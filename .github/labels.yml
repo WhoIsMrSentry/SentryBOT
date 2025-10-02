@@ -78,3 +78,7 @@
 - name: "type: feature"
   color: "0e8a16"
   description: "Feature branch (feat-*, feature-*)"
+
+- name: "target: main"
+  color: "f9d423"
+  description: "Pull request targets the main branch"
