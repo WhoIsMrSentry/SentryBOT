@@ -9,6 +9,14 @@ Ana hedefler:
 - Donanım ağır işlerini Arduino üstlenir; görüntü işleme gibi pahalı işler gerekiyorsa dış istemcilere (PC) köprülenir
 
 
+## Neler Yeni? (Öne Çıkan Son Geliştirmeler)
+
+- Servo sürüşü I2C’ye taşındı (PCA9685, 50 Hz). Açı→mikrosaniye darbe haritalaması konfigüre edilebilir (min/max us).
+- Çift “X‑cross” lazer eklendi: tekli ya da ikisi birden aç/kapa (firmware komut + Pi API).
+- 16×1 I2C LCD’ler için 8×2 adresleme düzeltmesi: 16 karakter mesajlar 8+8’e bölünerek yazdırılır.
+- PR etiketleme otomasyonu: modül adı, hedef branch ve tür (feature) otomatik etiketlenir; açık PR’lar için geri dönük etiketleme workflow’u.
+
+
 ## Mimari Genel Bakış
 
 - Donanım: Raspberry Pi 5 (ana bilgisayar) + Arduino (ör. Mega) kontrol kartı
@@ -163,6 +171,172 @@ Detaylar ve örnek istekler her modülün README’sinde mevcuttur.
 - İki mini servo (kulaklar) → PiServo
 - Kamera: PiCamera2 veya USB Webcam (auto seçimi desteklenir)
 - Görüntü işleme ağır ise bir PC’ye stream + Vision Bridge ile komut köprüleme
+
+
+## Arduino Firmware Özeti ve Donanım Detayları
+
+Arduino tarafı gerçek zamanlı I/O ve hareket kontrolünden sorumludur. NDJSON tabanlı satır‑satır komutlarla çalışır.
+
+- I2C Servo Sürüş (PCA9685)
+	- Frekans: 50 Hz. Kanallar: 0–15 (konfigürasyonla atanır).
+	- Konfig makroları (örnek): `SERVO_USE_PCA9685=1`, `PCA9685_ADDR=0x40`, `SERVO_MIN_US=500`, `SERVO_MAX_US=2500`.
+	- detach/reattach ve tam‑kapat (full‑off) kenar durumları ele alınmıştır.
+- Lazerler (iki adet X‑cross)
+	- Firmware komutu: `{ "cmd":"laser", "id":1|2, "on":true }`, `{ "cmd":"laser", "both":true, "on":true }`, `{ "cmd":"laser", "on":false }`.
+	- Pi tarafı API: `/arduino/laser/one/{1|2}`, `/arduino/laser/both`, `/arduino/laser/off` (gateway altında).
+- LCD 16×1 ekranlar
+	- Donanımsal olarak 8×2 gibi adreslenir; 16 karakterlik satırlar 8+8 olarak yazdırılır (kutucuk sorunu çözülür).
+- Ultrasonik, IMU, PID, Stepper
+	- Komut yüzeyi: `set_servo`, `set_pose(duration)`, `leg_ik`, `stepper(pos/vel/cfg)`, `home/zero`, `pid on/off`, `stand/sit`, `imu_read/cal`, `eeprom save/load`, `tune`, `policy`, `track`, `telemetry_*`, `get_state`, `estop`.
+
+Donanım bağlamaya dair pratik notlar:
+- Pi↔Arduino seviye dönüştürücü yönü doğru olmalı (Pi→LV, Arduino→HV hatları). I2C için pull‑up’lar tek tarafta yeterlidir.
+- PCA9685 beslemesi ve servo güç hattı kalın iletken ve ortak GND ile bağlanmalıdır.
+
+
+## Hızlı API Örnekleri
+
+Gateway çalışıyorsa tüm uçlar tek porttadır. Aşağıdaki istekler örnektir:
+
+- Lazerleri kontrol et (Arduino üzerinden)
+	- Tek lazer: POST `/arduino/laser/one/1`
+	- Her ikisi: POST `/arduino/laser/both`
+	- Kapat: POST `/arduino/laser/off`
+
+- NeoPixel duygusal renk gösterimi
+	- POST `/neopixel/emote` body: `{ "text": "joy curiosity", "duration": 0.25 }`
+
+- Görüntü işleme köprüsü (dış istemci → servo)
+	- POST `/vision/track` body: `{ "head_pan": 20, "head_tilt": -5 }`
+
+- Konuşma
+	- ASR başlat/durdur: `/speech/start`, `/speech/stop`
+	- TTS: `/speak/say` body: `{ "text": "Merhaba!" }`
+
+
+	## Modüller (Tek Tek)
+
+	- animate
+		- Amaç: YAML tabanlı servo animasyon sekansları; isimle tetiklenir.
+		- Kullanım: `xAnimateService.run('sit')`; adımlar `pose[]` ve `duration_ms|hold_ms` içerir.
+		- Config: `modules/animate/config/config.yml`
+
+	- arduino_serial
+		- Amaç: Arduino Mega ile NDJSON seri köprü; sürücü sınıfı + opsiyonel API.
+		- Kabiliyet: servo/pose/stepper/imu/telemetry/estop + lazer (tekli/çift) kontrolü.
+		- Uçlar: `/arduino/healthz`, `/arduino/request`, `/arduino/telemetry/start`, `/arduino/laser/*`.
+		- Config: port AUTO, baudrate; env: `ARDUINO_PORT`, `ARDUINO_BAUD`.
+
+	- calibration
+		- Amaç: Servo/Kamera/Audio kalibrasyon yardımcıları.
+		- Uçlar: `/calib/healthz`, `/calib/camera/checkerboard`, `/calib/servo/sweep`.
+
+	- camera
+		- Amaç: PiCamera2/OpenCV backend ile görüntü yakalama ve yayın.
+		- Özellikler: çözünürlük/FPS/JPEG kalite; yayıncı son kareyi saklar.
+		- Uçlar: `/camera/*` (gateway altında).
+
+	- config_center
+		- Amaç: Modül `config.yml` dosyalarını listele/düzenle; minimal UI.
+		- Uçlar: `/config/healthz`, `/config/list`, `/config/get|raw|set`, `/config/scan`, `/config/ui`.
+
+	- diagnostics
+		- Amaç: Boot self‑check ve modül sağlık taraması.
+		- Uçlar: `/diagnostics/healthz`, `/diagnostics/run`, `/diagnostics/report`.
+
+	- gateway
+		- Amaç: Ana giriş; tüm modül router’larını tek app’te toplar.
+		- Uçlar: Tüm modüller tek portta; `/healthz`, `/status` özet; `include.*` yönetimi.
+
+	- hardware
+		- Amaç: RPi5 sağlık/sistem, I2C tarama, GPIO özet.
+		- Uçlar: `/hardware/healthz`, `/hardware/system`, `/hardware/i2c/scan`, `/hardware/gpio/info`.
+
+	- interactions
+		- Amaç: Kural motoru; metrikler/olaylara göre NeoPixel efektleri.
+		- Uçlar: `/interactions/event|effect|base|state`.
+
+	- logwrapper
+		- Amaç: Merkezi loglama; console + dönen dosya + bellek içi halka buffer.
+		- Uçlar: Opsiyonel FastAPI router ile loglara erişim.
+
+	- mutagen
+		- Amaç: Mutagen CLI üzerinden dosya senkron yönetimi (cihaz ↔ robot).
+		- Uçlar: `/mutagen/healthz|status|start|stop|rescan`.
+
+	- neopixel
+		- Amaç: WS2812 LED kontrolü; donanım/simülatör otomatik; zengin animasyonlar ve "emotions" paleti.
+		- Uçlar: `/neopixel/healthz|clear|fill|effect|emote|emote_named|animate`.
+
+	- notifier
+		- Amaç: Telegram/Discord köprüleri.
+		- Uçlar: `/notify/healthz`, `/notify/telegram`, `/notify/discord`, `/notify/test`.
+
+	- ollama
+		- Amaç: LLM sohbet/persona; persona klasör yapısıyla yönetim.
+		- Uçlar: `/ollama/healthz|chat|persona(s)|persona/select|persona/create_from_url`.
+
+	- ota
+		- Amaç: Over‑the‑air güncelleme altyapısı (örn. Arduino firmware dağıtımı).
+
+	- piservo
+		- Amaç: Pi üzerinde kulak/ikincil servolar (pigpio) — jestler ve basit hareketler.
+		- Uçlar: `/piservo/*` (kulak pozları ve jestler).
+
+	- scheduler
+		- Amaç: Zamanlanmış işler; basit periyodik görevler (ör. sağlık pingi).
+		- Uçlar: `/scheduler/jobs` (liste/ekleme/çıkarma).
+
+	- speak
+		- Amaç: TTS (pyttsx3 veya Piper); base64 WAV oynatma; ALSA cihaz seçimi.
+		- Uçlar: `/speak/say`, `/speak/play`.
+
+	- speech
+		- Amaç: Offline ASR (Vosk), I2S; stereo ise DoA ve takip.
+		- Uçlar: `/speech/start|stop|last|direction|track/*`.
+
+	- state_manager
+		- Amaç: Global durum/emotions yönetimi.
+		- Uçlar: `/state/get`, `/state/set/emotions`.
+
+	- telemetry
+		- Amaç: Telemetri; Prometheus `/metrics` ve olay yayımı.
+		- Uçlar: `/telemetry/*`.
+
+	- vision_bridge
+		- Amaç: Dış görüntü işleme sonuçlarını Arduino komutlarına köprüler.
+		- Uçlar: `/vision/*` (ör. `/vision/track` → Arduino "track").
+
+	- wiki_rag
+		- Amaç: Yerel bilgi depoları (wiki) üzerinden RAG; persona ile sohbet bağlamı.
+		- Uçlar: `/wiki_rag/*` (preprocess, index/rebuild, chat, persona/select).
+
+
+	## Tipik Senaryolar
+
+	- Hedefe Bak (Görüntü → Servo): Dış istemci görüntüyü işler → `/vision/track` ile açı gönderir → Arduino (PCA9685) pan/tilt yapar.
+	- Konuş ve Yanıtla: `/speech/start` ile dinle → metni `/ollama/chat`’e gönder → yanıtı `/speak/say` ile seslendir → Interactions NeoPixel efekt tetikler.
+	- Duruma Göre Işıklar: Interactions CPU ısısı/yük, ağ burst ve olay akışını izler → NeoPixel’de base/transient animasyonlar oynatır.
+	- Lazer/LCD/Ultrasonik: `/arduino/laser/*` ile lazerleri tekli/ikili; ultrasonik ölçümleri LCD’de 16×1 uyumlu göster.
+
+
+## Geliştirici Otomasyonları (GitHub Actions)
+
+Repo, modül merkezli çalışma akışını destekleyen etiketleme ve yardımcı iş akışlarıyla gelir.
+
+- PR Etiketleyici (otomatik)
+	- Değişen dosya yollarından `modules/<ad>/...` ile modül adı bulunur ve `module: <ad>` etiketi eklenir.
+	- Branch adına göre tür etiketi: `type: feature` (feat/*, feature-*) ve hedef branch etiketi: `target: dev`.
+- Etiket Eşitleme
+	- Depodaki etiketleri bir YAML tanımıyla senkron tutar (yeni modüllere renkli etiketler).
+- Açık PR’ları Geriye Dönük Etiketleme
+	- Actions → “Relabel Open PRs” → Run workflow. Değişen dosyalardan modül tespit eder; eksik etiket varsa oluşturur ve uygular.
+
+Önerilen ek iş akışları (isteğe bağlı):
+- Lint/Test (Ruff/Black/Pytest) — değişen modüllerle sınırlı koşum
+- Arduino derleme kontrolü (`arduino-cli`) — firmware bütünlüğü
+- actionlint/yamllint — workflow sağlığı
+- pip‑audit/safety ve gitleaks — güvenlik taramaları
 
 
 ## Geliştirme Rehberi (DryCode)
