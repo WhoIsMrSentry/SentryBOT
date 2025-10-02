@@ -1,0 +1,42 @@
+# Speech module configuration
+
+server:
+  host: 0.0.0.0
+  port: 8082
+
+audio:
+  device: null           # ALSA device name or index (null=default)
+  samplerate: 16000
+  channels: 2            # two I2S mics for direction estimation
+  dtype: int16
+  frame_ms: 30
+
+recognition:
+  # You can set either language or model_path. If model_path is missing, language will be used to auto-pick a model.
+  language: tr                 # tr, en, en-us, de, es, fr, it, ru, ar, etc.
+  model_path: null             # explicit path overrides language mapping
+  # Optional per-language mapping to override defaults
+  language_models:
+    tr: models/vosk-tr
+    en: models/vosk-en
+    en-us: models/vosk-en-us
+    de: models/vosk-de
+    es: models/vosk-es
+    fr: models/vosk-fr
+  samplerate: 16000
+  max_alternatives: 0
+
+  vad:
+    enabled: false             # enable WebRTC VAD pre-filter
+    aggressiveness: 2          # 0-3 (3 = most aggressive)
+    hangover_ms: 300           # keep audio after speech end (ms)
+
+direction:
+  enabled: true
+  mic_distance_m: 0.06
+  control:
+    invert_direction: false   # reverse sign if L/R wiring swapped
+    deadband_deg: 3.0         # ignore small changes
+    smoothing_alpha: 0.3      # 0..1 low-pass for angle
+    slew_deg_per_s: 120.0     # max change per second
+    energy_threshold: 1000    # min RMS energy to update angle

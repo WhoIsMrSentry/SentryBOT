@@ -1,0 +1,30 @@
+# Speak (TTS) module configuration
+
+server:
+  host: 0.0.0.0
+  port: 8083
+
+audio_out:
+  device: null          # ALSA device (e.g., sysdefault, hw:1,0). For MAX98357A via I2S set the correct ALSA card.
+  samplerate: 22050
+  channels: 1           # MAX98357A is mono; driver may expose stereo. Upmix handled in code.
+  dtype: float32
+
+tts:
+  engine: pyttsx3       # pyttsx3 | piper | dummy
+  language: tr
+  voice: null           # optional voice id
+  rate: 170
+  volume: 1.0
+  samplerate: 22050
+  # Piper ayarları
+  piper:
+    bin_path: piper           # sistem PATH’te yoksa tam yol verin
+    model_path: null          # örn: /home/pi/models/tr.onnx
+    samplerate: 22050
+    speaker: null             # model çoklu speaker destekliyorsa id
+    length_scale: null
+    noise_scale: null
+    noise_w: null
+
+# note: external compressed audio decoding removed; /speak/play expects base64 WAV

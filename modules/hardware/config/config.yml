@@ -1,0 +1,11 @@
+server:
+  host: 0.0.0.0
+  port: 8090
+system:
+  poll_ms: 2000
+gpio:
+  enabled: false
+  mode: bcm
+i2c:
+  enabled: true
+  bus: 1

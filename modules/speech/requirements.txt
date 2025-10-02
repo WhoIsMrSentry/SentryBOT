@@ -1,0 +1,5 @@
+sounddevice>=0.4.6
+vosk>=0.3.45
+fastapi>=0.110.0
+uvicorn>=0.23.0
+webrtcvad>=2.0.10 ; python_version>='3.8'  # optional

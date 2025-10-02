@@ -1,0 +1,6 @@
+sounddevice>=0.4
+soundfile>=0.12
+numpy>=1.23
+# Optional for offline TTS
+pyttsx3>=2.90
+# Piper TTS harici ikili gerektirir (pip bağımlılığı yok). Model dosyaları ayrıca indirilir.

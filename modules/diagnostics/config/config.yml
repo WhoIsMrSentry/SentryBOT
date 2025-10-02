@@ -1,0 +1,10 @@
+server:
+  host: 0.0.0.0
+  port: 8098
+checks:
+  camera: true
+  arduino: true
+  neopixel: true
+  speech: true
+  speak: true
+  wiki_rag: false

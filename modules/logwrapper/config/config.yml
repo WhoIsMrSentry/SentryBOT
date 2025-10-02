@@ -1,0 +1,27 @@
+# logwrapper varsayılan ayarları
+
+# Konsola yazılsın mı?
+enable_console: true
+# Konsol seiyesi (DEBUG, INFO, WARNING, ERROR)
+console_level: INFO
+
+# Dosyaya yazılsın mı?
+enable_file: true
+# Dönen dosya yolu
+file_path: logs/sentry.log
+# Maks dosya boyutu (bayt)
+rotate_bytes: 2097152  # 2MB
+# Yedek dosya sayısı
+backup_count: 5
+
+# JSON formatta çıktı
+json_format: false
+
+# Bellek içi halka buffer boyutu
+buffer_size: 1000
+
+# Python warnings -> logging
+capture_warnings: true
+
+# Modül bazlı seviye override
+module_levels: {}

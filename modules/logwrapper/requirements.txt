@@ -1,0 +1,4 @@
+PyYAML>=6.0
+# API opsiyonel: FastAPI ve Uvicorn sadece gerekli ise
+fastapi>=0.111.0
+uvicorn>=0.30.0

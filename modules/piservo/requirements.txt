@@ -1,0 +1,4 @@
+fastapi>=0.110
+uvicorn[standard]>=0.23
+# Optional on Raspberry Pi for real hardware control
+pigpio>=1.78; platform_system == "Linux"

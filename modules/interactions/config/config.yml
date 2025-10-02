@@ -1,0 +1,76 @@
+server:
+  host: 0.0.0.0
+  port: 8095
+
+adapter:
+  mode: http
+  http_base_url: http://localhost:8092/neopixel
+
+hardware:
+  num_leds: 23  # 7 jewel + 16 stick (tek sıra)
+  segments:
+    - { name: jewel, start: 0, count: 7, reverse: false }
+    - { name: stick, start: 7, count: 16, reverse: false }
+
+tick_interval_ms: 800
+
+thresholds:
+  cpu_temp: { warm: 65, hot: 75, hysteresis: 3 }
+  cpu_load: { high: 0.9, window_s: 60 }
+  net: { burst_mbps: 20, min_duration_ms: 200 }
+
+defaults:
+  brightness: 0.6
+  idle:
+    base: { name: BREATHE, color: "#30E3CA", speed: slow }
+
+rules:
+  - id: cpu_hot
+    when: { cpu_temp_gte: 75 }
+    action: { base: { name: BREATHE, color: "#FF0000", speed: slow } }
+    priority: high
+
+  - id: cpu_warm
+    when: { cpu_temp_gte: 65, cpu_temp_lt: 75 }
+    action: { base: { name: PULSE, color: "#FF7F00", speed: slow } }
+    priority: medium
+
+  - id: cpu_load_high
+    when: { cpu_load_gte: 0.9 }
+    action: { base: { name: PULSE, color: "#FFD000", speed: slow } }
+    priority: medium
+
+  - id: net_burst
+    when: { net_burst: true }
+    action: { effect: { name: COMET, duration_ms: 800 } }
+    priority: medium
+    cooldown_ms: 3000
+
+  - id: speech_start
+    when: { event: speech.start }
+    action: { effect: { name: RAINBOW_CYCLE, duration_ms: 1000 } }
+    priority: high
+    cooldown_ms: 1000
+
+  - id: speech_end
+    when: { event: speech.end }
+    action: { effect: { name: COMET, duration_ms: 600 } }
+    priority: medium
+    cooldown_ms: 1000
+
+  - id: arduino_disconnected
+    when: { arduino_connected: false }
+    action: { base: { name: THEATER_CHASE, color: "#FF00FF" } }
+    priority: high
+
+  - id: error_ping
+    when: { event: error }
+    action: { effect: { name: METEOR, duration_ms: 500 } }
+    priority: critical
+    cooldown_ms: 10000
+
+  - id: warning_ping
+    when: { event: warning }
+    action: { effect: { name: PULSE, duration_ms: 400 } }
+    priority: high
+    cooldown_ms: 3000

@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Config Center</title>
+  <link rel="stylesheet" href="/config/static/css/styles.css"/>
+</head>
+<body>
+  <header>
+    <div class="title">Config Center</div>
+    <div class="search"><input id="q" type="search" placeholder="Ara: module, path, tag..."/></div>
+    <div class="toolbar">
+      <button class="btn" id="resetLayout">Yerleşimi Sıfırla</button>
+      <button class="btn" id="autoScan">Otomatik Tara</button>
+      <label class="toggle"><input type="checkbox" id="viewJson" checked/> JSON görünümü</label>
+      <label class="toggle"><input type="checkbox" id="autoSave" checked/> Otomatik kaydet</label>
+      <label class="toggle"><input type="checkbox" id="hl" checked/> Renklendir</label>
+    </div>
+  </header>
+  <main id="grid"></main>
+  <footer>Taşı-bırak ile panelleri düzenleyin. Notlarınız tarayıcıda saklanır.</footer>
+  <script src="/config/static/js/app.js"></script>
+</body>
+</html>

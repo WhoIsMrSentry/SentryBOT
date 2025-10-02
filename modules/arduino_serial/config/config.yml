@@ -1,0 +1,12 @@
+# Arduino Serial Module config (NDJSON @115200)
+port: AUTO   # AUTO to autodetect Arduino Mega, or set explicit COM port like COM5
+baudrate: 115200
+timeout: 0.05
+write_timeout: 0.1
+reconnect_sec: 2.0
+heartbeat_ms: 100
+auto_heartbeat: true
+telemetry:
+  enabled: false
+  interval_ms: 100
+log_level: INFO

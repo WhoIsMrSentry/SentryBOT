@@ -1,0 +1,12 @@
+server:
+  host: 0.0.0.0
+  port: 8096
+telegram:
+  bot_token: ""
+  chat_id: ""
+discord:
+  webhook: ""
+quiet_hours:
+  enabled: false
+  start: "23:00"
+  end: "08:00"

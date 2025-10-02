@@ -1,0 +1,19 @@
+server:
+  host: 0.0.0.0
+  port: 8098
+
+mutagen:
+  enabled: true
+  pairs:
+    - name: repo
+      alpha: ..
+      beta: /home/pi/SentryBOT
+      mode: two-way-resolved
+  opts:
+    sync_mode: two-way-resolved
+    ignore:
+      - .git
+      - __pycache__
+      - "*.pyc"
+      - logs/*
+    maxProblems: 128

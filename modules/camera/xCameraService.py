@@ -11,6 +11,13 @@ except Exception:  # when run as script without package context
     from services.capture import CameraCapture, FramePublisher, CaptureConfig  # type: ignore
     from api import get_router  # type: ignore
 
+try:
+    # Merkezi loglama (opsiyonel). Başarısız olsa bile modül çalışsın.
+    from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
+    _init_global_logging()
+except Exception:
+    pass
+
 
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)

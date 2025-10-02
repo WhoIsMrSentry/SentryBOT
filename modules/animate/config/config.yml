@@ -1,0 +1,4 @@
+# Animate module config
+animations_dir: null  # null -> use default modules/animate/animations
+default_speed: 1.0
+interpolate: true

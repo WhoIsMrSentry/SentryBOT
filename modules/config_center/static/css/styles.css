@@ -1,0 +1,25 @@
+/* Theme */
+:root { --bg:#0f172a; --surface:#111827; --panel:#1f2937; --text:#e5e7eb; --muted:#94a3b8; --accent:#22c55e; --accent2:#60a5fa; --warn:#f59e0b; }
+*{box-sizing:border-box}
+body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica Neue,Arial,"Apple Color Emoji","Segoe UI Emoji";background:var(--bg);color:var(--text)}
+header{padding:12px 16px;border-bottom:1px solid #1e293b;display:flex;gap:12px;align-items:center;position:sticky;top:0;background:linear-gradient(180deg,rgba(15,23,42,.98),rgba(15,23,42,.92));backdrop-filter:blur(6px);z-index:10}
+.title{font-weight:700}
+.search{flex:1}
+input[type="search"]{width:100%;padding:8px 10px;background:var(--surface);border:1px solid #1f2937;border-radius:8px;color:var(--text)}
+.toolbar{display:flex;gap:8px;align-items:center}
+.btn{background:var(--panel);border:1px solid #374151;color:var(--text);border-radius:8px;padding:6px 10px;cursor:pointer}
+.btn:hover{border-color:var(--accent2)}
+main{padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;align-items:start}
+.panel{background:var(--panel);border:1px solid #374151;border-radius:12px;padding:10px;position:relative;user-select:none;display:flex;flex-direction:column}
+.panel.dragging{opacity:.7;outline:2px dashed var(--accent2)}
+.panel h3{margin:0 0 6px;font-size:16px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+.meta{color:var(--muted);font-size:12px;margin-bottom:8px;word-break:break-all}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px}
+.tag{font-size:11px;padding:2px 6px;border-radius:999px;background:#0b1220;border:1px solid #23314f;color:#93c5fd}
+.actions{display:flex;gap:6px;align-items:center;margin-bottom:8px}
+.toggle{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.note{width:100%;min-height:64px;padding:8px;background:#0b1220;color:var(--text);border:1px dashed #334155;border-radius:8px;resize:vertical}
+.code{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;background:#0b1220;border:1px solid #23314f;border-radius:8px;padding:8px;font-size:12px;max-height:none;overflow:auto;white-space:pre-wrap;flex:1 1 auto;min-height:0;color:var(--text);caret-color:var(--text)}
+/* Syntax highlight tokens */
+.tok-key{color:#60a5fa}.tok-str{color:#22c55e}.tok-num{color:#f59e0b}.tok-bool{color:#f472b6}.tok-null{color:#94a3b8}.tok-comm{color:#64748b;font-style:italic}
+footer{padding:16px;text-align:center;color:var(--muted)}

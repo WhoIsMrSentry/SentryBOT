@@ -1,0 +1,1 @@
+# namespace for notifier services

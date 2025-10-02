@@ -1,0 +1,26 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+include:
+  arduino: true
+  vision_bridge: true
+  neopixel: true
+  interactions: true
+  speak: true
+  speech: true
+  ollama: true
+  wiki_rag: true
+  camera: true
+  logs: true
+  animate: true
+  piservo: true
+  ota: true
+  mutagen: true
+  hardware: true
+  telemetry: true
+  diagnostics: true
+  state_manager: true
+  scheduler: true
+  notifier: true
+  calibration: true
+  config_center: true

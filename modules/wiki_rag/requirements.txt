@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+requests
+beautifulsoup4
+html2text
+llama-index
+llama-index-llms-ollama
+llama-index-embeddings-ollama
