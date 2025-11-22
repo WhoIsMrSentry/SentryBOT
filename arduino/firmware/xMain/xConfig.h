@@ -127,6 +127,9 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #ifndef LCD_ROWS
 #define LCD_ROWS 1
 #endif
+#ifndef LCD_16X1_SPLIT_ROW
+#define LCD_16X1_SPLIT_ROW 1  // 1: use row split (0,1), 0: use position split (0-7, 8-15)
+#endif
 
 // RFID (MFRC522 - SPI)
 #ifndef RFID_ENABLED

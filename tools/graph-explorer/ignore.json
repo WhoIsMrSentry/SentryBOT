@@ -1,0 +1,15 @@
+{
+  "ignore": [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".vscode",
+    "node_modules",
+    ".DS_Store",
+    "dist",
+    "build",
+    ".ipynb_checkpoints"
+  ]
+}

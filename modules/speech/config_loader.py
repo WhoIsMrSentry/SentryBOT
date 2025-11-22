@@ -10,9 +10,10 @@ _DEF_CFG_PATH = Path(__file__).parent / "config" / "config.yml"
 def load_config(override_path: str | os.PathLike | None = None) -> Dict[str, Any]:
     """Load YAML config for the speech module.
 
-    Priority: override_path > default config.yml
+    Priority: override_path > SPEECH_CONFIG env > default config.yml
     """
-    cfg_path = Path(override_path) if override_path else _DEF_CFG_PATH
+    cfg_env = os.getenv("SPEECH_CONFIG")
+    cfg_path = Path(override_path or cfg_env) if (override_path or cfg_env) else _DEF_CFG_PATH
     if not cfg_path.exists():
         raise FileNotFoundError(f"Config file not found: {cfg_path}")
     with open(cfg_path, "r", encoding="utf-8") as f:

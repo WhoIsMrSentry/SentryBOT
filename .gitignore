@@ -1,3 +1,6 @@
 .venv
 __pycache__
 copilot-instructions.md
+sentry.log
+.pytest_cache
+arduino.avr.mega
