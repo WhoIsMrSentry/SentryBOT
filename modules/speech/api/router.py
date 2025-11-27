@@ -1,11 +1,18 @@
 from __future__ import annotations
 from fastapi import APIRouter, Response
+import requests
+import threading
 
 try:
     from ..xSpeechService import SpeechService
 except Exception:
     from xSpeechService import SpeechService  # type: ignore
 
+def _notify_autonomy():
+    try:
+        requests.post("http://localhost:8080/autonomy/interaction", timeout=0.1)
+    except Exception:
+        pass
 
 def get_router(service: SpeechService) -> APIRouter:
     router = APIRouter()
@@ -19,6 +26,8 @@ def get_router(service: SpeechService) -> APIRouter:
     def _cb(r):
         nonlocal last
         last = {"text": r.text, "final": r.is_final, "confidence": r.confidence}
+        if r.is_final and r.text:
+            threading.Thread(target=_notify_autonomy, daemon=True).start()
 
     @router.post("/speech/start")
     async def start():

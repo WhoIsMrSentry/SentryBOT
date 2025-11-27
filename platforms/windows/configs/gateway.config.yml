@@ -24,3 +24,4 @@ include:
   notifier: false
   calibration: false
   config_center: false
+  autonomy: true

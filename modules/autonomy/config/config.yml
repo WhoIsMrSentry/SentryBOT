@@ -1,0 +1,55 @@
+defaults:
+  loop_interval_ms: 1000
+  boredom_threshold_s: 20
+  mood:
+    decay_rate: 0.5
+    initial_happiness: 50
+    initial_energy: 100
+    max_happiness: 100
+    max_energy: 100
+
+endpoints:
+  arduino: "http://localhost:8080/arduino"
+  neopixel: "http://localhost:8080/neopixel"
+  speak: "http://localhost:8080/speak"
+  ollama: "http://localhost:8080/ollama"
+  vision: "http://localhost:8080/vision"
+
+behaviors:
+  idle:
+    enabled: true
+    actions:
+      - "look_around"
+      - "blink"
+      - "sigh"
+      - "stretch"
+      - "monologue"
+  curiosity:
+    enabled: true
+    face_tracking: true
+    sound_reaction: true
+  sleep:
+    enabled: true
+    start_hour: 23
+    end_hour: 7
+    wake_up_action: "stretch"
+
+llm:
+  enabled: true
+  model: "llama3"
+  prompt_template: |
+    Sen SentryBOT adında, duyguları olan bir robotsun.
+    
+    Şu anki İç Durumun:
+    - Mutluluk: {happiness}/100 (Düşükse üzgün, yüksekse neşeli)
+    - Enerji: {energy}/100 (Düşükse uykulu/yorgun)
+    - Sıkılma: {is_bored} (Evet ise ilgi istiyorsun)
+    - Son Etkileşim: {last_interaction_ago} saniye önce
+    - Saat: {time}
+
+    GÖREV: Bu duruma uygun, çok kısa (maksimum 10 kelime) bir iç ses cümlesi kur.
+    - Robotik değil, canlı bir karakter gibi konuş.
+    - Sadece söyleyeceğin cümleyi yaz.
+
+wikirag:
+  enabled: true

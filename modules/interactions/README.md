@@ -51,7 +51,26 @@ Gateway, `interactions` router’ını tek portta sunar. NeoPixel uçları da ga
   action: { effect: { name: COMET, duration_ms: 700 } }
   priority: high
   cooldown_ms: 2000
-```
+- id: autonomy_bored
+  when: { event: autonomy.bored }
+  action: { base: { name: BREATHE, color: "#0000FF" } } # Blue breathe
+  priority: medium
+
+- id: autonomy_excited
+  when: { event: autonomy.excited }
+  action: { effect: { name: PULSE, duration_ms: 1000 }, base: { name: RAINBOW, color: null } }
+  priority: high
+
+- id: autonomy_sleep
+  when: { event: autonomy.sleep }
+  action: { base: { name: BREATHE, color: "#100010" } } # Dim purple
+  priority: high
+
+- id: autonomy_wake
+  when: { event: autonomy.wake }
+  action: { effect: { name: RAINBOW, duration_ms: 2000 }, base: { name: BREATHE, color: "#00FF00" } }
+  priority: high
+
 2. Olayı gönderin:
 ```json
 POST /interactions/event
