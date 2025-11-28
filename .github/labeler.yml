@@ -13,6 +13,10 @@
   - changed-files:
       - any-glob-to-any-file: modules/calibration/**
   - head-branch: ["(?i).*calibration.*"]
+"module: autonomy":
+  - changed-files:
+      - any-glob-to-any-file: modules/autonomy/**
+  - head-branch: ["(?i).*autonomy.*"]
 "module: camera":
   - changed-files:
       - any-glob-to-any-file: modules/camera/**
