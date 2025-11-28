@@ -1,0 +1,744 @@
+<!doctype html>
+<html lang="tr">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SentryBOT Graph Explorer (Standalone)</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #0b1220;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --entry: #9333ea;
+      --service: #06b6d4;
+      --module: #22c55e;
+      --mount: #94a3b8;
+      --http: #f59e0b;
+      --serial: #ef4444;
+      --event: #3b82f6;
+      --llm: #84cc16;
+      --health: #a78bfa;
+    }
+
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      overflow: hidden;
+    }
+
+    #svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      cursor: grab;
+    }
+
+    #toolbar {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      z-index: 10;
+      pointer-events: none;
+      /* Allow clicking through to graph */
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      pointer-events: auto;
+      background: #111827aa;
+      padding: 6px;
+      border-radius: 8px;
+      backdrop-filter: blur(4px);
+    }
+
+    #moduleList {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      pointer-events: auto;
+      background: #111827aa;
+      padding: 6px;
+      border-radius: 8px;
+      backdrop-filter: blur(4px);
+      flex: 1;
+      /* Take remaining space */
+    }
+
+    .btn {
+      background: #1f2937;
+      color: var(--text);
+      border: 1px solid #374151;
+      border-radius: 6px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+
+    .btn:hover {
+      background: #374151;
+    }
+
+    .toggle.active {
+      background: #059669;
+      border-color: #10b981;
+      color: white;
+    }
+
+    .legend {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      background: #111827aa;
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      pointer-events: auto;
+      backdrop-filter: blur(4px);
+    }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid currentColor;
+      cursor: default;
+      background: #00000044;
+      transition: all 0.2s;
+    }
+
+    .pill.interactive {
+      cursor: pointer;
+    }
+
+    .pill.interactive:hover {
+      transform: scale(1.05);
+      filter: brightness(1.2);
+    }
+
+    .entry {
+      color: var(--entry);
+    }
+
+    .service {
+      color: var(--service);
+    }
+
+    .module {
+      color: var(--module);
+    }
+
+    .mount {
+      color: var(--mount);
+    }
+
+    .http {
+      color: var(--http);
+    }
+
+    .serial {
+      color: var(--serial);
+    }
+
+    .event {
+      color: var(--event);
+    }
+
+    .llm {
+      color: var(--llm);
+    }
+
+    .health {
+      color: var(--health);
+    }
+
+    /* Modal Styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(4px);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+    }
+
+    .modal-content {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 12px;
+      padding: 20px;
+      max-width: 500px;
+      width: 90%;
+      color: var(--text);
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      border-bottom: 1px solid #334155;
+      padding-bottom: 10px;
+    }
+
+    .modal-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #f8fafc;
+    }
+
+    .close-btn {
+      background: transparent;
+      border: none;
+      color: #94a3b8;
+      cursor: pointer;
+      font-size: 20px;
+    }
+
+    .close-btn:hover {
+      color: #fff;
+    }
+
+    .modal-body {
+      font-size: 14px;
+      line-height: 1.6;
+      color: #cbd5e1;
+    }
+
+    .modal-body ul {
+      padding-left: 20px;
+      margin: 8px 0;
+    }
+
+    .key-term {
+      color: #38bdf8;
+      font-weight: 600;
+    }
+  </style>
+</head>
+
+<body>
+  <svg id="svg"></svg>
+
+  <div id="toolbar">
+    <div class="controls">
+      <button id="btnShowAll" class="btn">Hepsini Göster</button>
+      <button id="btnCenterMode" class="btn toggle" title="Merkezi Düzen">Merkez Modu</button>
+      <button id="btnPin" class="btn toggle" title="Sabit Modu">Sabit Modu</button>
+      <button id="btnReset" class="btn" title="Sıfırla">Sıfırla</button>
+      <button id="btnHelp" class="btn" title="Yardım">?</button>
+    </div>
+
+    <div id="moduleList">
+      <!-- Modules will be injected here -->
+    </div>
+    <input type="color" id="colorPicker" style="visibility: hidden; position: absolute;">
+  </div>
+
+  <div class="legend">
+    <span class="pill entry">entry</span>
+    <span class="pill service">service</span>
+    <span class="pill module">module</span>
+    <span class="pill mount">mount</span>
+    <span class="pill http">http</span>
+    <span class="pill serial">serial</span>
+    <span class="pill event">event</span>
+    <span class="pill llm">llm</span>
+    <span class="pill health">health</span>
+  </div>
+
+  <!-- Help Modal -->
+  <div id="modalHelp" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title">SentryBOT Graph Explorer</div>
+        <button class="close-btn" onclick="document.getElementById('modalHelp').style.display='none'">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Bu araç, modüller arası ilişkileri görselleştirir.</p>
+        <ul>
+          <li><span class="key-term">Merkez Modu:</span> Gateway'i merkeze alır, modülleri halka şeklinde dizer.
+            Dosyalar
+            dışarıya doğru "yıldız" gibi açılır.</li>
+          <li><span class="key-term">Sabit Modu:</span> Düğümleri sürüklediğiniz yerde bırakır (fizik motorunu o düğüm
+            için durdurur).</li>
+          <li><span class="key-term">Modül Renkleri:</span> Üst çubuktaki modül isimlerine tıklayarak renklerini
+            değiştirebilirsiniz.</li>
+          <li><span class="key-term">Sürükleme:</span> Merkez modunda bile düğümleri sürükleyip ince ayar
+            yapabilirsiniz.</li>
+        </ul>
+        <p style="font-size: 12px; color: #94a3b8; margin-top: 12px;">
+          Not: Bu sürüm sentetik veri ile çalışır. Gerçek dosya sistemi için server.py kullanın.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script type="module">
+    // Utilities
+    const byId = (id) => document.getElementById(id);
+    const svg = d3.select('#svg');
+    let scene; // zoom/pan container
+    let zoom;  // persistent zoom behavior
+    let sim, nodes = [], links = [];
+    let pinMode = false;
+    let centerMode = false;
+    const DEFAULT_IGNORE = [".venv", "venv", ".pytest_cache", ".vscode", "__pycache__", ".git", "node_modules", ".DS_Store", "dist", "build", ".ipynb_checkpoints"];
+
+    // Module Colors State
+    const DEFAULT_COLORS = {
+      "animate": "#ef4444", "arduino_serial": "#f97316", "calibration": "#f59e0b", "camera": "#84cc16",
+      "config_center": "#10b981", "diagnostics": "#06b6d4", "gateway": "#3b82f6", "hardware": "#6366f1",
+      "interactions": "#8b5cf6", "logwrapper": "#d946ef", "mutagen": "#f43f5e", "neopixel": "#ec4899",
+      "notifier": "#db2777", "ollama": "#be185d", "ota": "#9d174d", "piservo": "#7f1d1d",
+      "scheduler": "#7c2d12", "speak": "#78350f", "speech": "#451a03", "state_manager": "#134e4a",
+      "telemetry": "#064e3b", "vision_bridge": "#042f2e", "wiki_rag": "#1e3a8a"
+    };
+    let moduleColors = { ...DEFAULT_COLORS };
+
+    // Colors
+    const colorByKind = (n) => {
+      if (n.kind === 'entry') return '#9333ea';
+      if (n.kind === 'service') return '#06b6d4';
+      if (n.kind === 'module') {
+        if (String(n.id).startsWith('file:modules/')) {
+          const parts = n.id.split('/');
+          if (parts.length > 1) {
+            const modName = parts[1];
+            return moduleColors[modName] || '#22c55e';
+          }
+        }
+        return moduleColors[n.id] || '#22c55e';
+      }
+      return '#94a3b8';
+    };
+    const colorByType = (t) => ({ mount: '#94a3b8', http: '#f59e0b', serial: '#ef4444', event: '#3b82f6', llm: '#84cc16', health: '#a78bfa' }[t] || '#64748b');
+
+    // Sentetik modül yapısı (DryCode standartları)
+    const MODULES = [
+      "animate", "arduino_serial", "calibration", "camera", "config_center", "diagnostics", "gateway", "hardware", "interactions", "logwrapper", "mutagen", "neopixel", "notifier", "ollama", "ota", "piservo", "scheduler", "speak", "speech", "state_manager", "telemetry", "vision_bridge", "wiki_rag"
+    ];
+    function camel(s) { return s.split('_').map(x => x.charAt(0).toUpperCase() + x.slice(1)).join(''); }
+    function moduleFiles(mod) {
+      const base = `modules/${mod}`;
+      const list = [
+        `${base}/README.md`,
+        `${base}/config_loader.py`,
+        `${base}/x${camel(mod)}Service.py`,
+        `${base}/api/router.py`,
+        `${base}/config/config.yml`,
+        `${base}/services/`,
+        `${base}/tests/`,
+      ];
+      return list.filter(p => !DEFAULT_IGNORE.some(ig => p.includes(ig)));
+    }
+
+    // Render Module Legend / Color Picker
+    function renderModuleLegend() {
+      const container = byId('moduleList');
+      container.innerHTML = '';
+
+      // Sort modules alphabetically for the list
+      const sortedModules = [...MODULES].sort();
+
+      sortedModules.forEach(mod => {
+        const color = moduleColors[mod] || '#22c55e';
+        const pill = document.createElement('span');
+        pill.className = 'pill interactive';
+        pill.style.color = color;
+        pill.style.borderColor = color;
+        pill.textContent = mod;
+        pill.title = 'Rengi değiştirmek için tıkla';
+
+        pill.onclick = () => openColorPicker(mod);
+        container.appendChild(pill);
+      });
+    }
+
+    let activeColorModule = null;
+    function openColorPicker(mod) {
+      activeColorModule = mod;
+      const picker = byId('colorPicker');
+      picker.value = moduleColors[mod] || '#22c55e';
+      picker.click();
+    }
+
+    byId('colorPicker').oninput = (e) => {
+      if (activeColorModule) {
+        const newColor = e.target.value;
+        moduleColors[activeColorModule] = newColor;
+        // Update UI
+        renderModuleLegend();
+        // Update Graph
+        svg.selectAll('circle')
+          .attr('fill', d => colorByKind(d));
+      }
+    };
+
+    // Graph helpers
+    function resetSimulation() {
+      svg.selectAll('*').remove();
+      const width = svg.node().clientWidth || 800;
+      const height = svg.node().clientHeight || 600;
+
+      // zoomable scene container
+      scene = svg.append('g').attr('class', 'scene');
+      zoom = d3.zoom().scaleExtent([0.1, 4]).on('zoom', (event) => {
+        scene.attr('transform', event.transform);
+      });
+      svg.call(zoom);
+
+      const linkDistance = (d) => {
+        if (d.type === 'boot') return 100;
+        if (String(d.target.id).startsWith('file:')) return 50; // Dosyalar modüle yakın olsun
+        if (d.type === 'mount') return 200; // Gateway -> Modül arası geniş olsun
+        return 150; // Diğer bağlantılar
+      };
+      const linkStrength = (d) => {
+        if (centerMode) return 0; // Merkez modunda fiziksel bağları kapat
+        if (String(d.target.id).startsWith('file:')) return 0.9;
+        if (d.type === 'mount') return 0.6;
+        if (d.type === 'boot') return 0.8;
+        return 0.3;
+      };
+      const radiusOfNode = (n) => {
+        if (n.kind === 'entry') return 0;
+        if (n.kind === 'service') return 100;
+        if (n.kind === 'module' && String(n.id).startsWith('file:')) return 350;
+        if (n.kind === 'module') return 250;
+        return 300;
+      };
+
+      sim = d3.forceSimulation(nodes)
+        .force('charge', d3.forceManyBody().strength(d => String(d.id).startsWith('file:') ? -50 : -400))
+        .force('link', d3.forceLink(links).id(d => d.id).distance(linkDistance).strength(linkStrength))
+        .force('center', d3.forceCenter(width / 2, height / 2).strength(centerMode ? 0 : 0.05)) // Merkez modunda center force kapat
+        .force('radial', d3.forceRadial(radiusOfNode, width / 2, height / 2).strength(centerMode ? 0 : 0.8))
+        .force('collision', d3.forceCollide().radius(d => String(d.id).startsWith('file:') ? 12 : (d.kind === 'module' ? 35 : 30)).iterations(2));
+
+      const defs = scene.append('defs');
+      const marker = defs.append('marker')
+        .attr('id', 'arrow')
+        .attr('viewBox', '0 0 10 10')
+        .attr('refX', '10').attr('refY', '5')
+        .attr('markerWidth', '6').attr('markerHeight', '6')
+        .attr('orient', 'auto-start-reverse')
+        .append('path').attr('d', 'M 0 0 L 10 5 L 0 10 z').attr('fill', '#94a3b8');
+
+      const link = scene.append('g')
+        .selectAll('line')
+        .data(links)
+        .enter().append('line')
+        .attr('stroke-width', d => (['http', 'serial', 'event', 'llm'].includes(d.type) ? 2.5 : 1.0)) // İşlevsel bağlar daha kalın
+        .attr('stroke', d => colorByType(d.type))
+        .attr('opacity', d => (['http', 'serial', 'event', 'llm'].includes(d.type) ? 1.0 : 0.4)) // İşlevsel bağlar daha belirgin, yapısal bağlar silik
+        .attr('marker-end', 'url(#arrow)');
+
+      const node = scene.append('g').selectAll('g')
+        .data(nodes)
+        .enter().append('g')
+        .call(d3.drag()
+          .on('start', (event, d) => {
+            if (!event.active) sim.alphaTarget(0.3).restart();
+            d.fx = d.x; d.fy = d.y;
+          })
+          .on('drag', (event, d) => {
+            d.fx = event.x; d.fy = event.y;
+          })
+          .on('end', (event, d) => {
+            if (!event.active) sim.alphaTarget(0);
+            if (!pinMode && !centerMode) { d.fx = null; d.fy = null; }
+          }))
+        .on('click', async (event, d) => {
+          if (centerMode) return;
+          if (pinMode) { d.fx = (d.fx == null ? d.x : null); d.fy = (d.fy == null ? d.y : null); return; }
+          if (d.kind === 'module') {
+            await showModuleFiles(d);
+          }
+        });
+
+      node.append('circle').attr('r', d => String(d.id).startsWith('file:') ? 8 : 18)
+        .attr('fill', d => colorByKind(d))
+        .attr('stroke', '#0b1220').attr('stroke-width', 2)
+        .append('title').text(d => d.label);
+
+      node.append('text')
+        .attr('x', d => String(d.id).startsWith('file:') ? 12 : 22)
+        .attr('y', 5)
+        .attr('fill', '#e2e8f0').attr('font-size', d => String(d.id).startsWith('file:') ? 10 : 12)
+        .text(d => d.label);
+
+      sim.on('tick', () => {
+        link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+          .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+        node.attr('transform', d => `translate(${d.x},${d.y})`);
+      });
+
+      if (centerMode) applyCenterLayout();
+    }
+
+    function applyCenterLayout() {
+      const width = svg.node().clientWidth || 800;
+      const height = svg.node().clientHeight || 600;
+      const cx = width / 2, cy = height / 2;
+
+      // 1. Gateway ve Entry Merkezde
+      const gateway = nodes.find(n => n.id === 'gw_service');
+      const entry = nodes.find(n => n.kind === 'entry');
+      if (gateway) { gateway.fx = cx; gateway.fy = cy; }
+      if (entry) { entry.fx = cx; entry.fy = cy - 80; }
+
+      // 2. Modülleri Halka Diz (Akıllı Sıralama)
+      const mods = nodes.filter(n => n.kind === 'module' && !String(n.id).startsWith('file:'));
+
+      // İlişkili modülleri yan yana getiren özel sıralama
+      const SMART_ORDER = [
+        "wiki_rag", "ollama", "speak", "speech", "interactions", "neopixel", // AI & Interaction Kümesi
+        "animate", "arduino_serial", "vision_bridge", // Serial/Donanım Kümesi
+        "camera", "piservo", "hardware",
+        "gateway", "diagnostics", "telemetry", "logwrapper", "state_manager", "config_center",
+        "calibration", "mutagen", "notifier", "ota", "scheduler"
+      ];
+
+      mods.sort((a, b) => {
+        const ia = SMART_ORDER.indexOf(a.id);
+        const ib = SMART_ORDER.indexOf(b.id);
+        if (ia !== -1 && ib !== -1) return ia - ib;
+        if (ia !== -1) return -1;
+        if (ib !== -1) return 1;
+        return a.label.localeCompare(b.label);
+      });
+
+      const R_MOD = 220;
+      mods.forEach((m, i) => {
+        const ang = (i / mods.length) * 2 * Math.PI - Math.PI / 2;
+        m.fx = cx + R_MOD * Math.cos(ang);
+        m.fy = cy + R_MOD * Math.sin(ang);
+        m.angle = ang; // Sakla
+      });
+
+      // 3. Dosyaları Modülden Dışarı Doğru Işın Gibi Diz (Star/Spoke)
+      mods.forEach(m => {
+        const files = nodes.filter(n => String(n.id).startsWith(`file:modules/${m.id}/`));
+        if (files.length === 0) return;
+
+        // Dosyaları isme göre sırala
+        files.sort((a, b) => a.label.localeCompare(b.label));
+
+        files.forEach((f, j) => {
+          // Modülden dışarı doğru düz çizgi
+          const dist = R_MOD + 60 + (j * 30); // Her dosya için mesafe artır
+          f.fx = cx + dist * Math.cos(m.angle);
+          f.fy = cy + dist * Math.sin(m.angle);
+        });
+      });
+
+      // 4. Etiket Hizalamasını Güncelle (Okunabilirlik için)
+      svg.selectAll('text')
+        .attr('text-anchor', d => {
+          if (!centerMode) return 'start'; // Normal modda varsayılan
+          if (d.kind === 'entry' || d.kind === 'service') return 'middle';
+          return d.fx < cx ? 'end' : 'start'; // Sol taraftakiler sağa yaslı, sağdakiler sola yaslı
+        })
+        .attr('x', d => {
+          if (!centerMode) return (String(d.id).startsWith('file:') ? 12 : 22);
+          if (d.kind === 'entry' || d.kind === 'service') return 0;
+          return d.fx < cx ? -15 : 15; // Merkeze zıt yöne ötele
+        })
+        .attr('y', d => {
+          if (!centerMode) return 5;
+          if (d.kind === 'entry' || d.kind === 'service') return -25;
+          return 5;
+        });
+
+      // Diğer düğümler (servisler vb) - Gateway etrafına yakın serpiştir
+      const others = nodes.filter(n => !n.fx && !n.fy);
+      others.forEach((n, i) => {
+        const ang = (i / others.length) * 2 * Math.PI;
+        const R = 100;
+        n.fx = cx + R * Math.cos(ang);
+        n.fy = cy + R * Math.sin(ang);
+      });
+
+      sim.alpha(1).restart();
+    }
+
+    function releaseCenterLayout() {
+      nodes.forEach(n => {
+        n.fx = null;
+        n.fy = null;
+      });
+      // Etiketleri eski haline getir
+      svg.selectAll('text')
+        .attr('text-anchor', 'start')
+        .attr('x', d => String(d.id).startsWith('file:') ? 12 : 22)
+        .attr('y', 5);
+
+      sim.alpha(1).restart();
+    }
+
+    // Map relations (sentetik veri)
+    async function buildGraphFromFs(_ignored) {
+      nodes.length = 0; links.length = 0;
+      // Core nodes
+      nodes.push({ id: 'run_robot', label: 'run_robot.py', kind: 'entry' });
+      nodes.push({ id: 'gw_service', label: 'Gateway', kind: 'service' });
+      links.push({ source: 'run_robot', target: 'gw_service', type: 'boot' });
+
+      // Modules (statik liste)
+      const modules = MODULES;
+      const moduleNodes = [];
+      for (const m of modules) {
+        moduleNodes.push({ id: m, label: m, kind: 'module' });
+        links.push({ source: 'gw_service', target: m, type: 'mount' });
+      }
+      nodes.push(...moduleNodes);
+
+      // Heuristic edges (mirrors server wiring)
+      function addEdge(s, t, type) { links.push({ source: s, target: t, type }); }
+      addEdge('interactions', 'neopixel', 'http');
+      addEdge('vision_bridge', 'arduino_serial', 'serial');
+      addEdge('animate', 'arduino_serial', 'serial');
+      addEdge('speech', 'interactions', 'event');
+      addEdge('speech', 'ollama', 'http');
+      addEdge('ollama', 'speak', 'http');
+      addEdge('wiki_rag', 'ollama', 'llm');
+      addEdge('diagnostics', 'gw_service', 'health');
+
+      resetSimulation();
+      renderModuleLegend(); // Render legend initially
+    }
+
+    // Başlangıç: Modülleri çember üzerinde başlangıç noktalarına koy (sabitleme yok)
+    function seedModulesCircle() {
+      const width = svg.node().clientWidth || 800;
+      const height = svg.node().clientHeight || 600;
+      const cx = width / 2, cy = height / 2;
+      const mods = nodes.filter(n => n.kind === 'module' && !n.id.startsWith('file:'));
+      const R = 250; // Geniş çember
+      const N = Math.max(1, mods.length);
+      mods.forEach((m, i) => {
+        const ang = (i / N) * Math.PI * 2 - Math.PI / 2;
+        const x = cx + R * Math.cos(ang);
+        const y = cy + R * Math.sin(ang);
+        m.x = x; m.y = y; // sadece başlangıç
+      });
+    }
+
+    // Bir modülün dosyalarını, çok halkalı düzenle etrafına yerleştir (başlangıç pozisyonu, sabitleme yok)
+    function expandFilesAround(mod, nearItems) {
+      const created = []; const newLinks = [];
+      const perRing = 12;
+      let placed = 0; let ring = 0;
+      while (placed < nearItems.length) {
+        const count = Math.min(perRing + ring * 6, nearItems.length - placed);
+        const radius = 60 + ring * 40; // Daha sıkı
+        for (let j = 0; j < count; j++) {
+          const f = nearItems[placed + j];
+          const ang = (j / count) * Math.PI * 2;
+          const baseX = mod.x ?? 0;
+          const baseY = mod.y ?? 0;
+          const nx = baseX + radius * Math.cos(ang);
+          const ny = baseY + radius * Math.sin(ang);
+          const id = `file:${f.path}`;
+          if (nodes.find(n => n.id === id)) continue;
+          const label = f.path.replace(`modules/${mod.id}/`, '');
+          created.push({ id, label, kind: 'module', x: nx, y: ny });
+          newLinks.push({ source: mod.id, target: id, type: 'mount' });
+        }
+        placed += count; ring += 1;
+      }
+      return { created, newLinks };
+    }
+
+    // On module node click: place its files around it (relation view)
+    async function showModuleFiles(mod) {
+      // Sentetik dosya listesi
+      const prefix = `modules/${mod.id}/`;
+      const near = moduleFiles(mod.id).map(p => ({ path: p, kind: p.endsWith('/') ? 'dir' : 'file' }));
+      const { created, newLinks } = expandFilesAround(mod, near);
+      nodes.push(...created); links.push(...newLinks);
+
+      if (centerMode) {
+        // Merkez modundaysak, yeni eklenenleri hemen yerine oturt
+        resetSimulation(); // Simülasyonu yeniden kur (yeni node'lar için)
+        // applyCenterLayout(); // resetSimulation içinde çağrılıyor zaten
+      } else {
+        resetSimulation();
+      }
+    }
+
+    // Show all files (careful!) – limited expansion by important folders
+    async function showAll() {
+      // Modülleri çember üzerinde seed et ve tüm dosyaları çok halkalı yerleştir
+      seedModulesCircle();
+      const mods = nodes.filter(n => n.kind === 'module' && !n.id.startsWith('file:'));
+      for (const m of mods) {
+        const near = moduleFiles(m.id).map(p => ({ path: p, kind: p.endsWith('/') ? 'dir' : 'file' }));
+        const { created, newLinks } = expandFilesAround(m, near);
+        nodes.push(...created); links.push(...newLinks);
+      }
+      resetSimulation();
+
+      // Biraz bekleyip grafiği ekrana sığdır
+      setTimeout(() => zoomToFit(30), 900);
+    }
+
+    // Ekrana sığdırma (zoom/pan ayarı)
+    function zoomToFit(padding = 20) {
+      const width = svg.node().clientWidth || 800;
+      const height = svg.node().clientHeight || 600;
+      if (nodes.length === 0) return;
+      const minX = Math.min(...nodes.map(n => n.x || 0));
+      const maxX = Math.max(...nodes.map(n => n.x || 0));
+      const minY = Math.min(...nodes.map(n => n.y || 0));
+      const maxY = Math.max(...nodes.map(n => n.y || 0));
+      const w = (maxX - minX) + padding * 2;
+      const h = (maxY - minY) + padding * 2;
+      const scale = Math.max(0.2, Math.min(4, 0.9 * Math.min(width / w, height / h)));
+      const tx = (width - scale * (minX + maxX)) / 2;
+      const ty = (height - scale * (minY + maxY)) / 2;
+      if (!zoom) return; // zoom henüz kurulmadıysa
+      svg.transition().duration(600).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+    }
+
+    // İlk yüklemede sentetik grafiği kur
+    (async () => { await buildGraphFromFs([]); })();
+
+    byId('btnShowAll').onclick = showAll;
+    byId('btnPin').onclick = (e) => { pinMode = !pinMode; e.currentTarget.classList.toggle('active', pinMode); };
+    byId('btnCenterMode').onclick = (e) => {
+      centerMode = !centerMode;
+      e.currentTarget.classList.toggle('active', centerMode);
+      if (centerMode) applyCenterLayout();
+      else releaseCenterLayout();
+    };
+    byId('btnReset').onclick = () => resetSimulation();
+    byId('btnHelp').onclick = () => byId('modalHelp').style.display = 'flex';
+  </script>
+</body>
+
+</html>

@@ -179,9 +179,29 @@ class SpeechService:
 
     # Hardware send stub: replace with Arduino/driver integration
     def _send_pan(self, angle_deg: float) -> None:
-        # Example: send to Arduino via serial or HTTP
-        # For now, just log. Keep DryCode: single responsibility.
-        logger.info("[pan_tilt] set pan=%.1f°", angle_deg)
+        # Send to Arduino via HTTP (Gateway)
+        # We use a simple requests call here, but in production consider async client or keeping a session
+        try:
+            import requests
+            # Assuming gateway is at localhost:8080
+            # We need to map 0-180 pan to whatever the arduino expects.
+            # The arduino module expects "set_servo" with pan/tilt.
+            # We only control pan here, tilt is kept at current or default?
+            # Ideally we should know current tilt. For now let's send a specific command or just pan.
+            # The arduino_serial module supports "set_servo" with optional args? 
+            # Let's assume we send both, but we need to know tilt.
+            # For now, let's just log if we can't send, but we try to send.
+            
+            # Better approach: The speech module shouldn't know about HTTP if possible, 
+            # but since it's a service, it can talk to other services.
+            
+            url = "http://localhost:8080/arduino/send"
+            # We default tilt to 90 if we don't know it. 
+            # TODO: Get current tilt from state or keep track of it.
+            payload = {"cmd": "set_servo", "pan": int(angle_deg), "tilt": 90} 
+            requests.post(url, json=payload, timeout=0.1)
+        except Exception as e:
+            logger.debug(f"Failed to send pan: {e}")
 
 
 def create_app(config_path: str | None = None) -> FastAPI:

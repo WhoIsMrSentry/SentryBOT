@@ -134,6 +134,15 @@ def _include_piservo(app: FastAPI, started: Dict[str, object]) -> None:
     app.include_router(get_piservo_router(ears))
 
 
+def _include_autonomy(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.autonomy.xAutonomyService import xAutonomyService  # type: ignore
+    from modules.autonomy.api.router import get_router as get_autonomy_router  # type: ignore
+    svc = xAutonomyService()
+    svc.start()
+    started["autonomy"] = svc
+    app.include_router(get_autonomy_router(svc.brain))
+
+
 def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
     """Start and wire modules according to cfg.include and return started dict."""
     started: Dict[str, object] = {}
@@ -170,6 +179,8 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         _try(lambda: _include_animate(app, started))
     if include.get("piservo"):
         _try(lambda: _include_piservo(app, started))
+    if include.get("autonomy"):
+        _try(lambda: _include_autonomy(app, started))
 
     # optional: mutagen
     if include.get("mutagen"):

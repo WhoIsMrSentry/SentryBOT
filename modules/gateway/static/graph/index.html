@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SentryBOT Graph Explorer</title>
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+    #app { display: grid; grid-template-columns: 2fr 1fr; height: 100%; }
+    #graph { background: #0f172a; color: #e2e8f0; position: relative; }
+    #graph .legend { position: absolute; top: 8px; left: 8px; background: #111827aa; padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+    #side { border-left: 1px solid #334155; display: grid; grid-template-rows: 1fr 1fr; }
+    #tree, #file { overflow: auto; padding: 10px; }
+    #tree h3, #file h3 { margin: 0 0 8px 0; }
+    .dir { color: #16a34a; cursor: pointer; }
+    .file { color: #93c5fd; cursor: pointer; }
+    ul { list-style: none; padding-left: 16px; }
+    li { margin: 2px 0; }
+    .crumbs { font-size: 12px; opacity: 0.8; }
+    .pill { display: inline-block; padding: 2px 6px; border-radius: 999px; margin-right: 6px; font-size: 12px; }
+    .pill.entry { background: #9333ea33; border: 1px solid #9333ea; }
+    .pill.service { background: #06b6d433; border: 1px solid #06b6d4; }
+    .pill.module { background: #22c55e33; border: 1px solid #22c55e; }
+    .pill.mount { background: #94a3b833; border: 1px solid #94a3b8; }
+    .pill.http { background: #f59e0b33; border: 1px solid #f59e0b; }
+    .pill.serial { background: #ef444433; border: 1px solid #ef4444; }
+    .pill.event { background: #3b82f633; border: 1px solid #3b82f6; }
+    .pill.llm { background: #84cc1633; border: 1px solid #84cc16; }
+    .pill.health { background: #a78bfa33; border: 1px solid #a78bfa; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="graph">
+      <div class="legend">
+        <span class="pill entry">entry</span>
+        <span class="pill service">service</span>
+        <span class="pill module">module</span>
+        <span class="pill mount">mount</span>
+        <span class="pill http">http</span>
+        <span class="pill serial">serial</span>
+        <span class="pill event">event</span>
+        <span class="pill llm">llm</span>
+        <span class="pill health">health</span>
+      </div>
+      <svg id="svg" width="100%" height="100%"></svg>
+    </div>
+    <div id="side">
+      <div id="tree">
+        <h3>Depo Ağacı</h3>
+        <div id="treeContent">Yükleniyor…</div>
+      </div>
+      <div id="file">
+        <h3>Dosya İçeriği</h3>
+        <pre id="fileContent" style="white-space: pre-wrap; background:#0b1220; color:#e2e8f0; padding:10px; border-radius:6px;">Seçmek için ağaçtan bir dosyaya tıklayın.</pre>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+  <script>
+    async function fetchJSON(path){ const r=await fetch(path); if(!r.ok) throw new Error(path+': '+r.status); return r.json(); }
+
+    function renderTree(node, container){
+      const ul = document.createElement('ul');
+      (node.children||[]).forEach(child=>{
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.textContent = child.name;
+        a.className = child.type;
+        a.href = '#';
+        a.onclick = (e)=>{
+          e.preventDefault();
+          if(child.type==='dir'){
+            li.appendChild(renderTree(child, li));
+          }else if(child.type==='file'){
+            loadFile(child.path);
+          }
+        };
+        li.appendChild(a);
+        ul.appendChild(li);
+      });
+      container.appendChild(ul);
+      return ul;
+    }
+
+    async function loadFile(path){
+      const pre = document.getElementById('fileContent');
+      pre.textContent = 'Yükleniyor: '+path+'…';
+      try{
+        const data = await fetchJSON('/graph-api/file?path='+encodeURIComponent(path));
+        if(data.text) pre.textContent = data.text; else pre.textContent = '[binary or non-utf8]';
+      }catch(err){ pre.textContent = 'Hata: '+err.message; }
+    }
+
+    function colorByKind(kind){
+      return { entry:'#9333ea', service:'#06b6d4', module:'#22c55e' }[kind] || '#94a3b8';
+    }
+    function colorByType(type){
+      return { mount:'#94a3b8', http:'#f59e0b', serial:'#ef4444', event:'#3b82f6', llm:'#84cc16', health:'#a78bfa' }[type] || '#64748b';
+    }
+
+    function renderGraph(graph){
+      const svg = d3.select('#svg');
+      svg.selectAll('*').remove();
+      const width = svg.node().clientWidth;
+      const height = svg.node().clientHeight;
+
+      const sim = d3.forceSimulation(graph.nodes)
+        .force('charge', d3.forceManyBody().strength(-400))
+        .force('link', d3.forceLink(graph.edges).id(d=>d.id).distance(d=> d.type==='mount'?120:80))
+        .force('center', d3.forceCenter(width/2, height/2))
+        .force('collision', d3.forceCollide().radius(40));
+
+      const link = svg.append('g').attr('stroke-width', 1.2).selectAll('line')
+        .data(graph.edges)
+        .enter().append('line')
+        .attr('stroke', d=> colorByType(d.type))
+        .attr('opacity', 0.8);
+
+      const node = svg.append('g').selectAll('g')
+        .data(graph.nodes)
+        .enter().append('g')
+        .call(d3.drag()
+          .on('start', (event,d)=>{ if(!event.active) sim.alphaTarget(0.3).restart(); d.fx=d.x; d.fy=d.y; })
+          .on('drag', (event,d)=>{ d.fx=event.x; d.fy=event.y; })
+          .on('end', (event,d)=>{ if(!event.active) sim.alphaTarget(0); d.fx=null; d.fy=null; }));
+
+      node.append('circle')
+        .attr('r', 18)
+        .attr('fill', d=> colorByKind(d.kind))
+        .attr('stroke', '#0b1220')
+        .attr('stroke-width', 2)
+        .append('title').text(d=> d.label);
+
+      node.append('text')
+        .attr('x', 22)
+        .attr('y', 5)
+        .attr('fill', '#e2e8f0')
+        .attr('font-size', 12)
+        .text(d=> d.label);
+
+      sim.on('tick', ()=>{
+        link
+          .attr('x1', d=> d.source.x)
+          .attr('y1', d=> d.source.y)
+          .attr('x2', d=> d.target.x)
+          .attr('y2', d=> d.target.y);
+        node
+          .attr('transform', d=> `translate(${d.x},${d.y})`);
+      });
+    }
+
+    async function boot(){
+      try{
+        const tree = await fetchJSON('/graph-api/tree');
+        const rel = await fetchJSON('/graph-api/relations');
+        const cont = document.getElementById('treeContent');
+        cont.innerHTML = '';
+        renderTree(tree, cont);
+        renderGraph(rel);
+      }catch(err){
+        document.getElementById('treeContent').textContent = 'Hata: '+err.message;
+      }
+    }
+
+    boot();
+  </script>
+</body>
+</html>

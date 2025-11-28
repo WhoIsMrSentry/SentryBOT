@@ -4,95 +4,99 @@
 "module: animate":
   - changed-files:
       - any-glob-to-any-file: modules/animate/**
-  - head-branch: ["(?i).*animate.*"]
+  - head-branch: [".*animate.*"]
 "module: arduino_serial":
   - changed-files:
       - any-glob-to-any-file: modules/arduino_serial/**
-  - head-branch: ["(?i).*arduino[_-]?serial.*"]
+  - head-branch: [".*arduino[_-]?serial.*"]
 "module: calibration":
   - changed-files:
       - any-glob-to-any-file: modules/calibration/**
-  - head-branch: ["(?i).*calibration.*"]
+  - head-branch: [".*calibration.*"]
+"module: autonomy":
+  - changed-files:
+      - any-glob-to-any-file: modules/autonomy/**
+  - head-branch: [".*autonomy.*"]
 "module: camera":
   - changed-files:
       - any-glob-to-any-file: modules/camera/**
-  - head-branch: ["(?i).*camera.*"]
+  - head-branch: [".*camera.*"]
 "module: config_center":
   - changed-files:
       - any-glob-to-any-file: modules/config_center/**
-  - head-branch: ["(?i).*config[_-]?center.*"]
+  - head-branch: [".*config[_-]?center.*"]
 "module: diagnostics":
   - changed-files:
       - any-glob-to-any-file: modules/diagnostics/**
-  - head-branch: ["(?i).*diagnostics.*"]
+  - head-branch: [".*diagnostics.*"]
 "module: gateway":
   - changed-files:
       - any-glob-to-any-file: modules/gateway/**
-  - head-branch: ["(?i).*gateway.*"]
+  - head-branch: [".*gateway.*"]
 "module: hardware":
   - changed-files:
       - any-glob-to-any-file: modules/hardware/**
-  - head-branch: ["(?i).*hardware.*"]
+  - head-branch: [".*hardware.*"]
 "module: interactions":
   - changed-files:
       - any-glob-to-any-file: modules/interactions/**
-  - head-branch: ["(?i).*interactions.*"]
+  - head-branch: [".*interactions.*"]
 "module: logwrapper":
   - changed-files:
       - any-glob-to-any-file: modules/logwrapper/**
-  - head-branch: ["(?i).*logwrapper.*"]
+  - head-branch: [".*logwrapper.*"]
 "module: mutagen":
   - changed-files:
       - any-glob-to-any-file: modules/mutagen/**
-  - head-branch: ["(?i).*mutagen.*"]
+  - head-branch: [".*mutagen.*"]
 "module: neopixel":
   - changed-files:
       - any-glob-to-any-file: modules/neopixel/**
-  - head-branch: ["(?i).*neopixel.*"]
+  - head-branch: [".*neopixel.*"]
 "module: notifier":
   - changed-files:
       - any-glob-to-any-file: modules/notifier/**
-  - head-branch: ["(?i).*notifier.*"]
+  - head-branch: [".*notifier.*"]
 "module: ollama":
   - changed-files:
       - any-glob-to-any-file: modules/ollama/**
-  - head-branch: ["(?i).*ollama.*"]
+  - head-branch: [".*ollama.*"]
 "module: ota":
   - changed-files:
       - any-glob-to-any-file: modules/ota/**
-  - head-branch: ["(?i).*ota.*"]
+  - head-branch: [".*ota.*"]
 "module: piservo":
   - changed-files:
       - any-glob-to-any-file: modules/piservo/**
-  - head-branch: ["(?i).*piservo.*"]
+  - head-branch: [".*piservo.*"]
 "module: scheduler":
   - changed-files:
       - any-glob-to-any-file: modules/scheduler/**
-  - head-branch: ["(?i).*scheduler.*"]
+  - head-branch: [".*scheduler.*"]
 "module: speak":
   - changed-files:
       - any-glob-to-any-file: modules/speak/**
-  - head-branch: ["(?i).*speak.*"]
+  - head-branch: [".*speak.*"]
 "module: speech":
   - changed-files:
       - any-glob-to-any-file: modules/speech/**
-  - head-branch: ["(?i).*speech.*"]
+  - head-branch: [".*speech.*"]
 "module: state_manager":
   - changed-files:
       - any-glob-to-any-file: modules/state_manager/**
-  - head-branch: ["(?i).*state[_-]?manager.*"]
+  - head-branch: [".*state[_-]?manager.*"]
 "module: telemetry":
   - changed-files:
       - any-glob-to-any-file: modules/telemetry/**
-  - head-branch: ["(?i).*telemetry.*"]
+  - head-branch: [".*telemetry.*"]
 "module: vision_bridge":
   - changed-files:
       - any-glob-to-any-file: modules/vision_bridge/**
-  - head-branch: ["(?i).*vision[_-]?bridge.*"]
+  - head-branch: [".*vision[_-]?bridge.*"]
 "module: wiki_rag":
   - changed-files:
       - any-glob-to-any-file: modules/wiki_rag/**
-  - head-branch: ["(?i).*wiki[_-]?rag.*"]
+  - head-branch: [".*wiki[_-]?rag.*"]
 
 # Label PRs targeting dev branch
 "target: dev":
@@ -100,4 +104,4 @@
 
 # Label feature PRs by branch name prefix (e.g., feat-...)
 "type: feature":
-  - head-branch: ["^(?i)feat[-/].*", "^(?i)feature[-/].*"]
+  - head-branch: ["^feat[-/].*", "^feature[-/].*"]

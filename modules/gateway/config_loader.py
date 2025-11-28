@@ -29,6 +29,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cfg: Dict[str, Any] = dict(DEFAULT_CONFIG)
     candidates = []
+    # Highest priority: explicit env var path
+    env_path = os.getenv("GATEWAY_CONFIG")
+    if env_path and os.path.exists(env_path):
+        candidates.append(env_path)
     if base_dir:
         candidates.append(os.path.join(base_dir, "config", "config.yml"))
     here = os.path.dirname(__file__)
