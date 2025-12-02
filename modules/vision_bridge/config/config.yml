@@ -1,3 +1,49 @@
 server:
   host: 0.0.0.0
   port: 8099
+
+vision:
+  processing_mode: local  # local | remote
+  # camera_source: "http://localhost:8000/video_feed" # Potential future: pull from camera module HTTP
+  camera_source: 0  # Local webcam when in local mode
+  model_path: "yolov8n.pt"
+  confidence_threshold: 0.5
+  blind_mode:
+    enabled: false
+    interval_seconds: 5.0
+  modes:
+    objects: true
+    people: true
+    faces: true
+    depth: false        # remote heavy model (e.g. MiDaS) için
+    ocr: false          # metin okuma
+    hazards: true       # tehlike algılama
+    semantic_scene: true
+  alerts:
+    classes: ["person", "car", "bicycle"]
+    distance_threshold_m: 1.2
+    announce_interval_s: 8.0
+  personalization:
+    known_people:
+      Alice:
+        greeting: "Hoş geldin Alice, seni gördüğüme sevindim."
+      Bob:
+        greeting: "Selam Bob, bugün nasıl hissediyorsun?"
+    greet_cooldown_s: 30
+  liveliness:
+    heartbeat_interval_s: 30
+    idle_lookaround_s: 60
+
+remote:
+  auth_token: "changeme"  # Set a secure token in production or override
+  accept_results: true     # Allow POST /vision/results ingestion
+
+robot:
+  host: "localhost"  # Change to Robot IP when running remotely
+
+ollama:
+  endpoint: "http://localhost:11434/api/generate"
+  model: "llama3"
+
+speak:
+  endpoint: "http://localhost:8083/speak/say"
