@@ -10,13 +10,13 @@ except Exception:  # pragma: no cover
 
 
 def get_router(engine: InteractionEngine) -> APIRouter:
-    r = APIRouter(prefix="/interactions")
+    r = APIRouter(prefix="/interactions", tags=["interactions"], responses={404: {"description": "Not found"}})
 
-    @r.get("/state")
+    @r.get("/state", tags=["interactions"], summary="State")
     def state():
         return engine.get_state()
 
-    @r.post("/event")
+    @r.post("/event", tags=["interactions"], summary="Push Event")
     def push_event(payload: Dict[str, Any]):
         t = str(payload.get("type", "")).strip()
         data = payload.get("data") if isinstance(payload.get("data"), dict) else None
@@ -25,14 +25,14 @@ def get_router(engine: InteractionEngine) -> APIRouter:
         engine.push_event(t, data)
         return {"ok": True}
 
-    @r.post("/effect")
+    @r.post("/effect", tags=["interactions"], summary="Effect")
     def effect(payload: Dict[str, Any]):
         name = str(payload.get("name", "COMET"))
         dur = int(payload.get("duration_ms", 800))
         engine.push_event("manual.effect", {"name": name, "duration_ms": dur})
         return {"ok": True}
 
-    @r.post("/base")
+    @r.post("/base", tags=["interactions"], summary="Base")
     def base(payload: Dict[str, Any]):
         name = str(payload.get("name", "BREATHE"))
         color = payload.get("color")

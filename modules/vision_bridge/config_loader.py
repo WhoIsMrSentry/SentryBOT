@@ -8,6 +8,22 @@ except Exception:
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8099},
+    "vision": {
+        "processing_mode": "local",  # local | remote
+        "blind_mode": {"enabled": False, "interval_seconds": 5.0},
+        "confidence_threshold": 0.5,
+    },
+    "remote": {
+        "auth_token": "changeme",  # Override in deployment
+        "accept_results": True,
+    },
+    "ollama": {
+        "endpoint": "http://localhost:11434/api/generate",
+        "model": "llama3",
+    },
+    "speak": {
+        "endpoint": "http://localhost:8083/speak/say",
+    },
 }
 
 def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

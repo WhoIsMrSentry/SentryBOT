@@ -24,30 +24,13 @@ def main() -> None:
     except Exception:
         pass
 
-    # Gateway app'i oluştur (platform override destekli)
-    # Platform yollarını öne al ki platforms/<plat> altındaki modules ve configs gölgelensin
-    try:
-        from platforms.loader import prepend_platform_paths  # type: ignore
-        current_platform = prepend_platform_paths()
-    except Exception:
-        current_platform = None
+    # Gateway app'i oluştur (platforms klasörü gereksiz; ana dizinden çalışır)
+    current_platform = None
     from modules.gateway.xGatewayService import create_app  # type: ignore
     from modules.gateway.config_loader import load_config  # type: ignore
 
-    # Windows gibi platformlarda platforms/<plat>/configs/gateway.config.yml varsa otomatik kullan
-    cfg_path = None
-    try:
-        root = Path(ROOT)
-        if current_platform:
-            plat_cfg = root / "platforms" / str(current_platform) / "configs" / "gateway.config.yml"
-            if plat_cfg.exists():
-                cfg_path = str(plat_cfg)
-    except Exception:
-        cfg_path = None
-
-    # Ortam değişkeni ile de override edilebilir (öncelik env'de)
-    if cfg_path and not os.getenv("GATEWAY_CONFIG"):
-        os.environ["GATEWAY_CONFIG"] = cfg_path
+    # Ortam değişkeni ile konfig override desteklenir; yoksa modül varsayılanı kullanılır
+    # Örn: $env:GATEWAY_CONFIG = "modules/gateway/config/config.yml"
 
     cfg = load_config()
     app = create_app()

@@ -1,0 +1,6 @@
+ultralytics
+opencv-python
+requests
+fastapi
+uvicorn
+face_recognition
