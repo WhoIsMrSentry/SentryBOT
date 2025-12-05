@@ -33,20 +33,19 @@ class SpeakService:
         self.tts = TextToSpeech(self.cfg.get("tts", {}))
         self.player = AudioPlayer(self.cfg.get("audio_out", {}))
 
-    def speak(self, text: str, engine: Optional[str] = None) -> dict:
+    def speak(self, text: str, engine: Optional[str] = None, tone: Optional[dict] = None) -> dict:
         """Metni sentezleyip oynatır; sonuç bilgisi döner.
         engine: 'pyttsx3' | 'piper' | None (config default)
         """
         if not text or not text.strip():
             raise ValueError("text is empty")
-        if engine and engine != getattr(self.tts, 'backend', object()).__class__.__name__.replace('Backend','').lower():
-            # Geçici: istenen engine için yeni TTS örneği oluştur (basit yaklaşım)
-            cfg = dict(self.cfg.get("tts", {}))
-            cfg["engine"] = engine
-            self.tts = TextToSpeech(cfg)
-        wav = self.tts.synthesize(text)
+        overrides = dict(tone or {})
+        if engine:
+            overrides["engine"] = engine
+        wav = self.tts.synthesize(text, overrides=overrides or None)
         dur = self.player.play_blocking(wav)
-        return {"ok": True, "engine": self.cfg.get("tts", {}).get("engine"), "duration_sec": dur, "samplerate": wav.samplerate}
+        used_engine = overrides.get("engine") or self.cfg.get("tts", {}).get("engine")
+        return {"ok": True, "engine": used_engine, "duration_sec": dur, "samplerate": wav.samplerate}
 
     def play_wav(self, data: bytes) -> dict:
         dur = self.player.play_wav_bytes(data)

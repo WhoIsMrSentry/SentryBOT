@@ -4,6 +4,11 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+try:
+    import requests  # type: ignore
+except Exception:  # pragma: no cover
+    requests = None  # type: ignore
+
 from .metrics import MetricsCollector
 from .rules import Rule, eval_condition, priority_rank
 from .adapters.neopixel_client import NeoHttpClient, NoOpNeoClient
@@ -33,8 +38,10 @@ class InteractionEngine:
         self._lock = threading.Lock()
         self._last_base: Optional[Tuple[str, Optional[str | tuple[int, int, int]]]] = None
         self._active_effect_until: float = 0.0
-        self._ctx: Dict[str, Any] = {"arduino_connected": True}
+        self._ctx: Dict[str, Any] = {"arduino_connected": False}
         self._last_net_burst: float = 0.0
+        self.monitor_cfg = dict(cfg.get("monitor", {}))
+        self._last_arduino_check = 0.0
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -78,6 +85,7 @@ class InteractionEngine:
     def _tick(self) -> None:
         now = time.time()
         metrics = self.metrics.sample()
+        self._update_arduino_state(now)
         net_burst = False
         try:
             thr = self.cfg.get("thresholds", {}).get("net", {})
@@ -150,3 +158,30 @@ class InteractionEngine:
 
             # one-shot event is consumed
             self._ctx.pop("event", None)
+
+    def _update_arduino_state(self, now: float) -> None:
+        if requests is None:
+            return
+        cfg = self.monitor_cfg.get("arduino") if isinstance(self.monitor_cfg.get("arduino"), dict) else None
+        if not cfg:
+            return
+        interval = float(cfg.get("interval_s", 5.0))
+        if now - self._last_arduino_check < interval:
+            return
+        self._last_arduino_check = now
+        url = str(cfg.get("url"))
+        if not url:
+            return
+        timeout = float(cfg.get("timeout_s", 0.5))
+        ok = False
+        try:
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code == 200:
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = {}
+                ok = bool(data.get("ok", True))
+        except Exception:
+            ok = False
+        self.set_state(arduino_connected=ok)

@@ -24,7 +24,8 @@ svc.speak("Merhaba dünya")
 ## API
 - GET `/speak/status` → { ready: true }
 - POST `/speak/say`
-	- Body: `{ "text": "...", "engine": "pyttsx3|piper" }` (engine opsiyonel)
+	- Body: `{ "text": "...", "engine": "pyttsx3|piper", "tone": { "rate": 190, "volume": 0.9 } }`
+	- `tone` alanı opsiyoneldir; `rate`, `volume` veya `piper` içindeki `length_scale`, `noise_scale` gibi ayarları anlık olarak override edebilirsiniz.
 	- Dönüş: `{ ok, engine, duration_sec, samplerate }`
 - POST `/speak/play`
 	- Body: `{ "data": "<base64-wav>" }`

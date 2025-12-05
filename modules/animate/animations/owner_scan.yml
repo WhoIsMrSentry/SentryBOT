@@ -1,0 +1,13 @@
+name: owner_scan
+loop: false
+steps:
+  - pose: [90,90,90, 90,90,90, 90,60]
+    duration_ms: 350
+  - pose: [90,90,90, 90,90,90, 90,120]
+    duration_ms: 350
+  - pose: [90,90,90, 90,90,90, 92,75]
+    duration_ms: 300
+  - pose: [90,90,90, 90,90,90, 88,105]
+    duration_ms: 300
+  - pose: [90,90,90, 90,90,90, 90,90]
+    duration_ms: 250

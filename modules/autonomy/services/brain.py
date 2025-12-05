@@ -4,23 +4,38 @@ import logging
 import random
 import datetime
 import json
+
 from .client import ServiceClient
 from .mood import MoodManager
 from .memory import ShortTermMemory
+from .brain_parts.animations import AnimationSupportMixin
+from .brain_parts.owner_guard import OwnerGuardMixin
+from .brain_parts.timeline import TimelineMixin
+from .brain_parts.vision import VisionMixin
+from .brain_parts.vocal import VocalMixin
 
 logger = logging.getLogger("autonomy")
 
-class AutonomyBrain:
+
+class AutonomyBrain(
+    AnimationSupportMixin,
+    TimelineMixin,
+    OwnerGuardMixin,
+    VisionMixin,
+    VocalMixin,
+):
     def __init__(self, config):
         self.config = config
         self.running = False
         self.thread = None
-        
+
         # Components
         self.mood = MoodManager(config)
         self.client = ServiceClient(config.get("endpoints", {}))
         self.memory = ShortTermMemory(max_items=20)
-        
+        self._vision_cfg = config.get("vision_hooks", {})
+        self.owner_cfg = config.get("owner", {})
+
         # State
         self.state = {
             "last_interaction": time.time(),
@@ -29,20 +44,36 @@ class AutonomyBrain:
             "last_speech_text": "",
             "last_speech_time": 0,
             "current_pan": 90,
-            "current_tilt": 90
+            "current_tilt": 90,
+            "last_emotion": None,
+            "last_vision_poll": 0.0,
+            "owner_last_seen": 0.0,
+            "owner_lockout_until": 0.0,
+            "owner_last_greet": 0.0,
+            "owner_permission_until": 0.0,
+            "temp_owner": None,
+            "temp_owner_expires": 0.0,
+            "rfid_authorized_until": 0.0,
+            "last_speaker": None,
         }
+        self._people_last_seen = {}
+        self._last_emotion_sent = None
+        self._current_people = {}
+        self._attempt_log = []
+        self._owner_report_pending = False
+        self._last_owner_scan = 0.0
+        self._reset_daily_timeline()
 
     def start(self):
         if self.running:
             return
         self.running = True
-        
-        # Select default persona
+
         try:
             self.client.select_persona("sentry")
         except Exception:
             logger.warning("Failed to select persona 'sentry'")
-            
+
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
         logger.info("Autonomy Brain started.")
@@ -59,147 +90,161 @@ class AutonomyBrain:
             try:
                 self._sense()
                 self._think()
-            except Exception as e:
-                logger.error(f"Error in autonomy loop: {e}")
+            except Exception as exc:
+                logger.error("Error in autonomy loop: %s", exc)
             time.sleep(interval)
 
+    def interaction_occurred(self, source=None):
+        """External ping that resets boredom timer and nudges mood."""
+        self.state["last_interaction"] = time.time()
+        self.state["is_bored"] = False
+        if source:
+            self.state["last_speaker"] = source
+        self.mood.modify("happiness", 1)
+
     def _sense(self):
-        """Poll sensors for new information"""
-        # 1. Check Speech Direction
+        """Poll sensors for new information."""
+        self._sense_sound_direction()
+        self._sense_speech_text()
+        self._sense_vision()
+
+    def _sense_sound_direction(self):
         try:
             direction = self.client.get_speech_direction()
             if direction and "angle" in direction:
                 angle = direction["angle"]
-                if abs(angle) > 10: 
+                if abs(angle) > 10:
                     self._react_to_sound(angle)
         except Exception:
             pass
 
-        # 2. Check Speech Text
+    def _sense_speech_text(self):
         try:
             speech = self.client.get_last_speech()
             if speech and speech.get("final") and speech.get("text"):
                 text = speech["text"]
-                if text != self.state["last_speech_text"] and (time.time() - self.state["last_speech_time"] > 2):
+                elapsed = time.time() - self.state["last_speech_time"]
+                if text != self.state["last_speech_text"] and elapsed > 2:
                     self.state["last_speech_text"] = text
                     self.state["last_speech_time"] = time.time()
                     self._react_to_speech(text)
         except Exception:
             pass
 
+    def _sync_emotion(self):
+        dominant = self.mood.get_dominant_emotion()
+        if not dominant or dominant == self._last_emotion_sent:
+            return
+        self._last_emotion_sent = dominant
+        self.state["last_emotion"] = dominant
+        self.client.update_emotions([dominant])
+        self.client.push_interaction_event(f"emotion.{dominant}")
+
     def _think(self):
         now = time.time()
-        
-        # 0. Check Circadian Rhythm
+        self._ensure_timeline_day()
+        self._refresh_rfid_authorization()
+
         self._check_sleep_cycle()
-        
         if self.state["is_sleeping"]:
             if random.random() < 0.1:
                 self.client.set_neopixel("breathe", emotions=["neutral"], duration=2.0)
             return
 
-        # 1. Update Mood
         self.mood.update()
-        
-        # 2. Micro-movements (Breathing)
+        self._sync_emotion()
+
         if random.random() < 0.4:
             self._perform_micro_movement()
 
-        # 3. Check Boredom & Agentic Decision
+        self._maybe_scan_for_owner()
+
         boredom_threshold = self.config.get("defaults", {}).get("boredom_threshold_s", 20)
         time_since_interaction = now - self.state["last_interaction"]
-        
         if time_since_interaction > boredom_threshold:
             if not self.state["is_bored"]:
                 logger.info("Robot is bored.")
                 self.state["is_bored"] = True
                 self.mood.modify("curiosity", 10)
                 self.memory.add_event("I became bored because nothing happened for a while.")
-            
-            # Agentic Decision making (instead of random)
-            if random.random() < 0.2: # Don't spam LLM, check every few seconds
+            if random.random() < 0.2:
                 self._make_agentic_decision()
         else:
             self.state["is_bored"] = False
 
     def _make_agentic_decision(self):
-        """Ask LLM what to do based on internal state"""
+        """Ask LLM what to do based on internal state."""
         if not self.config.get("llm", {}).get("enabled", False):
             return
 
-        # Construct prompt
         events = "\n".join(self.memory.get_recent_events())
         prompt = f"""
         You are SentryBOT. You are currently bored.
-        
+
         Internal State:
         - Happiness: {int(self.mood['happiness'])}/100
         - Energy: {int(self.mood['energy'])}/100
         - Curiosity: {int(self.mood['curiosity'])}/100
-        
+
         Recent Events:
         {events}
-        
+
         Available Actions:
         - LOOK_AROUND: Move head to look at surroundings.
         - SIGH: Make a sigh sound and dim lights.
         - STRETCH: Move head up and down to stretch.
         - MONOLOGUE: Say something short to yourself about your state.
         - BLINK: Blink eyes (lights).
-        
+
         DECISION FORMAT: JSON with keys "action" (one of above) and "reason" (short string).
         Example: {{"action": "LOOK_AROUND", "reason": "I want to see if anyone is there."}}
-        
+
         Make a decision now.
         """
-        
+
         try:
             resp = self.client.chat(prompt)
-            if resp:
-                # Try to parse JSON from response (it might be wrapped in markdown)
-                text = resp.get("answer", "")
-                # Simple cleanup
-                if "```json" in text:
-                    text = text.split("```json")[1].split("```")[0]
-                elif "{" in text:
-                    text = text[text.find("{"):text.rfind("}")+1]
-                
-                decision = json.loads(text)
-                action = decision.get("action")
-                reason = decision.get("reason")
-                
-                logger.info(f"Agentic Decision: {action} because {reason}")
-                self.memory.add_event(f"Decided to {action}: {reason}")
-                
-                self._execute_action(action)
-                
-        except Exception as e:
-            logger.error(f"Agentic decision failed: {e}")
+            if not resp:
+                return
+            text = resp.get("answer", "")
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "{" in text:
+                text = text[text.find("{"):text.rfind("}") + 1]
+
+            decision = json.loads(text)
+            action = decision.get("action")
+            reason = decision.get("reason")
+
+            logger.info("Agentic Decision: %s because %s", action, reason)
+            self.memory.add_event(f"Decided to {action}: {reason}")
+            self._execute_action(action)
+        except Exception as exc:
+            logger.error("Agentic decision failed: %s", exc)
 
     def _execute_action(self, action):
         if action == "LOOK_AROUND":
-            pan = random.randint(60, 120)
-            tilt = random.randint(70, 110)
-            self.state["current_pan"] = pan
-            self.state["current_tilt"] = tilt
-            self.client.move_head(pan, tilt)
+            if not self._trigger_animation("look_around"):
+                self._head_scan_fallback()
         elif action == "BLINK":
-            self.client.push_interaction_event("autonomy.blink")
+            if not self._trigger_animation("blink"):
+                self._blink_fallback()
         elif action == "SIGH":
-            self.client.speak("Hıııh.")
+            self._speak_with_mood("Hıııh.", emotion="tired")
             self.client.push_interaction_event("autonomy.bored")
         elif action == "STRETCH":
-            self.client.move_head(45, 130)
-            time.sleep(1)
-            self.client.move_head(135, 130)
-            time.sleep(1)
-            self.client.move_head(90, 90)
+            if not self._trigger_animation("stretch"):
+                self._stretch_fallback()
         elif action == "MONOLOGUE":
             self._generate_monologue()
 
     def _react_to_sound(self, angle):
-        """Turn head towards sound source"""
-        logger.info(f"Sound detected at {angle}")
+        """Turn head towards sound source."""
+        logger.info("Sound detected at %s", angle)
+        offset = max(-70, min(70, angle))
+        target_pan = max(0, min(180, 90 + offset))
+        self.state["current_pan"] = target_pan
+        self.client.move_head(target_pan, self.state["current_tilt"])
         self.client.push_interaction_event("autonomy.excited")
         self.state["last_interaction"] = time.time()
         self.mood.modify("curiosity", 5)
@@ -207,22 +252,34 @@ class AutonomyBrain:
         self.memory.add_event(f"Heard sound at angle {angle}")
 
     def _react_to_speech(self, text):
-        """React to heard text"""
-        logger.info(f"Heard: {text}")
+        """React to heard text."""
+        logger.info("Heard: %s", text)
         self.state["last_interaction"] = time.time()
         self.mood.modify("happiness", 5)
         self.memory.add_event(f"User said: {text}")
-        
-        # Trigger excited interaction
+        self._log_conversation(text)
+        speaker = self._guess_active_person()
+        if speaker:
+            self.state["last_speaker"] = speaker
+
         self.client.push_interaction_event("autonomy.excited")
-        
-        # Decide whether to use RAG (Knowledge) or Ollama (Chat/Persona)
-        # Simple heuristic: If it sounds like a question about facts, use RAG.
-        # Otherwise use Ollama.
-        # In a real agent, we would ask the LLM to classify the intent.
-        
-        is_question = "?" in text or any(x in text.lower() for x in ["nedir", "kimdir", "nasıl", "what", "who", "how"])
-        
+
+        blocked_response = self._maybe_block_request(text)
+        if blocked_response:
+            message, emotion = blocked_response
+            self._speak_with_mood(message, emotion=emotion)
+            return
+
+        if self._handle_owner_commands(text, speaker):
+            return
+
+        if self._features_locked_for_request(text):
+            return
+
+        is_question = "?" in text or any(
+            key in text.lower() for key in ["nedir", "kimdir", "nasıl", "what", "who", "how"]
+        )
+
         response_text = ""
         try:
             if is_question and self.config.get("wikirag", {}).get("enabled", False):
@@ -232,27 +289,16 @@ class AutonomyBrain:
                     response_text = resp["answer"]
             else:
                 logger.info("Routing to Ollama...")
-                # We can inject current mood into the prompt context if we want
-                # But Ollama module manages history. We just send the query.
-                # Maybe prefix with mood?
-                # For now, raw query.
                 resp = self.client.chat(text)
                 if resp and "answer" in resp:
                     response_text = resp["answer"]
-            
-            if response_text:
-                logger.info(f"Reply: {response_text}")
-                self.client.speak(response_text)
-                self.memory.add_event(f"I replied: {response_text}")
-                
-        except Exception as e:
-            logger.error(f"Failed to generate reply: {e}")
 
-    def _perform_micro_movement(self):
-        """Subtle servo movements to simulate breathing/alive-ness"""
-        delta_tilt = random.randint(-2, 2)
-        target_tilt = 90 + delta_tilt
-        self.client.move_head(self.state["current_pan"], target_tilt)
+            if response_text:
+                logger.info("Reply: %s", response_text)
+                self._speak_with_mood(response_text)
+                self.memory.add_event(f"I replied: {response_text}")
+        except Exception as exc:
+            logger.error("Failed to generate reply: %s", exc)
 
     def _check_sleep_cycle(self):
         sleep_cfg = self.config.get("behaviors", {}).get("sleep", {})
@@ -262,58 +308,27 @@ class AutonomyBrain:
         hour = datetime.datetime.now().hour
         start = sleep_cfg.get("start_hour", 23)
         end = sleep_cfg.get("end_hour", 7)
-        
-        should_sleep = False
+
         if start > end:
             should_sleep = hour >= start or hour < end
         else:
             should_sleep = start <= hour < end
-            
+
         if should_sleep and not self.state["is_sleeping"]:
             logger.info("Going to sleep...")
+            self._deliver_timeline_summary()
             self.state["is_sleeping"] = True
             self.memory.add_event("Going to sleep now.")
             self.client.push_interaction_event("autonomy.sleep")
-            self.client.move_head(90, 120) # Head down
-            self.client.speak("İyi geceler.")
+            self.client.move_head(90, 120)
+            self._speak_with_mood("İyi geceler.", emotion="tired")
             self.client.set_speech_tracking(False)
-            
+
         elif not should_sleep and self.state["is_sleeping"]:
             logger.info("Waking up!")
             self.state["is_sleeping"] = False
             self.memory.add_event("Waking up from sleep.")
             self.mood.modify("energy", 100)
             self.client.push_interaction_event("autonomy.wake")
-            self.client.speak("Günaydın.")
+            self._speak_with_mood("Günaydın.", emotion="joy")
             self.client.set_speech_tracking(True)
-
-    def _generate_monologue(self):
-        if not self.config.get("llm", {}).get("enabled", False):
-            return
-            
-        template = self.config.get("llm", {}).get("prompt_template", "")
-        
-        now = time.time()
-        happiness = int(self.mood["happiness"])
-        energy = int(self.mood["energy"])
-        is_bored = "Evet" if self.state["is_bored"] else "Hayır"
-        last_interaction_ago = int(now - self.state["last_interaction"])
-        current_time = datetime.datetime.now().strftime("%H:%M")
-        
-        try:
-            prompt = template.format(
-                happiness=happiness,
-                energy=energy,
-                is_bored=is_bored,
-                last_interaction_ago=last_interaction_ago,
-                time=current_time
-            )
-            
-            resp = self.client.chat(prompt)
-            if resp and "answer" in resp:
-                text = resp["answer"].strip('"')
-                logger.info(f"Monologue: {text}")
-                self.client.speak(text)
-                self.memory.add_event(f"Said to myself: {text}")
-        except Exception as e:
-            logger.error(f"Monologue failed: {e}")

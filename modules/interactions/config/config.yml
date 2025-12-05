@@ -6,6 +6,12 @@ adapter:
   mode: http
   http_base_url: http://localhost:8092/neopixel
 
+monitor:
+  arduino:
+    url: http://localhost:8080/arduino/healthz
+    interval_s: 5
+    timeout_s: 0.4
+
 hardware:
   num_leds: 23  # 7 jewel + 16 stick (tek sıra)
   segments:
@@ -74,3 +80,50 @@ rules:
     action: { effect: { name: PULSE, duration_ms: 400 } }
     priority: high
     cooldown_ms: 3000
+
+  - id: owner_scan
+    when: { event: owner.scan }
+    action: { effect: { name: COMET, duration_ms: 1200 } }
+    priority: high
+    cooldown_ms: 5000
+
+  - id: owner_rfid
+    when: { event: owner.rfid }
+    action: { effect: { name: RAINBOW_CYCLE, duration_ms: 1500 } }
+    priority: high
+    cooldown_ms: 8000
+
+  - id: owner_temp_granted
+    when: { event: owner.temp_granted }
+    action: { effect: { name: THEATER_CHASE, duration_ms: 1200 } }
+    priority: medium
+    cooldown_ms: 6000
+
+  - id: owner_temp_revoked
+    when: { event: owner.temp_revoked }
+    action: { effect: { name: PULSE, duration_ms: 800 } }
+    priority: medium
+    cooldown_ms: 4000
+
+  - id: owner_locked
+    when: { event: owner.locked }
+    action: { effect: { name: METEOR, duration_ms: 900 } }
+    priority: medium
+    cooldown_ms: 5000
+
+  - id: autonomy_excited
+    when: { event: autonomy.excited }
+    action: { effect: { name: RAINBOW_CYCLE, duration_ms: 700 } }
+    priority: medium
+    cooldown_ms: 1500
+
+  - id: autonomy_angry
+    when: { event: autonomy.angry }
+    action: { base: { name: BREATHE, color: "#FF3300", speed: slow } }
+    priority: high
+
+  - id: vision_person
+    when: { event: vision.person }
+    action: { effect: { name: COMET, duration_ms: 600 } }
+    priority: low
+    cooldown_ms: 1200

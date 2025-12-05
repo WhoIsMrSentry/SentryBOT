@@ -12,6 +12,7 @@ Kamera akışını işleyen yerel (Pi5) veya uzak (dizüstü / sunucu) görünt�
 - `POST /vision/track { head_tilt, head_pan, drive? }` : Arduino "track" komutu.
 - `POST /vision/analyze` : Tek kare analiz (yalnızca local).
 - `GET  /vision/video_feed` : Annotated MJPEG akışı (yalnızca local).
+- `GET  /vision/results/latest` : Son işlenen karedeki nesne/kişi listesi (autonomy vb. modüller bu uçtan beslenebilir).
 - `POST /vision/results` : Uzak işlemciden obje/kisi tespiti sonuçları (remote veya her iki mod). Header: `X-Auth-Token`.
 - `POST /vision/blind/start` / `stop` : Görme engelli modu açıklama.
 - `POST /vision/faces/register` / `GET /vision/faces` : Yüz kayıt & liste (local).

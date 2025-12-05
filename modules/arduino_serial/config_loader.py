@@ -18,6 +18,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "auto_heartbeat": True,
     "telemetry": {"enabled": False, "interval_ms": 100},
     "log_level": "INFO",
+    "rfid": {
+        "allowed_uids": [],
+        "authorize_window_s": 8.0,
+    },
 }
 
 

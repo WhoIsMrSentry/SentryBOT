@@ -18,10 +18,11 @@ def get_router(service: SpeakService) -> APIRouter:
     async def say(payload: dict):
         text = str(payload.get("text", "")).strip()
         engine = payload.get("engine")
+        tone = payload.get("tone")
         if not text:
             return {"ok": False, "error": "text is empty"}
         try:
-            return service.speak(text, engine=engine)
+            return service.speak(text, engine=engine, tone=tone)
         except Exception as e:
             return {"ok": False, "error": str(e)}
 

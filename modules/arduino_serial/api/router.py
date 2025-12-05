@@ -49,6 +49,19 @@ def get_router(svc: xArduinoSerialService) -> APIRouter:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    @r.get("/rfid/last")
+    def rfid_last():
+        snap = svc.get_last_rfid()
+        if not snap:
+            return {"ok": False, "error": "no_rfid"}
+        return {"ok": True, **snap}
+
+    @r.get("/rfid/authorize")
+    def rfid_authorize(uid: Optional[str] = None, window_s: Optional[float] = None):
+        result = svc.authorize_rfid(uid=uid, window_s=window_s)
+        ok = bool(result.get("authorized"))
+        return {"ok": ok, **result}
+
     # Laser controls
     @r.post("/laser/one/{which}")
     def laser_one(which: int):

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import copy
 import logging
 from dataclasses import dataclass
 from typing import Dict, Optional
@@ -117,6 +118,10 @@ class PiperBackend(TTSBackend):
 
 class TextToSpeech:
     def __init__(self, cfg: Dict):
+        self._base_cfg = copy.deepcopy(cfg)
+        self.backend = self._build_backend(self._base_cfg)
+
+    def _build_backend(self, cfg: Dict) -> TTSBackend:
         tcfg = TTSConfig(
             engine=str(cfg.get("engine", "pyttsx3")),
             language=str(cfg.get("language", "tr")),
@@ -126,15 +131,30 @@ class TextToSpeech:
             samplerate=int(cfg.get("samplerate", 22050)),
         )
         if tcfg.engine == "piper":
-            self.backend = PiperBackend(tcfg, cfg.get("piper", {}))
-        elif tcfg.engine == "pyttsx3":
+            return PiperBackend(tcfg, cfg.get("piper", {}))
+        if tcfg.engine == "pyttsx3":
             try:
-                self.backend: TTSBackend = Pyttsx3Backend(tcfg)
+                return Pyttsx3Backend(tcfg)
             except Exception as e:
                 logger.warning("pyttsx3 unavailable, falling back to dummy: %s", e)
-                self.backend = DummyBackend(tcfg)
-        else:
-            self.backend = DummyBackend(tcfg)
+                return DummyBackend(tcfg)
+        return DummyBackend(tcfg)
 
-    def synthesize(self, text: str):
+    def _merge_overrides(self, overrides: Dict | None) -> Optional[Dict]:
+        if not overrides:
+            return None
+        merged = copy.deepcopy(self._base_cfg)
+        if "piper" in overrides:
+            merged["piper"] = {**merged.get("piper", {}), **overrides.get("piper", {})}
+        for key, value in overrides.items():
+            if key == "piper":
+                continue
+            merged[key] = value
+        return merged
+
+    def synthesize(self, text: str, overrides: Optional[Dict] = None):
+        if overrides:
+            cfg = self._merge_overrides(overrides)
+            backend = self._build_backend(cfg or self._base_cfg)
+            return backend.synthesize(text)
         return self.backend.synthesize(text)

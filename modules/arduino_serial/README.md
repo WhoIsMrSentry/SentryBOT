@@ -47,12 +47,16 @@ Gateway çalışırken Arduino uçları tek portta sunulur:
 - POST `/arduino/request`
 - POST `/arduino/telemetry/start`
 - POST `/arduino/telemetry/stop`
+- GET  `/arduino/rfid/last` → Son görülen kart UID'sini ve kaç saniye önce okunduğunu döner.
+- GET  `/arduino/rfid/authorize` → `config.yml` içindeki `rfid.allowed_uids` listesine göre kartı doğrular; `authorized: true` ise Autonomy içindeki RFID koruması açılır.
 
 ## Konfig
 `modules/arduino_serial/config/config.yml` içinde varsayılanlar:
 - port: AUTO (Arduino Mega otomatik bulunur)
 - baudrate: 115200
 - heartbeat_ms: 100
+- rfid.allowed_uids: Yetki verilecek kart UID'leri (HEX, büyük/küçük fark etmez)
+- rfid.authorize_window_s: Son kart okumasının geçerli sayılacağı zaman penceresi (s)
 
 Env override: `ARDUINO_PORT`, `ARDUINO_BAUD`.
 

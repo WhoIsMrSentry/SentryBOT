@@ -1,14 +1,21 @@
 from __future__ import annotations
 from typing import Dict, Any
 
+import logging
+
 from fastapi import FastAPI
+
+logger = logging.getLogger("gateway.bootstrap")
 
 
 def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore
     ardu = xArduinoSerialService()
-    ardu.start()
+    try:
+        ardu.start()
+    except Exception as exc:
+        logger.warning("Arduino serial service failed to start, running degraded: %s", exc)
     started["arduino"] = ardu
     app.include_router(get_arduino_router(ardu))
 

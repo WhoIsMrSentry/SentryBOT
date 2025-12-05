@@ -13,6 +13,10 @@ endpoints:
   neopixel: "http://localhost:8080/neopixel"
   speak: "http://localhost:8080/speak"
   ollama: "http://localhost:8080/ollama"
+  speech: "http://localhost:8080/speech"
+  interactions: "http://localhost:8080/interactions"
+  state_manager: "http://localhost:8080/state"
+  animate: "http://localhost:8080/animate"
   vision: "http://localhost:8080/vision"
 
 behaviors:
@@ -53,3 +57,49 @@ llm:
 
 wikirag:
   enabled: true
+
+vision_hooks:
+  enabled: true
+  poll_interval_s: 3
+  max_results: 5
+  person_cooldown_s: 25
+  ignore_labels:
+    - "chair"
+    - "tv"
+  prefer_llm_greetings: true
+  speak_on_unknown: false
+
+owner:
+  enabled: true
+  name: "Emir"
+  addressing:
+    affectionate: "Baba"
+    formal: "Emir"
+    handle: "WhoIsMrSentry"
+  presence_timeout_s: 45
+  require_presence: true
+  permission_grace_s: 900
+  max_requests_without_owner: 3
+  cooldown_s: 20
+  speaker_window_s: 10
+  polite_message: "Baba olmadan isteğini yerine getiremiyorum."
+  angry_message: "Baba yokken beni zorlamanı istemiyorum."
+  cooldown_message: "Baba gelene kadar konuşmak istemiyorum."
+  greeting: "Baba! Geldiğine çok sevindim."
+  permission_message: "Tamam Baba, yanında olmasan da cevap vereceğim."
+  restricted_keywords:
+    - "format"
+    - "kendini kapat"
+    - "delete"
+  temporary:
+    enabled: true
+    command_keyword: "geçici sahip"
+    duration_s: 600
+    restricted_features:
+      - "high_torque"
+      - "network_admin"
+    animation: "temp_owner"
+    revoke_message: "Geçici yetkiler sona erdi."
+  rfid:
+    endpoint: "http://localhost:8080/arduino/rfid/authorize"
+    grace_s: 120

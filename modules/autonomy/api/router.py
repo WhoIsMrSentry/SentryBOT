@@ -11,7 +11,7 @@ def get_router(brain: AutonomyBrain) -> APIRouter:
     @router.post("/interaction")
     def report_interaction():
         """Report that an interaction occurred (resets boredom timer)"""
-        brain.interaction_occurred()
-        return {"status": "ok", "mood": brain.state["happiness"]}
+        brain.interaction_occurred(source="api")
+        return {"status": "ok", "mood": int(brain.mood["happiness"])}
 
     return router

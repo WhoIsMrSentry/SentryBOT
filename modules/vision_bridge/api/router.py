@@ -103,6 +103,16 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
         from fastapi.responses import StreamingResponse
         return StreamingResponse(processor.generate_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
 
+    @r.get("/results/latest", tags=["remote"], summary="Get last cached detections")
+    def latest_results(limit: int = 10):
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        limit = max(0, int(limit))
+        results = processor.latest_results
+        if limit:
+            results = results[:limit]
+        return {"results": results, "count": len(processor.latest_results)}
+
     @r.post("/results", tags=["remote"], summary="Ingest remote detection results")
     def ingest_results(request: Request, payload: dict):
         """External processor posts detection results.

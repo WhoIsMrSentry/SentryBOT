@@ -10,3 +10,6 @@ telemetry:
   enabled: false
   interval_ms: 100
 log_level: INFO
+rfid:
+  allowed_uids: []
+  authorize_window_s: 8
