@@ -1,7 +1,9 @@
 from __future__ import annotations
-from fastapi import APIRouter, Query
-from typing import Optional, List, Dict
+import logging
 import os
+
+from fastapi import APIRouter, Query
+from typing import Optional, List, Dict, Any
 import requests
 
 try:
@@ -27,6 +29,9 @@ def _load_persona_text(cfg: dict, name: Optional[str] = None) -> str:
         return "".join([line for line in f if len(line.strip()) > 0 and not line.strip().startswith("#")])
 
 
+logger = logging.getLogger("ollama.api")
+
+
 def get_router(cfg: dict) -> APIRouter:
     r = APIRouter(prefix="/ollama", tags=["ollama"])
 
@@ -34,6 +39,10 @@ def get_router(cfg: dict) -> APIRouter:
     model = str(cfg.get("ollama", {}).get("model", "llama3.2:3b"))
     timeout = float(cfg.get("ollama", {}).get("request_timeout", 60.0))
     client = OllamaClient(base_url=base_url, model=model, request_timeout=timeout)
+    actions_cfg = cfg.get("actions", {}) or {}
+    action_endpoint = str(actions_cfg.get("endpoint", "")).strip()
+    action_timeout = float(actions_cfg.get("timeout", 1.5))
+    default_apply = bool(actions_cfg.get("default_apply", False))
 
     persona_text = _load_persona_text(cfg)
     chat = OllamaChatService(client, PersonaProvider(persona_text), max_history=6)
@@ -57,15 +66,44 @@ def get_router(cfg: dict) -> APIRouter:
     def healthz():
         return {"ok": True, "base_url": base_url, "model": model}
 
+    def _format_chat_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {"ok": True, "answer": result.get("text", "")}
+        if result.get("actions"):
+            payload["actions"] = result["actions"]
+        if "raw" in result:
+            payload["raw"] = result.get("raw")
+        return payload
+
+    def _maybe_dispatch_actions(result: Dict[str, Any], apply_flag: bool) -> None:
+        if not apply_flag or not action_endpoint:
+            return
+        actions = result.get("actions")
+        if not actions:
+            return
+        payload = {
+            "text": result.get("text", ""),
+            "raw": result.get("raw"),
+            "actions": actions,
+            "speak": False,
+        }
+        try:
+            requests.post(action_endpoint, json=payload, timeout=action_timeout)
+        except Exception as exc:  # pragma: no cover - ağ hatası
+            logger.warning("Failed to dispatch persona actions: %s", exc)
+
     @r.get("/chat")
-    def chat_get(query: str = Query(...)):
-        answer = chat.chat(query)
-        return {"ok": True, "answer": answer}
+    def chat_get(query: str = Query(...), apply_actions: Optional[bool] = None):
+        result = chat.chat(query)
+        flag = default_apply if apply_actions is None else apply_actions
+        _maybe_dispatch_actions(result, flag)
+        return _format_chat_payload(result)
 
     @r.post("/chat")
-    def chat_post(query: str):
-        answer = chat.chat(query)
-        return {"ok": True, "answer": answer}
+    def chat_post(query: str, apply_actions: Optional[bool] = None):
+        result = chat.chat(query)
+        flag = default_apply if apply_actions is None else apply_actions
+        _maybe_dispatch_actions(result, flag)
+        return _format_chat_payload(result)
 
     @r.get("/persona")
     def get_persona():

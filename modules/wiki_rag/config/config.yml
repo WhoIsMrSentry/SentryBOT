@@ -11,6 +11,10 @@ storage:
 persona:
   active: glados
   dir: modules/ollama/config/personalities
+actions:
+  endpoint: http://localhost:8100/autonomy/apply_actions
+  default_apply: true
+  timeout: 1.5
 preprocess:
   cut_offs:
     - "##  Gallery"

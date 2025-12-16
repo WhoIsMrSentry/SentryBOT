@@ -1,8 +1,16 @@
 from __future__ import annotations
-from fastapi import APIRouter, Query
-from typing import Optional, List
+import logging
 import os
 import threading
+from typing import Optional, List, Dict
+
+import requests
+from fastapi import APIRouter, Query
+
+try:
+    from modules.ollama.services.tags import extract_llm_tags  # type: ignore
+except Exception:  # pragma: no cover - fallback when running relatively
+    from ..ollama.services.tags import extract_llm_tags  # type: ignore
 
 
 def _persona_dir(cfg: dict, name: Optional[str] = None) -> str:
@@ -29,6 +37,11 @@ def get_router(cfg: dict) -> APIRouter:
     model = str(cfg.get("ollama", {}).get("model", "llama3.2:3b"))
     timeout = float(cfg.get("ollama", {}).get("request_timeout", 60.0))
     active_persona = str(cfg.get("persona", {}).get("active", "glados"))
+    actions_cfg = cfg.get("actions", {}) or {}
+    action_endpoint = str(actions_cfg.get("endpoint", "")).strip()
+    action_timeout = float(actions_cfg.get("timeout", 1.5))
+    default_apply = bool(actions_cfg.get("default_apply", False))
+    logger = logging.getLogger("wiki_rag.api")
 
     # Lazy import heavy deps; degrade gracefully if missing
     IndexService = None  # type: ignore
@@ -148,21 +161,52 @@ def get_router(cfg: dict) -> APIRouter:
         _ensure_index()
         return {"ok": True, "persona": active_persona}
 
+    def _format_chat_payload(raw_answer: str) -> Dict[str, object]:
+        cleaned, actions = extract_llm_tags(raw_answer)
+        payload: Dict[str, object] = {"ok": True, "answer": cleaned}
+        if actions:
+            payload["actions"] = actions
+        payload["raw"] = raw_answer
+        return payload
+
+    def _maybe_dispatch_actions(payload: Dict[str, object], apply_flag: bool) -> None:
+        if not apply_flag or not action_endpoint:
+            return
+        actions = payload.get("actions")
+        if not actions:
+            return
+        body = {
+            "text": payload.get("answer", ""),
+            "raw": payload.get("raw"),
+            "actions": actions,
+            "speak": False,
+        }
+        try:
+            requests.post(action_endpoint, json=body, timeout=action_timeout)
+        except Exception as exc:  # pragma: no cover - ağ hatası
+            logger.warning("Failed to dispatch RAG persona actions: %s", exc)
+
     @r.get("/chat")
-    def chat_get(query: str = Query(...)):
+    def chat_get(query: str = Query(...), apply_actions: Optional[bool] = None):
         engine = _ensure_chat()
         if engine is None:
             return {"ok": False, "error": "chat deps missing"}
         answer = str(engine.chat(query))
-        return {"ok": True, "answer": answer}
+        payload = _format_chat_payload(answer)
+        flag = default_apply if apply_actions is None else apply_actions
+        _maybe_dispatch_actions(payload, flag)
+        return payload
 
     @r.post("/chat")
-    def chat_post(query: str):
+    def chat_post(query: str, apply_actions: Optional[bool] = None):
         engine = _ensure_chat()
         if engine is None:
             return {"ok": False, "error": "chat deps missing"}
         answer = str(engine.chat(query))
-        return {"ok": True, "answer": answer}
+        payload = _format_chat_payload(answer)
+        flag = default_apply if apply_actions is None else apply_actions
+        _maybe_dispatch_actions(payload, flag)
+        return payload
 
     # Startup one-time check: if persona-specific URLs exist and persona knowledge missing, run preprocess automatically
     def _bootstrap_all_personas() -> None:

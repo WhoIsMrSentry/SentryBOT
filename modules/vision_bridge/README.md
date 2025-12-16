@@ -40,6 +40,13 @@ Kamera akışını işleyen yerel (Pi5) veya uzak (dizüstü / sunucu) görünt�
 ## Blind Mode (Assistive)
 Aktifken semantik sahne özeti (Ollama varsa LLM tabanlı) ve kişilere özel selam gönderir. Uzak modda gelen sonuçlar üzerinden de çalışır.
 
+## LLM Action Dispatch
+- `config.actions.endpoint`: Genelde `http://<autonomy>/autonomy/apply_actions`. Boşsa özellik kapanır.
+- `config.actions.default_apply`: `true` iken her tespit turu için semantik özet oluşturulur, `[cmd:*]` ve `[[lights …]]` etiketleri otomatik olarak Autonomy’ye iletilir.
+- `config.actions.timeout`: HTTP post için saniye cinsinden bekleme süresi (varsayılan 1.5).
+
+`VisionActionDispatcher` sınıfı semantik ifadeleri `modules.ollama.services.tags.extract_llm_tags` ile parse eder; örneğin “`Selam [cmd:head_nod] [[lights palette=sunset_gold intensity=0.7]]`” metni servo nod ve LED paletine dönüştürülür. Autonomy bu webhook’u aldığında `ResponseTagMixin` fiziksel aksiyonları uygular, konuşma gerekirse `speak` sahasıyla tetiklenir.
+
 ## Çalıştırma
 - Bağımsız: `python -m modules.vision_bridge.xVisionBridgeService`
 - Gateway ile: `python -m modules.gateway.xGatewayService` ve `include.vision_bridge: true`

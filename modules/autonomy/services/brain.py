@@ -10,6 +10,7 @@ from .mood import MoodManager
 from .memory import ShortTermMemory
 from .brain_parts.animations import AnimationSupportMixin
 from .brain_parts.owner_guard import OwnerGuardMixin
+from .brain_parts.responses import ResponseTagMixin
 from .brain_parts.timeline import TimelineMixin
 from .brain_parts.vision import VisionMixin
 from .brain_parts.vocal import VocalMixin
@@ -21,6 +22,7 @@ class AutonomyBrain(
     AnimationSupportMixin,
     TimelineMixin,
     OwnerGuardMixin,
+    ResponseTagMixin,
     VisionMixin,
     VocalMixin,
 ):
@@ -55,6 +57,7 @@ class AutonomyBrain(
             "temp_owner_expires": 0.0,
             "rfid_authorized_until": 0.0,
             "last_speaker": None,
+            "persona_mode": None,
         }
         self._people_last_seen = {}
         self._last_emotion_sent = None
@@ -281,24 +284,52 @@ class AutonomyBrain(
         )
 
         response_text = ""
+        response_actions = None
+        raw_response = None
         try:
             if is_question and self.config.get("wikirag", {}).get("enabled", False):
                 logger.info("Routing to WikiRAG...")
                 resp = self.client.chat_rag(text)
                 if resp and "answer" in resp:
                     response_text = resp["answer"]
+                    response_actions = resp.get("actions")
+                    raw_response = resp.get("raw")
             else:
                 logger.info("Routing to Ollama...")
                 resp = self.client.chat(text)
                 if resp and "answer" in resp:
                     response_text = resp["answer"]
+                    response_actions = resp.get("actions")
+                    raw_response = resp.get("raw")
 
             if response_text:
-                logger.info("Reply: %s", response_text)
-                self._speak_with_mood(response_text)
-                self.memory.add_event(f"I replied: {response_text}")
+                clean_text = self.apply_llm_response(response_text, response_actions, raw_response, speak=True)
+                if clean_text:
+                    logger.info("Reply: %s", clean_text)
+                    self.memory.add_event(f"I replied: {clean_text}")
+                else:
+                    logger.info("LLM response only triggered physical actions.")
         except Exception as exc:
             logger.error("Failed to generate reply: %s", exc)
+
+    def apply_llm_response(
+        self,
+        text: str,
+        actions: dict | None = None,
+        raw_text: str | None = None,
+        speak: bool = False,
+    ) -> str:
+        """Harici modüllerin persona etiketlerini işletmesine izin ver."""
+        clean = self._handle_llm_actions(text or "", actions, raw_text)
+        if speak and clean:
+            self._speak_with_mood(clean)
+        return clean
+
+    def update_palettes(self, palettes: dict[str, list[int]]) -> None:
+        """Refresh in-memory palette cache after config edits."""
+        defaults = self.config.setdefault("defaults", {})
+        lights = defaults.setdefault("lights", {})
+        lights["palettes"] = dict(palettes)
 
     def _check_sleep_cycle(self):
         sleep_cfg = self.config.get("behaviors", {}).get("sleep", {})

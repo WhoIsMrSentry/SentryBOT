@@ -50,6 +50,19 @@ class ServiceClient:
         except Exception:
             pass
 
+    def fill_neopixel_color(self, r: int, g: int, b: int):
+        url = self.urls.get("neopixel")
+        if not url:
+            return None
+        try:
+            requests.post(
+                f"{url}/fill",
+                params={"r_": int(r), "g": int(g), "b": int(b)},
+                timeout=1.0,
+            )
+        except Exception as exc:
+            logger.debug(f"Failed to fill neopixel color: {exc}")
+
     def speak(self, text, tone=None, engine=None):
         payload = {"text": text}
         if tone:
@@ -58,8 +71,9 @@ class ServiceClient:
             payload["engine"] = engine
         return self._post("speak", "/say", payload)
 
-    def chat(self, query):
-        return self._post("ollama", "/chat", {"query": query}) # Changed to POST as per likely API
+    def chat(self, query, apply_actions: bool = False):
+        params = {"query": query, "apply_actions": str(bool(apply_actions)).lower()}
+        return self._post("ollama", "/chat", None, params=params)
 
     def get_speech_direction(self):
         return self._get("speech", "/direction")
@@ -74,8 +88,9 @@ class ServiceClient:
         endpoint = "/track/start" if enabled else "/track/stop"
         return self._post("speech", endpoint)
 
-    def chat_rag(self, query):
-        return self._post("wiki_rag", "/chat", {"query": query})
+    def chat_rag(self, query, apply_actions: bool = False):
+        params = {"query": query, "apply_actions": str(bool(apply_actions)).lower()}
+        return self._post("wiki_rag", "/chat", None, params=params)
 
     def select_persona(self, name):
         return self._post("ollama", "/persona/select", {"name": name})

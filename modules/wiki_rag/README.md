@@ -6,7 +6,7 @@ Manages preprocessing, indexing, and chatting over a local wiki-derived knowledg
 - GET /wiki_rag/healthz
 - POST /wiki_rag/preprocess
 - POST /wiki_rag/index/rebuild
-- GET/POST /wiki_rag/chat
+- GET/POST /wiki_rag/chat (`apply_actions=true` parametresi Autonomy etiketi yürütmesini tetikler, yanıt `actions` alanını içerir)
 
 ## Persona
 Personas live as folders under `modules/ollama/config/personalities/<name>/{persona.txt,urls.txt}`.

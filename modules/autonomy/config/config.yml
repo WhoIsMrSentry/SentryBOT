@@ -8,6 +8,18 @@ defaults:
     max_happiness: 100
     max_energy: 100
 
+  lights:
+    default_mode: breathe
+    palettes:
+      calm_violet: [120, 80, 255]
+      sunset_gold: [255, 170, 60]
+      alert_red: [255, 45, 45]
+      ocean_teal: [30, 180, 255]
+      arctic_white: [255, 255, 255]
+      forest_green: [60, 200, 90]
+      ember_orange: [255, 110, 40]
+      polar_blue: [90, 150, 255]
+
 endpoints:
   arduino: "http://localhost:8080/arduino"
   neopixel: "http://localhost:8080/neopixel"

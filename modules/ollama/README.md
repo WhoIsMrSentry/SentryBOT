@@ -5,6 +5,8 @@ Central LLM gateway for SentryBOT. Provides FastAPI endpoints to chat with an Ol
 ## Endpoints
 - GET /ollama/healthz
 - GET/POST /ollama/chat?query=...
+	- Yanıt yapısı `{ ok, answer, raw, actions? }` döndürür.
+	- `apply_actions=true` sorgu parametresi gönderilirse, `actions` alanı Autonomy servisinin `/autonomy/apply_actions` ucuna iletilir.
 - GET /ollama/persona
 - GET /ollama/personas
 - POST /ollama/persona/select (name)
@@ -21,7 +23,7 @@ This module is meant to be imported by other modules (e.g., interactions, speech
 ## Integration contract (other modules)
 - Speech: send recognized text → call `POST /ollama/chat` → receive `answer` (string)
 	- Then pass `answer` to Speak module `/speak/say` for TTS.
-- Interactions/Neopixel: optionally parse `answer` for emotion keywords or explicit control tokens, then trigger effects.
+	- Interactions/Neopixel: `actions.blocks` alanını kullanarak LED / servo değişikliklerini otomatik tetikleyebilir veya `apply_actions=true` ile Autonomy'ye devredebilirsiniz.
 - Camera: can request `answer` for descriptions or next actions; not directly dependent.
 
 All persona handling is centralized here; modules should not embed prompts. Use persona select to switch tone/role globally.

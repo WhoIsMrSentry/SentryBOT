@@ -47,3 +47,7 @@ ollama:
 
 speak:
   endpoint: "http://localhost:8083/speak/say"
+actions:
+  endpoint: "http://localhost:8100/autonomy/apply_actions"
+  default_apply: true
+  timeout: 1.5

@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 from .clients import OllamaClient
 from .memory import ChatMemory
+from .tags import extract_llm_tags
 
 
 class PersonaProvider:
@@ -18,14 +19,20 @@ class OllamaChatService:
         self.persona = persona
         self.memory = ChatMemory(max_turns=max_history)
 
-    def chat(self, query: str, extra_history: Optional[List[Dict[str, str]]] = None) -> str:
+    def chat(self, query: str, extra_history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         messages: List[Dict[str, str]] = [self.persona.system_prompt()]
         if extra_history:
             messages.extend(extra_history)
         messages.extend(self.memory.as_list())
         messages.append({"role": "user", "content": query})
         res = self.client.chat(messages)
-        text = str(res.get("message", {}).get("content", ""))
+        raw_text = str(res.get("message", {}).get("content", ""))
+        cleaned_text, actions = extract_llm_tags(raw_text)
+
         self.memory.add_user(query)
-        self.memory.add_assistant(text)
-        return text
+        self.memory.add_assistant(cleaned_text)
+
+        payload: Dict[str, Any] = {"text": cleaned_text, "raw": raw_text}
+        if actions:
+            payload["actions"] = actions
+        return payload

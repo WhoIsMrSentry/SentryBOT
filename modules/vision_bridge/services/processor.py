@@ -29,6 +29,10 @@ try:
     from .people_memory import PeopleMemory
 except ImportError:
     from services.people_memory import PeopleMemory
+try:
+    from .action_dispatcher import VisionActionDispatcher
+except ImportError:
+    from services.action_dispatcher import VisionActionDispatcher
 
 class VisionProcessor:
     def __init__(self, config: Dict[str, Any]):
@@ -71,6 +75,11 @@ class VisionProcessor:
         # Semantic describer (even in remote mode, works on ingested results)
         self.semantic = SemanticDescriber(config)
         self.memory = PeopleMemory()
+        actions_cfg = config.get("actions", {}) if isinstance(config, dict) else {}
+        endpoint = str(actions_cfg.get("endpoint", "http://localhost:8100/autonomy/apply_actions"))
+        timeout = float(actions_cfg.get("timeout", 1.5))
+        enabled = bool(actions_cfg.get("default_apply", False))
+        self.action_dispatcher = VisionActionDispatcher(endpoint=endpoint, timeout=timeout, enabled=enabled)
 
     def start_stream_processing(self):
         if self.processing_mode != "local":
@@ -222,6 +231,8 @@ class VisionProcessor:
             self._evaluate_alerts(parsed_results)
             # Person greet/interaction (local mode)
             self._handle_person_interactions(parsed_results)
+            if parsed_results:
+                self.action_dispatcher.emit_scene(self.semantic, parsed_results)
             
             # Encode frame for streaming
             ret, buffer = cv2.imencode('.jpg', annotated_frame)
@@ -385,6 +396,8 @@ class VisionProcessor:
         self._handle_person_interactions(normalized)
         if self.blind_mode_enabled and normalized:
             self._handle_blind_mode(normalized)
+        if normalized:
+            self.action_dispatcher.emit_scene(self.semantic, normalized)
         return {"count": len(normalized)}
 
     # Basit yardımcı: sohbet kaydı

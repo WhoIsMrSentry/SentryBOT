@@ -24,6 +24,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "speak": {
         "endpoint": "http://localhost:8083/speak/say",
     },
+    "actions": {
+        "endpoint": "http://localhost:8100/autonomy/apply_actions",
+        "default_apply": False,
+        "timeout": 1.5,
+    },
 }
 
 def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
