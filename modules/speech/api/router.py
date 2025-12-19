@@ -3,11 +3,10 @@ from fastapi import APIRouter, Response
 import requests
 import threading
 from threading import Timer, Lock
+from typing import TYPE_CHECKING
 
-try:
-    from ..xSpeechService import SpeechService
-except Exception:
-    from xSpeechService import SpeechService  # type: ignore
+if TYPE_CHECKING:
+    from modules.speech.xSpeechService import SpeechService
 
 def _notify_autonomy():
     try:

@@ -1,9 +1,16 @@
 server:
   host: 0.0.0.0
   port: 8096
+gateway:
+  base_url: "http://127.0.0.1:8080"
+  timeout_sec: 4.0
 telegram:
   bot_token: ""
   chat_id: ""
+  allowed_user_ids: []
+  polling:
+    enabled: true
+    interval_sec: 2.5
 discord:
   webhook: ""
 quiet_hours:

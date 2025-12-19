@@ -5,23 +5,16 @@ from threading import Event
 import audioop
 from typing import Optional, Callable, Iterable
 
-# Package imports with script fallback similar to camera module
-try:
-    from .config_loader import load_config
-    from .services.audio_capture import AudioCapture
-    from .services.recognizer import Recognizer, RecognitionResult
-    from .services.direction import DirectionEstimator
-    from .services.pan_tilt import PanTiltController
-    from .api import get_router
-    from fastapi import FastAPI
-except Exception:  # when run as script
-    from config_loader import load_config  # type: ignore
-    from services.audio_capture import AudioCapture  # type: ignore
-    from services.recognizer import Recognizer, RecognitionResult  # type: ignore
-    from services.direction import DirectionEstimator  # type: ignore
-    from services.pan_tilt import PanTiltController  # type: ignore
-    from api import get_router  # type: ignore
-    from fastapi import FastAPI  # type: ignore
+from modules.speech.config_loader import load_config
+from modules.speech.services.audio_capture import AudioCapture
+from modules.speech.services.recognizer import Recognizer, RecognitionResult
+from modules.speech.services.direction import DirectionEstimator
+from modules.speech.services.pan_tilt import PanTiltController
+from fastapi import FastAPI
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from modules.speech.api import get_router  # type: ignore
 
 try:
     from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
@@ -208,6 +201,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     """FastAPI app factory for the speech module."""
     service = SpeechService(config_path)
     app = FastAPI()
+    from modules.speech.api import get_router  # local import to avoid circular
     app.include_router(get_router(service))
     return app
 

@@ -22,11 +22,6 @@ class OutputConfig:
     channels: int = 1
     dtype: str = "float32"  # player expects float32
 
-
-class PCM:  # type: ignore[no-redef]
-    pass
-
-
 class AudioPlayer:
     def __init__(self, cfg: Dict):
         self.cfg = OutputConfig(

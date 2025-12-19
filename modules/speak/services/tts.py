@@ -3,6 +3,7 @@ import copy
 import logging
 from dataclasses import dataclass
 from typing import Dict, Optional
+import threading
 from .pcm import PCM
 
 logger = logging.getLogger("speak.tts")
@@ -21,40 +22,40 @@ class TTSConfig:
 class TTSBackend:
     def synthesize(self, text: str):  # returns PCM
         raise NotImplementedError
-
-
-class PCM:  # type: ignore[no-redef]
-    pass
-
-
 class Pyttsx3Backend(TTSBackend):
     def __init__(self, cfg: TTSConfig):
         try:
             import pyttsx3  # type: ignore
         except Exception as e:
             raise RuntimeError("pyttsx3 not installed. Add to requirements or choose 'dummy' engine.") from e
-        self.engine = pyttsx3.init()
-        if cfg.voice:
-            self.engine.setProperty('voice', cfg.voice)
-        self.engine.setProperty('rate', cfg.rate)
-        self.engine.setProperty('volume', cfg.volume)
+        self.cfg = cfg
         self.samplerate = cfg.samplerate
+        self._lock = threading.Lock()
+
+    def _make_engine(self):
+        import pyttsx3  # type: ignore
+        engine = pyttsx3.init()
+        if self.cfg.voice:
+            engine.setProperty('voice', self.cfg.voice)
+        engine.setProperty('rate', self.cfg.rate)
+        engine.setProperty('volume', self.cfg.volume)
+        return engine
 
     def synthesize(self, text: str):
-        # pyttsx3 doğrudan PCM verisi döndürmez; workaround: temp wav'e yazıp geri oku.
+        # pyttsx3 doğrudan PCM verisi döndürmez; temp wav'e yazıp geri okuruz.
         import tempfile, os
         import soundfile as sf
         import numpy as np
-        with tempfile.TemporaryDirectory() as d:
-            tmp = os.path.join(d, "out.wav")
-            self.engine.save_to_file(text, tmp)
-            self.engine.runAndWait()
-            data, sr = sf.read(tmp, dtype='float32')
-            if data.ndim == 1:
-                ch = 1
-            else:
-                ch = data.shape[1]
-            return PCM(data=data, samplerate=sr, channels=ch)
+        with self._lock:
+            engine = self._make_engine()
+            with tempfile.TemporaryDirectory() as d:
+                tmp = os.path.join(d, "out.wav")
+                engine.save_to_file(text, tmp)
+                engine.runAndWait()
+                engine.stop()
+                data, sr = sf.read(tmp, dtype='float32')
+        ch = 1 if data.ndim == 1 else data.shape[1]
+        return PCM(data=data, samplerate=sr, channels=ch)
 
 
 class DummyBackend(TTSBackend):

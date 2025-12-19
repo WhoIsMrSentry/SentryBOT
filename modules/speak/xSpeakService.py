@@ -3,18 +3,14 @@ import argparse
 import logging
 from typing import Optional
 
-try:
-    from .config_loader import load_config
-    from .services.tts import TextToSpeech
-    from .services.player import AudioPlayer
-    from .api import get_router
-    from fastapi import FastAPI
-except Exception:
-    from config_loader import load_config  # type: ignore
-    from services.tts import TextToSpeech  # type: ignore
-    from services.player import AudioPlayer  # type: ignore
-    from api import get_router  # type: ignore
-    from fastapi import FastAPI  # type: ignore
+from modules.speak.config_loader import load_config
+from modules.speak.services.tts import TextToSpeech
+from modules.speak.services.player import AudioPlayer
+from fastapi import FastAPI
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from modules.speak.api import get_router  # type: ignore
 
 try:
     from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
@@ -55,6 +51,7 @@ class SpeakService:
 def create_app(config_path: str | None = None) -> FastAPI:
     service = SpeakService(config_path)
     app = FastAPI()
+    from modules.speak.api import get_router  # local import to avoid circular
     app.include_router(get_router(service))
     return app
 

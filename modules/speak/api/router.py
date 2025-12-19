@@ -1,11 +1,14 @@
 from __future__ import annotations
 from fastapi import APIRouter
+from typing import TYPE_CHECKING
+import asyncio
+import logging
 
-try:
-    from ..xSpeakService import SpeakService
-except Exception:
-    from xSpeakService import SpeakService  # type: ignore
+if TYPE_CHECKING:
+    from modules.speak.xSpeakService import SpeakService
 
+
+logger = logging.getLogger("speak.api")
 
 def get_router(service: SpeakService) -> APIRouter:
     router = APIRouter()
@@ -22,9 +25,11 @@ def get_router(service: SpeakService) -> APIRouter:
         if not text:
             return {"ok": False, "error": "text is empty"}
         try:
-            return service.speak(text, engine=engine, tone=tone)
+            # Offload blocking TTS to thread to avoid event loop freeze
+            return await asyncio.to_thread(service.speak, text, engine=engine, tone=tone)
         except Exception as e:
-            return {"ok": False, "error": str(e)}
+            logger.exception("/speak/say failed")
+            return {"ok": False, "error": repr(e)}
 
     @router.post("/speak/play")
     async def play(payload: dict):
