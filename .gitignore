@@ -16,7 +16,6 @@ modules/notifier/config/config.local.yml
 urls.txt
 vosk-tr/
 .env
-ai/
 faces.json
 *.bak
 tmp/
