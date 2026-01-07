@@ -5,6 +5,7 @@ from fastapi import APIRouter
 
 from ..services.senders import send_telegram, send_discord
 from ..services.telegram_bot import TelegramBot
+from ..services.whatsapp_web import WhatsAppWebSender
 
 
 def _quiet_hours_active(cfg: Dict[str, Any]) -> bool:
@@ -22,7 +23,11 @@ def _quiet_hours_active(cfg: Dict[str, Any]) -> bool:
     return now >= start or now < end
 
 
-def get_router(cfg: Dict[str, Any], bot: TelegramBot | None = None) -> APIRouter:
+def get_router(
+    cfg: Dict[str, Any],
+    bot: TelegramBot | None = None,
+    whatsapp_web: WhatsAppWebSender | None = None,
+) -> APIRouter:
     r = APIRouter(prefix="/notify", tags=["notifier"])
 
     @r.get("/healthz")
@@ -55,7 +60,7 @@ def get_router(cfg: Dict[str, Any], bot: TelegramBot | None = None) -> APIRouter
     @r.post("/test")
     async def test():
         msg = "SentryBOT notifier test"
-        res = {"telegram": False, "discord": False}
+        res = {"telegram": False, "discord": False, "whatsapp": False}
         t = cfg.get("telegram", {})
         d = cfg.get("discord", {})
         if t.get("bot_token") and t.get("chat_id"):
@@ -65,6 +70,26 @@ def get_router(cfg: Dict[str, Any], bot: TelegramBot | None = None) -> APIRouter
                 res["telegram"] = send_telegram(t["bot_token"], t["chat_id"], msg)
         if d.get("webhook"):
             res["discord"] = send_discord(d["webhook"], msg)
+        if whatsapp_web:
+            res["whatsapp"] = await whatsapp_web.send_text(msg)
         return {"ok": any(res.values()), "results": res}
+
+    @r.post("/whatsapp")
+    async def whatsapp_send(body: Dict[str, Any]):
+        if _quiet_hours_active(cfg):
+            return {"ok": False, "reason": "quiet_hours"}
+        if not whatsapp_web:
+            return {"ok": False, "reason": "disabled"}
+        text = str(body.get("text", "")).strip()
+        if not text:
+            return {"ok": False, "reason": "empty_text"}
+        target = str(body.get("to") or body.get("recipient") or "").strip() or None
+        delay_override_sec = body.get("delay_sec")
+        try:
+            delay_value = int(delay_override_sec) if delay_override_sec is not None else None
+        except Exception:
+            delay_value = None
+        ok = await whatsapp_web.send_text(text, to=target, delay_override_sec=delay_value)
+        return {"ok": ok}
 
     return r
