@@ -11,6 +11,14 @@ telegram:
   polling:
     enabled: true
     interval_sec: 2.5
+whatsapp_web:
+  enabled: true
+  recipient: "your_number_here"
+  send_mode: "instant"   # instant | schedule
+  schedule_delay_sec: 90
+  wait_time_sec: 15
+  close_time_sec: 5
+  tab_close: false
 discord:
   webhook: ""
 quiet_hours:
