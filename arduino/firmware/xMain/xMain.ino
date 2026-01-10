@@ -22,6 +22,194 @@ static Ultrasonic g_ultra; static float g_ultraCm = NAN; static bool g_avoidEnab
 #if LASER_ENABLED
 static LaserPair g_lasers;
 #endif
+#if BUZZER_ENABLED
+static BuzzerPair g_buzzer;
+static BuzzerSongPlayer g_song;
+static BuzzerOut g_buzzerDefaultOut = BUZZER_OUT_QUIET;
+#endif
+#if IR_ENABLED
+static IrKeyReader g_ir;
+#endif
+
+#if IR_ENABLED
+// IR command state machine: tokens are entered as "*<digits>" and committed either by
+// - waiting IR_TOKEN_TIMEOUT_MS with no new digits, or
+// - pressing '*' again, or
+// - pressing 'OK' / '#'
+// Example flow: *1 (menu=1 servo), *4 (servo=4), *90 (angle=90)
+class IrMenuController {
+public:
+  void reset(){ _menu = 0; _servoSel = -1; _token = ""; _capture=false; _lastDigitMs=0; }
+
+  void onKey(const String &k, Robot &robot){
+    if (k == "UNKNOWN") return;
+
+    // Direct controls (no menu needed)
+    if (!_capture && _menu==0){
+      if (k == "UP"){ robot.setModeStand(); emitEvent("stand"); return; }
+      if (k == "DOWN"){ robot.setModeSit(); emitEvent("sit"); return; }
+      if (k == "LEFT"){ robot.setDriveCmd(-200); emitEvent("drive", -200); return; }
+      if (k == "RIGHT"){ robot.setDriveCmd(200); emitEvent("drive", 200); return; }
+      if (k == "OK"){ robot.setDriveCmd(0); emitEvent("drive", 0); return; }
+    }
+
+    if (k == "*"){
+      // Commit previous token (if any) then start capturing a new one
+      commitTokenIfAny(robot);
+      _capture = true;
+      _token = "";
+      _lastDigitMs = 0;
+      emitEvent("token_start");
+      return;
+    }
+
+    if (k == "OK" || k == "#"){
+      commitTokenIfAny(robot);
+      _capture = false;
+      _token = "";
+      return;
+    }
+
+    if (isDigitKey(k)){
+      if (!_capture) return;
+      _token += k;
+      _lastDigitMs = millis();
+      return;
+    }
+  }
+
+  void tick(Robot &robot){
+    if (!_capture) return;
+    if (_token.length()==0) return;
+    if (_lastDigitMs==0) return;
+    if (millis() - _lastDigitMs >= (unsigned long)IR_TOKEN_TIMEOUT_MS){
+      commitTokenIfAny(robot);
+      _capture = false;
+      _token = "";
+    }
+  }
+
+private:
+  static bool isDigitKey(const String &k){ return k.length()==1 && k[0]>='0' && k[0]<='9'; }
+
+  void commitTokenIfAny(Robot &robot){
+    if (_token.length()==0) return;
+    long v = _token.toInt();
+    applyToken(v, robot);
+    _token = "";
+    _lastDigitMs = 0;
+  }
+
+  void applyToken(long v, Robot &robot){
+    // Menus:
+    // 1: Servo control -> token1=servo(1..8 or 0..7), token2=deg
+    // 2: Drive (skate) -> token=speed steps/s (applies to both via driveCmd)
+    // 3: Laser -> token 0=off, 1=both on
+    // 4: Mode -> 1=stand, 2=sit, 3=pid on, 4=pid off
+    // 5: Sound -> 1=loud, 2=quiet, 3=mute
+    if (_menu == 0){
+      _menu = (int)v;
+      _servoSel = -1;
+      emitMenu(_menu);
+      return;
+    }
+
+    if (_menu == 1){
+      if (_servoSel < 0){
+        _servoSel = normalizeServoIndex(v);
+        emitEvent("servo_sel", _servoSel);
+        return;
+      }
+      float deg = (float)constrain(v, 0, 180);
+      robot.writeServoLimited(_servoSel, deg);
+      emitEvent("servo_set", _servoSel, (long)deg);
+#if BUZZER_ENABLED
+      g_buzzer.beepOn(g_buzzerDefaultOut, 2400, 40);
+#endif
+      return;
+    }
+
+    if (_menu == 2){
+      robot.setDriveCmd((float)v);
+      emitEvent("drive", v);
+      return;
+    }
+
+    if (_menu == 3){
+#if LASER_ENABLED
+      if (v == 1){ g_lasers.bothOn(); emitEvent("laser", 1); }
+      else { g_lasers.off(); emitEvent("laser", 0); }
+#else
+      emitEvent("laser_disabled");
+#endif
+      return;
+    }
+
+    if (_menu == 4){
+      if (v == 1){ robot.setModeStand(); emitEvent("stand"); return; }
+      if (v == 2){ robot.setModeSit(); emitEvent("sit"); return; }
+      if (v == 3){ robot.setBalance(true); emitEvent("pid", 1); return; }
+      if (v == 4){ robot.setBalance(false); emitEvent("pid", 0); return; }
+      emitEvent("mode_unknown", v);
+      return;
+    }
+
+    if (_menu == 5){
+#if BUZZER_ENABLED
+      if (v == 1){ g_buzzerDefaultOut = BUZZER_OUT_LOUD; g_song.setDefaultOut(g_buzzerDefaultOut); emitEvent("sound_out", 1); g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 60); return; }
+      if (v == 2){ g_buzzerDefaultOut = BUZZER_OUT_QUIET; g_song.setDefaultOut(g_buzzerDefaultOut); emitEvent("sound_out", 2); g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 60); return; }
+#else
+      emitEvent("sound_disabled");
+#endif
+      return;
+    }
+
+    emitEvent("menu_unknown", _menu);
+  }
+
+  static int normalizeServoIndex(long v){
+    // Accept both 1-based (1..8) and 0-based (0..7)
+    if (v >= 1 && v <= SERVO_COUNT_TOTAL) return (int)v - 1;
+    return (int)constrain(v, 0, SERVO_COUNT_TOTAL-1);
+  }
+
+  static void emitMenu(int menu){
+    SERIAL_IO.print(F("{\"ok\":true,\"event\":\"ir_menu\",\"id\":"));
+    SERIAL_IO.print(menu);
+    SERIAL_IO.println(F("}"));
+  }
+
+  static void emitEvent(const char *name){
+    SERIAL_IO.print(F("{\"ok\":true,\"event\":\"ir\",\"name\":\""));
+    SERIAL_IO.print(name);
+    SERIAL_IO.println(F("\"}"));
+  }
+  static void emitEvent(const char *name, long v){
+    SERIAL_IO.print(F("{\"ok\":true,\"event\":\"ir\",\"name\":\""));
+    SERIAL_IO.print(name);
+    SERIAL_IO.print(F("\",\"v\":"));
+    SERIAL_IO.print(v);
+    SERIAL_IO.println(F("}"));
+  }
+  static void emitEvent(const char *name, long a, long b){
+    SERIAL_IO.print(F("{\"ok\":true,\"event\":\"ir\",\"name\":\""));
+    SERIAL_IO.print(name);
+    SERIAL_IO.print(F("\",\"a\":"));
+    SERIAL_IO.print(a);
+    SERIAL_IO.print(F(",\"b\":"));
+    SERIAL_IO.print(b);
+    SERIAL_IO.println(F("}"));
+  }
+
+  int _menu{0};
+  int _servoSel{-1};
+  bool _capture{false};
+  String _token;
+  unsigned long _lastDigitMs{0};
+};
+
+static IrMenuController g_irMenu;
+#endif
 
 void setup(){
   SERIAL_IO.begin(ROBOT_SERIAL_BAUD);
@@ -40,6 +228,18 @@ void setup(){
 #endif
 #if LASER_ENABLED
   g_lasers.begin(LASER1_PIN, LASER2_PIN);
+#endif
+#if BUZZER_ENABLED
+  g_buzzer.begin(BUZZER_LOUD_PIN, BUZZER_QUIET_PIN);
+  g_song.begin(&g_buzzer);
+  g_song.setDefaultOut(g_buzzerDefaultOut);
+#if BOOT_BEEP
+  g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 50);
+#endif
+#endif
+#if IR_ENABLED
+  g_ir.begin(IR_PIN);
+  g_irMenu.reset();
 #endif
 #if BOOT_CALIBRATION_PROMPT
   unsigned long t0 = millis();
@@ -112,6 +312,51 @@ static void handleJson(const String &line){
 #endif
     return;
   }
+
+  if (line.indexOf("\"cmd\":\"sound\"")>=0){
+#if BUZZER_ENABLED
+    // Select default physical buzzer output
+    if (line.indexOf("\"out\":\"loud\"")>=0 || line.indexOf("\"mode\":\"loud\"")>=0){ g_buzzerDefaultOut = BUZZER_OUT_LOUD; g_song.setDefaultOut(g_buzzerDefaultOut); Protocol::sendOk("sound_out_loud"); return; }
+    if (line.indexOf("\"out\":\"quiet\"")>=0 || line.indexOf("\"mode\":\"quiet\"")>=0){ g_buzzerDefaultOut = BUZZER_OUT_QUIET; g_song.setDefaultOut(g_buzzerDefaultOut); Protocol::sendOk("sound_out_quiet"); return; }
+    Protocol::sendErr("bad_out");
+#else
+    Protocol::sendErr("buzzer_disabled");
+#endif
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"buzzer\"")>=0){
+#if BUZZER_ENABLED
+    int p=line.indexOf("\"freq\":"); int freq=2200; if(p>=0) freq=line.substring(p+7).toInt();
+    p=line.indexOf("\"ms\":"); int ms=60; if(p>=0) ms=line.substring(p+5).toInt();
+    BuzzerOut out = g_buzzerDefaultOut;
+    if (line.indexOf("\"out\":\"loud\"")>=0) out = BUZZER_OUT_LOUD;
+    if (line.indexOf("\"out\":\"quiet\"")>=0) out = BUZZER_OUT_QUIET;
+    g_buzzer.beepOn(out, (uint16_t)freq, (uint16_t)ms);
+    Protocol::sendOk("beep");
+#else
+    Protocol::sendErr("buzzer_disabled");
+#endif
+    return;
+  }
+
+    if (line.indexOf("\"cmd\":\"sound_play\"")>=0){
+  #if BUZZER_ENABLED
+    // {"cmd":"sound_play","name":"walle|bb8","out":"loud|quiet"}
+    int p=line.indexOf("\"name\":\"");
+    String name = "";
+    if (p>=0){ int e=line.indexOf('"', p+8); if (e>p) name = line.substring(p+8, e); }
+    BuzzerOut out = g_buzzerDefaultOut;
+    if (line.indexOf("\"out\":\"loud\"")>=0) out = BUZZER_OUT_LOUD;
+    if (line.indexOf("\"out\":\"quiet\"")>=0) out = BUZZER_OUT_QUIET;
+    if (name.length()==0){ Protocol::sendErr("no_name"); return; }
+    g_song.play(name, out);
+    Protocol::sendOk("sound_play");
+  #else
+    Protocol::sendErr("buzzer_disabled");
+  #endif
+    return;
+    }
   if (line.indexOf("\"cmd\":\"set_servo\"")>=0){
     int idx=-1; float deg=90;
     int p=line.indexOf("\"index\":"); if(p>=0){ idx=line.substring(p+8).toInt(); }
@@ -243,7 +488,14 @@ static void handleJson(const String &line){
     out += "],""stepper_pos"": ["; out += robot.steppers.pos1(); out += ","; out += robot.steppers.pos2(); out += "]}";
     SERIAL_IO.println(out); return;
   }
-  if (line.indexOf("\"cmd\":\"estop\"")>=0){ robot.estop(); Protocol::sendOk("estopped"); return; }
+  if (line.indexOf("\"cmd\":\"estop\"")>=0){
+    robot.estop();
+#if BUZZER_ENABLED
+    g_buzzer.beepOn(BUZZER_OUT_LOUD, 1800, 150);
+#endif
+    Protocol::sendOk("estopped");
+    return;
+  }
   if (line.indexOf("\"cmd\":\"telemetry_start\"")>=0){
     int p=line.indexOf("\"interval_ms\":"); if(p>=0){ unsigned long v=line.substring(p+15).toInt(); telemetryInterval = max((unsigned long)TELEMETRY_MIN_INTERVAL_MS, v); }
     telemetryOn = true; lastTelemetryMs = millis(); Protocol::sendOk("telemetry_on"); return;
@@ -300,6 +552,18 @@ void loop(){
       }
     }
   #endif
+
+#if IR_ENABLED
+  String k;
+  if (g_ir.poll(k)){
+    g_irMenu.onKey(k, robot);
+  }
+  g_irMenu.tick(robot);
+#endif
+
+#if BUZZER_ENABLED
+  g_song.update();
+#endif
   // Heartbeat timeout safety
   if (HEARTBEAT_TIMEOUT_MS>0 && (millis() - lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS)){
     robot.estop();
