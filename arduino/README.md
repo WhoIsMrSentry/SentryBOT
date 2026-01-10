@@ -33,6 +33,39 @@ Bu dizin, biped robot firmware'ini içerir. Ana sketch `arduino/firmware/xMain/x
 - Kapat: `{ "cmd":"laser", "on":false }`
 - Pin ve polarite: `LASER1_PIN`, `LASER2_PIN`, `LASER_ACTIVE_HIGH` (`xConfig.h`).
 
+## Güncel Pinler (Son Değişiklik)
+- Lazerler: `LASER1_PIN=12`, `LASER2_PIN=11`
+- Step/Dir: `PIN_STEPPER1_STEP=10`, `PIN_STEPPER1_DIR=9`, `PIN_STEPPER2_STEP=8`, `PIN_STEPPER2_DIR=7`
+
+## Dual Buzzer (Sesli/Sessiz)
+- İki buzzer desteği vardır: `BUZZER_LOUD_PIN` ve `BUZZER_QUIET_PIN`.
+- Bu seçim yazılımsal “mute” değil; fiziksel olarak iki ayrı çıkış seçilir (loud/quiet).
+- Varsayılan çıkış seçimi (JSON): `{ "cmd":"sound", "out":"loud|quiet" }`
+- Tek seferlik beep (JSON): `{ "cmd":"buzzer", "out":"loud|quiet", "freq":2200, "ms":60 }`
+- Hazır ses çal (JSON): `{ "cmd":"sound_play", "name":"walle|bb8", "out":"loud|quiet" }`
+
+## IR Remote Kontrol (Menü + Parametre)
+- IR alıcı pini: `IR_PIN` (varsayılan 26)
+- Tuşlar firmware içinde şu string’lere çevrilir: `0..9`, `*`, `#`, `UP`, `DOWN`, `LEFT`, `RIGHT`, `OK`.
+
+### Kullanım Mantığı (Token)
+- Komut girişi `*` ile başlar ve sayılar bir "token" olarak toplanır.
+- Token şu durumlarda otomatik işlenir:
+  - `IR_TOKEN_TIMEOUT_MS` (varsayılan 900ms) boyunca yeni rakam gelmezse
+  - veya `*` / `OK` / `#` basılırsa
+
+Örnek akış:
+- `*1` → Menü 1 (Servo)
+- `*4` → Servo seçimi (4. servo; 1-based)
+- `*90` → 90 dereceye götür
+
+### Menü Referansı
+- Menü 1 (Servo): token1=servo(1..8 veya 0..7), token2=deg(0..180)
+- Menü 2 (Drive): token=speed (steps/s) → `driveCmd`
+- Menü 3 (Laser): token 1=on (both), token 0=off
+- Menü 4 (Mode): 1=stand, 2=sit, 3=pid on, 4=pid off
+- Menü 5 (Sound): 1=loud, 2=quiet
+
 ## Komut Referansı (Özet)
 - Ping: `{ "cmd":"hello" }`
 - Heartbeat: `{ "cmd":"hb" }`
