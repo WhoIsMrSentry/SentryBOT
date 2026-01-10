@@ -4,6 +4,15 @@
 #include <Arduino.h>
 #include "xConfig.h"
 
+#if BUZZER_ENABLED
+#include <avr/pgmspace.h>
+#endif
+
+#if IR_ENABLED
+// Requires Arduino Library: IRremote (v4+)
+#include <IRremote.hpp>
+#endif
+
 #if RFID_ENABLED
 #include <SPI.h>
 #include <MFRC522.h>
@@ -146,6 +155,191 @@ public:
   }
 private:
   uint8_t _p1{255}, _p2{255};
+};
+#endif
+
+#if BUZZER_ENABLED
+enum BuzzerOut : uint8_t {
+  BUZZER_OUT_LOUD = 0,
+  BUZZER_OUT_QUIET = 1,
+};
+
+class BuzzerPair {
+public:
+  void begin(uint8_t loudPin, uint8_t quietPin){
+    _loud = loudPin; _quiet = quietPin;
+    pinMode(_loud, OUTPUT);
+    pinMode(_quiet, OUTPUT);
+    stop();
+  }
+
+  void beepOn(BuzzerOut out, uint16_t freqHz = 2200, uint16_t ms = 60){
+    uint8_t pin = selectPin(out);
+    if (pin == 255) return;
+
+#if BUZZER_USE_TONE
+    tone(pin, freqHz, ms);
+#else
+    digitalWrite(pin, HIGH);
+    delay(ms);
+    digitalWrite(pin, LOW);
+#endif
+  }
+
+  void stop(){
+#if BUZZER_USE_TONE
+    if (_loud != 255) noTone(_loud);
+    if (_quiet != 255) noTone(_quiet);
+#endif
+    if (_loud != 255) digitalWrite(_loud, LOW);
+    if (_quiet != 255) digitalWrite(_quiet, LOW);
+  }
+
+private:
+  uint8_t selectPin(BuzzerOut out) const {
+    return (out == BUZZER_OUT_LOUD) ? _loud : _quiet;
+  }
+
+  uint8_t _loud{255}, _quiet{255};
+};
+
+struct BuzzerNote {
+  uint16_t freq;
+  uint16_t durMs;
+  uint16_t gapMs;
+};
+
+class BuzzerSongPlayer {
+public:
+  void begin(BuzzerPair *pair){ _pair = pair; stop(); }
+
+  void setDefaultOut(BuzzerOut out){ _defaultOut = out; }
+  BuzzerOut defaultOut() const { return _defaultOut; }
+
+  void play(const String &name, BuzzerOut out){
+    const BuzzerNote *song = nullptr;
+    uint8_t len = 0;
+    if (!resolveSong(name, song, len)) return;
+    _song = song;
+    _len = len;
+    _idx = 0;
+    _out = out;
+    _state = PLAYING;
+    _nextMs = 0;
+  }
+
+  void playDefault(const String &name){ play(name, _defaultOut); }
+
+  void stop(){
+    _state = IDLE;
+    _song = nullptr;
+    _len = 0;
+    _idx = 0;
+    _nextMs = 0;
+  }
+
+  void update(){
+    if (_state == IDLE || !_pair || !_song || _len == 0) return;
+    unsigned long now = millis();
+    if (_nextMs != 0 && now < _nextMs) return;
+
+    if (_idx >= _len){
+      stop();
+      return;
+    }
+
+    BuzzerNote n;
+    n.freq = pgm_read_word(&_song[_idx].freq);
+    n.durMs = pgm_read_word(&_song[_idx].durMs);
+    n.gapMs = pgm_read_word(&_song[_idx].gapMs);
+
+    if (n.freq > 0 && n.durMs > 0){
+      _pair->beepOn(_out, n.freq, n.durMs);
+      _nextMs = now + (unsigned long)n.durMs + (unsigned long)n.gapMs;
+    } else {
+      _nextMs = now + (unsigned long)n.gapMs;
+    }
+    _idx++;
+  }
+
+private:
+  enum State : uint8_t { IDLE=0, PLAYING=1 };
+
+  static bool resolveSong(const String &name, const BuzzerNote *&outSong, uint8_t &outLen){
+    if (name.equalsIgnoreCase("walle") || name.equalsIgnoreCase("wall-e")){
+      outSong = SONG_WALLE; outLen = (uint8_t)(sizeof(SONG_WALLE)/sizeof(SONG_WALLE[0])); return true;
+    }
+    if (name.equalsIgnoreCase("bb8") || name.equalsIgnoreCase("bb-8")){
+      outSong = SONG_BB8; outLen = (uint8_t)(sizeof(SONG_BB8)/sizeof(SONG_BB8[0])); return true;
+    }
+    return false;
+  }
+
+  // Minimal melodies: short and distinctive (passive buzzer).
+  static const BuzzerNote SONG_WALLE[] PROGMEM;
+  static const BuzzerNote SONG_BB8[] PROGMEM;
+
+  BuzzerPair *_pair{nullptr};
+  const BuzzerNote *_song{nullptr};
+  uint8_t _len{0};
+  uint8_t _idx{0};
+  unsigned long _nextMs{0};
+  BuzzerOut _defaultOut{BUZZER_OUT_QUIET};
+  BuzzerOut _out{BUZZER_OUT_QUIET};
+  State _state{IDLE};
+};
+
+// Definitions
+const BuzzerNote BuzzerSongPlayer::SONG_WALLE[] PROGMEM = {
+  {880, 80, 30}, {0, 0, 40}, {1319, 120, 50}, {988, 90, 80}, {1175, 140, 60},
+  {0, 0, 70}, {784, 120, 40}, {988, 160, 100},
+};
+
+const BuzzerNote BuzzerSongPlayer::SONG_BB8[] PROGMEM = {
+  {1760, 40, 20}, {1976, 40, 20}, {2093, 50, 30}, {0, 0, 40},
+  {1568, 70, 30}, {2093, 60, 40}, {0, 0, 60}, {2349, 80, 120},
+};
+#endif
+
+#if IR_ENABLED
+class IrKeyReader {
+public:
+  void begin(uint8_t pin){
+    IrReceiver.begin(pin, ENABLE_LED_FEEDBACK);
+  }
+
+  // Returns true when a key is decoded; outKey is one of: "0".."9","*","#","UP","DOWN","LEFT","RIGHT","OK","UNKNOWN"
+  bool poll(String &outKey){
+    if (!IrReceiver.decode()) return false;
+    uint32_t code = IrReceiver.decodedIRData.decodedRawData;
+    IrReceiver.resume();
+    outKey = decodeToKey(code);
+    return true;
+  }
+
+private:
+  static String decodeToKey(uint32_t code){
+    switch(code){
+      case 0xBA45FF00: return "1";
+      case 0xB946FF00: return "2";
+      case 0xB847FF00: return "3";
+      case 0xBB44FF00: return "4";
+      case 0xBF40FF00: return "5";
+      case 0xBC43FF00: return "6";
+      case 0xF807FF00: return "7";
+      case 0xEA15FF00: return "8";
+      case 0xF609FF00: return "9";
+      case 0xE916FF00: return "*";
+      case 0xE619FF00: return "0";
+      case 0xF20DFF00: return "#";
+      case 0xE718FF00: return "UP";
+      case 0xF708FF00: return "LEFT";
+      case 0xE31CFF00: return "OK";
+      case 0xA55AFF00: return "RIGHT";
+      case 0xAD52FF00: return "DOWN";
+      default: return "UNKNOWN";
+    }
+  }
 };
 #endif
 
