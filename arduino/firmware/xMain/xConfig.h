@@ -31,10 +31,12 @@
 #define PIN_HEAD_TILT 12
 
 // Stepper pins (moved to avoid servo overlap)
+// Updated wiring: STEP/DIR pins
+// Stepper1: STEP=10 DIR=9, Stepper2: STEP=8 DIR=7
 #define PIN_STEPPER1_STEP 10
-#define PIN_STEPPER1_DIR  11
-#define PIN_STEPPER2_STEP 12
-#define PIN_STEPPER2_DIR  13
+#define PIN_STEPPER1_DIR  9
+#define PIN_STEPPER2_STEP 8
+#define PIN_STEPPER2_DIR  7
 // Limit switch pins (optional). Use -1 to disable; active LOW by default.
 #ifndef PIN_LIMIT1
 #define PIN_LIMIT1 -1
@@ -172,14 +174,53 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define LASER_ENABLED 1
 #endif
 #ifndef LASER1_PIN
-#define LASER1_PIN 24
+#define LASER1_PIN 12
 #endif
 #ifndef LASER2_PIN
-#define LASER2_PIN 25
+#define LASER2_PIN 11
 #endif
 #ifndef LASER_ACTIVE_HIGH
 #define LASER_ACTIVE_HIGH 1  // 1: HIGH opens laser, 0: LOW opens laser
 #endif
+
+// =====================
+// IR Remote (optional)
+// =====================
+#ifndef IR_ENABLED
+#define IR_ENABLED 1
+#endif
+#ifndef IR_PIN
+// IR receiver OUT pin
+#define IR_PIN 26
+#endif
+#ifndef IR_TOKEN_TIMEOUT_MS
+// "*1" -> wait this long to commit token if no more digits come
+#define IR_TOKEN_TIMEOUT_MS 900
+#endif
+
+// =====================
+// Dual Buzzer (optional)
+// =====================
+// Two physical buzzers: one loud, one quiet.
+#ifndef BUZZER_ENABLED
+#define BUZZER_ENABLED 1
+#endif
+#ifndef BUZZER_LOUD_PIN
+#define BUZZER_LOUD_PIN 27
+#endif
+#ifndef BUZZER_QUIET_PIN
+#define BUZZER_QUIET_PIN 28
+#endif
+#ifndef BUZZER_USE_TONE
+// 1: use tone() with freq; 0: simple digital on/off
+#define BUZZER_USE_TONE 1
+#endif
+
+#ifndef BOOT_BEEP
+// 1: play short beep on boot
+#define BOOT_BEEP 0
+#endif
+
 
 // =====================
 // Servos over I2C (PCA9685)
