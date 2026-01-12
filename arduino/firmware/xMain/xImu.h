@@ -9,7 +9,11 @@
 class Imu {
 public:
   bool begin(uint8_t addr = IMU_I2C_ADDR) {
-    if (!mpu.begin(addr)) return false;
+    // Try primary address first; if module's AD0 is tied high it may be at 0x69.
+    if (!mpu.begin(addr)) {
+      uint8_t alt = (addr == 0x68) ? 0x69 : 0x68;
+      if (!mpu.begin(alt)) return false;
+    }
     mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
     mpu.setGyroRange(MPU6050_RANGE_250_DEG);
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);

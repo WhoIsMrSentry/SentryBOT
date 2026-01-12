@@ -125,7 +125,9 @@ void setup(){
   #endif
 
     // I2C modules
-    bool imuOk = i2cDevicePresent(IMU_I2C_ADDR);
+    // Check both common MPU6050 addresses (0x68 and 0x69) because AD0 pin
+    // on some modules may be pulled high (0x69).
+    bool imuOk = i2cDevicePresent(IMU_I2C_ADDR) || i2cDevicePresent(0x69);
     bootInfo("imu", imuOk);
     bootUiStep("IMU", imuOk ? "OK" : "MISSING", imuOk ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
 
