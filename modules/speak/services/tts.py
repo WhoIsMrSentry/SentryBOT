@@ -6,6 +6,10 @@ from typing import Dict, Optional
 import threading
 from .pcm import PCM
 
+import io
+
+import requests
+
 logger = logging.getLogger("speak.tts")
 
 
@@ -22,6 +26,18 @@ class TTSConfig:
 class TTSBackend:
     def synthesize(self, text: str):  # returns PCM
         raise NotImplementedError
+
+
+def _wav_bytes_to_pcm(wav_bytes: bytes) -> PCM:
+    import numpy as np
+    import soundfile as sf
+
+    with io.BytesIO(wav_bytes) as f:
+        data, sr = sf.read(f, dtype="float32")
+    ch = 1 if getattr(data, "ndim", 1) == 1 else int(data.shape[1])
+    if isinstance(data, np.ndarray) and data.dtype != np.float32:
+        data = data.astype(np.float32)
+    return PCM(data=data, samplerate=int(sr), channels=ch)
 class Pyttsx3Backend(TTSBackend):
     def __init__(self, cfg: TTSConfig):
         try:
@@ -117,6 +133,42 @@ class PiperBackend(TTSBackend):
             return PCM(data=data, samplerate=sr, channels=ch)
 
 
+class XTTSHttpBackend(TTSBackend):
+    """XTTS via external local HTTP service.
+
+    This backend is designed to let XTTS run in a separate Python env (often with CUDA),
+    while SentryBOT gateway keeps its own env lightweight.
+
+    Expected endpoint:
+      - POST {endpoint} (default: http://127.0.0.1:5002/synthesize)
+      - JSON: { text, speaker_wav?, language? }
+      - Response: audio/wav bytes
+    """
+
+    def __init__(self, cfg: TTSConfig, xtts_cfg: Dict):
+        self.samplerate = int(xtts_cfg.get("samplerate", cfg.samplerate))
+        self.endpoint = str(xtts_cfg.get("endpoint", "http://127.0.0.1:5002/synthesize")).strip()
+        self.timeout = float(xtts_cfg.get("timeout", 120.0))
+        self.default_speaker_wav = xtts_cfg.get("speaker_wav")
+        self.default_language = str(xtts_cfg.get("language", cfg.language))
+
+        if not self.endpoint:
+            raise ValueError("xtts.endpoint is required")
+
+    def synthesize(self, text: str, speaker_wav: Optional[str] = None, language: Optional[str] = None) -> PCM:
+        payload: Dict[str, object] = {
+            "text": text,
+            "language": language or self.default_language,
+        }
+        wav = speaker_wav or self.default_speaker_wav
+        if wav:
+            payload["speaker_wav"] = wav
+
+        resp = requests.post(self.endpoint, json=payload, timeout=self.timeout)
+        resp.raise_for_status()
+        return _wav_bytes_to_pcm(resp.content)
+
+
 class TextToSpeech:
     def __init__(self, cfg: Dict):
         self._base_cfg = copy.deepcopy(cfg)
@@ -133,6 +185,8 @@ class TextToSpeech:
         )
         if tcfg.engine == "piper":
             return PiperBackend(tcfg, cfg.get("piper", {}))
+        if tcfg.engine == "xtts":
+            return XTTSHttpBackend(tcfg, cfg.get("xtts", {}))
         if tcfg.engine == "pyttsx3":
             try:
                 return Pyttsx3Backend(tcfg)
@@ -147,8 +201,12 @@ class TextToSpeech:
         merged = copy.deepcopy(self._base_cfg)
         if "piper" in overrides:
             merged["piper"] = {**merged.get("piper", {}), **overrides.get("piper", {})}
+        if "xtts" in overrides:
+            merged["xtts"] = {**merged.get("xtts", {}), **overrides.get("xtts", {})}
         for key, value in overrides.items():
             if key == "piper":
+                continue
+            if key == "xtts":
                 continue
             merged[key] = value
         return merged
@@ -157,5 +215,9 @@ class TextToSpeech:
         if overrides:
             cfg = self._merge_overrides(overrides)
             backend = self._build_backend(cfg or self._base_cfg)
+            if isinstance(backend, XTTSHttpBackend):
+                speaker_wav = overrides.get("speaker_wav") if isinstance(overrides, dict) else None
+                language = overrides.get("language") if isinstance(overrides, dict) else None
+                return backend.synthesize(text, speaker_wav=speaker_wav, language=language)
             return backend.synthesize(text)
         return self.backend.synthesize(text)

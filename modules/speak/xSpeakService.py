@@ -29,15 +29,26 @@ class SpeakService:
         self.tts = TextToSpeech(self.cfg.get("tts", {}))
         self.player = AudioPlayer(self.cfg.get("audio_out", {}))
 
-    def speak(self, text: str, engine: Optional[str] = None, tone: Optional[dict] = None) -> dict:
+    def speak(
+        self,
+        text: str,
+        engine: Optional[str] = None,
+        tone: Optional[dict] = None,
+        speaker_wav: Optional[str] = None,
+        language: Optional[str] = None,
+    ) -> dict:
         """Metni sentezleyip oynatır; sonuç bilgisi döner.
-        engine: 'pyttsx3' | 'piper' | None (config default)
+        engine: 'pyttsx3' | 'piper' | 'xtts' | None (config default)
         """
         if not text or not text.strip():
             raise ValueError("text is empty")
         overrides = dict(tone or {})
         if engine:
             overrides["engine"] = engine
+        if speaker_wav:
+            overrides["speaker_wav"] = speaker_wav
+        if language:
+            overrides["language"] = language
         wav = self.tts.synthesize(text, overrides=overrides or None)
         dur = self.player.play_blocking(wav)
         used_engine = overrides.get("engine") or self.cfg.get("tts", {}).get("engine")
