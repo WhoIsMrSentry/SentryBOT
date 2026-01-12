@@ -3,9 +3,14 @@ server:
   port: 8092
 
 hardware:
+  # backend: auto | pi5neo | spi_ws2812 | sim
+  # - Raspberry Pi 5: pi5neo
+  # - Jetson Nano: spi_ws2812 (SPI MOSI -> DIN)
+  backend: auto
   device: "/dev/spidev0.0"
   num_leds: 30
   speed_khz: 800
+  ws2812_spi_khz: 2400
   order: "GRB"  # GRB|RGB|BRG
 
 defaults:

@@ -41,6 +41,12 @@ def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
     spd = os.getenv("NEO_SPEED_KHZ")
     if spd:
         env.setdefault("hardware", {})["speed_khz"] = int(spd)
+    backend = os.getenv("NEO_BACKEND")
+    if backend:
+        env.setdefault("hardware", {})["backend"] = backend
+    wspd = os.getenv("NEO_WS2812_SPI_KHZ")
+    if wspd:
+        env.setdefault("hardware", {})["ws2812_spi_khz"] = int(wspd)
     order = os.getenv("NEO_ORDER")
     if order:
         env.setdefault("hardware", {})["order"] = order
