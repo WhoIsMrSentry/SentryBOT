@@ -19,6 +19,7 @@ unsigned long lastTelemetryMs = 0;
 RfidReader g_rfid;
 String g_lastRfid;
 #endif
+String g_lastSpeech;
 #if LCD_ENABLED
 LcdDisplay g_lcd1;
 #if LCD2_ENABLED
@@ -168,7 +169,7 @@ void setup(){
   g_ir.begin(IR_PIN);
 #if LCD_ENABLED
   // IR menü olayları LCD'de 3sn gösterilir; UNKNOWN gürültüsü yazdırılmaz.
-  g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.show(top, bottom); });
+  g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.show(top, bottom, true); });
 #endif
   g_irMenu.reset();
 #endif

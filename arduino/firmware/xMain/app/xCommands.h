@@ -5,6 +5,7 @@
 #include "../xConfig.h"
 #include "../xProtocol.h"
 #include "../xRobot.h"
+#include "xIrMenuController.h"
 
 // Globals owned by xMain.ino
 extern Robot robot;
@@ -12,6 +13,12 @@ extern unsigned long lastHeartbeatMs;
 extern bool telemetryOn;
 extern unsigned long telemetryInterval;
 extern unsigned long lastTelemetryMs;
+
+// Last brain speech text (set via NDJSON cmd)
+extern String g_lastSpeech;
+
+// IR menu instance (defined in xMain.ino)
+extern IrMenuController g_irMenu;
 
 #if RFID_ENABLED
 #include "../xPeripherals.h"
@@ -195,6 +202,24 @@ static inline void handleJson(const String &line){
 #else
     Protocol::sendErr("buzzer_disabled");
 #endif
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"speech\"")>=0){
+    int p=line.indexOf("\"text\":\"");
+    String txt="";
+    if (p>=0){ int e=line.indexOf('"', p+8); if (e>p) txt = line.substring(p+8,e); }
+    if (txt.length()==0){ Protocol::sendErr("no_text"); }
+    else { g_lastSpeech = txt; Protocol::sendOk("speech_ok"); }
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"speech_play\"")>=0){
+    if (g_lastSpeech.length()==0){ Protocol::sendErr("no_speech"); return; }
+    String pat = g_irMenu.textToMorse(g_lastSpeech);
+    if (pat.length()==0){ Protocol::sendErr("bad_text"); return; }
+    g_irMenu.startMorse(pat);
+    Protocol::sendOk("speech_playing");
     return;
   }
 
