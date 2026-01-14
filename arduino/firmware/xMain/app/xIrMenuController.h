@@ -23,14 +23,45 @@ extern BuzzerOut g_buzzerDefaultOut;
 extern LaserPair g_lasers;
 #endif
 
-// IR command state machine: tokens are entered as "*<digits>" and committed either by
-// - waiting IR_TOKEN_TIMEOUT_MS with no new digits, or
-// - pressing '*' again, or
-// - pressing 'OK' / '#'
-// Example flow: *1 (menu=1 servo), *4 (servo=4), *90 (angle=90)
+#if ULTRA_ENABLED
+extern float g_ultraCm;
+#endif
+
+#if RFID_ENABLED
+extern String g_lastRfid;
+#endif
+
+#if LCD_ENABLED
+extern bool g_lcd1Ok;
+extern uint8_t g_lcdRouteMask;
+#if LCD2_ENABLED
+extern bool g_lcd2Ok;
+#endif
+#endif
+
 class IrMenuController {
 public:
-  void reset(){ _menu = 0; _servoSel = -1; _token = ""; _capture = false; _lastDigitMs = 0; }
+  void reset(){
+    _state = STATE_HOME;
+    _menuIndex = 0;
+    _token = "";
+    _capture = false;
+    _lastDigitMs = 0;
+    _servoSel = -1;
+    _laserOn = false;
+    _lastUiMs = 0;
+    _imuSub = 0;
+
+    _sysSub = 0;
+
+    _soundIndex = 0;
+    _morseMode = false;
+    _morsePattern = "";
+    _morseIdx = 0;
+    _morseNextMs = 0;
+    _morsePlaying = false;
+    showHome();
+  }
 
 #if LCD_ENABLED
   typedef void (*LcdPrintFn)(const String &, const String &);
@@ -40,203 +71,388 @@ public:
   void onKey(const String &k, Robot &robot){
     if (k == "UNKNOWN") return;
 
-    // Always show received key (when not in a capture flow) so user knows IR is working.
-    if (!_capture){
-      if (_menu == 0){
-        lcdPrint("IR", "KEY:" + k);
-      } else {
-        lcdPrint(menuTop(), "KEY:" + k);
-      }
-    }
-
-    // Direct controls (no menu needed)
-    if (!_capture && _menu == 0){
-      if (k == "UP"){ robot.setModeStand(); emitEvent("stand"); lcdPrint("MODE:STAND"); return; }
-      if (k == "DOWN"){ robot.setModeSit(); emitEvent("sit"); lcdPrint("MODE:SIT"); return; }
-      if (k == "LEFT"){ robot.setDriveCmd(-200); emitEvent("drive", -200); lcdPrint("DRIVE:-200"); return; }
-      if (k == "RIGHT"){ robot.setDriveCmd(200); emitEvent("drive", 200); lcdPrint("DRIVE:200"); return; }
-      if (k == "OK"){ robot.setDriveCmd(0); emitEvent("drive", 0); lcdPrint("DRIVE:0"); return; }
-    }
-
-    // Back / cancel
+    // Global back/cancel
     if (k == "#"){
-      // If currently typing a token, cancel it.
       if (_capture){
-        _capture = false;
-        _token = "";
-        _lastDigitMs = 0;
+        cancelToken();
         lcdPrint("TOKEN", "CANCEL");
         return;
       }
-
-      // If in a submenu stage, go one step back.
-      if (_menu == 1 && _servoSel >= 0){
+      if (_state == STATE_SERVO_DEG){
+        _state = STATE_SERVO_SEL;
         _servoSel = -1;
-        lcdPrint(menuTop(), "SERVO? (1..8)");
+        showServoPrompt();
+        return;
+      }
+      if (_state != STATE_HOME){
+        enterHome();
+        return;
+      }
+      // already home
+      showHome();
+      return;
+    }
+
+    // HOME: keep simple direct controls; OK opens menu
+    if (_state == STATE_HOME){
+      if (k == "OK"){
+        enterMenu();
+        return;
+      }
+      if (k == "UP"){ robot.setModeStand(); emitEvent("stand"); lcdPrint("MODE", "STAND"); return; }
+      if (k == "DOWN"){ robot.setModeSit(); emitEvent("sit"); lcdPrint("MODE", "SIT"); return; }
+      if (k == "LEFT"){ robot.setDriveCmd(-200); emitEvent("drive", -200); lcdPrint("DRIVE", "-200"); return; }
+      if (k == "RIGHT"){ robot.setDriveCmd(200); emitEvent("drive", 200); lcdPrint("DRIVE", "200"); return; }
+      // digits on home just show key feedback
+      lcdPrint("IR", "KEY:" + k);
+      return;
+    }
+
+    // MENU: UP/DOWN select, OK enter
+    if (_state == STATE_MENU){
+      if (k == "UP"){ menuPrev(); showMenu(); return; }
+      if (k == "DOWN"){ menuNext(); showMenu(); return; }
+      if (k == "OK"){ enterSelected(robot); return; }
+      // ignore others
+      return;
+    }
+
+    // Servo flow
+    if (_state == STATE_SERVO_SEL || _state == STATE_SERVO_DEG){
+      if (k == "*"){
+        startToken();
+        showServoToken();
+        return;
+      }
+      if (k == "OK"){
+        commitTokenIfAny(robot);
+        _capture = false;
+        _token = "";
+        showServoPrompt();
+        return;
+      }
+      if (isDigitKey(k)){
+        if (!_capture){
+          _capture = true;
+          _token = "";
+        }
+        _token += k;
+        _lastDigitMs = millis();
+        showServoToken();
+        return;
+      }
+      return;
+    }
+
+    // Laser control
+    if (_state == STATE_LASER){
+      if (k == "OK"){
+        _laserOn = !_laserOn;
+        applyLaser();
+        showLaser();
+        return;
+      }
+      if (k == "UP"){
+        _laserOn = true;
+        applyLaser();
+        showLaser();
+        return;
+      }
+      if (k == "DOWN"){
+        _laserOn = false;
+        applyLaser();
+        showLaser();
+        return;
+      }
+      return;
+    }
+
+    // Sound / buzzer
+    if (_state == STATE_SOUND){
+      if (k == "LEFT" || k == "RIGHT"){
+#if BUZZER_ENABLED
+        // Toggle output
+        g_buzzerDefaultOut = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? BUZZER_OUT_QUIET : BUZZER_OUT_LOUD;
+        g_song.setDefaultOut(g_buzzerDefaultOut);
+#endif
+        showSound();
         return;
       }
 
-      // Otherwise exit menu.
-      if (_menu != 0){
-        _menu = 0;
-        lcdPrint("IR", "HOME");
+      if (k == "UP"){
+        if (_soundIndex == 0) _soundIndex = SOUND_COUNT - 1;
+        else _soundIndex--;
+        _morseMode = false;
+        showSound();
+        return;
       }
-      return;
-    }
+      if (k == "DOWN"){
+        _soundIndex = (_soundIndex + 1) % SOUND_COUNT;
+        _morseMode = false;
+        showSound();
+        return;
+      }
 
-    if (k == "*"){
-      // Start (or restart) token capture.
-      commitTokenIfAny(robot);
-      _capture = true;
-      _token = "";
-      _lastDigitMs = 0;
-      emitEvent("token_start");
-      if (_menu == 0) lcdPrint("MENU", "1..5");
-      else lcdPrint(menuTop(), "VAL?");
-      return;
-    }
-
-    if (k == "OK"){
-      commitTokenIfAny(robot);
-      _capture = false;
-      _token = "";
-      lcdPrint("TOKEN", "COMMIT");
-      return;
-    }
-
-    if (isDigitKey(k)){
-      // In menu mode, allow digits to start capture without needing '*'.
-      if (!_capture){
-        if (_menu == 0){
-          // Home mode: digits just show KEY feedback (handled above).
+      if (k == "OK"){
+        if ((SoundItem)_soundIndex == SOUND_MORSE){
+          _morseMode = !_morseMode;
+          if (_morseMode) lcdPrint("MORSE", "KEY=CODE #=BK");
+          else showSound();
           return;
         }
-        _capture = true;
-        _token = "";
+        playSelectedSound();
+        showSound();
+        return;
       }
-      _token += k;
-      _lastDigitMs = millis();
-      if (_menu == 0) lcdPrint("MENU:" + _token, "OK=SET");
-      else lcdPrint("VAL:" + _token, "OK=SET");
+
+      // Morse mode: digits (and OK) produce deterministic patterns.
+      if (_morseMode){
+        String pat = morsePatternForKey(k);
+        if (pat.length() > 0){
+          startMorse(pat);
+          lcdPrint("MORSE:" + k, pat);
+        }
+      }
+      return;
+    }
+
+    // Sensor pages: allow changing subpage on IMU
+    if (_state == STATE_IMU){
+      if (k == "UP" || k == "DOWN"){
+        _imuSub = (_imuSub + 1) % 3;
+        _lastUiMs = 0;
+      }
+      return;
+    }
+
+    if (_state == STATE_SYSTEM){
+      if (k == "UP" || k == "DOWN"){
+        _sysSub = (_sysSub + 1) % 3;
+        _lastUiMs = 0;
+      }
       return;
     }
   }
 
   void tick(Robot &robot){
-    if (!_capture) return;
-    if (_token.length() == 0) return;
-    if (_lastDigitMs == 0) return;
-    if (millis() - _lastDigitMs >= (unsigned long)IR_TOKEN_TIMEOUT_MS){
-      commitTokenIfAny(robot);
-      _capture = false;
-      _token = "";
+    // Token timeout
+    if (_capture && _token.length() > 0 && _lastDigitMs != 0){
+      if (millis() - _lastDigitMs >= (unsigned long)IR_TOKEN_TIMEOUT_MS){
+        commitTokenIfAny(robot);
+        _capture = false;
+        _token = "";
+        showServoPrompt();
+      }
     }
+
+    // Periodic refresh for live pages
+    if (_state == STATE_ULTRA || _state == STATE_IMU || _state == STATE_RFID || _state == STATE_SYSTEM || _state == STATE_LASER){
+      unsigned long now = millis();
+      if (_lastUiMs == 0 || (now - _lastUiMs) >= 250UL){
+        _lastUiMs = now;
+        refreshLive(robot);
+      }
+    }
+
+    // Non-blocking morse player
+    tickMorse();
   }
 
 private:
   static bool isDigitKey(const String &k){ return k.length() == 1 && k[0] >= '0' && k[0] <= '9'; }
 
-  void commitTokenIfAny(Robot &robot){
-    if (_token.length() == 0) return;
-    long v = _token.toInt();
-    applyToken(v, robot);
+  enum State : uint8_t {
+    STATE_HOME = 0,
+    STATE_MENU,
+    STATE_SERVO_SEL,
+    STATE_SERVO_DEG,
+    STATE_LASER,
+    STATE_SOUND,
+    STATE_ULTRA,
+    STATE_IMU,
+    STATE_RFID,
+    STATE_SYSTEM,
+  };
+
+  enum MenuItem : uint8_t {
+    MENU_SERVO = 0,
+    MENU_LASER,
+    MENU_ULTRA,
+    MENU_IMU,
+    MENU_RFID,
+    MENU_SOUND,
+    MENU_SYSTEM,
+    MENU_COUNT,
+  };
+
+  enum SoundItem : uint8_t {
+    SOUND_WALLE = 0,
+    SOUND_BB8,
+    SOUND_MORSE,
+    SOUND_COUNT,
+  };
+
+  void enterHome(){
+#if LCD_ENABLED
+    g_lcdStatus.setPinned(false);
+#endif
+    _state = STATE_HOME;
+    _capture = false;
+    _token = "";
+    _lastDigitMs = 0;
+    _lastUiMs = 0;
+    showHome();
+  }
+
+  void enterMenu(){
+#if LCD_ENABLED
+    g_lcdStatus.setPinned(true);
+#endif
+    _state = STATE_MENU;
+    _capture = false;
+    _token = "";
+    _lastDigitMs = 0;
+    showMenu();
+  }
+
+  void menuPrev(){
+    if (_menuIndex == 0) _menuIndex = MENU_COUNT - 1;
+    else _menuIndex--;
+  }
+  void menuNext(){
+    _menuIndex = (_menuIndex + 1) % MENU_COUNT;
+  }
+
+  static String menuName(uint8_t idx){
+    switch ((MenuItem)idx){
+      case MENU_SERVO: return "SERVO";
+      case MENU_LASER: return "LASER";
+      case MENU_ULTRA: return "ULTRA";
+      case MENU_IMU: return "IMU";
+      case MENU_RFID: return "RFID";
+      case MENU_SOUND: return "SOUND";
+      case MENU_SYSTEM: return "SYSTEM";
+      default: return "MENU";
+    }
+  }
+
+  void showHome(){
+    lcdPrint("IR", "OK=MENU #=BACK");
+  }
+
+  void showMenu(){
+    lcdPrint("MENU", menuName(_menuIndex) + " OK=ENTER");
+  }
+
+  void enterSelected(Robot &robot){
+    switch ((MenuItem)_menuIndex){
+      case MENU_SERVO:
+        if (!robot.servos.driverOk()){
+          lcdPrint("SERVO", "DRIVER MISSING");
+          return;
+        }
+        _state = STATE_SERVO_SEL;
+        _servoSel = -1;
+        _capture = false;
+        _token = "";
+        _lastDigitMs = 0;
+        showServoPrompt();
+        return;
+
+      case MENU_LASER:
+        _state = STATE_LASER;
+        _lastUiMs = 0;
+        showLaser();
+        return;
+
+      case MENU_ULTRA:
+        _state = STATE_ULTRA;
+        _lastUiMs = 0;
+        refreshLive(robot);
+        return;
+
+      case MENU_IMU:
+        _state = STATE_IMU;
+        _imuSub = 0;
+        _lastUiMs = 0;
+        refreshLive(robot);
+        return;
+
+      case MENU_RFID:
+        _state = STATE_RFID;
+        _lastUiMs = 0;
+        refreshLive(robot);
+        return;
+
+      case MENU_SOUND:
+        _state = STATE_SOUND;
+        _morseMode = false;
+        _lastUiMs = 0;
+        showSound();
+        return;
+
+      case MENU_SYSTEM:
+        _state = STATE_SYSTEM;
+        _lastUiMs = 0;
+        refreshLive(robot);
+        return;
+
+      default:
+        return;
+    }
+  }
+
+  void showServoPrompt(){
+    if (_state == STATE_SERVO_SEL){
+      lcdPrint("SERVO", "NUM(1..8) OK");
+    } else {
+      lcdPrint("SERVO:" + String(_servoSel + 1), "DEG(0..180) OK");
+    }
+  }
+
+  void showServoPrompt();
+
+  void showServoToken();
+
+  void showLaser(){
+    lcdPrint("LASER", _laserOn ? "ON  UP/DN OK" : "OFF UP/DN OK");
+  }
+
+  static String soundName(uint8_t idx){
+  static String soundName(uint8_t idx);
+
+  void showSound();
+
+  void playSelectedSound();
+
+  static String morsePatternForKey(const String &k);
+
+  void startMorse(const String &pattern);
+
+  String textToMorse(const String &text);
+
+  void tickMorse();
+
+  void applyLaser(){
+#if LASER_ENABLED
+    if (_laserOn) g_lasers.bothOn();
+    else g_lasers.off();
+#endif
+  }
+
+  void startToken(){
+    _capture = true;
     _token = "";
     _lastDigitMs = 0;
   }
 
-  void applyToken(long v, Robot &robot){
-    // Menus:
-    // 1: Servo control -> token1=servo(1..8 or 0..7), token2=deg
-    // 2: Drive (skate) -> token=speed steps/s (applies to both via driveCmd)
-    // 3: Laser -> token 0=off, 1=both on
-    // 4: Mode -> 1=stand, 2=sit, 3=pid on, 4=pid off
-    // 5: Sound -> 1=loud, 2=quiet
-    if (_menu == 0){
-      _menu = (int)v;
-      _servoSel = -1;
-      emitMenu(_menu);
-      lcdPrint(menuTop(), menuHint());
-      return;
-    }
+  void startToken();
 
-    if (_menu == 1){
-      if (!robot.servos.driverOk()){
-        emitEvent("servo_driver_missing");
-        lcdPrint("SERVO", "DRIVER MISSING");
-        return;
-      }
-      if (_servoSel < 0){
-        _servoSel = normalizeServoIndex(v);
-        emitEvent("servo_sel", _servoSel);
-        lcdPrint(menuTop(), "SERVO:" + String(_servoSel + 1) + " DEG?");
-        return;
-      }
-      float deg = (float)constrain(v, 0, 180);
-      robot.writeServoLimited(_servoSel, deg);
-      emitEvent("servo_set", _servoSel, (long)deg);
-      lcdPrint("SERVO:" + String(_servoSel + 1), "DEG:" + String((int)deg));
-#if BUZZER_ENABLED
-      g_buzzer.beepOn(g_buzzerDefaultOut, 2400, 40);
-#endif
-      return;
-    }
+  void cancelToken();
 
-    if (_menu == 2){
-      robot.setDriveCmd((float)v);
-      emitEvent("drive", v);
-      lcdPrint("MENU:2 DRIVE", "SPEED:" + String((int)v));
-      return;
-    }
+  void commitTokenIfAny(Robot &robot);
 
-    if (_menu == 3){
-#if LASER_ENABLED
-      if (v == 1){ g_lasers.bothOn(); emitEvent("laser", 1); lcdPrint("MENU:3 LASER", "ON"); }
-      else { g_lasers.off(); emitEvent("laser", 0); lcdPrint("MENU:3 LASER", "OFF"); }
-#else
-      emitEvent("laser_disabled");
-      lcdPrint("MENU:3 LASER", "DISABLED");
-#endif
-      return;
-    }
-
-    if (_menu == 4){
-      if (v == 1){ robot.setModeStand(); emitEvent("stand"); lcdPrint("MODE:STAND"); return; }
-      if (v == 2){ robot.setModeSit(); emitEvent("sit"); lcdPrint("MODE:SIT"); return; }
-      if (v == 3){ robot.setBalance(true); emitEvent("pid", 1); lcdPrint("MENU:4", "PID:ON"); return; }
-      if (v == 4){ robot.setBalance(false); emitEvent("pid", 0); lcdPrint("MENU:4", "PID:OFF"); return; }
-      emitEvent("mode_unknown", v);
-      lcdPrint("MENU:4", "UNKNOWN");
-      return;
-    }
-
-    if (_menu == 5){
-#if BUZZER_ENABLED
-      if (v == 1){
-        g_buzzerDefaultOut = BUZZER_OUT_LOUD;
-        g_song.setDefaultOut(g_buzzerDefaultOut);
-        emitEvent("sound_out", 1);
-        lcdPrint("MENU:5 SOUND", "LOUD");
-        g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 60);
-        return;
-      }
-      if (v == 2){
-        g_buzzerDefaultOut = BUZZER_OUT_QUIET;
-        g_song.setDefaultOut(g_buzzerDefaultOut);
-        emitEvent("sound_out", 2);
-        lcdPrint("MENU:5 SOUND", "QUIET");
-        g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 60);
-        return;
-      }
-#else
-      emitEvent("sound_disabled");
-      lcdPrint("MENU:5 SOUND", "DISABLED");
-#endif
-      return;
-    }
-
-    emitEvent("menu_unknown", _menu);
-    lcdPrint("MENU:?", "UNKNOWN");
-  }
+  void applyToken(long v, Robot &robot);
 
 #if LCD_ENABLED
   void lcdPrint(const String &top, const String &bottom = ""){
@@ -247,22 +463,13 @@ private:
   void lcdPrint(const String &, const String & = ""){ }
 #endif
 
-  String menuTop() const { return "MENU:" + String(_menu); }
-
-  String menuHint() const {
-    switch (_menu){
-      case 1: return "SERVO then DEG";
-      case 2: return "SPEED?";
-      case 3: return "0=OFF 1=ON";
-      case 4: return "1ST 2SI 3ON 4OFF";
-      case 5: return "1LOUD 2QUIET";
-      default: return "";
-    }
+  void refreshLive(Robot &robot){
+    // delegated to sensors implementation
+    refreshLive(robot);
   }
 
   static int normalizeServoIndex(long v){
     // Accept both 1-based (1..8) and 0-based (0..7)
-    if (v >= 1 && v <= SERVO_COUNT_TOTAL) return (int)v - 1;
     return (int)constrain(v, 0, SERVO_COUNT_TOTAL - 1);
   }
 
@@ -296,12 +503,32 @@ private:
     SERIAL_IO.println(F("}"));
   }
 
-  int _menu{0};
+  State _state{STATE_HOME};
+  uint8_t _menuIndex{0};
+
   int _servoSel{-1};
+  bool _laserOn{false};
+
   bool _capture{false};
   String _token;
   unsigned long _lastDigitMs{0};
+
+  unsigned long _lastUiMs{0};
+  uint8_t _imuSub{0};
+
+  uint8_t _sysSub{0};
+
+  uint8_t _soundIndex{0};
+  bool _morseMode{false};
+  String _morsePattern;
+  uint16_t _morseIdx{0};
+  unsigned long _morseNextMs{0};
+  bool _morsePlaying{false};
 };
+
+#include "menus/xIrMenuController_sound.h"
+#include "menus/xIrMenuController_servo.h"
+#include "menus/xIrMenuController_sensors.h"
 
 #endif // IR_ENABLED
 

@@ -24,6 +24,15 @@ public:
   void read() {
     if (!ready) return;
     sensors_event_t a, g, temp; mpu.getEvent(&a, &g, &temp);
+
+    accX = a.acceleration.x;
+    accY = a.acceleration.y;
+    accZ = a.acceleration.z;
+    gyroX = g.gyro.x;
+    gyroY = g.gyro.y;
+    gyroZ = g.gyro.z;
+    tempC = temp.temperature;
+
     float accPitch = atan2(a.acceleration.x, sqrt(a.acceleration.y*a.acceleration.y + a.acceleration.z*a.acceleration.z)) * 180.0 / PI;
     float accRoll  = atan2(a.acceleration.y, sqrt(a.acceleration.x*a.acceleration.x + a.acceleration.z*a.acceleration.z)) * 180.0 / PI;
     #ifndef IMU_USE_COMPLEMENTARY
@@ -47,6 +56,15 @@ public:
   float getPitch() const { return pitch - offPitch; }
   float getRoll()  const { return roll  - offRoll; }
 
+  // Raw sensor values from the last read()
+  float getAccX() const { return accX; }
+  float getAccY() const { return accY; }
+  float getAccZ() const { return accZ; }
+  float getGyroX() const { return gyroX; }
+  float getGyroY() const { return gyroY; }
+  float getGyroZ() const { return gyroZ; }
+  float getTempC() const { return tempC; }
+
   void calibrateLevel() {
     // Capture current orientation as zero-offset
     if (!ready) return;
@@ -65,6 +83,9 @@ private:
   bool ready=false; 
   float pitch=0, roll=0;
   float offPitch=0, offRoll=0;
+  float accX=0, accY=0, accZ=0;
+  float gyroX=0, gyroY=0, gyroZ=0;
+  float tempC=0;
   unsigned long lastUs=0;
 };
 

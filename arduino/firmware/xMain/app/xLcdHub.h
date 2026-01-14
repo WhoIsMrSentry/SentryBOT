@@ -145,8 +145,19 @@ public:
     show(defaultMsg, "", true);
   }
 
+  void setPinned(bool pinned){
+    _pinned = pinned;
+    if (!_pinned){
+      // Reset timer so we don't instantly revert right after unpin.
+      _lastShowMs = millis();
+    }
+  }
+
+  bool isPinned() const { return _pinned; }
+
   void show(const String &top, const String &bottom = "", bool force=false){
     if (!lcdHubAny()) return;
+    if (_pinned && !force) return;
     if (!force && top == _lastTop && bottom == _lastBottom) return;
     _lastTop = top;
     _lastBottom = bottom;
@@ -156,6 +167,7 @@ public:
 
   void showTo(uint8_t targetMask, const String &top, const String &bottom = "", bool force=false){
     if (!lcdHubAny()) return;
+    if (_pinned && !force) return;
     if (!force && top == _lastTop && bottom == _lastBottom){
       // content same; still allow reroute without redraw
       lcdHubPrint(targetMask, top, bottom);
@@ -169,6 +181,7 @@ public:
 
   void tick(){
     if (!lcdHubAny()) return;
+    if (_pinned) return;
     if (_holdMs == 0) return;
     if (_lastShowMs == 0) return;
     if (millis() - _lastShowMs < _holdMs) return;
@@ -182,6 +195,7 @@ private:
   String _lastBottom;
   unsigned long _holdMs{3000};
   unsigned long _lastShowMs{0};
+  bool _pinned{false};
 };
 
 extern LcdStatus g_lcdStatus;
