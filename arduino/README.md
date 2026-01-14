@@ -51,9 +51,59 @@ Not:
 - Hazır ses çal (JSON): `{ "cmd":"sound_play", "name":"walle|bb8", "out":"loud|quiet" }`
 
 ## IR Remote Kontrol (Menü + Parametre)
-- IR alıcı pini: `IR_PIN` (varsayılan 26)
+- IR alıcı pini: `IR_PIN` (varsayılan 2)
 - Tuşlar firmware içinde şu string’lere çevrilir: `0..9`, `*`, `#`, `UP`, `DOWN`, `LEFT`, `RIGHT`, `OK`.
 - `LCD_ENABLED=1` ise IR menü geçişleri ve parametreler LCD'de 2 satır halinde gösterilir (son mesaj ~3 sn tutulur; `UNKNOWN` spam'ı yazdırılmaz).
+
+### Yeni Menü Kullanımı (Önerilen)
+- HOME: `OK` menüyü açar.
+- HOME hızlı kontrol: `UP/DOWN` = Stand/Sit, `LEFT/RIGHT` = Drive -200/+200.
+- Menü ekranı: `UP/DOWN` ile gez, `OK` ile gir, `#` ile geri/çık.
+
+Menü sayfaları:
+- `SERVO`: servo no (1..8) seç → derece (0..180) gir.
+- `LASER`: `OK` toggle, `UP` aç, `DOWN` kapa.
+- `ULTRA`: HC-SR04 mesafesini canlı gösterir.
+- `IMU`: pitch/roll + accel (AX/AY/AZ) + sıcaklık sayfaları (UP/DOWN ile değişir).
+ - `RFID`: son okunan UID’nin son 8 karakterini gösterir.
+ - `SOUND`: `WALLE` / `BB8` çal; `MORSE` ile kumandadan mors test (OK ile morse moduna gir, sonra rakamlara bas).
+ - `BRAIN SPEECH`: Dışarıdan gönderilen metni buzzer ile (Morse/Braille-speak tarzı) çalabilme.
+
+### Brain Speech (Beyinden Gelen Konuşmayı Buzzer ile Duyurma)
+SentryBOT’a dışarıdan (ör: Python gateway) bir konuşma metni gönderip, bunu buzzer’dan Braille Speak/Morse gibi tonlu olarak duyurabilirsiniz.
+
+Kullanım:
+
+- Arduino’ya NDJSON komutuyla metin gönderin:
+  ```json
+  {"cmd": "speech", "text": "merhaba sentry"}
+  ```
+- Son metin RAM’de tutulur, IR menüsünde SOUND/MORSE sayfasında veya komutla buzzer’dan çalınabilir.
+- Çalmak için:
+  ```json
+  {"cmd": "speech_play"}
+  ```
+- Buzzer, metni Morse koduna çevirip non-blocking olarak oynatır. IR ve LCD menüsü etkilenmez.
+
+Python Gateway ile örnek:
+
+```python
+from modules.arduino_serial import send_brain_speech
+send_brain_speech("merhaba sentry")
+```
+
+veya doğrudan NDJSON ile:
+
+```python
+arduino_serial.send_command({"cmd": "speech", "text": "merhaba sentry"})
+arduino_serial.send_command({"cmd": "speech_play"})
+```
+
+Notlar:
+
+- Metin uzunluğu kısıtlıdır (tipik <64 karakter).
+- Buzzer çalarken IR menüsü ve LCD sabit kalır (pinned).
+- SOUND/MORSE menüsünden de son metni tekrar çalabilirsiniz.
 
 ### Kullanım Mantığı (Token)
 - Komut girişi `*` ile başlar ve sayılar bir "token" olarak toplanır.
