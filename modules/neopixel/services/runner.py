@@ -96,10 +96,16 @@ class NeoRunner:
         store = self._get_store()
         return [store.random_color(e) for e in emotions]
 
-    def animate(self, name: str, emotions: list[str] | None = None, iterations: int | None = None) -> None:
+    def animate(
+        self,
+        name: str,
+        emotions: list[str] | None = None,
+        iterations: int | None = None,
+        color: tuple[int, int, int] | None = None,
+    ) -> None:
         name = name.upper()
         cols = self._colors_from_emotions(emotions)
-        c1 = cols[0] if cols else None
+        c1 = color if color is not None else (cols[0] if cols else None)
         c2 = cols[1] if len(cols) > 1 else None
         # Map names to functions
         if name == "RAINBOW":

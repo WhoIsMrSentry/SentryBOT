@@ -101,8 +101,16 @@ def get_router(runner: NeoRunner) -> APIRouter:
         return {"ok": True, "emotion": emotion, "name": entry.name, "rgb": entry.color}
 
     @r.post("/animate")
-    def animate(name: str, emotions: Optional[List[str]] = Query(None), iterations: int | None = None):
-        runner.animate(name, emotions=emotions, iterations=iterations)
-        return {"ok": True, "name": name, "emotions": emotions, "iterations": iterations}
+    def animate(
+        name: str,
+        emotions: Optional[List[str]] = Query(None),
+        r: int | None = None,
+        g: int | None = None,
+        b: int | None = None,
+        iterations: int | None = None,
+    ):
+        color = (r, g, b) if r is not None and g is not None and b is not None else None
+        runner.animate(name, emotions=emotions, iterations=iterations, color=color)
+        return {"ok": True, "name": name, "emotions": emotions, "color": color, "iterations": iterations}
 
     return r
