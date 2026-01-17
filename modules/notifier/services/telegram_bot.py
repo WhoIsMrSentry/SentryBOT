@@ -47,7 +47,7 @@ class TelegramBot:
         quiet_hours: QuietHours | None = None,
         command_router: CommandRouter | None = None,
     ) -> None:
-        self._bot_token = bot_token
+        self._bot_token = bot_token.strip('"').strip("'")
         self._default_chat_id = default_chat_id
         self._allowed_user_ids = set(allowed_user_ids or [])
         self._poll_interval = poll_interval

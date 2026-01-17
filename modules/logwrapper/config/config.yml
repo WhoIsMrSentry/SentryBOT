@@ -24,4 +24,6 @@ buffer_size: 1000
 capture_warnings: true
 
 # Modül bazlı seviye override
-module_levels: {}
+module_levels:
+  uvicorn.access: WARNING
+  httpx: WARNING

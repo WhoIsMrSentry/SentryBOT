@@ -92,4 +92,18 @@ def get_router(
         ok = await whatsapp_web.send_text(text, to=target, delay_override_sec=delay_value)
         return {"ok": ok}
 
+    @r.post("/start")
+    async def start_bot():
+        if bot:
+            await bot.start()
+            return {"ok": True, "status": "polling_started"}
+        return {"ok": False, "reason": "no_bot_configured"}
+
+    @r.post("/stop")
+    async def stop_bot():
+        if bot:
+            await bot.stop()
+            return {"ok": True, "status": "polling_stopped"}
+        return {"ok": False, "reason": "no_bot_configured"}
+
     return r
