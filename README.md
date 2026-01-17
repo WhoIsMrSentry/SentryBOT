@@ -14,7 +14,9 @@ Ana hedefler:
 - Servo sürüşü I2C’ye taşındı (PCA9685, 50 Hz). Açı→mikrosaniye darbe haritalaması konfigüre edilebilir (min/max us).
 - Çift “X‑cross” lazer eklendi: tekli ya da ikisi birden aç/kapa (firmware komut + Pi API).
 - 16×1 I2C LCD’ler için 8×2 adresleme düzeltmesi: 16 karakter mesajlar 8+8’e bölünerek yazdırılır.
-- PR etiketleme otomasyonu: modül adı, hedef branch ve tür (feature) otomatik etiketlenir; açık PR’lar için geri dönük etiketleme workflow’u.
+- **Duygu Motoru (Emotional Engine)**: Robotun iç durumu (Mutluluk, Enerji, Merak, Korku) davranışlarını ve NeoPixel ışıklarını otomatik olarak etkiler (örn: `joy` -> altın rengi nefes alma).
+- **Tam Yapılandırılmış Çıktı (Structured JSON)**: Ollama artık tüm yanıtlarını düşünce (thoughts), vokal yanıt (text) ve fiziksel aksiyonlar (actions) içeren katı bir JSON formatında döner.
+- **Sistem-Genel Modül Kontrolü**: Robot artık kendi modüllerini (notifier, camera, speech vb.) LLM kararlarıyla çalışma esnasında kapatıp açabilir.
 
 
 ## Mimari Genel Bakış
