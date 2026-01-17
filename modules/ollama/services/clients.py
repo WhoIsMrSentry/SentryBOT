@@ -19,11 +19,12 @@ class OllamaClient:
         # fallback so the gateway can call a remote Ollama server without extra deps.
         self._client = Client(host=self.base_url) if Client is not None else None
 
-    def chat(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
+    def chat(self, messages: List[Dict[str, str]], format: Optional[Any] = None) -> Dict[str, Any]:
         if self._client is not None:
             return self._client.chat(
                 model=self.model,
                 messages=messages,
+                format=format,
                 options={"temperature": 0.6},
             )
 
@@ -34,6 +35,7 @@ class OllamaClient:
             "model": self.model,
             "messages": messages,
             "stream": False,
+            "format": format,
             "options": {"temperature": 0.6},
         }
         resp = requests.post(url, json=payload, timeout=float(self.timeout))

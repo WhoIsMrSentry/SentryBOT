@@ -9,9 +9,11 @@ import requests
 try:
     from ..services.clients import OllamaClient
     from ..services.chat import PersonaProvider, OllamaChatService
+    from ..models.sentry_schema import SentryResponse
 except Exception:
     from services.clients import OllamaClient  # type: ignore
     from services.chat import PersonaProvider, OllamaChatService  # type: ignore
+    from models.sentry_schema import SentryResponse  # type: ignore
 
 
 def _persona_dir(cfg: dict, name: Optional[str] = None) -> str:
@@ -67,7 +69,12 @@ def get_router(cfg: dict) -> APIRouter:
         return {"ok": True, "base_url": base_url, "model": model}
 
     def _format_chat_payload(result: Dict[str, Any]) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"ok": True, "answer": result.get("text", "")}
+        payload: Dict[str, Any] = {
+            "ok": True, 
+            "answer": result.get("text", ""),
+            "text": result.get("text", ""),
+            "thoughts": result.get("thoughts", "")
+        }
         if result.get("actions"):
             payload["actions"] = result["actions"]
         if "raw" in result:
@@ -92,15 +99,17 @@ def get_router(cfg: dict) -> APIRouter:
             logger.warning("Failed to dispatch persona actions: %s", exc)
 
     @r.get("/chat")
-    def chat_get(query: str = Query(...), apply_actions: Optional[bool] = None):
-        result = chat.chat(query)
+    def chat_get(query: str = Query(...), apply_actions: Optional[bool] = None, structured: bool = False):
+        model_schema = SentryResponse if structured else None
+        result = chat.chat(query, schema_model=model_schema)
         flag = default_apply if apply_actions is None else apply_actions
         _maybe_dispatch_actions(result, flag)
         return _format_chat_payload(result)
 
     @r.post("/chat")
-    def chat_post(query: str, apply_actions: Optional[bool] = None):
-        result = chat.chat(query)
+    def chat_post(query: str, apply_actions: Optional[bool] = None, structured: bool = False):
+        model_schema = SentryResponse if structured else None
+        result = chat.chat(query, schema_model=model_schema)
         flag = default_apply if apply_actions is None else apply_actions
         _maybe_dispatch_actions(result, flag)
         return _format_chat_payload(result)

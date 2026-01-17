@@ -2,11 +2,11 @@ server:
   host: 0.0.0.0
   port: 8099
 ollama:
-  base_url: http://localhost:11434
-  model: llama3.2:3b
+  base_url: http://localhost:11435
+  model: gemma3:4b
   request_timeout: 60
 persona:
-  default: glados
+  default: sentry
   dir: modules/ollama/config/personalities
 actions:
   endpoint: http://localhost:8100/autonomy/apply_actions
