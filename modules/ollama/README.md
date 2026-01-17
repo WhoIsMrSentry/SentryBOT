@@ -5,8 +5,20 @@ Central LLM gateway for SentryBOT. Provides FastAPI endpoints to chat with an Ol
 ## Endpoints
 - GET /ollama/healthz
 - GET/POST /ollama/chat?query=...
-	- Yanıt yapısı `{ ok, answer, raw, actions? }` döndürür.
+	- **Structured Mode**: `structured=true` parametresi ile `SentryResponse` Pydantic şemasına zorlanmış JSON döner: `{ text: "...", thoughts: "...", actions: [...] }`.
+	- **Normal Mode**: Geriye dönük uyumluluk için `answer` (text) ve `raw` alanlarını içeren bir yapı döner.
 	- `apply_actions=true` sorgu parametresi gönderilirse, `actions` alanı Autonomy servisinin `/autonomy/apply_actions` ucuna iletilir.
+
+## Supported Actions (Hardware & System)
+Ollama artık robotu aşağıdaki aksiyon türleri ile kontrol edebilir:
+- `servo`: Kafa hareketi (pan/tilt).
+- `lights`: NeoPixel animasyonları (mode, emotions, intensity).
+- `laser`: Lazer kontrolü (id, on, both).
+- `buzzer` / `sound_play`: Sesli uyarılar.
+- `system`: Modül kontrolü (`notifier`, `camera`, `autonomy`, `wiki_rag`).
+- `speak`: Özel tonlama gerektiren sesli yanıtlar.
+- `anim`: Hazır animasyon sekansları.
+- `stand` / `sit` / `home`: Pozisyon komutları.
 - GET /ollama/persona
 - GET /ollama/personas
 - POST /ollama/persona/select (name)

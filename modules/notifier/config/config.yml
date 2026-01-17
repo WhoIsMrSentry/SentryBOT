@@ -9,7 +9,7 @@ telegram:
   chat_id: ""
   allowed_user_ids: []
   polling:
-    enabled: true
+    enabled: false
     interval_sec: 2.5
 whatsapp_web:
   enabled: true

@@ -30,25 +30,27 @@ class ResponseTagMixin:
 	def _handle_llm_actions(
 		self,
 		text: str,
-		action_bundle: Dict[str, Any] | None,
+		action_bundle: List[Dict[str, Any]] | Dict[str, Any] | None,
 		raw_text: str | None = None,
 	) -> str:
 		cleaned = text or ""
-		commands: List[str] = []
 		blocks: List[Dict[str, Any]] = []
 
-		bundle = action_bundle or {}
-		if bundle.get("commands") or bundle.get("blocks"):
-			commands = [str(cmd).strip().lower() for cmd in bundle.get("commands", []) if str(cmd).strip()]
-			blocks = [blk for blk in bundle.get("blocks", []) if isinstance(blk, dict)]
+		if isinstance(action_bundle, list):
+			# New RobotAction list format
+			blocks = action_bundle
+		elif isinstance(action_bundle, dict):
+			# Old bundle format (commands/blocks)
+			blocks = action_bundle.get("blocks", [])
+			if action_bundle.get("commands"):
+				self._dispatch_llm_commands(action_bundle.get("commands", []))
 		elif extract_llm_tags is not None:
 			source = raw_text or cleaned
 			cleaned, parsed = extract_llm_tags(source)
-			commands = [str(cmd).strip().lower() for cmd in parsed.get("commands", []) if str(cmd).strip()]
-			blocks = [blk for blk in parsed.get("blocks", []) if isinstance(blk, dict)]
+			blocks = parsed.get("blocks", [])
+			if parsed.get("commands"):
+				self._dispatch_llm_commands(parsed.get("commands", []))
 
-		if commands:
-			self._dispatch_llm_commands(commands)
 		if blocks:
 			self._dispatch_llm_blocks(blocks)
 		return cleaned.strip()
@@ -56,6 +58,7 @@ class ResponseTagMixin:
 	# ------------------------------------------------------------------
 	def _dispatch_llm_commands(self, commands: List[str]) -> None:
 		for cmd in commands:
+			cmd = str(cmd).strip().lower()
 			if cmd in {"head_nod", "head_nod_abs"}:
 				self._servo_nod(strength=1.0 if cmd.endswith("abs") else 0.5)
 			elif cmd in {"head_shake", "head_shake_abs"}:
@@ -71,6 +74,10 @@ class ResponseTagMixin:
 			elif cmd == "scan":
 				if not self._trigger_animation("look_around"):
 					self._head_scan_fallback()
+			elif cmd in {"stand", "sit", "home", "zero_now"}:
+				self.client.robot_command(cmd)
+			elif cmd in {"ultra_read", "imu_read", "rfid_last"}:
+				self.client.read_sensor(cmd)
 			else:
 				if not self._trigger_animation(cmd):
 					logger.debug("Unhandled LLM command tag: %s", cmd)
@@ -91,6 +98,28 @@ class ResponseTagMixin:
 				self._handle_event_block(attrs)
 			elif kind == "mode":
 				self._handle_mode_block(attrs)
+			elif kind == "system":
+				module = attrs.get("module")
+				action = attrs.get("action")
+				if module and action:
+					self.client.system_control(module, action)
+					self.client.push_interaction_event(f"system.{module}.{action}")
+			elif kind == "laser":
+				self.client.set_laser(on=attrs.get("on", False), id=attrs.get("id", 1), both=attrs.get("both", False))
+			elif kind == "buzzer":
+				self.client.set_buzzer(out=attrs.get("out", "loud"), freq=attrs.get("freq", 2200), ms=attrs.get("ms", 60))
+			elif kind == "sound_play":
+				self.client.play_sound(name=attrs.get("name"), out=attrs.get("out", "loud"))
+			elif kind in {"speak", "say"}:
+				self.client.speak(text=attrs.get("text"), tone=attrs.get("tone"), engine=attrs.get("engine"))
+			elif kind == "lcd":
+				self.client.set_lcd(msg=attrs.get("msg"), top=attrs.get("top"), bottom=attrs.get("bottom"), id=attrs.get("id", 0))
+			elif kind == "stepper":
+				self.client.set_stepper(id=attrs.get("id", 0), mode=attrs.get("mode", "pos"), value=attrs.get("value", 0), drive=attrs.get("drive", 200))
+			elif kind in {"stand", "sit", "home", "zero_now"}:
+				self.client.robot_command(kind)
+			elif kind in {"ultra_read", "imu_read", "rfid_last"}:
+				self.client.read_sensor(kind)
 			else:
 				logger.debug("Unknown structured tag '%s'", kind)
 
@@ -131,14 +160,29 @@ class ResponseTagMixin:
 		palette_key = str(attrs.get("palette", "")).lower() or None
 		rgb = self._resolve_palette_rgb(palette_key)
 		intensity = float(attrs.get("intensity", 1.0) or 1.0)
+		
+		# If no explicit emotions provided, use current dominant brain emotion
+		emotions = attrs.get("emotions")
+		if not emotions:
+			dominant = getattr(self, "mood", None) and self.mood.get_dominant_emotion()
+			if dominant:
+				emotions = [dominant]
+		elif isinstance(emotions, str):
+			emotions = [emotions]
+
+		scaled = None
 		if rgb:
 			scaled = tuple(max(0, min(255, int(channel * max(0.1, min(1.0, intensity))))) for channel in rgb)
-			self.client.fill_neopixel_color(*scaled)
+
 		mode = attrs.get("mode") or self._default_light_mode()
 		if isinstance(mode, str) and mode:
-			self.client.set_neopixel(mode.lower())
+			self.client.set_neopixel(mode.lower(), emotions=emotions, color=scaled)
+		elif scaled:
+			self.client.fill_neopixel_color(*scaled)
+			
 		data = dict(attrs)
 		data["palette"] = palette_key
+		data["dominant_emotion"] = emotions[0] if emotions else None
 		self.client.push_interaction_event("persona.lights", data)
 
 	def _handle_servo_block(self, attrs: Dict[str, Any]) -> None:

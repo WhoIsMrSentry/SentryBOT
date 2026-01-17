@@ -11,14 +11,16 @@
    - **Mikro-hareketler:** Nefes alma benzeri küçük servo hareketleri.
    - **Ses Takibi:** Ses gelen yöne otomatik kafa çevirme.
    - **Sıkılma:** Boşta kaldığında etrafı izleme, iç çekme veya monolog yapma.
- - **Duygu Yayını:** `MoodManager` dominant duyguyu `state_manager` ve `interactions` modüllerine aktararak LED/palet ve diğer istemcilerle paylaşıyor.
- - **Ses Tonu Çeşitliliği:** Mutluluk, yorgunluk, merak gibi duygulara göre TTS hız/volüm parametreleri otomatik ayarlanır; aynı cümle farklı ruh hâliyle söylenebilir.
+ - **Duygu Yayını:** `MoodManager` (HAPPINESS, ENERGY, CURIOSITY, FEAR) dominant duyguyu `state_manager` ve `interactions` modüllerine aktararak LED/palet ve diğer istemcilerle paylaşıyor.
+- **Duygusal Işık Senkronizasyonu:** NeoPixel animasyonları artık robotun dominant duygusuna göre (`joy`, `sadness`, `fear` vb.) otomatik renk seçimi yapabiliyor.
+- **Sistem-Genel Modül Kontrolü:** Ollama üzerinden gelen `system` aksiyonları ile `notifier`, `camera` gibi modüller çalışma esnasında durdurulup başlatılabilir.
+- **Ses Tonu Çeşitliliği:** Mutluluk, yorgunluk, merak gibi duygulara göre TTS hız/volüm parametreleri otomatik ayarlanır.
  - **Zaman Çizgisi Hafızası:** Gün boyunca kişi ve sohbet sayılarını, ilginç soruları kaydeder; uykuya geçmeden önce kısa bir sözlü özet paylaşır.
  - **Dinamik Odak:** Vision Bridge yeni bir hareket/yüz gördüğünde kısa “focus” animasyonu ve LED olayı tetikler; animasyon servisi yoksa servo tabanlı küçük jest yapılır.
  - **Sahip Koruması:** `owner` konfigürasyonu aktifken robot esnek hitap biçimleriyle (Baba / Emir / WhoIsMrSentry) konuşur, sahibi görüşte değilse istekleri reddeder, RFID veya sözlü izin gelirse kısıtlamaları kaldırır, ısrarcı kişileri rapor eder, gerekirse geçici sahip atar ve Baba’yı aramak için kafasını sağ/sol tarar.
  - **LLM Karar Mekanizması:** Karmaşık durumlar için Ollama kullanarak karar verir.
  - **Animasyon Entegrasyonu:** Uygun olduğunda `animate` servisine hazır sekanslar gönderir, servis yoksa servo tabanlı fallback çalışır.
-- **LLM Eylem Etiketleri:** Ollama, Wiki RAG veya Vision Bridge’den gelen `[cmd:*]` / `[[lights …]]` etiketleri `ResponseTagMixin` ile çözümlenip servo, animasyon, LED ve olay sistemlerine uygulanır. Dış istemciler `/autonomy/apply_actions` endpoint’ine POST ederek aynı yardımcıyı tetikleyebilir.
+- **LLM Eylem İşleme:** Ollama'dan gelen yapılandırılmış JSON aksiyonları veya `[cmd:*]` etiketleri `ResponseTagMixin` ile çözümlenip donanım/sistem katmanına yönlendirilir.
  
  ## Yapı
  - `xAutonomyService.py`: Servis başlatıcı.
