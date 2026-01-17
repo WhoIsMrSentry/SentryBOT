@@ -30,6 +30,10 @@ endpoints:
   state_manager: "http://localhost:8080/state"
   animate: "http://localhost:8080/animate"
   vision: "http://localhost:8080/vision"
+  camera: "http://localhost:8080/camera"
+  notifier: "http://localhost:8080/notify"
+  wiki_rag: "http://localhost:8080/wiki_rag"
+  autonomy: "http://localhost:8080/autonomy"
 
 behaviors:
   idle:
