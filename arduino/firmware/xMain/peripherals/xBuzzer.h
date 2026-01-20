@@ -185,6 +185,9 @@ private:
   // Minimal melodies: short and distinctive (passive buzzer).
   static const BuzzerNote SONG_WALLE[] PROGMEM;
   static const BuzzerNote SONG_BB8[] PROGMEM;
+  static const BuzzerNote SONG_BB8_1[] PROGMEM;
+  static const BuzzerNote SONG_BB8_2[] PROGMEM;
+  static const BuzzerNote SONG_BB8_3[] PROGMEM;
 
   BuzzerPair *_pair{nullptr};
   const BuzzerNote *_song{nullptr};
@@ -207,6 +210,19 @@ const BuzzerNote BuzzerSongPlayer::SONG_BB8[] PROGMEM = {
   {1568, 70, 30}, {2093, 60, 40}, {0, 0, 60}, {2349, 80, 120},
 };
 
+const BuzzerNote BuzzerSongPlayer::SONG_BB8_1[] PROGMEM = {
+  {2000, 30, 10}, {2500, 30, 10}, {3000, 30, 10}, {0, 0, 50}, 
+  {1800, 50, 10}, {2200, 50, 10},
+};
+const BuzzerNote BuzzerSongPlayer::SONG_BB8_2[] PROGMEM = {
+  {880, 60, 10}, {0, 0, 20}, {2200, 40, 0}, {1500, 50, 20},
+  {2800, 40, 0}, {1200, 60, 0},
+};
+const BuzzerNote BuzzerSongPlayer::SONG_BB8_3[] PROGMEM = {
+   {2500, 30, 5}, {2600, 30, 5}, {2700, 30, 5}, {1500, 100, 10},
+   {2200, 40, 5}, {2300, 40, 5},
+};
+
 inline bool BuzzerSongPlayer::resolveSong(const String &name, const BuzzerNote *&outSong, uint8_t &outLen){
   if (name.equalsIgnoreCase("walle") || name.equalsIgnoreCase("wall-e")){
     outSong = SONG_WALLE;
@@ -218,6 +234,9 @@ inline bool BuzzerSongPlayer::resolveSong(const String &name, const BuzzerNote *
     outLen = (uint8_t)(sizeof(SONG_BB8) / sizeof(SONG_BB8[0]));
     return true;
   }
+  if (name.indexOf("bb8_1")>=0){ outSong = SONG_BB8_1; outLen = sizeof(SONG_BB8_1)/sizeof(BuzzerNote); return true; }
+  if (name.indexOf("bb8_2")>=0){ outSong = SONG_BB8_2; outLen = sizeof(SONG_BB8_2)/sizeof(BuzzerNote); return true; }
+  if (name.indexOf("bb8_3")>=0){ outSong = SONG_BB8_3; outLen = sizeof(SONG_BB8_3)/sizeof(BuzzerNote); return true; }
   return false;
 }
 

@@ -13,18 +13,20 @@ String IrMenuController::soundName(uint8_t idx){
     case SOUND_WALLE: return "WALLE";
     case SOUND_BB8: return "BB8";
     case SOUND_MORSE: return "MORSE";
+    case SOUND_BUZZER: return "BUZZER";
     default: return "SOUND";
   }
 }
 
 void IrMenuController::showSound(){
-#if BUZZER_ENABLED
-  String out = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
-#else
-  String out = "OFF";
-#endif
-  String line2 = soundName(_soundIndex) + " " + out;
-  if ((SoundItem)_soundIndex == SOUND_MORSE) line2 += _morseMode ? " RUN" : " OK";
+  String buzzerState = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
+  String line2 = soundName(_soundIndex);
+  if ((SoundItem)_soundIndex == SOUND_BUZZER){
+    line2 += ": " + buzzerState;
+  } else {
+    line2 += " " + buzzerState;
+    if ((SoundItem)_soundIndex == SOUND_MORSE) line2 += _morseMode ? " RUN" : " OK";
+  }
   lcdPrint("SOUND", line2);
 }
 
@@ -35,10 +37,24 @@ void IrMenuController::playSelectedSound(){
     return;
   }
   if ((SoundItem)_soundIndex == SOUND_BB8){
-    g_song.play("bb8", g_buzzerDefaultOut);
+    long r = random(0, 4);
+    if (r == 0) g_song.play("bb8", g_buzzerDefaultOut);
+    else if (r == 1) g_song.play("bb8_1", g_buzzerDefaultOut);
+    else if (r == 2) g_song.play("bb8_2", g_buzzerDefaultOut);
+    else g_song.play("bb8_3", g_buzzerDefaultOut);
     return;
   }
-  // MORSE is handled via _morseMode
+  if ((SoundItem)_soundIndex == SOUND_MORSE){
+    _morseMode = !_morseMode;
+    if (_morseMode) lcdPrint("MORSE", "KEY=CODE #=BK");
+    return;
+  }
+  if ((SoundItem)_soundIndex == SOUND_BUZZER){
+    g_buzzerDefaultOut = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? BUZZER_OUT_QUIET : BUZZER_OUT_LOUD;
+    g_song.setDefaultOut(g_buzzerDefaultOut);
+    g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 50);
+    return;
+  }
 #endif
 }
 
