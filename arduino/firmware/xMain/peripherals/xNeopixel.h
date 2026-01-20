@@ -9,16 +9,14 @@
 #include "../xConfig.h"
 
 #if NEOPIXEL_ENABLED
-static Adafruit_NeoPixel _neo_strip = Adafruit_NeoPixel(NEO_NUM_LEDS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
+static Adafruit_NeoPixel* _neo_strip = nullptr;
 
-inline void neopixel_begin(){
-  _neo_strip.begin();
-  _neo_strip.show();
-}
+// function moved below neopixel_start_animation
 
 inline void neopixel_clear(){
-  for (uint16_t i=0;i<NEO_NUM_LEDS;i++) _neo_strip.setPixelColor(i, 0);
-  _neo_strip.show();
+  if (!_neo_strip) return;
+  for (uint16_t i=0;i<NEO_NUM_LEDS;i++) _neo_strip->setPixelColor(i, 0);
+  _neo_strip->show();
 }
 
 // --- simple animation engine state ---
@@ -33,9 +31,10 @@ static unsigned int _neo_interval_ms = 50;
 
 // wheel helper (0-255 -> RGB)
 inline uint32_t neo_wheel(uint8_t pos){
-  if (pos < 85) return _neo_strip.Color(pos * 3, 255 - pos * 3, 0);
-  if (pos < 170){ pos -= 85; return _neo_strip.Color(255 - pos * 3, 0, pos * 3); }
-  pos -= 170; return _neo_strip.Color(0, pos * 3, 255 - pos * 3);
+  if (!_neo_strip) return 0;
+  if (pos < 85) return _neo_strip->Color(pos * 3, 255 - pos * 3, 0);
+  if (pos < 170){ pos -= 85; return _neo_strip->Color(255 - pos * 3, 0, pos * 3); }
+  pos -= 170; return _neo_strip->Color(0, pos * 3, 255 - pos * 3);
 }
 
 inline void neopixel_stop(){ _neo_effect = NE_OFF; }
@@ -59,15 +58,27 @@ inline void neopixel_start_animation(const String &name, int r, int g, int b, in
   else _neo_effect = NE_FILL; // fallback
 }
 
+inline void neopixel_begin(){
+  if (!_neo_strip) {
+    _neo_strip = new Adafruit_NeoPixel(NEO_NUM_LEDS, PIN_NEOPIXEL, NEO_CONFIG);
+    _neo_strip->begin();
+    _neo_strip->setBrightness(255);
+  }
+  // Start with a rainbow animation to verify proper operation on boot
+  neopixel_start_animation("rainbow", 255, 255, 255, 0, 50);
+  _neo_strip->show();
+}
+
 inline void neopixel_tick(){
+  if (!_neo_strip) return;
   if (_neo_effect == NE_OFF) return;
   unsigned long now = millis();
   if (now - _neo_last_ms < _neo_interval_ms) return;
   _neo_last_ms = now;
 
   if (_neo_effect == NE_FILL){
-    for (uint16_t i=0;i<NEO_NUM_LEDS;i++) _neo_strip.setPixelColor(i, _neo_strip.Color(_neo_r,_neo_g,_neo_b));
-    _neo_strip.show();
+    for (uint16_t i=0;i<NEO_NUM_LEDS;i++) _neo_strip->setPixelColor(i, _neo_strip->Color(_neo_r,_neo_g,_neo_b));
+    _neo_strip->show();
     if (_neo_iter_target){ _neo_iter_count++; if (_neo_iter_count>=_neo_iter_target) neopixel_stop(); }
     return;
   }
@@ -77,9 +88,9 @@ inline void neopixel_tick(){
   if (_neo_effect == NE_RAINBOW){
     for (uint16_t i=0;i<NEO_NUM_LEDS;i++){
       uint8_t p = (uint8_t)((i * 256 / NEO_NUM_LEDS) + _neo_step);
-      _neo_strip.setPixelColor(i, neo_wheel(p));
+      _neo_strip->setPixelColor(i, neo_wheel(p));
     }
-    _neo_strip.show();
+    _neo_strip->show();
     _neo_step = (_neo_step + 1) & 0xFF;
     if (_neo_step == 0 && _neo_iter_target){ _neo_iter_count++; if (_neo_iter_count>=_neo_iter_target) neopixel_stop(); }
     return;
@@ -88,10 +99,10 @@ inline void neopixel_tick(){
   if (_neo_effect == NE_THEATER){
     int phase = _neo_step % 3;
     for (uint16_t i=0;i<NEO_NUM_LEDS;i++){
-      if ((i + phase) % 3 == 0) _neo_strip.setPixelColor(i, _neo_strip.Color(_neo_r,_neo_g,_neo_b));
-      else _neo_strip.setPixelColor(i, 0);
+      if ((i + phase) % 3 == 0) _neo_strip->setPixelColor(i, _neo_strip->Color(_neo_r,_neo_g,_neo_b));
+      else _neo_strip->setPixelColor(i, 0);
     }
-    _neo_strip.show();
+    _neo_strip->show();
     _neo_step++;
     if (_neo_step % 3 == 0 && _neo_iter_target){ _neo_iter_count++; if (_neo_iter_count>=_neo_iter_target) neopixel_stop(); }
     return;
@@ -106,8 +117,8 @@ inline void neopixel_tick(){
     uint8_t rr = (uint8_t)( (float)_neo_r * scale );
     uint8_t gg = (uint8_t)( (float)_neo_g * scale );
     uint8_t bb = (uint8_t)( (float)_neo_b * scale );
-    for (uint16_t i=0;i<NEO_NUM_LEDS;i++) _neo_strip.setPixelColor(i, _neo_strip.Color(rr,gg,bb));
-    _neo_strip.show();
+    for (uint16_t i=0;i<NEO_NUM_LEDS;i++) _neo_strip->setPixelColor(i, _neo_strip->Color(rr,gg,bb));
+    _neo_strip->show();
     _neo_step++;
     if (_neo_step % period == 0 && _neo_iter_target){ _neo_iter_count++; if (_neo_iter_count>=_neo_iter_target) neopixel_stop(); }
     return;
@@ -150,11 +161,13 @@ inline void neopixel_set_pixels_from_line(const String &line){
     int r = vals[i];
     int g = vals[i+1];
     int b = vals[i+2];
-    _neo_strip.setPixelColor(pix++, _neo_strip.Color(r, g, b));
+    if (_neo_strip) _neo_strip->setPixelColor(pix++, _neo_strip->Color(r, g, b));
   }
   // if fewer specified than strip length, clear remaining
-  for (int j=pix;j<NEO_NUM_LEDS;j++) _neo_strip.setPixelColor(j, 0);
-  _neo_strip.show();
+  if (_neo_strip){
+    for (int j=pix;j<NEO_NUM_LEDS;j++) _neo_strip->setPixelColor(j, 0);
+    _neo_strip->show();
+  }
 }
 
 #endif // NEOPIXEL_ENABLED

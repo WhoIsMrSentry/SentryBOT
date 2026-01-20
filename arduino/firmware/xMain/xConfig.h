@@ -170,7 +170,6 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define RFID_ENABLED 1
 #endif
 #ifndef RFID_SS_PIN
-// MEGA: 53 donanımsal SS; RC522 için ayrı SS kullanılabilir
 #define RFID_SS_PIN 53
 #endif
 #ifndef RFID_RST_PIN
@@ -316,10 +315,14 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define NEOPIXEL_ENABLED 1
 #endif
 #ifndef PIN_NEOPIXEL
-#define PIN_NEOPIXEL 48
+#define PIN_NEOPIXEL 22
 #endif
 #ifndef NEO_NUM_LEDS
 #define NEO_NUM_LEDS 23
+#endif
+#ifndef NEO_CONFIG
+// User confirmed working with NEO_RGBW + NEO_KHZ800
+#define NEO_CONFIG (NEO_RGBW + NEO_KHZ800)
 #endif
 
 #endif // ROBOT_CONFIG_H
