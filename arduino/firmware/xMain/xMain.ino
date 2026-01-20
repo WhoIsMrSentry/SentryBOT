@@ -5,22 +5,53 @@
 #include <EEPROM.h>
 #include "xPeripherals.h"
 
+#include "app/xLcdHub.h"
+#include "app/xIrMenuController.h"
+#include "app/xCommands.h"
+
 Robot robot;
-static unsigned long lastHeartbeatMs = 0;
-static bool telemetryOn = false; static unsigned long telemetryInterval = 100; static unsigned long lastTelemetryMs = 0;
+unsigned long lastHeartbeatMs = 0;
+bool telemetryOn = false;
+unsigned long telemetryInterval = 100;
+unsigned long lastTelemetryMs = 0;
 
 #if RFID_ENABLED
-static RfidReader g_rfid;
-static String g_lastRfid;
+RfidReader g_rfid;
+String g_lastRfid;
 #endif
+String g_lastSpeech;
 #if LCD_ENABLED
-static LcdDisplay g_lcd;
+LcdDisplay g_lcd1;
+#if LCD2_ENABLED
+LcdDisplay g_lcd2;
+#endif
+
+bool g_lcd1Ok = false;
+#if LCD2_ENABLED
+bool g_lcd2Ok = false;
+#endif
+uint8_t g_lcdRouteMask = LCD_TGT_BOTH;
+LcdStatus g_lcdStatus;
 #endif
 #if ULTRA_ENABLED
-static Ultrasonic g_ultra; static float g_ultraCm = NAN; static bool g_avoidEnable = AVOID_ENABLE_DEFAULT;
+Ultrasonic g_ultra;
+float g_ultraCm = NAN;
+bool g_avoidEnable = AVOID_ENABLE_DEFAULT;
 #endif
 #if LASER_ENABLED
-static LaserPair g_lasers;
+LaserPair g_lasers;
+#endif
+#if BUZZER_ENABLED
+BuzzerPair g_buzzer;
+BuzzerSongPlayer g_song;
+BuzzerOut g_buzzerDefaultOut = BUZZER_OUT_LOUD;
+#endif
+#if IR_ENABLED
+IrKeyReader g_ir;
+#endif
+
+#if IR_ENABLED
+IrMenuController g_irMenu;
 #endif
 
 void setup(){
@@ -30,7 +61,92 @@ void setup(){
   if (EEPROM.read(EEPROM_ADDR_MAGIC)==EEPROM_MAGIC){ float p,r; EEPROM.get(EEPROM_ADDR_IMU_OFF,p); EEPROM.get(EEPROM_ADDR_IMU_OFF+sizeof(float),r); robot.imu.setOffsets(p,r); }
   Protocol::sendOk("ready");
 #if LCD_ENABLED
-  g_lcd.begin(); g_lcd.printLine("READY");
+  Wire.begin();
+#if defined(ARDUINO_ARCH_AVR)
+  Wire.setWireTimeout(25000, true);
+#endif
+  bool p1 = i2cDevicePresent(LCD_I2C_ADDR);
+#if LCD2_ENABLED
+  bool p2 = i2cDevicePresent(LCD2_I2C_ADDR);
+#else
+  bool p2 = false;
+#endif
+
+  g_lcd1Ok = p1;
+#if LCD2_ENABLED
+  g_lcd2Ok = p2;
+#endif
+
+  // Auto-promote: if only one LCD exists, prefer treating it as 16x2 (prevents 2x8 split look on 16x2 modules).
+  bool onlyOne = (p1 && !p2) || (!p1 && p2);
+
+  if (p1){
+    uint8_t cols = LCD_COLS;
+    uint8_t rows = LCD_ROWS;
+    bool split = (bool)LCD_16X1_SPLIT_ROW;
+    if (LCD_AUTO_PROMOTE_16X2_IF_SINGLE && onlyOne && cols == 16 && rows == 1){
+      rows = 2;
+      split = false;
+    }
+    g_lcd1.begin(LCD_I2C_ADDR, cols, rows, split);
+  }
+
+#if LCD2_ENABLED
+  if (p2){
+    uint8_t cols = LCD2_COLS;
+    uint8_t rows = LCD2_ROWS;
+    bool split = (bool)LCD2_16X1_SPLIT_ROW;
+    if (LCD_AUTO_PROMOTE_16X2_IF_SINGLE && onlyOne && cols == 16 && rows == 1){
+      rows = 2;
+      split = false;
+    }
+    g_lcd2.begin(LCD2_I2C_ADDR, cols, rows, split);
+  }
+#endif
+
+  // Default routing from config (still falls back to detected if requested target isn't present)
+  if (LCD_ROUTE_DEFAULT == 2) g_lcdRouteMask = LCD_TGT_1;
+  else if (LCD_ROUTE_DEFAULT == 3) g_lcdRouteMask = LCD_TGT_2;
+  else if (LCD_ROUTE_DEFAULT == 1) g_lcdRouteMask = LCD_TGT_BOTH;
+  else g_lcdRouteMask = LCD_TGT_BOTH;
+
+  // Eğer iki ekran da yoksa firmware yine çalışır; sadece LCD çıktısı no-op olur.
+  g_lcdStatus.begin("READY", 3000);
+
+    if (BOOT_STATUS_ENABLED && lcdHubAny()){
+    bootUiStep("SentryBOT", "BOOT", BOOT_SPLASH_MS);
+
+    // LCDs
+    bootInfo("lcd1", g_lcd1Ok);
+    bootUiStep("LCD1", g_lcd1Ok ? "OK" : "MISSING", g_lcd1Ok ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
+
+  #if LCD2_ENABLED
+    bootInfo("lcd2", g_lcd2Ok);
+    bootUiStep("LCD2", g_lcd2Ok ? "OK" : "MISSING", g_lcd2Ok ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
+  #endif
+
+    // I2C modules
+    // Check both common MPU6050 addresses (0x68 and 0x69) because AD0 pin
+    // on some modules may be pulled high (0x69).
+    bool imuOk = i2cDevicePresent(IMU_I2C_ADDR) || i2cDevicePresent(0x69);
+    bootInfo("imu", imuOk);
+    bootUiStep("IMU", imuOk ? "OK" : "MISSING", imuOk ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
+
+  #if SERVO_USE_PCA9685
+    bool pcaOk = i2cDevicePresent(PCA9685_ADDR);
+    bootInfo("pca9685", pcaOk);
+    bootUiStep("SERVO", pcaOk ? "PCA9685 OK" : "PCA9685 MISSING", pcaOk ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
+  #else
+    bootInfo("servo_driver", true);
+    bootUiStep("SERVO", "DIRECT PINS", BOOT_STATUS_OK_MS);
+  #endif
+
+    // Compile-time features (to give a bit of "liveliness")
+    String feat = String("") + (IR_ENABLED?"IR ":"") + (RFID_ENABLED?"RFID ":"") + (ULTRA_ENABLED?"ULTRA ":"") + (LASER_ENABLED?"LASER ":"");
+    if (feat.length() > 0) bootUiStep("FEAT", feat, BOOT_STATUS_STEP_MS);
+
+    bootUiStep("READY", "", BOOT_STATUS_OK_MS);
+    }
 #endif
 #if RFID_ENABLED
   g_rfid.begin(RFID_SS_PIN, RFID_RST_PIN);
@@ -40,6 +156,25 @@ void setup(){
 #endif
 #if LASER_ENABLED
   g_lasers.begin(LASER1_PIN, LASER2_PIN);
+#endif
+#if BUZZER_ENABLED
+  g_buzzer.begin(BUZZER_LOUD_PIN, BUZZER_QUIET_PIN);
+  g_song.begin(&g_buzzer);
+  g_song.setDefaultOut(g_buzzerDefaultOut);
+#if BOOT_BEEP
+  g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 50);
+#endif
+#endif
+#if IR_ENABLED
+  g_ir.begin(IR_PIN);
+#if LCD_ENABLED
+  // IR menü olayları LCD'de 3sn gösterilir; UNKNOWN gürültüsü yazdırılmaz.
+  g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.show(top, bottom, true); });
+#endif
+  g_irMenu.reset();
+#endif
+#if NEOPIXEL_ENABLED
+  neopixel_begin();
 #endif
 #if BOOT_CALIBRATION_PROMPT
   unsigned long t0 = millis();
@@ -58,220 +193,6 @@ void setup(){
 #endif
 }
 
-static void handleJson(const String &line){
-  // Very small manual parse for known keys to avoid heavy JSON libs on AVR
-  if (line.indexOf("\"cmd\":\"hello\"")>=0){ Protocol::sendOk("hello"); return; }
-  if (line.indexOf("\"cmd\":\"hb\"")>=0){ lastHeartbeatMs = millis(); Protocol::sendOk("hb"); return; }
-  if (line.indexOf("\"cmd\":\"lcd\"")>=0){
-#if LCD_ENABLED
-  int p=line.indexOf("\"msg\":\""); if (p>=0){ int e=line.indexOf('"', p+7); String m = (e>p? line.substring(p+7,e):""); g_lcd.printLine(m); Protocol::sendOk("lcd_ok"); }
-  else Protocol::sendErr("no_msg");
-#else
-  Protocol::sendErr("lcd_disabled");
-#endif
-  return;
-  }
-  if (line.indexOf("\"cmd\":\"rfid_last\"")>=0){
-#if RFID_ENABLED
-  String out = String("{\"ok\":true,\"rfid\":\"") + Protocol::escape(g_lastRfid) + "\"}"; SERIAL_IO.println(out);
-#else
-  Protocol::sendErr("rfid_disabled");
-#endif
-  return;
-  }
-  if (line.indexOf("\"cmd\":\"ultra_read\"")>=0){
-#if ULTRA_ENABLED
-  String out = String("{\"ok\":true,\"cm\":") + (isnan(g_ultraCm)?String("null"):String(g_ultraCm,1)) + "}"; SERIAL_IO.println(out);
-#else
-  Protocol::sendErr("ultra_disabled");
-#endif
-  return;
-  }
-  if (line.indexOf("\"cmd\":\"avoid\"")>=0){
-#if ULTRA_ENABLED
-  g_avoidEnable = (line.indexOf("\"enable\":true")>=0);
-  Protocol::sendOk(g_avoidEnable?"avoid_on":"avoid_off");
-#else
-  Protocol::sendErr("ultra_disabled");
-#endif
-  return;
-  }
-  if (line.indexOf("\"cmd\":\"laser\"")>=0){
-#if LASER_ENABLED
-    bool both = (line.indexOf("\"both\":true")>=0);
-    int p = line.indexOf("\"id\":"); int id = 0; if (p>=0) id = line.substring(p+5).toInt();
-    if (line.indexOf("\"on\":true")>=0){
-      if (both){ g_lasers.bothOn(); Protocol::sendOk("laser_both_on"); }
-      else if (id==1 || id==2){ g_lasers.oneOn((uint8_t)id); Protocol::sendOk("laser_on"); }
-      else { Protocol::sendErr("bad_id"); }
-    } else {
-      g_lasers.off(); Protocol::sendOk("laser_off");
-    }
-#else
-    Protocol::sendErr("laser_disabled");
-#endif
-    return;
-  }
-  if (line.indexOf("\"cmd\":\"set_servo\"")>=0){
-    int idx=-1; float deg=90;
-    int p=line.indexOf("\"index\":"); if(p>=0){ idx=line.substring(p+8).toInt(); }
-    p=line.indexOf("\"deg\":"); if(p>=0){ deg=line.substring(p+6).toFloat(); }
-    if (idx>=0 && idx<SERVO_COUNT_TOTAL){ robot.writeServoLimited(idx,deg); Protocol::sendOk(); }
-    else Protocol::sendErr("bad_index");
-    return;
-  }
-  if (line.indexOf("\"cmd\":\"set_pose\"")>=0){
-    // Expect pose as 8 ints [..]; optional duration_ms for time-based easing
-    int lb=line.indexOf('['); int rb=line.indexOf(']');
-    if (lb>0 && rb>lb){
-      uint8_t pose[SERVO_COUNT_TOTAL]; int i=0; String nums=line.substring(lb+1,rb);
-      nums += ','; int s=0; for (int k=0;k<nums.length() && i<SERVO_COUNT_TOTAL;k++) if(nums[k]==','){ pose[i++]= (uint8_t) constrain(nums.substring(s,k).toInt(),0,180); s=k+1; }
-      // duration_ms
-      long durMs = 0; int p=line.indexOf("\"duration_ms\":"); if(p>=0) durMs = line.substring(p+14).toInt();
-      if (i==SERVO_COUNT_TOTAL){
-        if (durMs>0){
-          // Compute max delta and set speed so that worst joint arrives in durMs
-          float maxDelta = 0.0f;
-          for (int j=0;j<SERVO_COUNT_TOTAL;j++){
-            float d = fabs((float)pose[j] - robot.servos.get(j)); if (d>maxDelta) maxDelta=d;
-          }
-          if (maxDelta>0){ float speed = (maxDelta / (durMs/1000.0f)); robot.servos.setSpeed(speed); }
-        }
-        robot.writePoseLimited(pose); Protocol::sendOk(); return;
-      }
-    }
-    Protocol::sendErr("bad_pose"); return;
-  }
-  if (line.indexOf("\"cmd\":\"leg_ik\"")>=0){
-    float x=120; Side side=LEFT;
-    int p=line.indexOf("\"x\":"); if(p>=0){ x=line.substring(p+4).toFloat(); }
-    p=line.indexOf("\"side\":\"R\""); if(p>=0){ side=RIGHT; }
-    if (robot.setLegByIK(side,x)) Protocol::sendOk(); else Protocol::sendErr("ik_fail");
-    return;
-  }
-  if (line.indexOf("\"cmd\":\"stepper\"")>=0){
-    // modes: pos, vel
-    bool vel = line.indexOf("\"mode\":\"vel\"")>=0;
-    int id = (line.indexOf("\"id\":1")>=0)?1:0;
-    long val=0; int p=line.indexOf("\"value\":"); if(p>=0){ val=line.substring(p+8).toInt(); }
-    if (vel){ robot.steppers.setSpeedOne(id, (float)val); }
-    else { robot.steppers.moveToOne(id, val); }
-    // Optional: global drive override for sit/skate balance blending
-    int pd=line.indexOf("\"drive\":"); if(pd>=0){ long d=line.substring(pd+8).toInt(); robot.setDriveCmd((float)d); }
-    Protocol::sendOk(); return;
-  }
-  if (line.indexOf("\"cmd\":\"home\"")>=0){
-    robot.steppers.homeBoth(); Protocol::sendOk("homed"); return;
-  }
-  if (line.indexOf("\"cmd\":\"zero_now\"")>=0){ robot.steppers.zeroNow(); Protocol::sendOk("zeroed_now"); return; }
-  if (line.indexOf("\"cmd\":\"zero_set\"")>=0){
-    long p1=0,p2=0; int p=line.indexOf("\"p1\":"); if(p>=0) p1=line.substring(p+5).toInt(); p=line.indexOf("\"p2\":"); if(p>=0) p2=line.substring(p+5).toInt();
-    robot.steppers.zeroSet(p1,p2); Protocol::sendOk("zero_set"); return;
-  }
-  if (line.indexOf("\"cmd\":\"stepper_cfg\"")>=0){
-    int p=line.indexOf("\"maxSpeed\":"); if(p>=0){ float v=line.substring(p+11).toFloat(); robot.steppers.setMaxSpeed(v); }
-    p=line.indexOf("\"accel\":"); if(p>=0){ float a=line.substring(p+8).toFloat(); robot.steppers.setAcceleration(a); }
-    Protocol::sendOk("stepper_cfg"); return;
-  }
-  if (line.indexOf("\"cmd\":\"pid\"")>=0){
-    bool enable = (line.indexOf("\"enable\":true")>=0);
-    robot.setBalance(enable);
-    Protocol::sendOk(enable?"pid_on":"pid_off");
-    return;
-  }
-  if (line.indexOf("\"cmd\":\"calibrate\"")>=0){
-    robot.calibrateNeutral();
-    Protocol::sendOk("calibrated");
-    return;
-  }
-  if (line.indexOf("\"cmd\":\"stand\"")>=0){ robot.setModeStand(); Protocol::sendOk("stand"); return; }
-  if (line.indexOf("\"cmd\":\"sit\"")>=0){ robot.setModeSit(); Protocol::sendOk("sit"); return; }
-  if (line.indexOf("\"cmd\":\"imu_read\"")>=0){ robot.imu.read();
-    String msg = String("pitch=")+robot.imu.getPitch()+",roll="+robot.imu.getRoll(); Protocol::sendOk(msg); return; }
-  if (line.indexOf("\"cmd\":\"imu_cal\"")>=0){ robot.imu.calibrateLevel(); Protocol::sendOk("imu_calibrated"); return; }
-  if (line.indexOf("\"cmd\":\"drive\"")>=0){
-    long v=0; int p=line.indexOf("\"value\":"); if(p>=0){ v=line.substring(p+8).toInt(); }
-    robot.setDriveCmd((float)v); Protocol::sendOk("drive_set"); return;
-  }
-  if (line.indexOf("\"cmd\":\"eeprom_save\"")>=0){
-    float p,r; robot.imu.getOffsets(p,r);
-    EEPROM.update(EEPROM_ADDR_MAGIC, EEPROM_MAGIC);
-    EEPROM.put(EEPROM_ADDR_IMU_OFF, p); EEPROM.put(EEPROM_ADDR_IMU_OFF+sizeof(float), r);
-    Protocol::sendOk("saved"); return;
-  }
-  if (line.indexOf("\"cmd\":\"eeprom_load\"")>=0){
-    if (EEPROM.read(EEPROM_ADDR_MAGIC)==EEPROM_MAGIC){ float p,r; EEPROM.get(EEPROM_ADDR_IMU_OFF,p); EEPROM.get(EEPROM_ADDR_IMU_OFF+sizeof(float),r); robot.imu.setOffsets(p,r); Protocol::sendOk("loaded"); }
-    else Protocol::sendErr("no_data");
-    return;
-  }
-  if (line.equalsIgnoreCase("cal")) { robot.calibrateNeutral(); Protocol::sendOk("calibrated"); return; }
-  if (line.indexOf("\"cmd\":\"policy\"")>=0){
-    // MuJoCo/policy hook: optional pose[8] and steppers[2] arrays
-    int lb=line.indexOf("[", line.indexOf("\"pose\""));
-    int rb=line.indexOf("]", lb+1);
-    if (lb>0 && rb>lb){ uint8_t pose[SERVO_COUNT_TOTAL]; int i=0; String nums=line.substring(lb+1,rb); nums+=','; int s=0; for(int k=0;k<nums.length() && i<SERVO_COUNT_TOTAL;k++) if(nums[k]==','){ pose[i++]=(uint8_t)constrain(nums.substring(s,k).toInt(),0,180); s=k+1; }
-      if (i==SERVO_COUNT_TOTAL) robot.servos.writePose(pose);
-    }
-    int ls=line.indexOf("[", line.indexOf("\"steppers\""));
-    int rs=line.indexOf("]", ls+1);
-    if (ls>0 && rs>ls){ String nums=line.substring(ls+1,rs); nums+=','; long v[2]={0,0}; int i=0; int s=0; for(int k=0;k<nums.length() && i<2;k++) if(nums[k]==','){ v[i++]=nums.substring(s,k).toInt(); s=k+1; }
-      if (i>=1) robot.steppers.setSpeedOne(0, (float)v[0]);
-      if (i>=2) robot.steppers.setSpeedOne(1, (float)v[1]);
-    }
-    Protocol::sendOk("policy_applied"); return;
-  }
-  if (line.indexOf("\"cmd\":\"track\"")>=0){
-    // Tracking skeleton: client (OpenCV) sends desired head angles and optional steer velocity
-    // {"cmd":"track","head_tilt":x,"head_pan":y,"drive":v}
-    float tilt=90, pan=90; long drive=0;
-    int p=line.indexOf("\"head_tilt\":"); if(p>=0) tilt=line.substring(p+12).toFloat();
-    p=line.indexOf("\"head_pan\":"); if(p>=0) pan=line.substring(p+11).toFloat();
-    p=line.indexOf("\"drive\":"); if(p>=0) drive=line.substring(p+9).toInt();
-    robot.head(tilt, pan);
-    // In sit/skate, set user drive command (mixed with balance correction)
-    robot.setDriveCmd((float)drive);
-    Protocol::sendOk("track_ack"); return;
-  }
-  if (line.indexOf("\"cmd\":\"get_state\"")>=0){
-    robot.imu.read();
-    String out = "{""ok"":true,""mode"":"; out += (robot.getMode()==MODE_STAND?"\"stand\"":"\"sit\"");
-    out += ",""pid"":"; out += (robot.isBalanceEnabled()?"true":"false");
-    out += ",""pitch"":"; out += robot.imu.getPitch();
-    out += ",""roll"":"; out += robot.imu.getRoll();
-    out += ",""pose"": [";
-    for (int i=0;i<SERVO_COUNT_TOTAL;i++){ if(i) out += ","; out += (int)robot.servos.get(i); }
-    out += "],""stepper_pos"": ["; out += robot.steppers.pos1(); out += ","; out += robot.steppers.pos2(); out += "]}";
-    SERIAL_IO.println(out); return;
-  }
-  if (line.indexOf("\"cmd\":\"estop\"")>=0){ robot.estop(); Protocol::sendOk("estopped"); return; }
-  if (line.indexOf("\"cmd\":\"telemetry_start\"")>=0){
-    int p=line.indexOf("\"interval_ms\":"); if(p>=0){ unsigned long v=line.substring(p+15).toInt(); telemetryInterval = max((unsigned long)TELEMETRY_MIN_INTERVAL_MS, v); }
-    telemetryOn = true; lastTelemetryMs = millis(); Protocol::sendOk("telemetry_on"); return;
-  }
-  if (line.indexOf("\"cmd\":\"telemetry_stop\"")>=0){ telemetryOn=false; Protocol::sendOk("telemetry_off"); return; }
-  if (line.indexOf("\"cmd\":\"tune\"")>=0){
-    int p=line.indexOf("\"servo_speed\":"); if(p>=0){ float v=line.substring(p+14).toFloat(); robot.setServoSpeed(v); }
-    float kpP,kiP,kdP,kpR,kiR,kdR; robot.getPidGains(kpP,kiP,kdP,kpR,kiR,kdR);
-    p=line.indexOf("\"kpP\":"); if(p>=0) kpP=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kiP\":"); if(p>=0) kiP=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kdP\":"); if(p>=0) kdP=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kpR\":"); if(p>=0) kpR=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kiR\":"); if(p>=0) kiR=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kdR\":"); if(p>=0) kdR=line.substring(p+6).toFloat();
-    robot.setPidGains(kpP,kiP,kdP,kpR,kiR,kdR);
-    float skp, ski, skd; robot.getSkateGains(skp,ski,skd); float smax=robot.getSkateSpeedLimit();
-    int sp=line.indexOf("\"skate\""); if(sp>=0){
-      int q=line.indexOf("\"kp\":", sp); if(q>0) skp=line.substring(q+5).toFloat();
-      q=line.indexOf("\"ki\":", sp); if(q>0) ski=line.substring(q+5).toFloat();
-      q=line.indexOf("\"kd\":", sp); if(q>0) skd=line.substring(q+5).toFloat();
-      q=line.indexOf("\"max\":", sp); if(q>0) smax=line.substring(q+6).toFloat();
-    }
-    robot.setSkateGains(skp,ski,skd); robot.setSkateSpeedLimit(smax);
-    Protocol::sendOk("tuned"); return;
-  }
-  Protocol::sendErr("unknown_cmd");
-}
-
 void loop(){
   String line; if (Protocol::readLine(SERIAL_IO, line)) handleJson(line);
   robot.update();
@@ -283,7 +204,7 @@ void loop(){
       SERIAL_IO.println(evt);
   #if LCD_ENABLED
       String tail = g_lastRfid; if (tail.length()>8) tail = tail.substring(tail.length()-8);
-      g_lcd.printLine("RFID:" + tail);
+      g_lcdStatus.show("RFID", tail);
   #endif
     }
   #endif
@@ -295,11 +216,32 @@ void loop(){
       if (!isnan(g_ultraCm) && g_ultraCm>0 && g_ultraCm < AVOID_DISTANCE_CM){
         robot.setDriveCmd(AVOID_REVERSE_SPEED);
   #if LCD_ENABLED
-        g_lcd.printLine("AVOID:" + String((int)g_ultraCm) + "cm");
+        g_lcdStatus.show("AVOID", String((int)g_ultraCm) + "cm");
   #endif
       }
     }
   #endif
+
+#if IR_ENABLED
+  String k;
+  if (g_ir.poll(k)){
+    g_irMenu.onKey(k, robot);
+  }
+  g_irMenu.tick(robot);
+#endif
+
+#if LCD_ENABLED
+  g_lcdStatus.tick();
+#endif
+
+#if BUZZER_ENABLED
+  g_song.update();
+  g_buzzer.update();
+#endif
+  // NeoPixel animation tick
+#if NEOPIXEL_ENABLED
+  neopixel_tick();
+#endif
   // Heartbeat timeout safety
   if (HEARTBEAT_TIMEOUT_MS>0 && (millis() - lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS)){
     robot.estop();

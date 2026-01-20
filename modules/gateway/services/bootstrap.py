@@ -38,6 +38,8 @@ def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
         device=str(hw.get("device", "/dev/spidev0.0")),
         num_leds=int(hw.get("num_leds", 30)),
         speed_khz=int(hw.get("speed_khz", 800)),
+        ws2812_spi_khz=int(hw.get("ws2812_spi_khz", 2400)),
+        backend=str(hw.get("backend", "auto")),
         order=str(hw.get("order", "GRB")),
     )
     runner = NeoRunner(cfg_obj)

@@ -11,7 +11,7 @@ audio_out:
   dtype: float32
 
 tts:
-  engine: pyttsx3       # pyttsx3 | piper | dummy
+  engine: pyttsx3       # pyttsx3 | piper | xtts | dummy
   language: tr
   voice: null           # optional voice id
   rate: 170
@@ -26,5 +26,13 @@ tts:
     length_scale: null
     noise_scale: null
     noise_w: null
+
+  # XTTS ayarları (ayrı env'de çalışan local HTTP servis)
+  # Örn: OneDrive/Masaüstü/xTTS/1.py -> `uvicorn 1:app --host 127.0.0.1 --port 5002`
+  xtts:
+    endpoint: http://127.0.0.1:5002/synthesize
+    timeout: 120
+    language: tr
+    speaker_wav: null          # ses kopyalama için referans wav yolu (opsiyonel)
 
 # note: external compressed audio decoding removed; /speak/play expects base64 WAV

@@ -30,6 +30,10 @@ endpoints:
   state_manager: "http://localhost:8080/state"
   animate: "http://localhost:8080/animate"
   vision: "http://localhost:8080/vision"
+  camera: "http://localhost:8080/camera"
+  notifier: "http://localhost:8080/notify"
+  wiki_rag: "http://localhost:8080/wiki_rag"
+  autonomy: "http://localhost:8080/autonomy"
 
 behaviors:
   idle:
@@ -83,7 +87,11 @@ vision_hooks:
 
 owner:
   enabled: true
-  name: "Emir"
+  name: "WhoIsMrSentry"
+  # additional accepted owner aliases (case-insensitive)
+  aliases:
+    - "Emir"
+    - "Kharuun'Uru"
   addressing:
     affectionate: "Baba"
     formal: "Emir"
@@ -105,13 +113,23 @@ owner:
     - "delete"
   temporary:
     enabled: true
-    command_keyword: "geçici sahip"
+    # support single or list of keywords; include the new Khar language trigger
+    command_keyword:
+      - "geçici sahip"
+      - "Zaal Kharuun'Mak"
+      - "zaal kharuun'mak"
     duration_s: 600
     restricted_features:
       - "high_torque"
       - "network_admin"
     animation: "temp_owner"
     revoke_message: "Geçici yetkiler sona erdi."
+  # Kharuun'Nokh phrases: trigger strong anger / irreversible mode
+  kharuun_nokh_keywords:
+    - "Kharuun'Nokh"
+    - "kharuun'nokh"
+    - "kharuun nokh"
+  kharuun_nokh_message: "Khar sınırları aşıldı. Savunma durumuna geçiyorum."
   rfid:
     endpoint: "http://localhost:8080/arduino/rfid/authorize"
     grace_s: 120

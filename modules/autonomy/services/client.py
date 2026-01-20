@@ -31,24 +31,49 @@ class ServiceClient:
             logger.debug(f"Failed to get from {service}: {e}")
             return None
 
-    def move_head(self, pan, tilt):
-        return self._post("arduino", "/send", {"cmd": "set_servo", "pan": pan, "tilt": tilt})
+    def move_head(self, pan, tilt, speed=0.8):
+        return self._post("arduino", "/send", {"cmd": "set_servo", "pan": pan, "tilt": tilt, "speed": speed})
 
-    def set_neopixel(self, effect, emotions=None):
-        url = self.urls.get("neopixel")
-        if not url:
-            return None
-        try:
-            # Construct query string
-            q = f"?name={effect}"
-            if emotions:
-                for e in emotions:
-                    q += f"&emotions={e}"
-            
-            full_url = f"{url}/animate{q}"
-            requests.post(full_url, timeout=1.0)
-        except Exception:
-            pass
+    def set_laser(self, on: bool, id: int = 1, both: bool = False):
+        return self._post("arduino", "/send", {"cmd": "laser", "id": id, "on": on, "both": both})
+
+    def set_buzzer(self, out: str = "loud", freq: int = 2200, ms: int = 60):
+        return self._post("arduino", "/send", {"cmd": "buzzer", "out": out, "freq": freq, "ms": ms})
+
+    def play_sound(self, name: str, out: str = "loud"):
+        return self._post("arduino", "/send", {"cmd": "sound_play", "name": name, "out": out})
+
+    def set_lcd(self, msg: str = None, top: str = None, bottom: str = None, id: int = 0):
+        payload = {"cmd": "lcd", "id": id}
+        if msg: payload["msg"] = msg
+        if top: payload["top"] = top
+        if bottom: payload["bottom"] = bottom
+        return self._post("arduino", "/send", payload)
+
+    def set_stepper(self, id: int, mode: str, value: int, drive: int = 200):
+        return self._post("arduino", "/send", {"cmd": "stepper", "id": id, "mode": mode, "value": value, "drive": drive})
+
+    def robot_command(self, cmd: str):
+        """Send simple commands like 'stand', 'sit', 'home', 'zero_now'"""
+        return self._post("arduino", "/send", {"cmd": cmd})
+
+    def read_sensor(self, type: str):
+        """Request sensor data: 'ultra_read', 'imu_read', 'rfid_last'"""
+        return self._post("arduino", "/send", {"cmd": type})
+
+    def system_control(self, service: str, action: str):
+        """Send system commands like 'start' or 'stop' to a module"""
+        # Mapping generic actions to service-specific endpoints if needed
+        endpoint = f"/{action}"
+        return self._post(service, endpoint)
+
+    def set_neopixel(self, effect, emotions=None, color=None):
+        params = {"name": effect}
+        if emotions:
+            params["emotions"] = emotions
+        if color and len(color) == 3:
+            params["r"], params["g"], params["b"] = color
+        return self._post("neopixel", "/animate", params=params)
 
     def fill_neopixel_color(self, r: int, g: int, b: int):
         url = self.urls.get("neopixel")

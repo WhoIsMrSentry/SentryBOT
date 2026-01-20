@@ -31,10 +31,12 @@
 #define PIN_HEAD_TILT 12
 
 // Stepper pins (moved to avoid servo overlap)
+// Updated wiring: STEP/DIR pins
+// Stepper1: STEP=10 DIR=9, Stepper2: STEP=8 DIR=7
 #define PIN_STEPPER1_STEP 10
-#define PIN_STEPPER1_DIR  11
-#define PIN_STEPPER2_STEP 12
-#define PIN_STEPPER2_DIR  13
+#define PIN_STEPPER1_DIR  9
+#define PIN_STEPPER2_STEP 8
+#define PIN_STEPPER2_DIR  7
 // Limit switch pins (optional). Use -1 to disable; active LOW by default.
 #ifndef PIN_LIMIT1
 #define PIN_LIMIT1 -1
@@ -131,6 +133,38 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define LCD_16X1_SPLIT_ROW 1  // 1: use row split (0,1), 0: use position split (0-7, 8-15)
 #endif
 
+// LCD output routing defaults
+// 0: AUTO (detected displays)
+// 1: BOTH (write to both if present; else fallback to detected)
+// 2: ONLY_1 (prefer LCD1; if missing, fallback to detected)
+// 3: ONLY_2 (prefer LCD2; if missing, fallback to detected)
+#ifndef LCD_ROUTE_DEFAULT
+#define LCD_ROUTE_DEFAULT 1
+#endif
+
+// If only ONE LCD is detected on I2C and it looks like a standard 16x2, auto-promote it to 16x2 mode.
+// This prevents "2x8" look when a 16x2 screen is configured as 16x1.
+#ifndef LCD_AUTO_PROMOTE_16X2_IF_SINGLE
+#define LCD_AUTO_PROMOTE_16X2_IF_SINGLE 1
+#endif
+
+// Optional second I2C LCD (typical 16x2). If one display is missing, firmware keeps running with the detected one.
+#ifndef LCD2_ENABLED
+#define LCD2_ENABLED 1
+#endif
+#ifndef LCD2_I2C_ADDR
+#define LCD2_I2C_ADDR 0x3F
+#endif
+#ifndef LCD2_COLS
+#define LCD2_COLS 16
+#endif
+#ifndef LCD2_ROWS
+#define LCD2_ROWS 2
+#endif
+#ifndef LCD2_16X1_SPLIT_ROW
+#define LCD2_16X1_SPLIT_ROW 0
+#endif
+
 // RFID (MFRC522 - SPI)
 #ifndef RFID_ENABLED
 #define RFID_ENABLED 1
@@ -148,10 +182,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define ULTRA_ENABLED 1
 #endif
 #ifndef ULTRA_TRIG_PIN
-#define ULTRA_TRIG_PIN 22
+#define ULTRA_TRIG_PIN 6
 #endif
 #ifndef ULTRA_ECHO_PIN
-#define ULTRA_ECHO_PIN 23
+#define ULTRA_ECHO_PIN 5
 #endif
 #ifndef ULTRA_MEASURE_INTERVAL_MS
 #define ULTRA_MEASURE_INTERVAL_MS 50
@@ -172,14 +206,88 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define LASER_ENABLED 1
 #endif
 #ifndef LASER1_PIN
-#define LASER1_PIN 24
+#define LASER1_PIN 12
 #endif
 #ifndef LASER2_PIN
-#define LASER2_PIN 25
+#define LASER2_PIN 11
 #endif
 #ifndef LASER_ACTIVE_HIGH
 #define LASER_ACTIVE_HIGH 1  // 1: HIGH opens laser, 0: LOW opens laser
 #endif
+
+// =====================
+// IR Remote (optional)
+// =====================
+#ifndef IR_ENABLED
+#define IR_ENABLED 1
+#endif
+#ifndef IR_PIN
+// IR receiver OUT pin
+#define IR_PIN 2
+#endif
+#ifndef IR_TOKEN_TIMEOUT_MS
+// "*1" -> wait this long to commit token if no more digits come
+#define IR_TOKEN_TIMEOUT_MS 900
+#endif
+
+// =====================
+// Dual Buzzer (optional)
+// =====================
+// Two physical buzzers: one loud, one quiet.
+#ifndef BUZZER_ENABLED
+#define BUZZER_ENABLED 1
+#endif
+#ifndef BUZZER_LOUD_PIN
+#define BUZZER_LOUD_PIN 3
+#endif
+#ifndef BUZZER_QUIET_PIN
+#define BUZZER_QUIET_PIN 4
+#endif
+#ifndef BUZZER_USE_TONE
+// 1: use tone() with freq; 0: simple digital on/off
+#define BUZZER_USE_TONE 1
+#endif
+
+// On AVR, IRremote and tone() can share timers; this may break IR reception after a beep.
+// Default: if IR is enabled, avoid tone() and use non-blocking digital beep instead.
+#ifndef BUZZER_DISABLE_TONE_WHEN_IR
+#define BUZZER_DISABLE_TONE_WHEN_IR 1
+#endif
+
+// If tone() is used while IR is enabled (BUZZER_DISABLE_TONE_WHEN_IR=0),
+// AVR timers can leave IRremote in a stuck state. Re-initialize IR receiver
+// shortly after tone() finishes to resume IR decoding.
+#ifndef BUZZER_REINIT_IR_AFTER_TONE
+#define BUZZER_REINIT_IR_AFTER_TONE 1
+#endif
+
+#ifndef BOOT_BEEP
+// 1: play short beep on boot
+#define BOOT_BEEP 0
+#endif
+
+// Boot status screen
+#ifndef BOOT_STATUS_ENABLED
+#define BOOT_STATUS_ENABLED 1
+#endif
+#ifndef BOOT_STATUS_STEP_MS
+#define BOOT_STATUS_STEP_MS 350
+#endif
+
+// Boot UI / diagnostics
+#ifndef BOOT_UI_ENABLED
+#define BOOT_UI_ENABLED 1
+#endif
+#ifndef BOOT_SPLASH_MS
+#define BOOT_SPLASH_MS 450
+#endif
+#ifndef BOOT_STATUS_OK_MS
+#define BOOT_STATUS_OK_MS 250
+#endif
+#ifndef BOOT_STATUS_FAIL_MS
+#define BOOT_STATUS_FAIL_MS 1200
+#endif
+
 
 // =====================
 // Servos over I2C (PCA9685)
@@ -199,6 +307,19 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #endif
 #ifndef SERVO_MAX_US
 #define SERVO_MAX_US 2500
+#endif
+
+// =====================
+// NeoPixel (WS2812) defaults
+// =====================
+#ifndef NEOPIXEL_ENABLED
+#define NEOPIXEL_ENABLED 1
+#endif
+#ifndef PIN_NEOPIXEL
+#define PIN_NEOPIXEL 48
+#endif
+#ifndef NEO_NUM_LEDS
+#define NEO_NUM_LEDS 23
 #endif
 
 #endif // ROBOT_CONFIG_H

@@ -3,9 +3,14 @@ server:
   port: 8092
 
 hardware:
+  # backend: auto | pi | arduino | sim
+  # - Raspberry Pi 5: pi (uses pi5neo driver when available)
+  # - Arduino: Arduino connected over serial will drive the LED strip (preferred)
+  backend: auto
   device: "/dev/spidev0.0"
   num_leds: 30
   speed_khz: 800
+  ws2812_spi_khz: 2400
   order: "GRB"  # GRB|RGB|BRG
 
 defaults:

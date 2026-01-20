@@ -2,3 +2,6 @@ fastapi>=0.110
 uvicorn[standard]>=0.23
 # Optional, only on Raspberry Pi 5 SPI setup
 # pi5neo
+
+# Optional, for Arduino serial control
+# pyserial

@@ -8,7 +8,7 @@ from ..services import palette_store
 
 class ActionPayload(BaseModel):
     text: str = ""
-    actions: Dict[str, Any] | None = None
+    actions: List[Dict[str, Any]] | None = None
     raw: str | None = None
     speak: bool = False
 
@@ -59,5 +59,15 @@ def get_router(brain: AutonomyBrain) -> APIRouter:
             raise HTTPException(status_code=404, detail="palette not found")
         brain.update_palettes(palettes)
         return {"ok": True, "items": palettes}
+
+    @router.post("/start")
+    def start_brain():
+        brain.start()
+        return {"ok": True}
+
+    @router.post("/stop")
+    def stop_brain():
+        brain.stop()
+        return {"ok": True}
 
     return router

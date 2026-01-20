@@ -29,6 +29,10 @@ public:
 
     // IMU
     Wire.begin();
+  #if defined(ARDUINO_ARCH_AVR)
+    // Prevent hard lockups on missing/bad I2C devices.
+    Wire.setWireTimeout(25000, true);
+  #endif
     imu.begin(IMU_I2C_ADDR);
 
     lastPidMs = millis();

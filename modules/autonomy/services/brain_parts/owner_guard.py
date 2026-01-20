@@ -64,18 +64,33 @@ class OwnerGuardMixin:
         lowered = text.lower()
         handled = False
         temp_cfg = self.owner_cfg.get("temporary", {})
-        keyword = (temp_cfg.get("command_keyword") or "geçici sahip").lower()
-        if temp_cfg.get("enabled") and keyword in lowered:
-            target = self._extract_temp_owner_name(text, keyword)
-            if target:
-                self._assign_temp_owner(target)
-                handled = True
+        # support single keyword or list of keywords for temporary owner commands
+        cmd_kw = temp_cfg.get("command_keyword") or "geçici sahip"
+        if isinstance(cmd_kw, str):
+            keywords = [cmd_kw.lower()]
+        else:
+            keywords = [k.lower() for k in cmd_kw if k]
+        if temp_cfg.get("enabled"):
+            for keyword in keywords:
+                if keyword in lowered:
+                    target = self._extract_temp_owner_name(text, keyword)
+                    if target:
+                        self._assign_temp_owner(target)
+                        handled = True
+                        break
         if any(phrase in lowered for phrase in ["geçici yetki iptal", "geçici sahip değil"]):
             self._clear_temp_owner(announce=True)
             handled = True
         if any(phrase in lowered for phrase in ["izin ver", "serbest", "cevap verebilirsin"]):
             self._grant_owner_permission()
             handled = True
+        # Kharuun'Nokh handling: strong anger trigger phrases
+        nokh_kw = self.owner_cfg.get("kharuun_nokh_keywords") or ["kharuun'nokh", "kharuun nokh"]
+        for nk in nokh_kw:
+            if nk.lower() in lowered:
+                self._trigger_kharuun_nokh(speaker)
+                handled = True
+                break
         return handled
 
     def _is_owner_context(self, speaker: str | None) -> bool:
@@ -221,10 +236,36 @@ class OwnerGuardMixin:
         return candidates[0][0]
 
     def _is_owner_name(self, name: str | None) -> bool:
-        owner_name = self.owner_cfg.get("name")
-        if not owner_name or not name:
+        if not name:
             return False
-        return owner_name.lower() == name.lower()
+        owner_name = self.owner_cfg.get("name")
+        aliases = self.owner_cfg.get("aliases") or []
+        names = []
+        if owner_name:
+            names.append(owner_name)
+        for a in aliases:
+            if a:
+                names.append(a)
+        lowered = name.lower()
+        for n in names:
+            if n and lowered == n.lower():
+                return True
+        return False
+
+    def _trigger_kharuun_nokh(self, source: str | None = None) -> None:
+        # Strong negative reaction: modify mood, push event, announce
+        try:
+            self.mood.modify("happiness", -30)
+            self.mood.modify("fear", 30)
+        except Exception:
+            pass
+        self.client.push_interaction_event("autonomy.angry")
+        note = "Kharuun'Nokh triggered"
+        if source:
+            note += f" by {source}"
+        self.memory.add_event(note)
+        msg = self.owner_cfg.get("kharuun_nokh_message", "Sınırlar aşıldı. Tepki veriyorum.")
+        self._speak_with_mood(msg, emotion="anger")
 
     def _on_owner_seen(self, timestamp: float) -> None:
         self.state["owner_last_seen"] = timestamp

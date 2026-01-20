@@ -32,4 +32,14 @@ def get_router(capture: CameraCapture, fps: int) -> APIRouter:
         data = await capture.snapshot()
         return {"ok": bool(data)}
 
+    @router.post("/start")
+    async def start_camera():
+        capture.start()
+        return {"ok": True}
+
+    @router.post("/stop")
+    async def stop_camera():
+        capture.stop()
+        return {"ok": True}
+
     return router

@@ -1,6 +1,10 @@
 # Neopixel Module
 
-DryCode uyumlu, hem kütüphane hem servis olarak çalışabilen NeoPixel (WS2812) kontrol modülü. Pi5 üzerinde `pi5neo` ile donanım sürer; donanım yoksa simülatör çalışır.
+DryCode uyumlu, hem kütüphane hem servis olarak çalışabilen NeoPixel (WS2812) kontrol modülü.
+
+- Raspberry Pi 5: `pi5neo` ile SPI üzerinden sürer.
+- Jetson Nano desteği kaldırıldı; artık Arduino veya Pi üzerinden sürülür.
+- Donanım yoksa simülatör çalışır.
 
 ## Özellikler
 - Donanım/simülatör otomatik seçim
@@ -83,7 +87,22 @@ colors:
 	- get_by_name(emotion, name)
 
 ## Config
-`modules/neopixel/config/config.yml` içinde. Ortam değişkenleri: NEO_DEVICE, NEO_NUM_LEDS, NEO_SPEED_KHZ, NEO_ORDER, NEO_HOST, NEO_PORT.
+`modules/neopixel/config/config.yml` içinde.
+
+Ortam değişkenleri:
+- `NEO_DEVICE`, `NEO_NUM_LEDS`, `NEO_SPEED_KHZ`, `NEO_ORDER`, `NEO_HOST`, `NEO_PORT`
+- `NEO_BACKEND` (auto|pi|arduino|sim)
+- `NEO_WS2812_SPI_KHZ` (örn 2400)
+
+Arduino üzerinden sürme (özet):
+- `hardware.backend: arduino`
+- `hardware.device: AUTO` veya `COM3`/`/dev/ttyUSB0` gibi Arduino portu
+
+Raspberry Pi 5 için tipik ayar (Pi native driver):
+- `hardware.backend: pi`
+- `hardware.device: /dev/spidev0.0`
+
+Not: WS2812/NeoPixel 5V veri seviyesi ister; ara donanım (Arduino) kullanıyorsanız Arduino tarafında fiziksel sürme ve seviye çevirici uygulanmalıdır.
 
 ## Kütüphane Kullanımı
 

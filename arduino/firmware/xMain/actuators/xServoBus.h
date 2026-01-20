@@ -46,14 +46,23 @@ public:
     if(index<0||index>=SERVO_COUNT_TOTAL) return false;
 #if SERVO_USE_PCA9685
     // PCA9685 doesn't have 'attached' per channel; assume attached after begin
-    return driverReady;
+    return driverReady && driverPresent;
 #else
     return servos[index].attached();
 #endif
   }
 
+  bool driverOk() const {
+#if SERVO_USE_PCA9685
+    return driverReady && driverPresent;
+#else
+    return true;
+#endif
+  }
+
   void detachAll(){
 #if SERVO_USE_PCA9685
+    if (!driverOk()) return;
     // Full off for all channels to release torque
     for (int i=0;i<SERVO_COUNT_TOTAL;i++){ channelFullOff(pinMap[i]); }
 #else
@@ -64,6 +73,7 @@ public:
 #if SERVO_USE_PCA9685
     // Ensure driver initialized
     if (!driverReady) beginDriver();
+    if (!driverOk()) return;
     for (int i=0;i<SERVO_COUNT_TOTAL;i++) rawWrite(i, (int)currents[i]);
 #else
     for(int i=0;i<SERVO_COUNT_TOTAL;i++){ if(!servos[i].attached()) servos[i].attach(pinMap[i]); servos[i].write((int)currents[i]); }
@@ -73,6 +83,7 @@ public:
   void detachOne(int index){
     if(index<0||index>=SERVO_COUNT_TOTAL) return;
 #if SERVO_USE_PCA9685
+    if (!driverOk()) return;
     channelFullOff(pinMap[index]);
 #else
     if(servos[index].attached()) servos[index].detach();
@@ -81,6 +92,7 @@ public:
   void reattachOne(int index){
     if(index<0||index>=SERVO_COUNT_TOTAL) return;
 #if SERVO_USE_PCA9685
+    if (!driverOk()) return;
     // Write current angle back to re-enable PWM
     rawWrite(index, (int)currents[index]);
 #else
@@ -102,6 +114,10 @@ private:
   static constexpr uint8_t MODE1 = 0x00;
   static constexpr uint8_t PRESCALE = 0xFE;
   static constexpr uint8_t LED0_ON_L = 0x06;
+  bool i2cPing() const {
+    Wire.beginTransmission(PCA9685_ADDR);
+    return (Wire.endTransmission() == 0);
+  }
   void i2cWrite8(uint8_t reg, uint8_t val){ Wire.beginTransmission(PCA9685_ADDR); Wire.write(reg); Wire.write(val); Wire.endTransmission(); }
   uint8_t i2cRead8(uint8_t reg){ Wire.beginTransmission(PCA9685_ADDR); Wire.write(reg); Wire.endTransmission(); Wire.requestFrom((int)PCA9685_ADDR, 1); return Wire.available()?Wire.read():0; }
   void setPwmFreq(float hz){
@@ -145,9 +161,28 @@ private:
     setPwm(ch, 0, off);
   }
   void beginDriver(){
-    if (driverReady) return; Wire.begin(); i2cWrite8(MODE1, 0x00); delay(5); setPwmFreq(SERVO_FREQ_HZ); driverReady = true; }
-  void rawWrite(int index, int deg){ angleWrite(pinMap[index], deg); }
+    if (driverReady) return;
+    Wire.begin();
+#if defined(ARDUINO_ARCH_AVR)
+    // Avoid hard lock if a device disappears or bus glitches.
+    Wire.setWireTimeout(25000, true);
+#endif
+    driverPresent = i2cPing();
+    if (!driverPresent){
+      driverReady = true; // initialized but unavailable -> keep writes as no-op
+      return;
+    }
+    i2cWrite8(MODE1, 0x00);
+    delay(5);
+    setPwmFreq(SERVO_FREQ_HZ);
+    driverReady = true;
+  }
+  void rawWrite(int index, int deg){
+    if (!driverOk()) return;
+    angleWrite(pinMap[index], deg);
+  }
   bool driverReady=false;
+  bool driverPresent=false;
 #else
   Servo servos[SERVO_COUNT_TOTAL];
   void beginDriver(){ /* no-op for direct Servo */ for (int i=0;i<SERVO_COUNT_TOTAL;i++){ servos[i].attach(pinMap[i]); servos[i].write((int)targets[i]); } }
