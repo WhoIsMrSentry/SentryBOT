@@ -71,9 +71,8 @@ public:
 
     // Klasik 16x2 vb.
     _lcd->setCursor(0, 0);
-    for (int i = 0; i < _cols; i++) _lcd->print(' ');
-    _lcd->setCursor(0, 0);
     _lcd->print(m);
+    for (int i = (int)m.length(); i < _cols; i++) _lcd->print(' ');
   }
 
   void printLines(const String &line1, const String &line2){
@@ -92,14 +91,12 @@ public:
     if ((int)b.length() > _cols) b = b.substring(0, _cols);
 
     _lcd->setCursor(0, 0);
-    for (int i = 0; i < _cols; i++) _lcd->print(' ');
-    _lcd->setCursor(0, 0);
     _lcd->print(a);
+    for (int i = (int)a.length(); i < _cols; i++) _lcd->print(' ');
 
     _lcd->setCursor(0, 1);
-    for (int i = 0; i < _cols; i++) _lcd->print(' ');
-    _lcd->setCursor(0, 1);
     _lcd->print(b);
+    for (int i = (int)b.length(); i < _cols; i++) _lcd->print(' ');
 
     _lcd->setCursor(0, 0);
   }

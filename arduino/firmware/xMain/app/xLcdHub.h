@@ -158,7 +158,7 @@ public:
   void show(const String &top, const String &bottom = "", bool force=false){
     if (!lcdHubAny()) return;
     if (_pinned && !force) return;
-    if (!force && top == _lastTop && bottom == _lastBottom) return;
+    if (top == _lastTop && bottom == _lastBottom) return; // Ignore even if forced if content is identical
     _lastTop = top;
     _lastBottom = bottom;
     _lastShowMs = millis();
@@ -168,9 +168,9 @@ public:
   void showTo(uint8_t targetMask, const String &top, const String &bottom = "", bool force=false){
     if (!lcdHubAny()) return;
     if (_pinned && !force) return;
-    if (!force && top == _lastTop && bottom == _lastBottom){
-      // content same; still allow reroute without redraw
-      lcdHubPrint(targetMask, top, bottom);
+    if (top == _lastTop && bottom == _lastBottom){
+      // Content same; if forced we might still want to ensure it's on this specific display,
+      // but to solve flicker we avoid redundant print calls.
       return;
     }
     _lastTop = top;
