@@ -3,7 +3,7 @@
 DryCode uyumlu, hem kütüphane hem servis olarak çalışabilen NeoPixel (WS2812) kontrol modülü.
 
 - Raspberry Pi 5: `pi5neo` ile SPI üzerinden sürer.
-- Jetson Nano (ve benzeri): `spi_ws2812` backend’i ile SPI MOSI üzerinden WS2812 sinyali üretir.
+- Jetson Nano desteği kaldırıldı; artık Arduino veya Pi üzerinden sürülür.
 - Donanım yoksa simülatör çalışır.
 
 ## Özellikler
@@ -91,15 +91,18 @@ colors:
 
 Ortam değişkenleri:
 - `NEO_DEVICE`, `NEO_NUM_LEDS`, `NEO_SPEED_KHZ`, `NEO_ORDER`, `NEO_HOST`, `NEO_PORT`
-- `NEO_BACKEND` (auto|pi5neo|spi_ws2812|sim)
+- `NEO_BACKEND` (auto|pi|arduino|sim)
 - `NEO_WS2812_SPI_KHZ` (örn 2400)
 
-Jetson Nano için tipik ayar:
-- `hardware.backend: spi_ws2812`
-- `hardware.device: /dev/spidev0.0` (sisteminize göre `/dev/spidev1.0` olabilir)
-- `hardware.ws2812_spi_khz: 2400`
+Arduino üzerinden sürme (özet):
+- `hardware.backend: arduino`
+- `hardware.device: AUTO` veya `COM3`/`/dev/ttyUSB0` gibi Arduino portu
 
-Not: WS2812/NeoPixel 5V veri seviyesi ister; Jetson 3.3V GPIO ile sürüyorsanız seviye çevirici (level shifter) önerilir.
+Raspberry Pi 5 için tipik ayar (Pi native driver):
+- `hardware.backend: pi`
+- `hardware.device: /dev/spidev0.0`
+
+Not: WS2812/NeoPixel 5V veri seviyesi ister; ara donanım (Arduino) kullanıyorsanız Arduino tarafında fiziksel sürme ve seviye çevirici uygulanmalıdır.
 
 ## Kütüphane Kullanımı
 
