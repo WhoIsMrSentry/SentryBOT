@@ -48,7 +48,7 @@ public:
     _capture = false;
     _lastDigitMs = 0;
     _servoSel = -1;
-    _laserOn = false;
+    _laserMode = 0;
     _lastUiMs = 0;
     _imuSub = 0;
 
@@ -60,6 +60,7 @@ public:
     _morseIdx = 0;
     _morseNextMs = 0;
     _morsePlaying = false;
+    _lastProxBeepMs = 0;
     showHome();
   }
 
@@ -70,6 +71,12 @@ public:
 
   void onKey(const String &k, Robot &robot){
     if (k == "UNKNOWN") return;
+
+#if BUZZER_ENABLED
+    // Feedback beep for every valid key
+    // Short, high pitch
+    g_buzzer.beepOn(g_buzzerDefaultOut, 2400, 30);
+#endif
 
     // Global back/cancel
     if (k == "#"){
@@ -144,22 +151,44 @@ public:
       return;
     }
 
-    // Laser control
-    if (_state == STATE_LASER){
-      if (k == "OK"){
-        _laserOn = !_laserOn;
-        applyLaser();
-        showLaser();
+    // NeoPixel flow
+    if (_state >= STATE_NEO_MAIN && _state <= STATE_NEO_ANIM){
+      if (k == "*"){
+        startToken();
+        showNeoPixelToken();
         return;
       }
-      if (k == "UP"){
-        _laserOn = true;
+      if (k == "OK"){
+        commitTokenIfAny(robot);
+        _capture = false;
+        _token = "";
+        showNeoPixelPrompt();
+        return;
+      }
+      if (isDigitKey(k)){
+        if (!_capture){
+          _capture = true;
+          _token = "";
+        }
+        _token += k;
+        _lastDigitMs = millis();
+        showNeoPixelToken();
+        return;
+      }
+      return;
+    }
+
+    // Laser control
+    if (_state == STATE_LASER){
+      if (k == "OK" || k == "UP"){
+        _laserMode = (_laserMode + 1) % 4;
         applyLaser();
         showLaser();
         return;
       }
       if (k == "DOWN"){
-        _laserOn = false;
+        if (_laserMode == 0) _laserMode = 3;
+        else _laserMode--;
         applyLaser();
         showLaser();
         return;
@@ -194,13 +223,15 @@ public:
       }
 
       if (k == "OK"){
-        if ((SoundItem)_soundIndex == SOUND_MORSE){
-          _morseMode = !_morseMode;
-          if (_morseMode) lcdPrint("MORSE", "KEY=CODE #=BK");
-          else showSound();
-          return;
-        }
         playSelectedSound();
+        showSound();
+        return;
+      }
+      if (k == "LEFT" || k == "RIGHT"){
+#if BUZZER_ENABLED
+        g_buzzerDefaultOut = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? BUZZER_OUT_QUIET : BUZZER_OUT_LOUD;
+        g_song.setDefaultOut(g_buzzerDefaultOut);
+#endif
         showSound();
         return;
       }
@@ -245,6 +276,15 @@ public:
       }
     }
 
+    if (_capture && _token.length() > 0 && _lastDigitMs != 0 && _state >= STATE_NEO_MAIN){
+      if (millis() - _lastDigitMs >= (unsigned long)IR_TOKEN_TIMEOUT_MS){
+        commitTokenIfAny(robot);
+        _capture = false;
+        _token = "";
+        showNeoPixelPrompt();
+      }
+    }
+
     // Periodic refresh for live pages
     if (_state == STATE_ULTRA || _state == STATE_IMU || _state == STATE_RFID || _state == STATE_SYSTEM || _state == STATE_LASER){
       unsigned long now = millis();
@@ -254,11 +294,23 @@ public:
       }
     }
 
+    // Proximity feedback in Ultra mode
+#if ULTRA_ENABLED && BUZZER_ENABLED
+    if (_state == STATE_ULTRA && !isnan(g_ultraCm) && g_ultraCm > 0 && g_ultraCm < 150.0f){
+      unsigned long now2 = millis();
+      // closer = faster beeps. Interval: ~50ms to 800ms.
+      unsigned long interval = (unsigned long)constrain(g_ultraCm * 5.0f + 40.0f, 50.0f, 800.0f);
+      if (now2 - _lastProxBeepMs >= interval){
+        _lastProxBeepMs = now2;
+        g_buzzer.beepOn(g_buzzerDefaultOut, 2800, 30);
+      }
+    }
+#endif
+
     // Non-blocking morse player
     tickMorse();
   }
 
-private:
   static bool isDigitKey(const String &k){ return k.length() == 1 && k[0] >= '0' && k[0] <= '9'; }
 
   enum State : uint8_t {
@@ -272,6 +324,11 @@ private:
     STATE_IMU,
     STATE_RFID,
     STATE_SYSTEM,
+    STATE_NEO_MAIN,
+    STATE_NEO_RGB_R,
+    STATE_NEO_RGB_G,
+    STATE_NEO_RGB_B,
+    STATE_NEO_ANIM,
   };
 
   enum MenuItem : uint8_t {
@@ -281,6 +338,7 @@ private:
     MENU_IMU,
     MENU_RFID,
     MENU_SOUND,
+    MENU_NEOPIXEL,
     MENU_SYSTEM,
     MENU_COUNT,
   };
@@ -289,6 +347,7 @@ private:
     SOUND_WALLE = 0,
     SOUND_BB8,
     SOUND_MORSE,
+    SOUND_BUZZER,
     SOUND_COUNT,
   };
 
@@ -331,6 +390,7 @@ private:
       case MENU_IMU: return "IMU";
       case MENU_RFID: return "RFID";
       case MENU_SOUND: return "SOUND";
+      case MENU_NEOPIXEL: return "NEOPIXEL";
       case MENU_SYSTEM: return "SYSTEM";
       default: return "MENU";
     }
@@ -397,61 +457,50 @@ private:
         refreshLive(robot);
         return;
 
+      case MENU_NEOPIXEL:
+        _state = STATE_NEO_MAIN;
+        _neoR = 255; _neoG = 50; _neoB = 255; // Default from user request
+        _capture = false;
+        _token = "";
+        _lastDigitMs = 0;
+        showNeoPixelPrompt();
+        return;
+
       default:
         return;
     }
   }
 
-  void showServoPrompt(){
-    if (_state == STATE_SERVO_SEL){
-      lcdPrint("SERVO", "NUM(1..8) OK");
-    } else {
-      lcdPrint("SERVO:" + String(_servoSel + 1), "DEG(0..180) OK");
-    }
-  }
-
   void showServoPrompt();
-
   void showServoToken();
+  void showNeoPixelPrompt();
+  void showNeoPixelToken();
 
   void showLaser(){
-    lcdPrint("LASER", _laserOn ? "ON  UP/DN OK" : "OFF UP/DN OK");
+    const char* modes[] = {"OFF", "L1", "L2", "BOTH"};
+    lcdPrint("LASER", String(modes[_laserMode % 4]) + " UP/DN/OK");
   }
 
-  static String soundName(uint8_t idx){
   static String soundName(uint8_t idx);
-
   void showSound();
-
   void playSelectedSound();
-
   static String morsePatternForKey(const String &k);
-
   void startMorse(const String &pattern);
-
   String textToMorse(const String &text);
-
   void tickMorse();
 
   void applyLaser(){
 #if LASER_ENABLED
-    if (_laserOn) g_lasers.bothOn();
+    if (_laserMode == 1) g_lasers.oneOn(1);
+    else if (_laserMode == 2) g_lasers.oneOn(2);
+    else if (_laserMode == 3) g_lasers.bothOn();
     else g_lasers.off();
 #endif
   }
 
-  void startToken(){
-    _capture = true;
-    _token = "";
-    _lastDigitMs = 0;
-  }
-
   void startToken();
-
   void cancelToken();
-
   void commitTokenIfAny(Robot &robot);
-
   void applyToken(long v, Robot &robot);
 
 #if LCD_ENABLED
@@ -463,10 +512,9 @@ private:
   void lcdPrint(const String &, const String & = ""){ }
 #endif
 
-  void refreshLive(Robot &robot){
-    // delegated to sensors implementation
-    refreshLive(robot);
-  }
+  void refreshLive(Robot &robot);
+
+private:
 
   static int normalizeServoIndex(long v){
     // Accept both 1-based (1..8) and 0-based (0..7)
@@ -507,7 +555,7 @@ private:
   uint8_t _menuIndex{0};
 
   int _servoSel{-1};
-  bool _laserOn{false};
+  uint8_t _laserMode{0}; // 0:OFF, 1:L1, 2:L2, 3:BOTH
 
   bool _capture{false};
   String _token;
@@ -524,10 +572,14 @@ private:
   uint16_t _morseIdx{0};
   unsigned long _morseNextMs{0};
   bool _morsePlaying{false};
+
+  uint8_t _neoR{255}, _neoG{255}, _neoB{255};
+  unsigned long _lastProxBeepMs{0};
 };
 
 #include "menus/xIrMenuController_sound.h"
 #include "menus/xIrMenuController_servo.h"
+#include "menus/xIrMenuController_neopixel.h"
 #include "menus/xIrMenuController_sensors.h"
 
 #endif // IR_ENABLED
