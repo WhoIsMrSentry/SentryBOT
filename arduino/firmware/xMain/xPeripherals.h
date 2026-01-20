@@ -11,5 +11,7 @@
 #include "peripherals/xLaserPair.h"
 #include "peripherals/xBuzzer.h"
 #include "peripherals/xIrKeyReader.h"
+// NeoPixel peripheral
+#include "peripherals/xNeopixel.h"
 
 #endif // ROBOT_PERIPHERALS_H

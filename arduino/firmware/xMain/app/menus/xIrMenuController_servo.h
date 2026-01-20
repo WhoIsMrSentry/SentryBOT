@@ -57,6 +57,47 @@ void IrMenuController::applyToken(long v, Robot &robot){
 #endif
     return;
   }
+
+#if NEOPIXEL_ENABLED
+  if (_state == STATE_NEO_MAIN){
+    if (v == 1) _state = STATE_NEO_RGB_R;
+    else if (v == 2) _state = STATE_NEO_ANIM;
+    showNeoPixelPrompt();
+    return;
+  }
+  if (_state == STATE_NEO_RGB_R){
+    _neoR = (uint8_t)constrain(v, 0, 255);
+    _state = STATE_NEO_RGB_G;
+    showNeoPixelPrompt();
+    return;
+  }
+  if (_state == STATE_NEO_RGB_G){
+    _neoG = (uint8_t)constrain(v, 0, 255);
+    _state = STATE_NEO_RGB_B;
+    showNeoPixelPrompt();
+    return;
+  }
+  if (_state == STATE_NEO_RGB_B){
+    _neoB = (uint8_t)constrain(v, 0, 255);
+    neopixel_start_animation("fill", _neoR, _neoG, _neoB, 0, 0);
+    lcdPrint("NEO: SET", "RGB " + String(_neoR) + "," + String(_neoG) + "," + String(_neoB));
+    _state = STATE_NEO_MAIN;
+    return;
+  }
+  if (_state == STATE_NEO_ANIM){
+    int anim = (int)v;
+    String name = "fill";
+    if (anim == 1) name = "fill";
+    else if (anim == 2) name = "rainbow";
+    else if (anim == 3) name = "theater";
+    else if (anim == 4) name = "breathe";
+    else if (anim == 5) name = "clear";
+    neopixel_start_animation(name, _neoR, _neoG, _neoB, 0, 50);
+    lcdPrint("NEO: ANIM", name);
+    _state = STATE_NEO_MAIN;
+    return;
+  }
+#endif
 }
 
 #endif // IR_ENABLED

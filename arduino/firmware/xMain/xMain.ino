@@ -44,7 +44,7 @@ LaserPair g_lasers;
 #if BUZZER_ENABLED
 BuzzerPair g_buzzer;
 BuzzerSongPlayer g_song;
-BuzzerOut g_buzzerDefaultOut = BUZZER_OUT_QUIET;
+BuzzerOut g_buzzerDefaultOut = BUZZER_OUT_LOUD;
 #endif
 #if IR_ENABLED
 IrKeyReader g_ir;
@@ -173,6 +173,9 @@ void setup(){
 #endif
   g_irMenu.reset();
 #endif
+#if NEOPIXEL_ENABLED
+  neopixel_begin();
+#endif
 #if BOOT_CALIBRATION_PROMPT
   unsigned long t0 = millis();
   SERIAL_IO.println(F("{\"info\":\"press 'c' + Enter in 2s to calibrate\"}"));
@@ -234,6 +237,10 @@ void loop(){
 #if BUZZER_ENABLED
   g_song.update();
   g_buzzer.update();
+#endif
+  // NeoPixel animation tick
+#if NEOPIXEL_ENABLED
+  neopixel_tick();
 #endif
   // Heartbeat timeout safety
   if (HEARTBEAT_TIMEOUT_MS>0 && (millis() - lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS)){
