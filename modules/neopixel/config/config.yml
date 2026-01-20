@@ -3,9 +3,9 @@ server:
   port: 8092
 
 hardware:
-  # backend: auto | pi5neo | spi_ws2812 | sim
-  # - Raspberry Pi 5: pi5neo
-  # - Jetson Nano: spi_ws2812 (SPI MOSI -> DIN)
+  # backend: auto | pi | arduino | sim
+  # - Raspberry Pi 5: pi (uses pi5neo driver when available)
+  # - Arduino: Arduino connected over serial will drive the LED strip (preferred)
   backend: auto
   device: "/dev/spidev0.0"
   num_leds: 30

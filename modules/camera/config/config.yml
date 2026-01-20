@@ -1,5 +1,5 @@
 # Camera module configuration (defaults)
-backend: auto           # auto | picamera2 | opencv
+backend: auto           # auto | picamera2 | opencv | gstreamer
 source: 0               # device index or RTSP/HTTP URL for OpenCV
 resolution:
   width: 1280
