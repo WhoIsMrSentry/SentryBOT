@@ -153,28 +153,7 @@ public:
 
     // NeoPixel flow
     if (_state >= STATE_NEO_MAIN && _state <= STATE_NEO_ANIM){
-      if (k == "*"){
-        startToken();
-        showNeoPixelToken();
-        return;
-      }
-      if (k == "OK"){
-        commitTokenIfAny(robot);
-        _capture = false;
-        _token = "";
-        showNeoPixelPrompt();
-        return;
-      }
-      if (isDigitKey(k)){
-        if (!_capture){
-          _capture = true;
-          _token = "";
-        }
-        _token += k;
-        _lastDigitMs = millis();
-        showNeoPixelToken();
-        return;
-      }
+      handleNeoPixelKey(k, robot);
       return;
     }
 
@@ -272,16 +251,11 @@ public:
         commitTokenIfAny(robot);
         _capture = false;
         _token = "";
-        showServoPrompt();
-      }
-    }
-
-    if (_capture && _token.length() > 0 && _lastDigitMs != 0 && _state >= STATE_NEO_MAIN){
-      if (millis() - _lastDigitMs >= (unsigned long)IR_TOKEN_TIMEOUT_MS){
-        commitTokenIfAny(robot);
-        _capture = false;
-        _token = "";
-        showNeoPixelPrompt();
+        if (_state >= STATE_NEO_MAIN && _state <= STATE_NEO_ANIM) {
+          showNeoPixelPrompt();
+        } else {
+          showServoPrompt();
+        }
       }
     }
 
@@ -459,7 +433,8 @@ public:
 
       case MENU_NEOPIXEL:
         _state = STATE_NEO_MAIN;
-        _neoR = 255; _neoG = 50; _neoB = 255; // Default from user request
+        _neoR = 255; _neoG = 50; _neoB = 255; 
+        _neoAnimIndex = 0;
         _capture = false;
         _token = "";
         _lastDigitMs = 0;
@@ -475,6 +450,7 @@ public:
   void showServoToken();
   void showNeoPixelPrompt();
   void showNeoPixelToken();
+  void handleNeoPixelKey(const String &k, Robot &robot);
 
   void showLaser(){
     const char* modes[] = {"OFF", "L1", "L2", "BOTH"};
@@ -501,7 +477,52 @@ public:
   void startToken();
   void cancelToken();
   void commitTokenIfAny(Robot &robot);
-  void applyToken(long v, Robot &robot);
+  void applyToken(long v, Robot &robot){
+    if (_state == STATE_SERVO_SEL){
+      _servoSel = normalizeServoIndex(v);
+      emitEvent("servo_sel", _servoSel);
+      _state = STATE_SERVO_DEG;
+      showServoPrompt();
+      return;
+    }
+    if (_state == STATE_SERVO_DEG){
+      float deg = (float)constrain(v, 0, 180);
+      robot.writeServoLimited(_servoSel, deg);
+      emitEvent("servo_set", _servoSel, (long)deg);
+      lcdPrint("SERVO:" + String(_servoSel + 1), "DEG:" + String((int)deg));
+#if BUZZER_ENABLED
+      g_buzzer.beepOn(g_buzzerDefaultOut, 2400, 40);
+#endif
+      return;
+    }
+#if NEOPIXEL_ENABLED
+    if (_state == STATE_NEO_MAIN){
+      if (v == 1) _state = STATE_NEO_RGB_R;
+      else if (v == 2) _state = STATE_NEO_ANIM;
+      showNeoPixelPrompt();
+      return;
+    }
+    if (_state == STATE_NEO_RGB_R){
+      _neoR = (uint8_t)constrain(v, 0, 255);
+      _state = STATE_NEO_RGB_G;
+      showNeoPixelPrompt();
+      return;
+    }
+    if (_state == STATE_NEO_RGB_G){
+      _neoG = (uint8_t)constrain(v, 0, 255);
+      _state = STATE_NEO_RGB_B;
+      showNeoPixelPrompt();
+      return;
+    }
+    if (_state == STATE_NEO_RGB_B){
+      _neoB = (uint8_t)constrain(v, 0, 255);
+      neopixel_start_animation("fill", _neoR, _neoG, _neoB, 0, 0);
+      lcdPrint("NEO: SET", "RGB " + String(_neoR) + "," + String(_neoG) + "," + String(_neoB));
+      _state = STATE_NEO_MAIN;
+      return;
+    }
+#endif
+  }
 
 #if LCD_ENABLED
   void lcdPrint(const String &top, const String &bottom = ""){
@@ -574,6 +595,7 @@ private:
   bool _morsePlaying{false};
 
   uint8_t _neoR{255}, _neoG{255}, _neoB{255};
+  uint8_t _neoAnimIndex{0};
   unsigned long _lastProxBeepMs{0};
 };
 
