@@ -8,6 +8,7 @@ class _StripProto(Protocol):
     def set_led_color(self, idx: int, r: int, g: int, b: int) -> None: ...
     def update_strip(self) -> None: ...
     def clear_strip(self) -> None: ...
+    def animate(self, name: str, r: int, g: int, b: int, iterations: int, speed_ms: int) -> bool: ...
 
 
 class _SimStrip:
@@ -31,6 +32,10 @@ class _SimStrip:
     def clear_strip(self) -> None:
         self.buf = [(0, 0, 0)] * self.num_leds
 
+    def animate(self, name: str, r: int, g: int, b: int, iterations: int, speed_ms: int) -> bool:
+        # Simulator doesn't play hardware animations
+        return False
+
 
 @dataclass
 class NeoDriverConfig:
@@ -39,9 +44,12 @@ class NeoDriverConfig:
     speed_khz: int = 800
     order: str = "GRB"  # GRB | RGB | BRG
 
-    # backend selection: auto | pi5neo | spi_ws2812 | sim
+    # backend selection: auto | pi | arduino | sim
+    # - `pi`     : Raspberry Pi native driver (pi5neo)
+    # - `arduino`: Arduino attached over serial will drive the LEDs (preferred for this project)
+    # - `sim`    : software simulator / no-op
     backend: str = "auto"
-    # For WS2812 over SPI (common on Jetson): typical is 2400kHz or 3200kHz.
+    # When using Arduino backend the `device` may be a serial port or 'AUTO'
     ws2812_spi_khz: int = 2400
 
 
@@ -58,36 +66,39 @@ def _parse_spidev_device(path: str) -> tuple[int, int] | None:
         return None
 
 
-class _SpiWs2812Strip:
-    """WS2812/NeoPixel driver over SPI using 'spidev'.
+class _ArduinoStrip:
+    """Backend that delegates LED driving to an attached Arduino via serial.
 
-    This is a pragmatic backend for boards like Jetson Nano where Pi-specific
-    drivers (e.g. pi5neo) are unavailable.
+    This class keeps a local pixel buffer and sends the full pixel array
+    to the Arduino when `update_strip` is called. The Arduino firmware is
+    expected to accept a JSON/NDJSON command such as:
+      { "cmd": "neopixel_pixels", "pixels": [[r,g,b], ...] }
 
-    Encoding approach:
-      - Use SPI at ~2.4MHz.
-      - Map each WS2812 data bit to a 3-bit SPI symbol:
-          0 -> 100
-          1 -> 110
+    The implementation uses the high-level `ArduinoDriver` helper if
+    available in the `modules.arduino_serial` module.
     """
 
-    def __init__(self, device: str, num_leds: int, spi_khz: int = 2400) -> None:
+    def __init__(self, device: str, num_leds: int) -> None:
         self.num_leds = num_leds
         self.buf: List[Tuple[int, int, int]] = [(0, 0, 0)] * num_leds
-
         try:
-            import spidev  # type: ignore
-        except Exception as exc:
-            raise RuntimeError("spidev not available; install python package 'spidev'") from exc
+            from modules.arduino_serial.services.driver import ArduinoDriver  # type: ignore
+        except Exception:
+            try:
+                from ..arduino_serial.services.driver import ArduinoDriver  # type: ignore
+            except Exception as exc:
+                raise RuntimeError("Arduino support not available (modules.arduino_serial missing)") from exc
 
-        parsed = _parse_spidev_device(device)
-        if not parsed:
-            raise ValueError(f"Invalid SPI device path: {device}")
-        bus, dev = parsed
-        self._spi = spidev.SpiDev()
-        self._spi.open(bus, dev)
-        self._spi.mode = 0
-        self._spi.max_speed_hz = int(spi_khz) * 1000
+        # construct driver with possible port override via `device` string
+        cfg_overrides = None
+        if device and device.upper() != "AUTO":
+            cfg_overrides = {"port": device}
+        self._arduino = ArduinoDriver()
+        try:
+            self._arduino.start()
+        except Exception:
+            # best-effort; caller may start Arduino service separately
+            pass
 
     def set_led_color(self, idx: int, r: int, g: int, b: int) -> None:
         if 0 <= idx < self.num_leds:
@@ -95,41 +106,35 @@ class _SpiWs2812Strip:
 
     def clear_strip(self) -> None:
         self.buf = [(0, 0, 0)] * self.num_leds
-
-    def _encode_byte(self, value: int) -> List[int]:
-        # Encode 8 WS2812 bits into 24 SPI bits, packed into 3 bytes.
-        bits: List[int] = []
-        for i in range(7, -1, -1):
-            bit = (value >> i) & 1
-            bits.extend([1, 1, 0] if bit else [1, 0, 0])
-        out: List[int] = []
-        cur = 0
-        n = 0
-        for b in bits:
-            cur = (cur << 1) | b
-            n += 1
-            if n == 8:
-                out.append(cur)
-                cur = 0
-                n = 0
-        if n:
-            out.append(cur << (8 - n))
-        return out
+        # notify Arduino immediately
+        try:
+            self._arduino.svc.send({"cmd": "neopixel_clear"})
+        except Exception:
+            pass
 
     def update_strip(self) -> None:
-        payload: List[int] = []
-        for r, g, b in self.buf:
-            payload.extend(self._encode_byte(r))
-            payload.extend(self._encode_byte(g))
-            payload.extend(self._encode_byte(b))
+        # send full pixel buffer as list of [r,g,b]
+        pix = [[r, g, b] for (r, g, b) in self.buf]
+        try:
+            self._arduino.svc.send({"cmd": "neopixel_pixels", "pixels": pix})
+        except Exception:
+            # best-effort: ignore if Arduino not reachable
+            pass
 
-        # Reset/latch: send a low period (>50us). Zeros on SPI do that.
-        payload.extend([0x00] * 64)
-
-        # Write in chunks to avoid huge single write on some drivers.
-        chunk = 4096
-        for i in range(0, len(payload), chunk):
-            self._spi.xfer2(payload[i : i + chunk])
+    def animate(self, name: str, r: int, g: int, b: int, iterations: int, speed_ms: int) -> bool:
+        try:
+            self._arduino.svc.send({
+                "cmd": "neopixel_animate",
+                "name": name,
+                "r": r,
+                "g": g,
+                "b": b,
+                "iterations": iterations,
+                "speed_ms": speed_ms
+            })
+            return True
+        except Exception:
+            return False
 
 
 class NeoDriver:
@@ -141,21 +146,19 @@ class NeoDriver:
         self._strip: _StripProto
         backend = (cfg.backend or "auto").strip().lower()
 
-        if backend in {"pi5neo", "auto"}:
+        if backend in {"pi", "auto"}:
             try:
-                # Optional dependency; primarily for Raspberry Pi 5 SPI setup
                 from pi5neo import Pi5Neo  # type: ignore
 
                 self._strip = Pi5Neo(cfg.device, num_leds=cfg.num_leds, spi_speed_khz=cfg.speed_khz)
                 return
             except Exception:
+                # fallthrough to Arduino or sim
                 pass
 
-        if backend in {"spi", "spi_ws2812", "ws2812_spi", "auto"}:
+        if backend in {"arduino"}:
             try:
-                # Generic WS2812-over-SPI backend (Jetson-friendly)
-                spi_khz = int(cfg.ws2812_spi_khz or 2400)
-                self._strip = _SpiWs2812Strip(cfg.device, num_leds=cfg.num_leds, spi_khz=spi_khz)
+                self._strip = _ArduinoStrip(cfg.device, num_leds=cfg.num_leds)
                 return
             except Exception:
                 pass
@@ -179,6 +182,12 @@ class NeoDriver:
         for i in range(self.num_leds):
             self.set(i, r, g, b)
         self.show()
+
+    def animate(self, name: str, r: int = 255, g: int = 255, b: int = 255, iterations: int = 0, speed_ms: int = 50) -> bool:
+        """Attempts to play a hardware-accelerated animation.
+        Returns True if the backend handled it, False if we need to fall back to software.
+        """
+        return self._strip.animate(name.lower(), r, g, b, iterations, speed_ms)
 
     # Helpers
     def _map_color(self, r: int, g: int, b: int) -> Tuple[int, int, int]:

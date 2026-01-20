@@ -103,9 +103,23 @@ class NeoRunner:
         iterations: int | None = None,
         color: tuple[int, int, int] | None = None,
     ) -> None:
-        name = name.upper()
+        name_lower = name.lower().strip()
         cols = self._colors_from_emotions(emotions)
         c1 = color if color is not None else (cols[0] if cols else None)
+
+        # Attempt hardware acceleration for supported names
+        hw_names = {"rainbow", "theater", "breathe", "clear", "fill"}
+        # Map some common Python names to Arduino names
+        mapped_name = name_lower
+        if name_lower == "theater_chase": mapped_name = "theater"
+
+        if mapped_name in hw_names:
+            r, g, b = c1 if c1 else (255, 255, 255)
+            # if hardware handles it, we are done
+            if self.driver.animate(mapped_name, r, g, b, iterations or 0, 50):
+                return
+
+        name = name.upper()
         c2 = cols[1] if len(cols) > 1 else None
         # Map names to functions
         if name == "RAINBOW":
