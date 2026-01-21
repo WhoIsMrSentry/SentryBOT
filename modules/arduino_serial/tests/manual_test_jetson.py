@@ -1,50 +1,51 @@
-import serial
+#!/usr/bin/python3
 import time
-import json
-import sys
+import serial
 
-def test_serial(port_name, baud_rate=115200):
-    print("Opening {} at {}...".format(port_name, baud_rate))
-    try:
-        ser = serial.Serial(port_name, baud_rate, timeout=2)
-        time.sleep(2)  # Wait for Arduino reset if DTR is connected, or just settle
-        print("Port opened.")
-    except Exception as e:
-        print("Error opening port: {}".format(e))
-        return
+print("UART Demonstration Program")
+print("NVIDIA Jetson Nano Developer Kit")
 
-    # Clear buffer
-    ser.reset_input_buffer()
+# Setup according to user request
+serial_port = serial.Serial(
+    port="/dev/ttyTHS1",
+    baudrate=115200,
+    bytesize=serial.EIGHTBITS,
+    parity=serial.PARITY_NONE,
+    stopbits=serial.STOPBITS_ONE,
+)
+# Wait a second to let the port initialize
+time.sleep(1)
 
-    # Send Hello
-    msg = {"cmd": "hello"}
-    line_out = json.dumps(msg) + "\n"
-    print("Sending: {}".format(line_out.strip()))
-    ser.write(line_out.encode('utf-8'))
-
-    # Listen for response
-    start_time = time.time()
-    while time.time() - start_time < 5:
-        if ser.in_waiting > 0:
+try:
+    # Send a simple header AND a SentryBOT command so we get a reply
+    print("Sending header and 'hello' command...")
+    # serial_port.write("UART Demonstration Program\r\n".encode())
+    
+    # SentryBOT expects JSON with a newline
+    cmd = '{"cmd":"hello"}\n'
+    serial_port.write(cmd.encode())
+    
+    while True:
+        if serial_port.inWaiting() > 0:
+            # Read all available bytes
+            data = serial_port.read(serial_port.inWaiting())
+            
+            # Print raw/decoded data
             try:
-                line = ser.readline().decode('utf-8').strip()
-                print("Received: {}".format(line))
-                if "ok" in line:
-                    print("SUCCESS: Communication established!")
-                    return
-            except Exception as e:
-                print("Read error: {}".format(e))
-        time.sleep(0.1)
-    
-    print("Timed out waiting for response.")
-    ser.close()
+                print(data.decode('utf-8'), end='')
+            except:
+                print(data)
+                
+            # NOTE: Echo (serial_port.write(data)) is DISABLED
+            # because echoing back to Arduino will confuse it (loops).
+            
+except KeyboardInterrupt:
+    print("Exiting Program")
 
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        port = sys.argv[1]
-    else:
-        # Default for Jetson UART (GPIO 14/15 -> /dev/ttyTHS1)
-        port = "/dev/ttyTHS1" 
-    
-    print("Usage: python3 manual_test_jetson.py [port]")
-    test_serial(port)
+except Exception as exception_error:
+    print("Error occurred. Exiting Program")
+    print("Error: " + str(exception_error))
+
+finally:
+    serial_port.close()
+    pass
