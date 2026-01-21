@@ -6,7 +6,7 @@
 #define ROBOT_SERIAL_BAUD 115200
 // Select serial port (Serial for USB, or Serial1 for RPi UART)
 #ifndef SERIAL_IO
-#define SERIAL_IO Serial
+#define SERIAL_IO Serial1
 #endif
 
 // Servo counts
