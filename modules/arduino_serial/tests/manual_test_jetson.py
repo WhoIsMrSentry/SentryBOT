@@ -4,13 +4,13 @@ import json
 import sys
 
 def test_serial(port_name, baud_rate=115200):
-    print(f"Opening {port_name} at {baud_rate}...")
+    print("Opening {} at {}...".format(port_name, baud_rate))
     try:
         ser = serial.Serial(port_name, baud_rate, timeout=2)
         time.sleep(2)  # Wait for Arduino reset if DTR is connected, or just settle
         print("Port opened.")
     except Exception as e:
-        print(f"Error opening port: {e}")
+        print("Error opening port: {}".format(e))
         return
 
     # Clear buffer
@@ -19,7 +19,7 @@ def test_serial(port_name, baud_rate=115200):
     # Send Hello
     msg = {"cmd": "hello"}
     line_out = json.dumps(msg) + "\n"
-    print(f"Sending: {line_out.strip()}")
+    print("Sending: {}".format(line_out.strip()))
     ser.write(line_out.encode('utf-8'))
 
     # Listen for response
@@ -28,12 +28,12 @@ def test_serial(port_name, baud_rate=115200):
         if ser.in_waiting > 0:
             try:
                 line = ser.readline().decode('utf-8').strip()
-                print(f"Received: {line}")
+                print("Received: {}".format(line))
                 if "ok" in line:
                     print("SUCCESS: Communication established!")
                     return
             except Exception as e:
-                print(f"Read error: {e}")
+                print("Read error: {}".format(e))
         time.sleep(0.1)
     
     print("Timed out waiting for response.")
@@ -44,8 +44,7 @@ if __name__ == "__main__":
         port = sys.argv[1]
     else:
         # Default for Jetson UART (GPIO 14/15 -> /dev/ttyTHS1)
-        # Check your specific Jetson model!
         port = "/dev/ttyTHS1" 
     
-    print(f"Usage: python3 manual_test_jetson.py [port]")
+    print("Usage: python3 manual_test_jetson.py [port]")
     test_serial(port)
