@@ -2,6 +2,7 @@
 #define SENTRY_APP_IR_MENU_CONTROLLER_H
 
 #include <Arduino.h>
+#include <EEPROM.h>
 #include "../xConfig.h"
 #include "../xRobot.h"
 
@@ -16,6 +17,9 @@
 extern BuzzerPair g_buzzer;
 extern BuzzerSongPlayer g_song;
 extern BuzzerOut g_buzzerDefaultOut;
+extern bool g_buzzerBothEnabled;
+extern uint16_t g_buzzerFreqLoud;
+extern uint16_t g_buzzerFreqQuiet;
 #endif
 
 #if LASER_ENABLED
@@ -73,9 +77,14 @@ public:
     if (k == "UNKNOWN") return;
 
 #if BUZZER_ENABLED
-    // Feedback beep for every valid key
-    // Short, high pitch
-    g_buzzer.beepOn(g_buzzerDefaultOut, 2400, 30);
+  // Feedback beep for every valid key — use per-buzzer frequencies; both optional
+  if (g_buzzerBothEnabled){
+    g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 30);
+    g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 30);
+  } else {
+    uint16_t f = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? g_buzzerFreqLoud : g_buzzerFreqQuiet;
+    g_buzzer.beepOn(g_buzzerDefaultOut, f, 30);
+  }
 #endif
 
     // Global back/cancel
@@ -175,16 +184,125 @@ public:
       return;
     }
 
+
     // Sound / buzzer
     if (_state == STATE_SOUND){
-      if (k == "LEFT" || k == "RIGHT"){
+      // LEFT: toggle default output (LOUD/QUIET)
+      if (k == "LEFT"){
 #if BUZZER_ENABLED
-        // Toggle output
         g_buzzerDefaultOut = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? BUZZER_OUT_QUIET : BUZZER_OUT_LOUD;
         g_song.setDefaultOut(g_buzzerDefaultOut);
 #endif
         showSound();
         return;
+      }
+
+      // RIGHT: when on BUZZER entry, toggle both buzzers; otherwise toggle output
+      if (k == "RIGHT"){
+        if (_soundIndex == SOUND_BUZZER || _soundIndex == SOUND_BUZZER_SETTINGS){
+          // when in buzzer area, RIGHT toggles selected buzzer between LOUD/QUIET for adjustment
+          _buzzerSel = (_buzzerSel == SEL_BUZZER_LOUD) ? SEL_BUZZER_QUIET : SEL_BUZZER_LOUD;
+          showSound();
+          return;
+        } else {
+#if BUZZER_ENABLED
+          g_buzzerDefaultOut = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? BUZZER_OUT_QUIET : BUZZER_OUT_LOUD;
+          g_song.setDefaultOut(g_buzzerDefaultOut);
+#endif
+          showSound();
+          return;
+        }
+      }
+
+      // STAR '*' enters/exits freq-adjust mode when on BUZZER or BUZZER_SETTINGS
+      if (k == "*" && (_soundIndex == SOUND_BUZZER || _soundIndex == SOUND_BUZZER_SETTINGS)){
+        _freqAdjustMode = !_freqAdjustMode;
+        _buzzerNumCapture = false;
+        _buzzerNumToken = "";
+        if (!_freqAdjustMode){
+#if BUZZER_ENABLED
+          EEPROM.put(EEPROM_ADDR_BUZZER_FREQ_LOUD, g_buzzerFreqLoud);
+          EEPROM.put(EEPROM_ADDR_BUZZER_FREQ_QUIET, g_buzzerFreqQuiet);
+          EEPROM.update(EEPROM_ADDR_BUZZER_FREQ_MAGIC, EEPROM_BUZZER_MAGIC);
+#endif
+          lcdPrint("SOUND", "FREQ SAVED");
+        } else {
+          showSound();
+        }
+        return;
+      }
+
+      // If in freq-adjust mode, handle numeric entry and exit by '#'
+      if (_freqAdjustMode){
+        if (k == "#"){
+          // exit and persist
+#if BUZZER_ENABLED
+          EEPROM.put(EEPROM_ADDR_BUZZER_FREQ_LOUD, g_buzzerFreqLoud);
+          EEPROM.put(EEPROM_ADDR_BUZZER_FREQ_QUIET, g_buzzerFreqQuiet);
+          EEPROM.update(EEPROM_ADDR_BUZZER_FREQ_MAGIC, EEPROM_BUZZER_MAGIC);
+#endif
+          _freqAdjustMode = false; _buzzerNumCapture = false; _buzzerNumToken = ""; showSound(); return;
+        }
+
+        if (_buzzerNumCapture){
+          // collect digits; OK commits
+          if (isDigitKey(k)){
+            _buzzerNumToken += k;
+            lcdPrint("NUM:" , _buzzerNumToken);
+            return;
+          }
+          if (k == "OK"){
+            long v = _buzzerNumToken.toInt();
+            if (v >= 200 && v <= 4000){
+              if (_buzzerSel == SEL_BUZZER_LOUD) g_buzzerFreqLoud = (uint16_t)v;
+              else g_buzzerFreqQuiet = (uint16_t)v;
+            }
+            _buzzerNumCapture = false; _buzzerNumToken = ""; showSound(); return;
+          }
+          if (k == "#"){
+            _buzzerNumCapture = false; _buzzerNumToken = ""; showSound(); return;
+          }
+          // ignore others while in numeric capture
+          return;
+        }
+
+        // '*' during adjust enters numeric capture
+        if (k == "*"){
+          _buzzerNumCapture = true; _buzzerNumToken = ""; lcdPrint("ENTER NUM","(OK=SAVE)"); return;
+        }
+
+        // otherwise UP/DOWN adjust selected buzzer (handled later by existing code path)
+      }
+
+      // Normal UP/DOWN navigation when not in freq-adjust mode
+      if (_freqAdjustMode){
+        // Adjust runtime freq in 100Hz steps for selected buzzer (default selects LOUD)
+        int sel = SEL_BUZZER_LOUD; // default
+        if (_buzzerSel == SEL_BUZZER_QUIET) sel = SEL_BUZZER_QUIET;
+        if (k == "UP"){
+          if (sel == SEL_BUZZER_LOUD) g_buzzerFreqLoud = (uint16_t)constrain((int)g_buzzerFreqLoud + 100, 200, 4000);
+          else g_buzzerFreqQuiet = (uint16_t)constrain((int)g_buzzerFreqQuiet + 100, 200, 4000);
+          showSound();
+          return;
+        }
+        if (k == "DOWN"){
+          if (sel == SEL_BUZZER_LOUD) g_buzzerFreqLoud = (uint16_t)constrain((int)g_buzzerFreqLoud - 100, 200, 4000);
+          else g_buzzerFreqQuiet = (uint16_t)constrain((int)g_buzzerFreqQuiet - 100, 200, 4000);
+          showSound();
+          return;
+        }
+        if (k == "OK"){
+#if BUZZER_ENABLED
+          if (g_buzzerBothEnabled){
+            g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 80);
+            g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 80);
+          } else {
+            uint16_t f = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
+            g_buzzer.beepOn(g_buzzerDefaultOut, f, 80);
+          }
+#endif
+          return;
+        }
       }
 
       if (k == "UP"){
@@ -247,20 +365,6 @@ public:
   void tick(Robot &robot){
     // Token timeout
     if (_capture && _token.length() > 0 && _lastDigitMs != 0){
-      if (millis() - _lastDigitMs >= (unsigned long)IR_TOKEN_TIMEOUT_MS){
-        commitTokenIfAny(robot);
-        _capture = false;
-        _token = "";
-        if (_state >= STATE_NEO_MAIN && _state <= STATE_NEO_ANIM) {
-          showNeoPixelPrompt();
-        } else {
-          showServoPrompt();
-        }
-      }
-    }
-
-    // Periodic refresh for live pages
-    if (_state == STATE_ULTRA || _state == STATE_IMU || _state == STATE_RFID || _state == STATE_SYSTEM || _state == STATE_LASER){
       unsigned long now = millis();
       if (_lastUiMs == 0 || (now - _lastUiMs) >= 250UL){
         _lastUiMs = now;
@@ -276,10 +380,24 @@ public:
       unsigned long interval = (unsigned long)constrain(g_ultraCm * 5.0f + 40.0f, 50.0f, 800.0f);
       if (now2 - _lastProxBeepMs >= interval){
         _lastProxBeepMs = now2;
-        g_buzzer.beepOn(g_buzzerDefaultOut, 2800, 30);
+        if (g_buzzerBothEnabled){
+          g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 30);
+          g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 30);
+        } else {
+          g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 30);
+        }
       }
     }
 #endif
+
+    // Periodic refresh for live sensor pages (ULTRA/IMU/RFID/SYSTEM)
+    unsigned long _now = millis();
+    if (_state == STATE_ULTRA || _state == STATE_IMU || _state == STATE_RFID || _state == STATE_SYSTEM){
+      if (_lastUiMs == 0 || (_now - _lastUiMs) >= 250UL){
+        _lastUiMs = _now;
+        refreshLive(robot);
+      }
+    }
 
     // Non-blocking morse player
     tickMorse();
@@ -322,7 +440,13 @@ public:
     SOUND_BB8,
     SOUND_MORSE,
     SOUND_BUZZER,
+    SOUND_BUZZER_SETTINGS,
     SOUND_COUNT,
+  };
+
+  enum {
+    SEL_BUZZER_LOUD = 0,
+    SEL_BUZZER_QUIET = 1
   };
 
   void enterHome(){
@@ -422,6 +546,7 @@ public:
         _state = STATE_SOUND;
         _morseMode = false;
         _lastUiMs = 0;
+        _soundIndex = 0;
         showSound();
         return;
 
@@ -491,7 +616,10 @@ public:
       emitEvent("servo_set", _servoSel, (long)deg);
       lcdPrint("SERVO:" + String(_servoSel + 1), "DEG:" + String((int)deg));
 #if BUZZER_ENABLED
-      g_buzzer.beepOn(g_buzzerDefaultOut, 2400, 40);
+    if (g_buzzerBothEnabled){
+      g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 40);
+      g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 40);
+    } else g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 40);
 #endif
       return;
     }
@@ -593,6 +721,11 @@ private:
   uint16_t _morseIdx{0};
   unsigned long _morseNextMs{0};
   bool _morsePlaying{false};
+
+  bool _freqAdjustMode{false};
+  uint8_t _buzzerSel{SEL_BUZZER_LOUD};
+  bool _buzzerNumCapture{false};
+  String _buzzerNumToken{""};
 
   uint8_t _neoR{255}, _neoG{255}, _neoB{255};
   uint8_t _neoAnimIndex{0};

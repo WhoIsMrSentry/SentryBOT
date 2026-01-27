@@ -53,7 +53,8 @@ void IrMenuController::applyToken(long v, Robot &robot){
     emitEvent("servo_set", _servoSel, (long)deg);
     lcdPrint("SERVO:" + String(_servoSel + 1), "DEG:" + String((int)deg));
 #if BUZZER_ENABLED
-    g_buzzer.beepOn(g_buzzerDefaultOut, 2400, 40);
+  if (g_buzzerBothEnabled) g_buzzer.beepBoth(1500, 40);
+  else g_buzzer.beepOn(BUZZER_OUT_LOUD, 1500, 40);
 #endif
     return;
   }
