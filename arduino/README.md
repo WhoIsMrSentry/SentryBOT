@@ -40,7 +40,7 @@ Not:
 - Lazerler: `LASER1_PIN=12`, `LASER2_PIN=11`
 - Step/Dir: `PIN_STEPPER1_STEP=10`, `PIN_STEPPER1_DIR=9`, `PIN_STEPPER2_STEP=8`, `PIN_STEPPER2_DIR=7`
 - IR: `IR_PIN=2`
-- Buzzer: `BUZZER_LOUD_PIN=3`, `BUZZER_QUIET_PIN=4`
+- Buzzer: `BUZZER_LOUD_PIN=3` (loud), `BUZZER_QUIET_PIN=4` (quiet)
 - Ultrasonik: `ULTRA_TRIG_PIN=6`, `ULTRA_ECHO_PIN=5`
 
 ## Dual Buzzer (Sesli/Sessiz)
@@ -48,6 +48,8 @@ Not:
 - Bu seçim yazılımsal “mute” değil; fiziksel olarak iki ayrı çıkış seçilir (loud/quiet).
 - Varsayılan çıkış seçimi (JSON): `{ "cmd":"sound", "out":"loud|quiet" }`
 - Tek seferlik beep (JSON): `{ "cmd":"buzzer", "out":"loud|quiet", "freq":2200, "ms":60 }`
+ - Tek seferlik beep (JSON): `{ "cmd":"buzzer", "out":"loud|quiet", "freq":2200, "ms":60 }`
+ - Eş zamanlı her iki buzzerı ayarlamak (opsiyonel): `{ "cmd":"sound", "both":true }` veya `{ "cmd":"sound", "both":false }`
 - Hazır ses çal (JSON): `{ "cmd":"sound_play", "name":"walle|bb8", "out":"loud|quiet" }`
 
 ## IR Remote Kontrol (Menü + Parametre)
