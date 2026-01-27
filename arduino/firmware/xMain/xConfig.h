@@ -4,9 +4,11 @@
 
 // Board serial
 #define ROBOT_SERIAL_BAUD 115200
-// Select serial port (Serial for USB, or Serial1 for RPi UART)
+// Select serial port (Serial for USB, or Serial1/Serial3 for other boards / RPi UART)
+// Default to USB `Serial` so logs are visible on the PC by default. Override if you
+// need a different UART (e.g. Serial1 or Serial3) for your board.
 #ifndef SERIAL_IO
-#define SERIAL_IO Serial1
+#define SERIAL_IO Serial
 #endif
 
 // Servo counts
@@ -111,6 +113,12 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define EEPROM_MAGIC 0x42
 #define EEPROM_ADDR_MAGIC   0
 #define EEPROM_ADDR_IMU_OFF 1   // float2: offPitch, offRoll (8 byte)
+// EEPROM addresses for persisted buzzer frequencies (uint16_t each)
+#define EEPROM_ADDR_BUZZER_FREQ_LOUD 9
+#define EEPROM_ADDR_BUZZER_FREQ_QUIET 11
+// Validation byte for buzzer freq presence
+#define EEPROM_ADDR_BUZZER_FREQ_MAGIC 13
+#define EEPROM_BUZZER_MAGIC 0xA5
 
 // =====================
 // Peripherals (optional)
@@ -195,6 +203,11 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #ifndef AVOID_DISTANCE_CM
 #define AVOID_DISTANCE_CM 25.0f
 #endif
+
+// When closer than this (cm), play a sustained/continuous warning tone
+#ifndef AVOID_CONTINUOUS_CM
+#define AVOID_CONTINUOUS_CM 8.0f
+#endif
 #ifndef AVOID_REVERSE_SPEED
 // Sit/skate modunda engelden kaçma için geri hız (steps/s)
 #define AVOID_REVERSE_SPEED -400.0f
@@ -237,10 +250,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define BUZZER_ENABLED 1
 #endif
 #ifndef BUZZER_LOUD_PIN
-#define BUZZER_LOUD_PIN 3
+#define BUZZER_LOUD_PIN 3 // Hardware mapping: loud -> pin 3
 #endif
 #ifndef BUZZER_QUIET_PIN
-#define BUZZER_QUIET_PIN 4
+#define BUZZER_QUIET_PIN 4 // Hardware mapping: quiet -> pin 4
 #endif
 #ifndef BUZZER_USE_TONE
 // 1: use tone() with freq; 0: simple digital on/off
@@ -249,8 +262,12 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 
 // On AVR, IRremote and tone() can share timers; this may break IR reception after a beep.
 // Default: if IR is enabled, avoid tone() and use non-blocking digital beep instead.
+// By default allow tone() even when IR is enabled. If you experience IR
+// reception issues while tone() runs, set this to 1 to disable tone() and
+// fall back to simple digital toggles. Re-initialization of IR after tone()
+// is enabled via BUZZER_REINIT_IR_AFTER_TONE.
 #ifndef BUZZER_DISABLE_TONE_WHEN_IR
-#define BUZZER_DISABLE_TONE_WHEN_IR 1
+#define BUZZER_DISABLE_TONE_WHEN_IR 0
 #endif
 
 // If tone() is used while IR is enabled (BUZZER_DISABLE_TONE_WHEN_IR=0),
@@ -270,7 +287,8 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define BOOT_STATUS_ENABLED 1
 #endif
 #ifndef BOOT_STATUS_STEP_MS
-#define BOOT_STATUS_STEP_MS 350
+// Increase step time slightly so boot scanning messages are readable on LCD.
+#define BOOT_STATUS_STEP_MS 800
 #endif
 
 // Boot UI / diagnostics
@@ -315,7 +333,7 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define NEOPIXEL_ENABLED 1
 #endif
 #ifndef PIN_NEOPIXEL
-#define PIN_NEOPIXEL 22
+#define PIN_NEOPIXEL 23
 #endif
 #ifndef NEO_NUM_LEDS
 #define NEO_NUM_LEDS 23

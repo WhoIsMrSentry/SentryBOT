@@ -15,6 +15,10 @@ bool telemetryOn = false;
 unsigned long telemetryInterval = 100;
 unsigned long lastTelemetryMs = 0;
 
+// Proximity beep state for HC-SR04 parking-like feedback
+unsigned long g_lastProxBeepMs = 0;
+bool g_proxContinuousOn = false;
+
 #if RFID_ENABLED
 RfidReader g_rfid;
 String g_lastRfid;
@@ -45,6 +49,15 @@ LaserPair g_lasers;
 BuzzerPair g_buzzer;
 BuzzerSongPlayer g_song;
 BuzzerOut g_buzzerDefaultOut = BUZZER_OUT_LOUD;
+#if 1
+// Runtime flag to enable both buzzers simultaneously (default: false)
+bool g_buzzerBothEnabled = false;
+#endif
+#if BUZZER_ENABLED
+// Runtime adjustable frequencies for loud and quiet buzzers (persisted to EEPROM)
+uint16_t g_buzzerFreqLoud = 1500;
+uint16_t g_buzzerFreqQuiet = 1200;
+#endif
 #endif
 #if IR_ENABLED
 IrKeyReader g_ir;
@@ -59,6 +72,16 @@ void setup(){
   robot.begin();
   // Auto-load IMU offsets if present
   if (EEPROM.read(EEPROM_ADDR_MAGIC)==EEPROM_MAGIC){ float p,r; EEPROM.get(EEPROM_ADDR_IMU_OFF,p); EEPROM.get(EEPROM_ADDR_IMU_OFF+sizeof(float),r); robot.imu.setOffsets(p,r); }
+  // Load persisted buzzer frequencies if present
+  #if BUZZER_ENABLED
+  if (EEPROM.read(EEPROM_ADDR_BUZZER_FREQ_MAGIC) == EEPROM_BUZZER_MAGIC){
+    uint16_t vfL = 0; uint16_t vfQ = 0;
+    EEPROM.get(EEPROM_ADDR_BUZZER_FREQ_LOUD, vfL);
+    EEPROM.get(EEPROM_ADDR_BUZZER_FREQ_QUIET, vfQ);
+    if (vfL >= 200 && vfL <= 4000) g_buzzerFreqLoud = vfL;
+    if (vfQ >= 200 && vfQ <= 4000) g_buzzerFreqQuiet = vfQ;
+  }
+  #endif
   Protocol::sendOk("ready");
 #if LCD_ENABLED
   Wire.begin();
@@ -162,7 +185,8 @@ void setup(){
   g_song.begin(&g_buzzer);
   g_song.setDefaultOut(g_buzzerDefaultOut);
 #if BOOT_BEEP
-  g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 50);
+  // Boot beep uses LOUD at test freq
+  g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 50);
 #endif
 #endif
 #if IR_ENABLED
@@ -172,9 +196,6 @@ void setup(){
   g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.show(top, bottom, true); });
 #endif
   g_irMenu.reset();
-#endif
-#if NEOPIXEL_ENABLED
-  neopixel_begin();
 #endif
 #if BOOT_CALIBRATION_PROMPT
   unsigned long t0 = millis();
@@ -204,7 +225,7 @@ void loop(){
       SERIAL_IO.println(evt);
   #if LCD_ENABLED
       String tail = g_lastRfid; if (tail.length()>8) tail = tail.substring(tail.length()-8);
-      g_lcdStatus.show("RFID", tail);
+      g_lcdStatus.show("RFID", tail, true);
   #endif
     }
   #endif
@@ -220,6 +241,51 @@ void loop(){
   #endif
       }
     }
+#if ULTRA_ENABLED && BUZZER_ENABLED
+    // Parking-style proximity beeps while sitting in avoid-mode
+    if (g_avoidEnable && robot.getMode()==MODE_SIT){
+      if (!isnan(g_ultraCm) && g_ultraCm>0 && g_ultraCm < AVOID_DISTANCE_CM){
+        unsigned long nowp = millis();
+        if (g_ultraCm <= AVOID_CONTINUOUS_CM){
+          // Very close: start a sustained/continuous tone until cleared (ms==0 => indefinite)
+          if (!g_proxContinuousOn){
+            if (g_buzzerBothEnabled){
+              g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 0);
+              g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 0);
+            } else {
+              uint16_t f = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
+              g_buzzer.beepOn(g_buzzerDefaultOut, f, 0);
+            }
+            g_proxContinuousOn = true;
+          }
+        } else {
+          // Parking beeps: interval scales with distance
+          unsigned long interval = (unsigned long)constrain(g_ultraCm * 5.0f + 40.0f, 50.0f, 800.0f);
+          if (nowp - g_lastProxBeepMs >= interval){
+            g_lastProxBeepMs = nowp;
+            if (g_buzzerBothEnabled){
+              g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 40);
+              g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 40);
+            } else {
+              uint16_t f = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
+              g_buzzer.beepOn(g_buzzerDefaultOut, f, 40);
+            }
+          }
+          // Ensure continuous flag cleared and any sustained tone is stopped
+          if (g_proxContinuousOn){
+            g_buzzer.stop();
+            g_proxContinuousOn = false;
+          }
+        }
+      } else {
+        // If ultrasonic no longer in range/valid, ensure sustained tone is stopped
+        if (g_proxContinuousOn){
+          g_buzzer.stop();
+          g_proxContinuousOn = false;
+        }
+      }
+    }
+#endif
   #endif
 
 #if IR_ENABLED
