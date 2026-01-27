@@ -29,12 +29,13 @@ public:
 
   void update(){
 #if !(BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR))
-    if (_activePin != 255){
+    if (_activeMask != 0){
       unsigned long now = millis();
       // millis() overflow safe compare
       if ((long)(now - _activeUntilMs) >= 0){
-        digitalWrite(_activePin, LOW);
-        _activePin = 255;
+        if (_activeMask & 0x01) digitalWrite(_loud, LOW);
+        if (_activeMask & 0x02) digitalWrite(_quiet, LOW);
+        _activeMask = 0;
         _activeUntilMs = 0;
       }
     }
@@ -56,7 +57,9 @@ public:
     if (pin == 255) return;
 
 #if BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR)
-    tone(pin, freqHz, ms);
+  // If ms==0 request an indefinite tone until `stop()` is called.
+  if (ms == 0) tone(pin, freqHz);
+  else tone(pin, freqHz, ms);
 
 #if IR_ENABLED && BUZZER_REINIT_IR_AFTER_TONE
     // tone() may disturb IRremote timers on AVR; re-init IR after the tone ends.
@@ -68,12 +71,42 @@ public:
 #else
     // Non-blocking beep (no delay). Frequency is ignored in this mode.
     // If another beep is active, override it.
-    if (_activePin != 255 && _activePin != pin){
-      digitalWrite(_activePin, LOW);
+    if (_activeMask != 0){
+      if (_activeMask & 0x01) digitalWrite(_loud, LOW);
+      if (_activeMask & 0x02) digitalWrite(_quiet, LOW);
     }
     digitalWrite(pin, HIGH);
-    _activePin = pin;
-    _activeUntilMs = millis() + (unsigned long)ms;
+    _activeMask = (pin == _loud) ? 0x01 : 0x02;
+    if (ms == 0){
+      // Represent an indefinite-on by setting a far future timestamp so update() won't clear it.
+      _activeUntilMs = 0xFFFFFFFFUL;
+    } else {
+      _activeUntilMs = millis() + (unsigned long)ms;
+    }
+#endif
+  }
+
+  // Beep both outputs simultaneously
+  void beepBoth(uint16_t freqHz = 2200, uint16_t ms = 60){
+    if (_loud == 255 && _quiet == 255) return;
+#if BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR)
+  if (_loud != 255){ if (ms == 0) tone(_loud, freqHz); else tone(_loud, freqHz, ms); }
+  if (_quiet != 255){ if (ms == 0) tone(_quiet, freqHz); else tone(_quiet, freqHz, ms); }
+#if IR_ENABLED && BUZZER_REINIT_IR_AFTER_TONE
+    unsigned long target = millis() + (unsigned long)ms + 5UL;
+    if (_irReinitAtMs == 0 || (long)(target - _irReinitAtMs) > 0){
+      _irReinitAtMs = target;
+    }
+#endif
+#else
+    if (_activeMask != 0){
+      if (_activeMask & 0x01) digitalWrite(_loud, LOW);
+      if (_activeMask & 0x02) digitalWrite(_quiet, LOW);
+    }
+    if (_loud != 255) digitalWrite(_loud, HIGH);
+    if (_quiet != 255) digitalWrite(_quiet, HIGH);
+    _activeMask = 0x03;
+    if (ms == 0) _activeUntilMs = 0xFFFFFFFFUL; else _activeUntilMs = millis() + (unsigned long)ms;
 #endif
   }
 
@@ -86,8 +119,8 @@ public:
     if (_quiet != 255) digitalWrite(_quiet, LOW);
 
 #if !(BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR))
-    _activePin = 255;
-    _activeUntilMs = 0;
+  _activeMask = 0;
+  _activeUntilMs = 0;
 #endif
 
 #if IR_ENABLED && BUZZER_USE_TONE && BUZZER_REINIT_IR_AFTER_TONE
@@ -104,7 +137,7 @@ private:
   uint8_t _quiet{255};
 
 #if !(BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR))
-  uint8_t _activePin{255};
+  uint8_t _activeMask{0};
   unsigned long _activeUntilMs{0};
 #endif
 
@@ -194,7 +227,7 @@ private:
   uint8_t _len{0};
   uint8_t _idx{0};
   unsigned long _nextMs{0};
-  BuzzerOut _defaultOut{BUZZER_OUT_QUIET};
+  BuzzerOut _defaultOut{BUZZER_OUT_LOUD};
   BuzzerOut _out{BUZZER_OUT_QUIET};
   State _state{IDLE};
 };
@@ -206,21 +239,21 @@ const BuzzerNote BuzzerSongPlayer::SONG_WALLE[] PROGMEM = {
 };
 
 const BuzzerNote BuzzerSongPlayer::SONG_BB8[] PROGMEM = {
-  {1760, 40, 20}, {1976, 40, 20}, {2093, 50, 30}, {0, 0, 40},
-  {1568, 70, 30}, {2093, 60, 40}, {0, 0, 60}, {2349, 80, 120},
+  {1100, 50, 20}, {1245, 50, 20}, {1320, 60, 30}, {0, 0, 40},
+  {980, 80, 30}, {1320, 60, 40}, {0, 0, 60}, {1200, 80, 120},
 };
 
 const BuzzerNote BuzzerSongPlayer::SONG_BB8_1[] PROGMEM = {
-  {2000, 30, 10}, {2500, 30, 10}, {3000, 30, 10}, {0, 0, 50}, 
-  {1800, 50, 10}, {2200, 50, 10},
+  {1200, 40, 10}, {1400, 40, 10}, {1600, 40, 10}, {0, 0, 50}, 
+  {1150, 60, 10}, {1300, 60, 10},
 };
 const BuzzerNote BuzzerSongPlayer::SONG_BB8_2[] PROGMEM = {
-  {880, 60, 10}, {0, 0, 20}, {2200, 40, 0}, {1500, 50, 20},
-  {2800, 40, 0}, {1200, 60, 0},
+  {880, 60, 10}, {0, 0, 20}, {1500, 40, 0}, {1100, 50, 20},
+  {1700, 40, 0}, {1200, 60, 0},
 };
 const BuzzerNote BuzzerSongPlayer::SONG_BB8_3[] PROGMEM = {
-   {2500, 30, 5}, {2600, 30, 5}, {2700, 30, 5}, {1500, 100, 10},
-   {2200, 40, 5}, {2300, 40, 5},
+  {1500, 30, 5}, {1600, 30, 5}, {1700, 30, 5}, {1500, 100, 10},
+  {1200, 40, 5}, {1300, 40, 5},
 };
 
 inline bool BuzzerSongPlayer::resolveSong(const String &name, const BuzzerNote *&outSong, uint8_t &outLen){
