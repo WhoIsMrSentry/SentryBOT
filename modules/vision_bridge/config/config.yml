@@ -3,7 +3,7 @@ server:
   port: 8099
 
 vision:
-  processing_mode: local  # local | remote
+  processing_mode: remote  # local | remote
   # camera_source: "http://localhost:8000/video_feed" # Potential future: pull from camera module HTTP
   camera_source: 0  # Local webcam when in local mode
   model_path: "yolov8n.pt"

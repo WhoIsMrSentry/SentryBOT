@@ -28,9 +28,9 @@ tts:
     noise_w: null
 
   # XTTS ayarları (ayrı env'de çalışan local HTTP servis)
-  # Örn: OneDrive/Masaüstü/xTTS/1.py -> `uvicorn 1:app --host 127.0.0.1 --port 5002`
+  # Örn: PC üzerindeki server_app TTS proxy: http://PC_IP:5000/tts/synthesize
   xtts:
-    endpoint: http://127.0.0.1:5002/synthesize
+    endpoint: http://192.168.1.100:5000/tts/synthesize
     timeout: 120
     language: tr
     speaker_wav: null          # ses kopyalama için referans wav yolu (opsiyonel)
