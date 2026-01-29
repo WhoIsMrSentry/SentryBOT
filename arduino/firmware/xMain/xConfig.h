@@ -330,7 +330,7 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 // NeoPixel (WS2812) defaults
 // =====================
 #ifndef NEOPIXEL_ENABLED
-#define NEOPIXEL_ENABLED 1
+#define NEOPIXEL_ENABLED 0
 #endif
 #ifndef PIN_NEOPIXEL
 #define PIN_NEOPIXEL 23

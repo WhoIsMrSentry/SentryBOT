@@ -12,6 +12,8 @@
 #include "peripherals/xBuzzer.h"
 #include "peripherals/xIrKeyReader.h"
 // NeoPixel peripheral
+#if NEOPIXEL_ENABLED
 #include "peripherals/xNeopixel.h"
+#endif
 
 #endif // ROBOT_PERIPHERALS_H
