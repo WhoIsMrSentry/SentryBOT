@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import os
 from queue import Queue, Empty
 from typing import Any, Dict, Optional, Callable, List
 
@@ -376,10 +377,29 @@ class xArduinoSerialService:
             if fallback:
                 return fallback
             raise RuntimeError("pyserial not installed")
+        # If the Raspberry Pi hardware UART path exists, prefer it
+        try:
+            if os.path.exists("/dev/serial0"):
+                return "/dev/serial0"
+        except Exception:
+            pass
+
         ports = list(serial.tools.list_ports.comports())
-        # try to find 'Arduino Mega' or '2560'
+        # Prefer common Linux UART device names if present
+        for p in ports:
+            dev = (p.device or "")
+            if any(x in dev for x in ("/dev/ttyAMA0", "/dev/serial0", "/dev/ttyS0", "ttyACM", "ttyUSB")):
+                return dev
+
+        # try to find 'Arduino Mega' or '2560' by description
         for p in ports:
             desc = (p.description or "").lower()
             if "mega" in desc or "2560" in desc or "arduino" in desc:
                 return p.device
-        return fallback or (ports[0].device if ports else "COM3")
+
+        # Fallback: return provided fallback, first discovered port, or a sensible default
+        if ports:
+            return ports[0].device
+        if fallback:
+            return fallback
+        return "COM3" if os.name == "nt" else "/dev/serial0"
