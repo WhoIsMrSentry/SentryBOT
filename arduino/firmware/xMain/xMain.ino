@@ -88,9 +88,29 @@ void setup(){
 #if defined(ARDUINO_ARCH_AVR)
   Wire.setWireTimeout(25000, true);
 #endif
-  bool p1 = i2cDevicePresent(LCD_I2C_ADDR);
+  uint8_t lcd1Addr = LCD_I2C_ADDR;
+  uint8_t lcd2Addr = LCD2_I2C_ADDR;
+
+  bool p1 = i2cDevicePresent(lcd1Addr);
 #if LCD2_ENABLED
-  bool p2 = i2cDevicePresent(LCD2_I2C_ADDR);
+  bool p2 = false;
+  // Try configured address first
+  if (i2cDevicePresent(lcd2Addr)) {
+    p2 = true;
+  } else {
+    // Try common alternative addresses (some backpacks use 0x27 or 0x3F)
+    const uint8_t altCandidates[] = {0x27, 0x3F, 0x3E, 0x26};
+    for (size_t _i = 0; _i < sizeof(altCandidates); ++_i){
+      uint8_t a = altCandidates[_i];
+      if (a == lcd1Addr) continue; // don't clash with primary
+      if (a == lcd2Addr) continue; // already tried
+      if (i2cDevicePresent(a)){
+        lcd2Addr = a;
+        p2 = true;
+        break;
+      }
+    }
+  }
 #else
   bool p2 = false;
 #endif
@@ -111,7 +131,7 @@ void setup(){
       rows = 2;
       split = false;
     }
-    g_lcd1.begin(LCD_I2C_ADDR, cols, rows, split);
+    g_lcd1.begin(lcd1Addr, cols, rows, split);
   }
 
 #if LCD2_ENABLED
@@ -123,7 +143,7 @@ void setup(){
       rows = 2;
       split = false;
     }
-    g_lcd2.begin(LCD2_I2C_ADDR, cols, rows, split);
+    g_lcd2.begin(lcd2Addr, cols, rows, split);
   }
 #endif
 
@@ -304,10 +324,7 @@ void loop(){
   g_song.update();
   g_buzzer.update();
 #endif
-  // NeoPixel animation tick
-#if NEOPIXEL_ENABLED
-  neopixel_tick();
-#endif
+  // NeoPixel support removed
   // Heartbeat timeout safety
   if (HEARTBEAT_TIMEOUT_MS>0 && (millis() - lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS)){
     robot.estop();

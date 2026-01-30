@@ -160,11 +160,7 @@ public:
       return;
     }
 
-    // NeoPixel flow
-    if (_state >= STATE_NEO_MAIN && _state <= STATE_NEO_ANIM){
-      handleNeoPixelKey(k, robot);
-      return;
-    }
+    // NeoPixel support removed
 
     // Laser control
     if (_state == STATE_LASER){
@@ -416,11 +412,6 @@ public:
     STATE_IMU,
     STATE_RFID,
     STATE_SYSTEM,
-    STATE_NEO_MAIN,
-    STATE_NEO_RGB_R,
-    STATE_NEO_RGB_G,
-    STATE_NEO_RGB_B,
-    STATE_NEO_ANIM,
   };
 
   enum MenuItem : uint8_t {
@@ -430,7 +421,6 @@ public:
     MENU_IMU,
     MENU_RFID,
     MENU_SOUND,
-    MENU_NEOPIXEL,
     MENU_SYSTEM,
     MENU_COUNT,
   };
@@ -488,7 +478,6 @@ public:
       case MENU_IMU: return "IMU";
       case MENU_RFID: return "RFID";
       case MENU_SOUND: return "SOUND";
-      case MENU_NEOPIXEL: return "NEOPIXEL";
       case MENU_SYSTEM: return "SYSTEM";
       default: return "MENU";
     }
@@ -556,16 +545,6 @@ public:
         refreshLive(robot);
         return;
 
-      case MENU_NEOPIXEL:
-        _state = STATE_NEO_MAIN;
-        _neoR = 255; _neoG = 50; _neoB = 255; 
-        _neoAnimIndex = 0;
-        _capture = false;
-        _token = "";
-        _lastDigitMs = 0;
-        showNeoPixelPrompt();
-        return;
-
       default:
         return;
     }
@@ -573,9 +552,6 @@ public:
 
   void showServoPrompt();
   void showServoToken();
-  void showNeoPixelPrompt();
-  void showNeoPixelToken();
-  void handleNeoPixelKey(const String &k, Robot &robot);
 
   void showLaser(){
     const char* modes[] = {"OFF", "L1", "L2", "BOTH"};
@@ -623,33 +599,7 @@ public:
 #endif
       return;
     }
-#if NEOPIXEL_ENABLED
-    if (_state == STATE_NEO_MAIN){
-      if (v == 1) _state = STATE_NEO_RGB_R;
-      else if (v == 2) _state = STATE_NEO_ANIM;
-      showNeoPixelPrompt();
-      return;
-    }
-    if (_state == STATE_NEO_RGB_R){
-      _neoR = (uint8_t)constrain(v, 0, 255);
-      _state = STATE_NEO_RGB_G;
-      showNeoPixelPrompt();
-      return;
-    }
-    if (_state == STATE_NEO_RGB_G){
-      _neoG = (uint8_t)constrain(v, 0, 255);
-      _state = STATE_NEO_RGB_B;
-      showNeoPixelPrompt();
-      return;
-    }
-    if (_state == STATE_NEO_RGB_B){
-      _neoB = (uint8_t)constrain(v, 0, 255);
-      neopixel_start_animation("fill", _neoR, _neoG, _neoB, 0, 0);
-      lcdPrint("NEO: SET", "RGB " + String(_neoR) + "," + String(_neoG) + "," + String(_neoB));
-      _state = STATE_NEO_MAIN;
-      return;
-    }
-#endif
+    // NeoPixel support removed
   }
 
 #if LCD_ENABLED
@@ -727,14 +677,12 @@ private:
   bool _buzzerNumCapture{false};
   String _buzzerNumToken{""};
 
-  uint8_t _neoR{255}, _neoG{255}, _neoB{255};
-  uint8_t _neoAnimIndex{0};
+  // NeoPixel state removed
   unsigned long _lastProxBeepMs{0};
 };
 
 #include "menus/xIrMenuController_sound.h"
 #include "menus/xIrMenuController_servo.h"
-#include "menus/xIrMenuController_neopixel.h"
 #include "menus/xIrMenuController_sensors.h"
 
 #endif // IR_ENABLED
