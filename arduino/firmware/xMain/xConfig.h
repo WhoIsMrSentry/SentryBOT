@@ -4,9 +4,17 @@
 
 // Board serial
 #define ROBOT_SERIAL_BAUD 115200
-// Select serial port (Serial for USB, or Serial1 for RPi UART)
+// Select serial port (Serial for USB, or Serial1/Serial3 for other boards / RPi UART)
+// Default selection: prefer the first hardware UART on boards that expose it
+// (e.g. Arduino Mega family) so Raspberry Pi can connect to `Serial1` safely.
+// You can still override by defining `SERIAL_IO` before including this header.
 #ifndef SERIAL_IO
+	// Detect common Mega2560/MEGA variants and map to Serial1 (RX/TX on pins 19/18)
+#if defined(ARDUINO_AVR_MEGA2560) || defined(ARDUINO_AVR_MEGA) || defined(__AVR_ATmega2560__)
+#define SERIAL_IO Serial1
+#else
 #define SERIAL_IO Serial
+#endif
 #endif
 
 // Servo counts
@@ -111,6 +119,12 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define EEPROM_MAGIC 0x42
 #define EEPROM_ADDR_MAGIC   0
 #define EEPROM_ADDR_IMU_OFF 1   // float2: offPitch, offRoll (8 byte)
+// EEPROM addresses for persisted buzzer frequencies (uint16_t each)
+#define EEPROM_ADDR_BUZZER_FREQ_LOUD 9
+#define EEPROM_ADDR_BUZZER_FREQ_QUIET 11
+// Validation byte for buzzer freq presence
+#define EEPROM_ADDR_BUZZER_FREQ_MAGIC 13
+#define EEPROM_BUZZER_MAGIC 0xA5
 
 // =====================
 // Peripherals (optional)
@@ -121,13 +135,13 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define LCD_ENABLED 1
 #endif
 #ifndef LCD_I2C_ADDR
-#define LCD_I2C_ADDR 0x27
+#define LCD_I2C_ADDR 0x3F
 #endif
 #ifndef LCD_COLS
 #define LCD_COLS 16
 #endif
 #ifndef LCD_ROWS
-#define LCD_ROWS 1
+#define LCD_ROWS 2
 #endif
 #ifndef LCD_16X1_SPLIT_ROW
 #define LCD_16X1_SPLIT_ROW 1  // 1: use row split (0,1), 0: use position split (0-7, 8-15)
@@ -153,7 +167,7 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define LCD2_ENABLED 1
 #endif
 #ifndef LCD2_I2C_ADDR
-#define LCD2_I2C_ADDR 0x3F
+#define LCD2_I2C_ADDR 0x27
 #endif
 #ifndef LCD2_COLS
 #define LCD2_COLS 16
@@ -170,11 +184,14 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define RFID_ENABLED 1
 #endif
 #ifndef RFID_SS_PIN
-// MEGA: 53 donanımsal SS; RC522 için ayrı SS kullanılabilir
 #define RFID_SS_PIN 53
 #endif
 #ifndef RFID_RST_PIN
 #define RFID_RST_PIN 49
+#endif
+// When the same tag remains present, allow re-emitting an event after this interval (ms)
+#ifndef RFID_REPEAT_MS
+#define RFID_REPEAT_MS 2000
 #endif
 
 // HC-SR04 Ultrasonic
@@ -195,6 +212,11 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #endif
 #ifndef AVOID_DISTANCE_CM
 #define AVOID_DISTANCE_CM 25.0f
+#endif
+
+// When closer than this (cm), play a sustained/continuous warning tone
+#ifndef AVOID_CONTINUOUS_CM
+#define AVOID_CONTINUOUS_CM 8.0f
 #endif
 #ifndef AVOID_REVERSE_SPEED
 // Sit/skate modunda engelden kaçma için geri hız (steps/s)
@@ -238,10 +260,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define BUZZER_ENABLED 1
 #endif
 #ifndef BUZZER_LOUD_PIN
-#define BUZZER_LOUD_PIN 3
+#define BUZZER_LOUD_PIN 3 // Hardware mapping: loud -> pin 3
 #endif
 #ifndef BUZZER_QUIET_PIN
-#define BUZZER_QUIET_PIN 4
+#define BUZZER_QUIET_PIN 4 // Hardware mapping: quiet -> pin 4
 #endif
 #ifndef BUZZER_USE_TONE
 // 1: use tone() with freq; 0: simple digital on/off
@@ -250,8 +272,12 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 
 // On AVR, IRremote and tone() can share timers; this may break IR reception after a beep.
 // Default: if IR is enabled, avoid tone() and use non-blocking digital beep instead.
+// By default allow tone() even when IR is enabled. If you experience IR
+// reception issues while tone() runs, set this to 1 to disable tone() and
+// fall back to simple digital toggles. Re-initialization of IR after tone()
+// is enabled via BUZZER_REINIT_IR_AFTER_TONE.
 #ifndef BUZZER_DISABLE_TONE_WHEN_IR
-#define BUZZER_DISABLE_TONE_WHEN_IR 1
+#define BUZZER_DISABLE_TONE_WHEN_IR 0
 #endif
 
 // If tone() is used while IR is enabled (BUZZER_DISABLE_TONE_WHEN_IR=0),
@@ -271,7 +297,8 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define BOOT_STATUS_ENABLED 1
 #endif
 #ifndef BOOT_STATUS_STEP_MS
-#define BOOT_STATUS_STEP_MS 350
+// Increase step time slightly so boot scanning messages are readable on LCD.
+#define BOOT_STATUS_STEP_MS 800
 #endif
 
 // Boot UI / diagnostics
@@ -313,13 +340,17 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 // NeoPixel (WS2812) defaults
 // =====================
 #ifndef NEOPIXEL_ENABLED
-#define NEOPIXEL_ENABLED 1
+#define NEOPIXEL_ENABLED 0
 #endif
 #ifndef PIN_NEOPIXEL
-#define PIN_NEOPIXEL 48
+#define PIN_NEOPIXEL 23
 #endif
 #ifndef NEO_NUM_LEDS
 #define NEO_NUM_LEDS 23
+#endif
+#ifndef NEO_CONFIG
+// User confirmed working with NEO_RGBW + NEO_KHZ800
+#define NEO_CONFIG (NEO_RGBW + NEO_KHZ800)
 #endif
 
 #endif // ROBOT_CONFIG_H

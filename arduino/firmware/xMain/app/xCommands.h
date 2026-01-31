@@ -156,6 +156,17 @@ static inline void handleJson(const String &line){
       Protocol::sendOk("sound_out_quiet");
       return;
     }
+    // Optional: enable both buzzers simultaneously via JSON: {"cmd":"sound","both":true}
+    if (line.indexOf("\"both\":true")>=0){
+      g_buzzerBothEnabled = true;
+      Protocol::sendOk("sound_both_on");
+      return;
+    }
+    if (line.indexOf("\"both\":false")>=0){
+      g_buzzerBothEnabled = false;
+      Protocol::sendOk("sound_both_off");
+      return;
+    }
     Protocol::sendErr("bad_out");
 #else
     Protocol::sendErr("buzzer_disabled");
@@ -451,7 +462,7 @@ static inline void handleJson(const String &line){
   if (line.indexOf("\"cmd\":\"estop\"")>=0){
     robot.estop();
 #if BUZZER_ENABLED
-    g_buzzer.beepOn(BUZZER_OUT_LOUD, 1800, 150);
+  g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 150);
 #endif
     Protocol::sendOk("estopped");
     return;

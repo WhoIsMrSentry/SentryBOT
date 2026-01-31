@@ -2,7 +2,11 @@ from __future__ import annotations
 import argparse
 import logging
 from threading import Event
-import audioop
+try:
+    import audioop
+except Exception:
+    audioop = None
+    # Don't fail import; we'll degrade direction/downmix functionality and log at runtime.
 from typing import Optional, Callable, Iterable
 
 from modules.speech.config_loader import load_config
@@ -123,7 +127,10 @@ class SpeechService:
             # Downmix to mono for recognizer if input is stereo
             if self.capture.cfg.channels >= 2:
                 try:
-                    mono = audioop.tomono(chunk, 2, 1.0, 0.0)
+                    if audioop is not None:
+                        mono = audioop.tomono(chunk, 2, 1.0, 0.0)
+                    else:
+                        mono = chunk
                 except Exception:
                     mono = chunk
                 yield mono

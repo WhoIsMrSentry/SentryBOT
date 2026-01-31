@@ -4,5 +4,7 @@ server:
 
 left:
   gpio: 12
+  arduino_index: null
 right:
   gpio: 13
+  arduino_index: null

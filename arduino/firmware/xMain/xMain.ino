@@ -14,6 +14,38 @@ unsigned long lastHeartbeatMs = 0;
 bool telemetryOn = false;
 unsigned long telemetryInterval = 100;
 unsigned long lastTelemetryMs = 0;
+// Owner RFID cooldown and song queue
+unsigned long g_lastOwnerRfidMs = 0;
+String g_lastOwnerUid = "";
+const unsigned long OWNER_RFID_COOLDOWN_MS = 5000UL;
+
+// Song queue (simple ring)
+const int SONG_QUEUE_CAP = 8;
+String g_songQueue[SONG_QUEUE_CAP];
+int g_songQueueStart = 0;
+int g_songQueueCount = 0;
+
+static inline void enqueueSong(const String &s){
+  if (g_songQueueCount >= SONG_QUEUE_CAP) return;
+  int idx = (g_songQueueStart + g_songQueueCount) % SONG_QUEUE_CAP;
+  g_songQueue[idx] = s;
+  g_songQueueCount++;
+}
+
+static inline void processSongQueue(){
+  if (g_songQueueCount == 0) return;
+  // g_song is global BuzzerSongPlayer; check isPlaying()
+  if (!g_song.isPlaying()){
+    String s = g_songQueue[g_songQueueStart];
+    g_songQueueStart = (g_songQueueStart + 1) % SONG_QUEUE_CAP;
+    g_songQueueCount--;
+    g_song.play(s, g_buzzerDefaultOut);
+  }
+}
+
+// Proximity beep state for HC-SR04 parking-like feedback
+unsigned long g_lastProxBeepMs = 0;
+bool g_proxContinuousOn = false;
 
 #if RFID_ENABLED
 RfidReader g_rfid;
@@ -45,6 +77,15 @@ LaserPair g_lasers;
 BuzzerPair g_buzzer;
 BuzzerSongPlayer g_song;
 BuzzerOut g_buzzerDefaultOut = BUZZER_OUT_LOUD;
+#if 1
+// Runtime flag to enable both buzzers simultaneously (default: false)
+bool g_buzzerBothEnabled = false;
+#endif
+#if BUZZER_ENABLED
+// Runtime adjustable frequencies for loud and quiet buzzers (persisted to EEPROM)
+uint16_t g_buzzerFreqLoud = 1500;
+uint16_t g_buzzerFreqQuiet = 1200;
+#endif
 #endif
 #if IR_ENABLED
 IrKeyReader g_ir;
@@ -59,15 +100,61 @@ void setup(){
   robot.begin();
   // Auto-load IMU offsets if present
   if (EEPROM.read(EEPROM_ADDR_MAGIC)==EEPROM_MAGIC){ float p,r; EEPROM.get(EEPROM_ADDR_IMU_OFF,p); EEPROM.get(EEPROM_ADDR_IMU_OFF+sizeof(float),r); robot.imu.setOffsets(p,r); }
+  // Load persisted buzzer frequencies if present
+  #if BUZZER_ENABLED
+  if (EEPROM.read(EEPROM_ADDR_BUZZER_FREQ_MAGIC) == EEPROM_BUZZER_MAGIC){
+    uint16_t vfL = 0; uint16_t vfQ = 0;
+    EEPROM.get(EEPROM_ADDR_BUZZER_FREQ_LOUD, vfL);
+    EEPROM.get(EEPROM_ADDR_BUZZER_FREQ_QUIET, vfQ);
+    if (vfL >= 200 && vfL <= 4000) g_buzzerFreqLoud = vfL;
+    if (vfQ >= 200 && vfQ <= 4000) g_buzzerFreqQuiet = vfQ;
+  }
+  #endif
   Protocol::sendOk("ready");
 #if LCD_ENABLED
   Wire.begin();
 #if defined(ARDUINO_ARCH_AVR)
   Wire.setWireTimeout(25000, true);
 #endif
-  bool p1 = i2cDevicePresent(LCD_I2C_ADDR);
+  uint8_t lcd1Addr = LCD_I2C_ADDR;
+  uint8_t lcd2Addr = LCD2_I2C_ADDR;
+
+  // Auto-detect LCD1 address: try configured value first, otherwise scan common I2C addresses.
+  bool p1 = false;
+  if (i2cDevicePresent(lcd1Addr)){
+    p1 = true;
+  } else {
+    // Common addresses for I2C LCD backpacks and modules
+    const uint8_t scanCandidates[] = {0x27, 0x3F, 0x3E, 0x26, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25};
+    for (size_t si = 0; si < sizeof(scanCandidates); ++si){
+      uint8_t a = scanCandidates[si];
+      if (a == lcd2Addr) continue; // avoid colliding with LCD2 default
+      if (i2cDevicePresent(a)){
+        lcd1Addr = a;
+        p1 = true;
+        break;
+      }
+    }
+  }
 #if LCD2_ENABLED
-  bool p2 = i2cDevicePresent(LCD2_I2C_ADDR);
+  bool p2 = false;
+  // Try configured address first
+  if (i2cDevicePresent(lcd2Addr)) {
+    p2 = true;
+  } else {
+    // Try common alternative addresses (some backpacks use 0x27 or 0x3F)
+    const uint8_t altCandidates[] = {0x27, 0x3F, 0x3E, 0x26};
+    for (size_t _i = 0; _i < sizeof(altCandidates); ++_i){
+      uint8_t a = altCandidates[_i];
+      if (a == lcd1Addr) continue; // don't clash with primary
+      if (a == lcd2Addr) continue; // already tried
+      if (i2cDevicePresent(a)){
+        lcd2Addr = a;
+        p2 = true;
+        break;
+      }
+    }
+  }
 #else
   bool p2 = false;
 #endif
@@ -88,7 +175,7 @@ void setup(){
       rows = 2;
       split = false;
     }
-    g_lcd1.begin(LCD_I2C_ADDR, cols, rows, split);
+    g_lcd1.begin(lcd1Addr, cols, rows, split);
   }
 
 #if LCD2_ENABLED
@@ -100,7 +187,7 @@ void setup(){
       rows = 2;
       split = false;
     }
-    g_lcd2.begin(LCD2_I2C_ADDR, cols, rows, split);
+    g_lcd2.begin(lcd2Addr, cols, rows, split);
   }
 #endif
 
@@ -162,19 +249,17 @@ void setup(){
   g_song.begin(&g_buzzer);
   g_song.setDefaultOut(g_buzzerDefaultOut);
 #if BOOT_BEEP
-  g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 50);
+  // Boot beep uses LOUD at test freq
+  g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 50);
 #endif
 #endif
 #if IR_ENABLED
   g_ir.begin(IR_PIN);
 #if LCD_ENABLED
-  // IR menü olayları LCD'de 3sn gösterilir; UNKNOWN gürültüsü yazdırılmaz.
-  g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.show(top, bottom, true); });
+  // IR menü olayları LCD2'de gösterilsin (LCD1 genel durum, LCD2 IR menü)
+  g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.showTo(LCD_TGT_2, top, bottom, true); });
 #endif
   g_irMenu.reset();
-#endif
-#if NEOPIXEL_ENABLED
-  neopixel_begin();
 #endif
 #if BOOT_CALIBRATION_PROMPT
   unsigned long t0 = millis();
@@ -203,8 +288,39 @@ void loop(){
       String evt = String("{\"ok\":true,\"event\":\"rfid\",\"uid\":\"") + Protocol::escape(g_lastRfid) + "\"}";
       SERIAL_IO.println(evt);
   #if LCD_ENABLED
+      // Show brief RFID on main status LCD (LCD1)
       String tail = g_lastRfid; if (tail.length()>8) tail = tail.substring(tail.length()-8);
-      g_lcdStatus.show("RFID", tail);
+      g_lcdStatus.showTo(LCD_TGT_1, "RFID", tail, true);
+
+      // Normalize UID (remove non-alnum, uppercase)
+      String norm = "";
+      for (size_t _i = 0; _i < g_lastRfid.length(); ++_i){
+        char c = g_lastRfid[_i];
+        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')){
+          if (c >= 'a' && c <= 'f') c = c - ('a' - 'A');
+          norm += c;
+        }
+      }
+
+      // Owner UID (uppercase, no separators)
+      const String owner = String("F3A186A5");
+            unsigned long now = millis();
+            if (norm.equalsIgnoreCase(owner)){
+              // update owner last seen (allow immediate re-reads)
+              g_lastOwnerUid = norm;
+              g_lastOwnerRfidMs = now;
+        // Greet owner on LCD1
+        g_lcdStatus.showTo(LCD_TGT_1, "Merhaba", "Sahip", true);
+        // Audible acknowledgement (short beep)
+      #if BUZZER_ENABLED
+        g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 200);
+      #endif
+        // Enqueue sequence: walle then three bb8 variants
+        enqueueSong("walle");
+        enqueueSong("bb8_1");
+        enqueueSong("bb8_2");
+        enqueueSong("bb8_3");
+            }
   #endif
     }
   #endif
@@ -218,8 +334,54 @@ void loop(){
   #if LCD_ENABLED
         g_lcdStatus.show("AVOID", String((int)g_ultraCm) + "cm");
   #endif
+  // (removed) processSongQueue was here under ULTRA condition; moved to main BUZZER section
       }
     }
+#if ULTRA_ENABLED && BUZZER_ENABLED
+    // Parking-style proximity beeps while sitting in avoid-mode
+    if (g_avoidEnable && robot.getMode()==MODE_SIT){
+      if (!isnan(g_ultraCm) && g_ultraCm>0 && g_ultraCm < AVOID_DISTANCE_CM){
+        unsigned long nowp = millis();
+        if (g_ultraCm <= AVOID_CONTINUOUS_CM){
+          // Very close: start a sustained/continuous tone until cleared (ms==0 => indefinite)
+          if (!g_proxContinuousOn){
+            if (g_buzzerBothEnabled){
+              g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 0);
+              g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 0);
+            } else {
+              uint16_t f = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
+              g_buzzer.beepOn(g_buzzerDefaultOut, f, 0);
+            }
+            g_proxContinuousOn = true;
+          }
+        } else {
+          // Parking beeps: interval scales with distance
+          unsigned long interval = (unsigned long)constrain(g_ultraCm * 5.0f + 40.0f, 50.0f, 800.0f);
+          if (nowp - g_lastProxBeepMs >= interval){
+            g_lastProxBeepMs = nowp;
+            if (g_buzzerBothEnabled){
+              g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 40);
+              g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 40);
+            } else {
+              uint16_t f = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
+              g_buzzer.beepOn(g_buzzerDefaultOut, f, 40);
+            }
+          }
+          // Ensure continuous flag cleared and any sustained tone is stopped
+          if (g_proxContinuousOn){
+            g_buzzer.stop();
+            g_proxContinuousOn = false;
+          }
+        }
+      } else {
+        // If ultrasonic no longer in range/valid, ensure sustained tone is stopped
+        if (g_proxContinuousOn){
+          g_buzzer.stop();
+          g_proxContinuousOn = false;
+        }
+      }
+    }
+#endif
   #endif
 
 #if IR_ENABLED
@@ -235,13 +397,12 @@ void loop(){
 #endif
 
 #if BUZZER_ENABLED
+  // First, allow queued songs to start if no song currently playing
+  processSongQueue();
   g_song.update();
   g_buzzer.update();
 #endif
-  // NeoPixel animation tick
-#if NEOPIXEL_ENABLED
-  neopixel_tick();
-#endif
+  // NeoPixel support removed
   // Heartbeat timeout safety
   if (HEARTBEAT_TIMEOUT_MS>0 && (millis() - lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS)){
     robot.estop();

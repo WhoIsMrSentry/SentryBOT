@@ -1,5 +1,5 @@
 # Arduino Serial Module config (NDJSON @115200)
-port: AUTO   # AUTO to autodetect Arduino Mega, or set explicit COM port like COM5
+port: /dev/serial0   # default to Raspberry Pi UART; set to AUTO to autodetect or COMx on Windows
 baudrate: 115200
 timeout: 0.05
 write_timeout: 0.1

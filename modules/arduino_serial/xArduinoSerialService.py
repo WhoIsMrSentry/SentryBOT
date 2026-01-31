@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+import os
 from queue import Queue, Empty
 from typing import Any, Dict, Optional, Callable, List
 
@@ -93,9 +94,13 @@ class xArduinoSerialService:
         self.send(obj)
         t0 = time.time()
         want_cmd = obj.get("cmd")
-        while time.time() - t0 < timeout:
+        while True:
+            elapsed = time.time() - t0
+            remaining = timeout - elapsed
+            if remaining <= 0:
+                break
             try:
-                msg = self._rx_queue.get(timeout=timeout)
+                msg = self._rx_queue.get(timeout=remaining)
                 # Filter out initial boot "ready" message once, so it doesn't satisfy the first request.
                 if not obj.get("allow_ready", False) and isinstance(msg, dict) and msg.get("ok") is True and msg.get("msg") == "ready":
                     # Only drop once per service lifecycle
@@ -111,6 +116,7 @@ class xArduinoSerialService:
                 # Otherwise ignore (likely telemetry) and keep waiting
                 continue
             except Empty:
+                # timed out waiting for a message in remaining interval; loop will break if overall timeout expired
                 pass
         raise TimeoutError("No response from Arduino")
 
@@ -252,12 +258,16 @@ class xArduinoSerialService:
     # -------- internals --------
     def _connect(self) -> None:
         port = self._autodetect_port(self.cfg["port"]) if self.cfg.get("port") in (None, "auto", "AUTO") else self.cfg["port"]
-        self._ser = self.transport_factory(
-            port,
-            int(self.cfg["baudrate"]),
-            float(self.cfg["timeout"]),
-            float(self.cfg["write_timeout"]),
-        )
+        try:
+            self._ser = self.transport_factory(
+                port,
+                int(self.cfg["baudrate"]),
+                float(self.cfg["timeout"]),
+                float(self.cfg["write_timeout"]),
+            )
+        except Exception as exc:
+            # Provide clearer diagnostic when port cannot be opened
+            raise RuntimeError(f"Failed to open serial port {port}: {exc}") from exc
 
     def _disconnect(self) -> None:
         if self._ser:
@@ -376,10 +386,29 @@ class xArduinoSerialService:
             if fallback:
                 return fallback
             raise RuntimeError("pyserial not installed")
+        # If the Raspberry Pi hardware UART path exists, prefer it
+        try:
+            if os.path.exists("/dev/serial0"):
+                return "/dev/serial0"
+        except Exception:
+            pass
+
         ports = list(serial.tools.list_ports.comports())
-        # try to find 'Arduino Mega' or '2560'
+        # Prefer common Linux UART device names if present
+        for p in ports:
+            dev = (p.device or "")
+            if any(x in dev for x in ("/dev/ttyAMA0", "/dev/serial0", "/dev/ttyS0", "ttyACM", "ttyUSB")):
+                return dev
+
+        # try to find 'Arduino Mega' or '2560' by description
         for p in ports:
             desc = (p.description or "").lower()
             if "mega" in desc or "2560" in desc or "arduino" in desc:
                 return p.device
-        return fallback or (ports[0].device if ports else "COM3")
+
+        # Fallback: return provided fallback, first discovered port, or a sensible default
+        if ports:
+            return ports[0].device
+        if fallback:
+            return fallback
+        return "COM3" if os.name == "nt" else "/dev/serial0"

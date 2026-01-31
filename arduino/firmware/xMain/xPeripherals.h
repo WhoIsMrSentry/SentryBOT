@@ -11,7 +11,6 @@
 #include "peripherals/xLaserPair.h"
 #include "peripherals/xBuzzer.h"
 #include "peripherals/xIrKeyReader.h"
-// NeoPixel peripheral
-#include "peripherals/xNeopixel.h"
+// NeoPixel peripheral removed — feature disabled and code deleted
 
 #endif // ROBOT_PERIPHERALS_H

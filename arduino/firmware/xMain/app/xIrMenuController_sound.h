@@ -94,10 +94,12 @@ void IrMenuController::tickMorse(){
   const uint16_t longGapMs = 240;
 
   if (c == '.'){
-    g_buzzer.beepOn(g_buzzerDefaultOut, freq, dotMs);
+    if (g_buzzerBothEnabled) g_buzzer.beepBoth(freq, dotMs);
+    else g_buzzer.beepOn(BUZZER_OUT_LOUD, freq, dotMs);
     _morseNextMs = now + (unsigned long)dotMs + (unsigned long)gapMs;
   } else if (c == '-'){
-    g_buzzer.beepOn(g_buzzerDefaultOut, freq, dashMs);
+    if (g_buzzerBothEnabled) g_buzzer.beepBoth(freq, dashMs);
+    else g_buzzer.beepOn(BUZZER_OUT_LOUD, freq, dashMs);
     _morseNextMs = now + (unsigned long)dashMs + (unsigned long)gapMs;
   } else {
     _morseNextMs = now + (unsigned long)longGapMs;

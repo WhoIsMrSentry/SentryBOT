@@ -14,6 +14,7 @@ String IrMenuController::soundName(uint8_t idx){
     case SOUND_BB8: return "BB8";
     case SOUND_MORSE: return "MORSE";
     case SOUND_BUZZER: return "BUZZER";
+    case SOUND_BUZZER_SETTINGS: return "BUZZER SET";
     default: return "SOUND";
   }
 }
@@ -23,9 +24,18 @@ void IrMenuController::showSound(){
   String line2 = soundName(_soundIndex);
   if ((SoundItem)_soundIndex == SOUND_BUZZER){
     line2 += ": " + buzzerState;
+    line2 += " L:" + String((int)g_buzzerFreqLoud);
+    line2 += " Q:" + String((int)g_buzzerFreqQuiet);
+    if (g_buzzerBothEnabled) line2 += " BOTH";
   } else {
     line2 += " " + buzzerState;
     if ((SoundItem)_soundIndex == SOUND_MORSE) line2 += _morseMode ? " RUN" : " OK";
+  }
+  if (_freqAdjustMode && _soundIndex == SOUND_BUZZER) line2 += " *=FREQ";
+  if ((SoundItem)_soundIndex == SOUND_BUZZER_SETTINGS){
+    // concise two-value display
+    line2 = "L:" + String((int)g_buzzerFreqLoud) + " Q:" + String((int)g_buzzerFreqQuiet);
+    if (g_buzzerBothEnabled) line2 += " BOTH";
   }
   lcdPrint("SOUND", line2);
 }
@@ -52,7 +62,20 @@ void IrMenuController::playSelectedSound(){
   if ((SoundItem)_soundIndex == SOUND_BUZZER){
     g_buzzerDefaultOut = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? BUZZER_OUT_QUIET : BUZZER_OUT_LOUD;
     g_song.setDefaultOut(g_buzzerDefaultOut);
-    g_buzzer.beepOn(g_buzzerDefaultOut, 2200, 50);
+    if (g_buzzerBothEnabled){
+      g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 50);
+      g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 50);
+    } else {
+      uint16_t f = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
+      g_buzzer.beepOn(g_buzzerDefaultOut, f, 50);
+    }
+    return;
+  }
+  if ((SoundItem)_soundIndex == SOUND_BUZZER_SETTINGS){
+    // Enter buzzer settings state
+    _state = STATE_SOUND; // keep STATE_SOUND but show settings
+    _soundIndex = SOUND_BUZZER_SETTINGS;
+    showSound();
     return;
   }
 #endif
@@ -104,17 +127,23 @@ void IrMenuController::tickMorse(){
   }
 
   const char c = _morsePattern[_morseIdx++];
-  const uint16_t freq = 2200;
+  const uint16_t freq = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
   const uint16_t dotMs = 80;
   const uint16_t dashMs = 240;
   const uint16_t gapMs = 80;
   const uint16_t longGapMs = 240;
 
   if (c == '.'){
-    g_buzzer.beepOn(g_buzzerDefaultOut, freq, dotMs);
+    if (g_buzzerBothEnabled){
+      g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, dotMs);
+      g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, dotMs);
+    } else g_buzzer.beepOn(BUZZER_OUT_LOUD, freq, dotMs);
     _morseNextMs = now + (unsigned long)dotMs + (unsigned long)gapMs;
   } else if (c == '-'){
-    g_buzzer.beepOn(g_buzzerDefaultOut, freq, dashMs);
+    if (g_buzzerBothEnabled){
+      g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, dashMs);
+      g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, dashMs);
+    } else g_buzzer.beepOn(BUZZER_OUT_LOUD, freq, dashMs);
     _morseNextMs = now + (unsigned long)dashMs + (unsigned long)gapMs;
   } else {
     _morseNextMs = now + (unsigned long)longGapMs;

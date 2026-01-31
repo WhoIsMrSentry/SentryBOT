@@ -16,6 +16,7 @@ public:
     _mfrc->PCD_Init();
     _lastUid = "";
     _lastSeenMs = 0;
+    _lastEventMs = 0;
   }
 
   // Returns true when a new UID is read.
@@ -24,16 +25,26 @@ public:
     if (!_mfrc->PICC_IsNewCardPresent() || !_mfrc->PICC_ReadCardSerial()) return false;
 
     String uid = uidToHex(_mfrc->uid);
-    bool isNew = (uid != _lastUid);
+    unsigned long now = millis();
+    bool isNew = false;
+    if (uid != _lastUid) {
+      isNew = true;
+    } else {
+      // same UID present; allow re-emitting event after RFID_REPEAT_MS
+      if ((long)(now - _lastEventMs) >= (long)RFID_REPEAT_MS) {
+        isNew = true;
+      }
+    }
 
     _lastUid = uid;
-    _lastSeenMs = millis();
+    _lastSeenMs = now;
 
     _mfrc->PICC_HaltA();
     _mfrc->PCD_StopCrypto1();
 
     if (isNew){
       _lastEventUid = uid;
+      _lastEventMs = now;
       return true;
     }
     return false;
@@ -63,6 +74,7 @@ private:
   String _lastUid;
   String _lastEventUid;
   unsigned long _lastSeenMs{0};
+  unsigned long _lastEventMs{0};
 };
 #endif
 
