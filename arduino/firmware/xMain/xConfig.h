@@ -5,10 +5,16 @@
 // Board serial
 #define ROBOT_SERIAL_BAUD 115200
 // Select serial port (Serial for USB, or Serial1/Serial3 for other boards / RPi UART)
-// Default to USB `Serial` so logs are visible on the PC by default. Override if you
-// need a different UART (e.g. Serial1 or Serial3) for your board.
+// Default selection: prefer the first hardware UART on boards that expose it
+// (e.g. Arduino Mega family) so Raspberry Pi can connect to `Serial1` safely.
+// You can still override by defining `SERIAL_IO` before including this header.
 #ifndef SERIAL_IO
+	// Detect common Mega2560/MEGA variants and map to Serial1 (RX/TX on pins 19/18)
+#if defined(ARDUINO_AVR_MEGA2560) || defined(ARDUINO_AVR_MEGA) || defined(__AVR_ATmega2560__)
+#define SERIAL_IO Serial1
+#else
 #define SERIAL_IO Serial
+#endif
 #endif
 
 // Servo counts
@@ -129,13 +135,13 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define LCD_ENABLED 1
 #endif
 #ifndef LCD_I2C_ADDR
-#define LCD_I2C_ADDR 0x27
+#define LCD_I2C_ADDR 0x3F
 #endif
 #ifndef LCD_COLS
 #define LCD_COLS 16
 #endif
 #ifndef LCD_ROWS
-#define LCD_ROWS 1
+#define LCD_ROWS 2
 #endif
 #ifndef LCD_16X1_SPLIT_ROW
 #define LCD_16X1_SPLIT_ROW 1  // 1: use row split (0,1), 0: use position split (0-7, 8-15)
@@ -161,7 +167,7 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define LCD2_ENABLED 1
 #endif
 #ifndef LCD2_I2C_ADDR
-#define LCD2_I2C_ADDR 0x3F
+#define LCD2_I2C_ADDR 0x27
 #endif
 #ifndef LCD2_COLS
 #define LCD2_COLS 16
@@ -182,6 +188,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #endif
 #ifndef RFID_RST_PIN
 #define RFID_RST_PIN 49
+#endif
+// When the same tag remains present, allow re-emitting an event after this interval (ms)
+#ifndef RFID_REPEAT_MS
+#define RFID_REPEAT_MS 2000
 #endif
 
 // HC-SR04 Ultrasonic

@@ -52,6 +52,7 @@ public:
 #endif
   }
 
+
   void beepOn(BuzzerOut out, uint16_t freqHz = 2200, uint16_t ms = 60){
     uint8_t pin = selectPin(out);
     if (pin == 255) return;
@@ -184,6 +185,8 @@ public:
     _idx = 0;
     _nextMs = 0;
   }
+
+  bool isPlaying() const { return _state != IDLE && _song != nullptr && _len > 0; }
 
   void update(){
     if (_state == IDLE || !_pair || !_song || _len == 0) return;

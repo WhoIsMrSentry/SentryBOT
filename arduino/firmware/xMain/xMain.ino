@@ -14,6 +14,34 @@ unsigned long lastHeartbeatMs = 0;
 bool telemetryOn = false;
 unsigned long telemetryInterval = 100;
 unsigned long lastTelemetryMs = 0;
+// Owner RFID cooldown and song queue
+unsigned long g_lastOwnerRfidMs = 0;
+String g_lastOwnerUid = "";
+const unsigned long OWNER_RFID_COOLDOWN_MS = 5000UL;
+
+// Song queue (simple ring)
+const int SONG_QUEUE_CAP = 8;
+String g_songQueue[SONG_QUEUE_CAP];
+int g_songQueueStart = 0;
+int g_songQueueCount = 0;
+
+static inline void enqueueSong(const String &s){
+  if (g_songQueueCount >= SONG_QUEUE_CAP) return;
+  int idx = (g_songQueueStart + g_songQueueCount) % SONG_QUEUE_CAP;
+  g_songQueue[idx] = s;
+  g_songQueueCount++;
+}
+
+static inline void processSongQueue(){
+  if (g_songQueueCount == 0) return;
+  // g_song is global BuzzerSongPlayer; check isPlaying()
+  if (!g_song.isPlaying()){
+    String s = g_songQueue[g_songQueueStart];
+    g_songQueueStart = (g_songQueueStart + 1) % SONG_QUEUE_CAP;
+    g_songQueueCount--;
+    g_song.play(s, g_buzzerDefaultOut);
+  }
+}
 
 // Proximity beep state for HC-SR04 parking-like feedback
 unsigned long g_lastProxBeepMs = 0;
@@ -91,7 +119,23 @@ void setup(){
   uint8_t lcd1Addr = LCD_I2C_ADDR;
   uint8_t lcd2Addr = LCD2_I2C_ADDR;
 
-  bool p1 = i2cDevicePresent(lcd1Addr);
+  // Auto-detect LCD1 address: try configured value first, otherwise scan common I2C addresses.
+  bool p1 = false;
+  if (i2cDevicePresent(lcd1Addr)){
+    p1 = true;
+  } else {
+    // Common addresses for I2C LCD backpacks and modules
+    const uint8_t scanCandidates[] = {0x27, 0x3F, 0x3E, 0x26, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25};
+    for (size_t si = 0; si < sizeof(scanCandidates); ++si){
+      uint8_t a = scanCandidates[si];
+      if (a == lcd2Addr) continue; // avoid colliding with LCD2 default
+      if (i2cDevicePresent(a)){
+        lcd1Addr = a;
+        p1 = true;
+        break;
+      }
+    }
+  }
 #if LCD2_ENABLED
   bool p2 = false;
   // Try configured address first
@@ -212,8 +256,8 @@ void setup(){
 #if IR_ENABLED
   g_ir.begin(IR_PIN);
 #if LCD_ENABLED
-  // IR menü olayları LCD'de 3sn gösterilir; UNKNOWN gürültüsü yazdırılmaz.
-  g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.show(top, bottom, true); });
+  // IR menü olayları LCD2'de gösterilsin (LCD1 genel durum, LCD2 IR menü)
+  g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.showTo(LCD_TGT_2, top, bottom, true); });
 #endif
   g_irMenu.reset();
 #endif
@@ -244,8 +288,39 @@ void loop(){
       String evt = String("{\"ok\":true,\"event\":\"rfid\",\"uid\":\"") + Protocol::escape(g_lastRfid) + "\"}";
       SERIAL_IO.println(evt);
   #if LCD_ENABLED
+      // Show brief RFID on main status LCD (LCD1)
       String tail = g_lastRfid; if (tail.length()>8) tail = tail.substring(tail.length()-8);
-      g_lcdStatus.show("RFID", tail, true);
+      g_lcdStatus.showTo(LCD_TGT_1, "RFID", tail, true);
+
+      // Normalize UID (remove non-alnum, uppercase)
+      String norm = "";
+      for (size_t _i = 0; _i < g_lastRfid.length(); ++_i){
+        char c = g_lastRfid[_i];
+        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')){
+          if (c >= 'a' && c <= 'f') c = c - ('a' - 'A');
+          norm += c;
+        }
+      }
+
+      // Owner UID (uppercase, no separators)
+      const String owner = String("F3A186A5");
+            unsigned long now = millis();
+            if (norm.equalsIgnoreCase(owner)){
+              // update owner last seen (allow immediate re-reads)
+              g_lastOwnerUid = norm;
+              g_lastOwnerRfidMs = now;
+        // Greet owner on LCD1
+        g_lcdStatus.showTo(LCD_TGT_1, "Merhaba", "Sahip", true);
+        // Audible acknowledgement (short beep)
+      #if BUZZER_ENABLED
+        g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 200);
+      #endif
+        // Enqueue sequence: walle then three bb8 variants
+        enqueueSong("walle");
+        enqueueSong("bb8_1");
+        enqueueSong("bb8_2");
+        enqueueSong("bb8_3");
+            }
   #endif
     }
   #endif
@@ -259,6 +334,7 @@ void loop(){
   #if LCD_ENABLED
         g_lcdStatus.show("AVOID", String((int)g_ultraCm) + "cm");
   #endif
+  // (removed) processSongQueue was here under ULTRA condition; moved to main BUZZER section
       }
     }
 #if ULTRA_ENABLED && BUZZER_ENABLED
@@ -321,6 +397,8 @@ void loop(){
 #endif
 
 #if BUZZER_ENABLED
+  // First, allow queued songs to start if no song currently playing
+  processSongQueue();
   g_song.update();
   g_buzzer.update();
 #endif
