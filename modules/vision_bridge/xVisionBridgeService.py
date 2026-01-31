@@ -5,10 +5,17 @@ try:
     from .config_loader import load_config
     from .api.router import get_router
     from .services.processor import VisionProcessor
-except ImportError:
-    from config_loader import load_config
-    from api.router import get_router
-    from services.processor import VisionProcessor
+except Exception:
+    # Try absolute package path as fallback (handles different import contexts)
+    try:
+        from modules.vision_bridge.config_loader import load_config
+        from modules.vision_bridge.api.router import get_router
+        from modules.vision_bridge.services.processor import VisionProcessor
+    except Exception:
+        # Last resort: try bare names (older layout)
+        from config_loader import load_config  # type: ignore
+        from api.router import get_router  # type: ignore
+        from services.processor import VisionProcessor  # type: ignore
 
 # Optional central logging
 try:

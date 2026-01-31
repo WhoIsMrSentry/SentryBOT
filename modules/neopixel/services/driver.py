@@ -108,22 +108,33 @@ class _ArduinoStrip:
         self.buf = [(0, 0, 0)] * self.num_leds
         # notify Arduino immediately
         try:
-            self._arduino.svc.send({"cmd": "neopixel_clear"})
+            svc = getattr(self._arduino, "svc", None)
+            if svc is None:
+                # Arduino service not available; skip
+                return
+            svc.send({"cmd": "neopixel_clear"})
         except Exception:
+            # best-effort; ignore
             pass
 
     def update_strip(self) -> None:
         # send full pixel buffer as list of [r,g,b]
         pix = [[r, g, b] for (r, g, b) in self.buf]
         try:
-            self._arduino.svc.send({"cmd": "neopixel_pixels", "pixels": pix})
+            svc = getattr(self._arduino, "svc", None)
+            if svc is None:
+                return
+            svc.send({"cmd": "neopixel_pixels", "pixels": pix})
         except Exception:
             # best-effort: ignore if Arduino not reachable
             pass
 
     def animate(self, name: str, r: int, g: int, b: int, iterations: int, speed_ms: int) -> bool:
         try:
-            self._arduino.svc.send({
+            svc = getattr(self._arduino, "svc", None)
+            if svc is None:
+                return False
+            svc.send({
                 "cmd": "neopixel_animate",
                 "name": name,
                 "r": r,

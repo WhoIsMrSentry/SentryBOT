@@ -94,9 +94,13 @@ class xArduinoSerialService:
         self.send(obj)
         t0 = time.time()
         want_cmd = obj.get("cmd")
-        while time.time() - t0 < timeout:
+        while True:
+            elapsed = time.time() - t0
+            remaining = timeout - elapsed
+            if remaining <= 0:
+                break
             try:
-                msg = self._rx_queue.get(timeout=timeout)
+                msg = self._rx_queue.get(timeout=remaining)
                 # Filter out initial boot "ready" message once, so it doesn't satisfy the first request.
                 if not obj.get("allow_ready", False) and isinstance(msg, dict) and msg.get("ok") is True and msg.get("msg") == "ready":
                     # Only drop once per service lifecycle
@@ -112,6 +116,7 @@ class xArduinoSerialService:
                 # Otherwise ignore (likely telemetry) and keep waiting
                 continue
             except Empty:
+                # timed out waiting for a message in remaining interval; loop will break if overall timeout expired
                 pass
         raise TimeoutError("No response from Arduino")
 
@@ -253,12 +258,16 @@ class xArduinoSerialService:
     # -------- internals --------
     def _connect(self) -> None:
         port = self._autodetect_port(self.cfg["port"]) if self.cfg.get("port") in (None, "auto", "AUTO") else self.cfg["port"]
-        self._ser = self.transport_factory(
-            port,
-            int(self.cfg["baudrate"]),
-            float(self.cfg["timeout"]),
-            float(self.cfg["write_timeout"]),
-        )
+        try:
+            self._ser = self.transport_factory(
+                port,
+                int(self.cfg["baudrate"]),
+                float(self.cfg["timeout"]),
+                float(self.cfg["write_timeout"]),
+            )
+        except Exception as exc:
+            # Provide clearer diagnostic when port cannot be opened
+            raise RuntimeError(f"Failed to open serial port {port}: {exc}") from exc
 
     def _disconnect(self) -> None:
         if self._ser:

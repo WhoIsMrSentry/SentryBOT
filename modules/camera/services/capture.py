@@ -4,12 +4,15 @@ import threading
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-import cv2
+try:
+    import cv2
+except Exception as e:
+    cv2 = None  # OpenCV not available (or missing libGL etc.)
 
 try:
     from picamera2 import Picamera2  # type: ignore
     PICAM_AVAILABLE = True
-except ImportError:
+except Exception:
     PICAM_AVAILABLE = False
 
 
@@ -53,6 +56,8 @@ class CameraCapture:
         self._picam: Optional["Picamera2"] = None
 
     def _start_opencv(self) -> None:
+        if cv2 is None:
+            raise RuntimeError("OpenCV (cv2) not available: check libGL (libGL.so.1) and opencv-python installation")
         src = self.cfg.source if isinstance(self.cfg.source, (int, str)) else 0
         cap = cv2.VideoCapture(src, cv2.CAP_DSHOW if isinstance(src, int) else 0)
         w, h = self.cfg.resolution
