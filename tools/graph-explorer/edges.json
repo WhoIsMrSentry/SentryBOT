@@ -1,0 +1,207 @@
+[
+  {
+    "source": "animate",
+    "target": "arduino_serial",
+    "type": "serial"
+  },
+  {
+    "source": "autonomy",
+    "target": "ollama",
+    "type": "llm"
+  },
+  {
+    "source": "camera",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "config_center",
+    "target": "append",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "animate",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "arduino_serial",
+    "type": "serial"
+  },
+  {
+    "source": "gateway",
+    "target": "autonomy",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "calibration",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "camera",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "config_center",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "diagnostics",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "hardware",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "interactions",
+    "type": "event"
+  },
+  {
+    "source": "gateway",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "mutagen",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "neopixel",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "notifier",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "ollama",
+    "type": "llm"
+  },
+  {
+    "source": "gateway",
+    "target": "ota",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "piservo",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "scheduler",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "speak",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "speech",
+    "type": "event"
+  },
+  {
+    "source": "gateway",
+    "target": "state_manager",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "telemetry",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
+    "target": "vision_bridge",
+    "type": "serial"
+  },
+  {
+    "source": "gateway",
+    "target": "wiki_rag",
+    "type": "http"
+  },
+  {
+    "source": "hardware",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "mutagen",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "neopixel",
+    "target": "arduino_serial",
+    "type": "serial"
+  },
+  {
+    "source": "neopixel",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "ollama",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "ota",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "piservo",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "speak",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "speech",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "vision_bridge",
+    "target": "arduino_serial",
+    "type": "serial"
+  },
+  {
+    "source": "vision_bridge",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "vision_bridge",
+    "target": "ollama",
+    "type": "llm"
+  },
+  {
+    "source": "wiki_rag",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "wiki_rag",
+    "target": "ollama",
+    "type": "llm"
+  }
+]
