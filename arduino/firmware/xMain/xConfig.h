@@ -116,9 +116,30 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define SKATE_SPEED_LIMIT 2000.0f // steps/s cap
 
 // Steps mapping for rotation/translation commands used by IR controller
-// Steps per degree (tune to match your stepper driver & gearing)
-#ifndef STEPPER_STEPS_PER_DEG
-#define STEPPER_STEPS_PER_DEG 10
+// Compute steps per revolution from motor full steps and gearbox ratio
+// Motor full steps (e.g. NEMA17 = 200)
+#ifndef STEPPER_MOTOR_FULLSTEPS
+#define STEPPER_MOTOR_FULLSTEPS 200
+#endif
+// Gearbox reduction ratio expressed as (1 + NUM/DEN)
+#ifndef GEARBOX_RATIO_NUM
+#define GEARBOX_RATIO_NUM 38
+#endif
+#ifndef GEARBOX_RATIO_DEN
+#define GEARBOX_RATIO_DEN 14
+#endif
+// Steps per output-shaft revolution (float) = MOTOR_FULLSTEPS * (1 + NUM/DEN)
+#ifndef STEPPER_STEPS_PER_REV
+#define STEPPER_STEPS_PER_REV ( (float)STEPPER_MOTOR_FULLSTEPS * (1.0f + ((float)GEARBOX_RATIO_NUM / (float)GEARBOX_RATIO_DEN) ) )
+#endif
+
+// Steering defaults
+#ifndef STEERING_FORWARD_DEG
+#define STEERING_FORWARD_DEG 20.0f
+#endif
+// Inner wheel scale for turns (0.0 .. 1.0) — lower means sharper turn. 0.6 => inner wheel moves 60% of outer.
+#ifndef STEERING_INNER_SCALE
+#define STEERING_INNER_SCALE 0.6f
 #endif
 
 // EEPROM (kalibrasyon) - basit layout

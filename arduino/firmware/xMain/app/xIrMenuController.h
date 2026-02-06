@@ -117,32 +117,39 @@ public:
       }
       // Replace stand/sit animations with position-based stepper moves
       if (k == "LEFT"){
-        // Rotate left by 45 degrees (relative)
-        long steps = (long)(45 * STEPPER_STEPS_PER_DEG);
-        robot.steppers.moveByOne(0, -steps);
-        robot.steppers.moveByOne(1, steps);
-        lcdPrint("TURN", "LEFT"); emitEvent("rotate", -1);
+        // Steering left: move both tracks forward but inner (left) wheel fewer steps
+        float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
+        long outer_steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
+        long inner_steps = (long)(outer_steps * STEERING_INNER_SCALE);
+        // both forward, left inner slower
+        robot.steppers.moveByOne(0, inner_steps);
+        robot.steppers.moveByOne(1, outer_steps);
+        lcdPrint("TURN", "LEFT"); emitEvent("steer", -1);
         return;
       }
       if (k == "RIGHT"){
-        // Rotate right by 45 degrees
-        long steps = (long)(45 * STEPPER_STEPS_PER_DEG);
-        robot.steppers.moveByOne(0, steps);
-        robot.steppers.moveByOne(1, -steps);
-        lcdPrint("TURN", "RIGHT"); emitEvent("rotate", 1);
+        float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
+        long outer_steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
+        long inner_steps = (long)(outer_steps * STEERING_INNER_SCALE);
+        // both forward, right inner slower
+        robot.steppers.moveByOne(0, outer_steps);
+        robot.steppers.moveByOne(1, inner_steps);
+        lcdPrint("TURN", "RIGHT"); emitEvent("steer", 1);
         return;
       }
       if (k == "DOWN"){
-        // U-turn: rotate 180 degrees
-        long steps = (long)(180 * STEPPER_STEPS_PER_DEG);
-        robot.steppers.moveByOne(0, steps);
+        // Move backward a short distance
+        float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
+        long steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
+        robot.steppers.moveByOne(0, -steps);
         robot.steppers.moveByOne(1, -steps);
-        lcdPrint("TURN", "U-TURN"); emitEvent("rotate", 0);
+        lcdPrint("DRIVE", "BACK"); emitEvent("drive", -100);
         return;
       }
       if (k == "UP"){
-        // Move forward a short step (translate)
-        long steps = (long)(100 * STEPPER_STEPS_PER_DEG); // tune as needed
+        // Move forward a short distance
+        float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
+        long steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
         robot.steppers.moveByOne(0, steps);
         robot.steppers.moveByOne(1, steps);
         lcdPrint("DRIVE", "FORWARD"); emitEvent("drive", 100);
