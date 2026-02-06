@@ -115,10 +115,32 @@ public:
         enterMenu();
         return;
       }
-      if (k == "UP"){ robot.setModeStand(); emitEvent("stand"); lcdPrint("MODE", "STAND"); return; }
-      if (k == "DOWN"){ robot.setModeSit(); emitEvent("sit"); lcdPrint("MODE", "SIT"); return; }
-      if (k == "LEFT"){ robot.setDriveCmd(-200); emitEvent("drive", -200); lcdPrint("DRIVE", "-200"); return; }
-      if (k == "RIGHT"){ robot.setDriveCmd(200); emitEvent("drive", 200); lcdPrint("DRIVE", "200"); return; }
+      // Replace stand/sit animations with direct rotation commands via steppers
+      if (k == "LEFT"){
+        // Rotate left in-place: left wheel backward, right wheel forward
+        robot.steppers.setSpeedOne(0, -500);
+        robot.steppers.setSpeedOne(1, 500);
+        // Non-blocking stop scheduled in tick() after short duration
+        _rotateEndMs = millis() + 800UL;
+        lcdPrint("TURN", "LEFT"); emitEvent("rotate", -1);
+        return;
+      }
+      if (k == "RIGHT"){
+        // Rotate right in-place
+        robot.steppers.setSpeedOne(0, 500);
+        robot.steppers.setSpeedOne(1, -500);
+        _rotateEndMs = millis() + 800UL;
+        lcdPrint("TURN", "RIGHT"); emitEvent("rotate", 1);
+        return;
+      }
+      if (k == "DOWN"){
+        // U-turn: spin longer
+        robot.steppers.setSpeedOne(0, 600);
+        robot.steppers.setSpeedOne(1, -600);
+        _rotateEndMs = millis() + 1500UL;
+        lcdPrint("TURN", "U-TURN"); emitEvent("rotate", 0);
+        return;
+      }
       // digits on home just show key feedback
       lcdPrint("IR", "KEY:" + k);
       return;
@@ -397,6 +419,16 @@ public:
 
     // Non-blocking morse player
     tickMorse();
+
+    // Rotation timeout: stop steppers when rotation period expires
+    if (_rotateEndMs != 0){
+      unsigned long nowr = millis();
+      if (nowr >= _rotateEndMs){
+        robot.steppers.setSpeedOne(0, 0);
+        robot.steppers.setSpeedOne(1, 0);
+        _rotateEndMs = 0;
+      }
+    }
   }
 
   static bool isDigitKey(const String &k){ return k.length() == 1 && k[0] >= '0' && k[0] <= '9'; }
@@ -679,6 +711,7 @@ private:
 
   // NeoPixel state removed
   unsigned long _lastProxBeepMs{0};
+  unsigned long _rotateEndMs{0};
 };
 
 #include "menus/xIrMenuController_sound.h"

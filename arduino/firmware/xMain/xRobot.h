@@ -116,12 +116,10 @@ public:
     mode = MODE_STAND; skateBalance = false; balanceEnabled = true;
     // Reattach all and play stand animation
     servos.reattachAll();
-    playStandAnimation();
   }
   void setModeSit(){
     mode = MODE_SIT; balanceEnabled = false; skateBalance = true;
-    // Sit animation then detach only knees/ankles (1,2,4,5); keep hips/head
-    playSitAnimation();
+    // Detached knees/ankles (1,2,4,5); animations removed per configuration
     servos.detachOne(1); servos.detachOne(2); servos.detachOne(4); servos.detachOne(5);
     // Reset user drive
     driveCmd = 0;

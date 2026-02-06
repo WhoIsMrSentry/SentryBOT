@@ -23,3 +23,9 @@ uvicorn modules.piservo.xPiServoService:create_app --factory --host 0.0.0.0 --po
 - PWM aralıkları, açı aralıkları `ServoConfig` ile koddan özelleştirilebilir.
 
 Not: pigpio yoksa simülatör çalışır.
+
+Arduino backend (default):
+
+- This project now defaults to driving the Pi "ears" (PiServo) via the Arduino backend when available.
+- Configure channel indices in `modules/piservo/config/config.yml` using `arduino_index` (PCA9685/Arduino servo index). Default in this repo: `left.arduino_index = 2`, `right.arduino_index = 3`.
+- Robot head `pan` and `tilt` on the Arduino are exposed as servo indices `0` (pan) and `1` (tilt) in firmware.
