@@ -141,7 +141,7 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #ifndef STEPPER_STEPS_PER_REV
 #define STEPPER_STEPS_PER_REV ( (float)STEPPER_MOTOR_FULLSTEPS * (float)MICROSTEP * (1.0f + ((float)GEARBOX_RATIO_NUM / (float)GEARBOX_RATIO_DEN) ) )
 #endif
-#endif
+
 
 // Steering defaults
 #ifndef STEERING_FORWARD_DEG
