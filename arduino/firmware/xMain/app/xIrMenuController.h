@@ -115,30 +115,37 @@ public:
         enterMenu();
         return;
       }
-      // Replace stand/sit animations with direct rotation commands via steppers
+      // Replace stand/sit animations with position-based stepper moves
       if (k == "LEFT"){
-        // Rotate left in-place: left wheel backward, right wheel forward
-        robot.steppers.setSpeedOne(0, -500);
-        robot.steppers.setSpeedOne(1, 500);
-        // Non-blocking stop scheduled in tick() after short duration
-        _rotateEndMs = millis() + 800UL;
+        // Rotate left by 45 degrees (relative)
+        long steps = (long)(45 * STEPPER_STEPS_PER_DEG);
+        robot.steppers.moveByOne(0, -steps);
+        robot.steppers.moveByOne(1, steps);
         lcdPrint("TURN", "LEFT"); emitEvent("rotate", -1);
         return;
       }
       if (k == "RIGHT"){
-        // Rotate right in-place
-        robot.steppers.setSpeedOne(0, 500);
-        robot.steppers.setSpeedOne(1, -500);
-        _rotateEndMs = millis() + 800UL;
+        // Rotate right by 45 degrees
+        long steps = (long)(45 * STEPPER_STEPS_PER_DEG);
+        robot.steppers.moveByOne(0, steps);
+        robot.steppers.moveByOne(1, -steps);
         lcdPrint("TURN", "RIGHT"); emitEvent("rotate", 1);
         return;
       }
       if (k == "DOWN"){
-        // U-turn: spin longer
-        robot.steppers.setSpeedOne(0, 600);
-        robot.steppers.setSpeedOne(1, -600);
-        _rotateEndMs = millis() + 1500UL;
+        // U-turn: rotate 180 degrees
+        long steps = (long)(180 * STEPPER_STEPS_PER_DEG);
+        robot.steppers.moveByOne(0, steps);
+        robot.steppers.moveByOne(1, -steps);
         lcdPrint("TURN", "U-TURN"); emitEvent("rotate", 0);
+        return;
+      }
+      if (k == "UP"){
+        // Move forward a short step (translate)
+        long steps = (long)(100 * STEPPER_STEPS_PER_DEG); // tune as needed
+        robot.steppers.moveByOne(0, steps);
+        robot.steppers.moveByOne(1, steps);
+        lcdPrint("DRIVE", "FORWARD"); emitEvent("drive", 100);
         return;
       }
       // digits on home just show key feedback
@@ -419,16 +426,6 @@ public:
 
     // Non-blocking morse player
     tickMorse();
-
-    // Rotation timeout: stop steppers when rotation period expires
-    if (_rotateEndMs != 0){
-      unsigned long nowr = millis();
-      if (nowr >= _rotateEndMs){
-        robot.steppers.setSpeedOne(0, 0);
-        robot.steppers.setSpeedOne(1, 0);
-        _rotateEndMs = 0;
-      }
-    }
   }
 
   static bool isDigitKey(const String &k){ return k.length() == 1 && k[0] >= '0' && k[0] <= '9'; }
@@ -711,7 +708,7 @@ private:
 
   // NeoPixel state removed
   unsigned long _lastProxBeepMs{0};
-  unsigned long _rotateEndMs{0};
+  // rotation timeout removed; moves are now position-based
 };
 
 #include "menus/xIrMenuController_sound.h"

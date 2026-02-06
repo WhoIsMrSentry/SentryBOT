@@ -115,6 +115,12 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 #define SKATE_KD  0.8f    // speed per (deg/s)
 #define SKATE_SPEED_LIMIT 2000.0f // steps/s cap
 
+// Steps mapping for rotation/translation commands used by IR controller
+// Steps per degree (tune to match your stepper driver & gearing)
+#ifndef STEPPER_STEPS_PER_DEG
+#define STEPPER_STEPS_PER_DEG 10
+#endif
+
 // EEPROM (kalibrasyon) - basit layout
 #define EEPROM_MAGIC 0x42
 #define EEPROM_ADDR_MAGIC   0

@@ -66,17 +66,42 @@ class _ArduinoWrapper:
 class Servo:
     def __init__(self, cfg: ServoConfig):
         self.cfg = cfg
-        # Prefer Arduino backend if configured
-        if self.cfg.arduino_index is not None:
+        # Prefer Arduino backend when available. Use explicit `arduino_index` if provided,
+        # otherwise, if ArduinoDriver exists, try using the `gpio` as an index (common when
+        # using PCA9685 channel numbers). Fallback to pigpio, then sim.
+        ArduinoDriver = None
+        try:
+            from modules.arduino_serial.services.driver import ArduinoDriver  # type: ignore
+        except Exception:
             try:
-                self._io = _ArduinoWrapper(self.cfg.arduino_index)
+                from ..arduino_serial.services.driver import ArduinoDriver  # type: ignore
             except Exception:
-                # Fallback to pigpio or sim
+                ArduinoDriver = None  # type: ignore
+
+        if ArduinoDriver is not None:
+            # Decide an index: prefer explicit config arduino_index; otherwise try gpio if reasonable
+            idx = None
+            if self.cfg.arduino_index is not None:
+                idx = int(self.cfg.arduino_index)
+            else:
+                # If gpio looks like a small PCA9685 channel (0..15) use it
                 try:
-                    self._io = _PigpioWrapper()
+                    if 0 <= int(self.cfg.gpio) <= 15:
+                        idx = int(self.cfg.gpio)
                 except Exception:
-                    self._io = _SimGPIO()
+                    idx = None
+
+            if idx is not None:
+                try:
+                    self._io = _ArduinoWrapper(idx)
+                except Exception:
+                    self._io = None
+            else:
+                self._io = None
         else:
+            self._io = None
+
+        if self._io is None:
             try:
                 self._io = _PigpioWrapper()
             except Exception:
