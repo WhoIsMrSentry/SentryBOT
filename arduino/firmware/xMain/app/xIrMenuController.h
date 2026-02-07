@@ -169,6 +169,36 @@ public:
       return;
     }
 
+    // PID menu handling
+    if (_state == STATE_PID_SEL){
+      if (k == "UP") { _pidParam = (_pidParam + 2) % 3; showPidPrompt(); return; }
+      if (k == "DOWN") { _pidParam = (_pidParam + 1) % 3; showPidPrompt(); return; }
+      if (k == "LEFT" || k == "RIGHT") { _pidMotor = 1 - _pidMotor; showPidPrompt(); return; }
+      if (k == "OK") { _state = STATE_PID_VAL; _pidCapture = true; _pidToken = ""; showPidValue(); return; }
+      if (k == "#") { enterHome(); return; }
+      return;
+    }
+
+    if (_state == STATE_PID_VAL){
+      if (k == "#"){ _pidCapture = false; _pidToken = ""; showPidPrompt(); _state = STATE_PID_SEL; return; }
+      if (isDigitKey(k) || k == "."){
+        if (!_pidCapture) { _pidCapture = true; _pidToken = ""; }
+        _pidToken += k; showPidValue(); return;
+      }
+      if (k == "OK"){
+        // commit value
+        float v = _pidToken.toFloat();
+        float kp,ki,kd; robot.steppers.getPidGains(_pidMotor, kp, ki, kd);
+        if (_pidParam==0) kp = v; else if (_pidParam==1) ki = v; else kd = v;
+        robot.steppers.setPidGains(_pidMotor, kp, ki, kd);
+        lcdPrint("PID M" + String(_pidMotor), String((_pidParam==0?"Kp":"K")) + String((_pidParam==0?"p":"")) + ":" + String(v));
+        emitEvent("pid_adjusted", _pidMotor);
+        _pidCapture = false; _pidToken = ""; _state = STATE_PID_SEL; showPidPrompt();
+        return;
+      }
+      return;
+    }
+
     // Servo flow
     if (_state == STATE_SERVO_SEL || _state == STATE_SERVO_DEG){
       if (k == "*"){
@@ -440,6 +470,8 @@ public:
   enum State : uint8_t {
     STATE_HOME = 0,
     STATE_MENU,
+    STATE_PID_SEL,
+    STATE_PID_VAL,
     STATE_SERVO_SEL,
     STATE_SERVO_DEG,
     STATE_LASER,
@@ -457,6 +489,7 @@ public:
     MENU_IMU,
     MENU_RFID,
     MENU_SOUND,
+    MENU_PID,
     MENU_SYSTEM,
     MENU_COUNT,
   };
@@ -527,6 +560,19 @@ public:
     lcdPrint("MENU", menuName(_menuIndex) + " OK=ENTER");
   }
 
+  void showPidPrompt(){
+    const char* names[] = {"Kp","Ki","Kd"};
+    String top = "PID M" + String(_pidMotor) + " " + String(names[_pidParam]);
+    String bot = "OK=edit L/R=motor";
+    lcdPrint(top, bot);
+  }
+
+  void showPidValue(){
+    String top = "PID M" + String(_pidMotor) + " VAL";
+    String bot = _pidToken.length()>0 ? _pidToken : "(enter num)";
+    lcdPrint(top, bot);
+  }
+
   void enterSelected(Robot &robot){
     switch ((MenuItem)_menuIndex){
       case MENU_SERVO:
@@ -575,6 +621,15 @@ public:
         showSound();
         return;
 
+      case MENU_PID:
+        _state = STATE_PID_SEL;
+        _pidMotor = 0;
+        _pidParam = 0; // 0=kp,1=ki,2=kd
+        _pidToken = "";
+        _pidCapture = false;
+        showPidPrompt();
+        return;
+
       case MENU_SYSTEM:
         _state = STATE_SYSTEM;
         _lastUiMs = 0;
@@ -588,6 +643,8 @@ public:
 
   void showServoPrompt();
   void showServoToken();
+  void showPidPrompt();
+  void showPidValue();
 
   void showLaser(){
     const char* modes[] = {"OFF", "L1", "L2", "BOTH"};
@@ -648,6 +705,12 @@ public:
 #endif
 
   void refreshLive(Robot &robot);
+
+  // PID menu state
+  int _pidMotor{0};
+  int _pidParam{0};
+  bool _pidCapture{false};
+  String _pidToken{0};
 
 private:
 

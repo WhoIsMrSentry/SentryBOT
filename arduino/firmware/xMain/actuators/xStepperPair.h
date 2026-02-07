@@ -56,6 +56,7 @@ public:
 
   // Enkoder yok: yazılımsal hız kontrolü (PID-benzeri) using step timing estimator.
   void setPidGains(uint8_t id, float kp, float ki, float kd){ if(id>1) return; pidCtrls[id].kp=kp; pidCtrls[id].ki=ki; pidCtrls[id].kd=kd; }
+  void getPidGains(uint8_t id, float &kp, float &ki, float &kd){ if (id>1) {kp=ki=kd=0; return;} kp=pidCtrls[id].kp; ki=pidCtrls[id].ki; kd=pidCtrls[id].kd; }
   void startPidControl(uint8_t id, float targetHz){ if(id>1) return; pidCtrls[id].enabled=true; pidCtrls[id].targetHz=targetHz; pidCtrls[id].integral=0; pidCtrls[id].lastError=0; pidCtrls[id].lastUpdateMicros=micros(); }
   void stopPidControl(uint8_t id){ if(id>1) return; pidCtrls[id].enabled=false; }
 

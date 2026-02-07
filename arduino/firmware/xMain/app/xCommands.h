@@ -304,6 +304,44 @@ static inline void handleJson(const String &line){
     return;
   }
 
+  // PID commands for steppers (encoderless)
+  // Examples:
+  // {"cmd":"pid","action":"set_gains","id":0,"kp":0.1,"ki":0.01,"kd":0.0}
+  // {"cmd":"pid","action":"start","id":0,"target_hz":50}
+  // {"cmd":"pid","action":"stop","id":0}
+  // {"cmd":"pid","action":"status","id":0}
+  if (line.indexOf("\"cmd\":\"pid\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    if (line.indexOf("\"action\":\"set_gains\"")>=0){
+      float kp=0.1, ki=0.0, kd=0.0;
+      int p=line.indexOf("\"kp\":"); if (p>=0) kp = line.substring(p+5).toFloat();
+      p=line.indexOf("\"ki\":"); if (p>=0) ki = line.substring(p+5).toFloat();
+      p=line.indexOf("\"kd\":"); if (p>=0) kd = line.substring(p+5).toFloat();
+      robot.steppers.setPidGains(id, kp, ki, kd);
+      Protocol::sendOk(); return;
+    }
+    if (line.indexOf("\"action\":\"start\"")>=0){
+      float hz=10.0f; int p=line.indexOf("\"target_hz\":"); if (p>=0) hz = line.substring(p+12).toFloat();
+      robot.steppers.startPidControl(id, hz);
+      Protocol::sendOk(); return;
+    }
+    if (line.indexOf("\"action\":\"stop\"")>=0){
+      robot.steppers.stopPidControl(id);
+      Protocol::sendOk(); return;
+    }
+    if (line.indexOf("\"action\":\"status\"")>=0){
+      float kp,ki,kd; robot.steppers.getPidGains(id, kp, ki, kd);
+      SERIAL_IO.print(F("{\"ok\":true,\"event\":\"pid_status\",\"id\":")); SERIAL_IO.print(id);
+      SERIAL_IO.print(F(",\"kp\":")); SERIAL_IO.print(kp);
+      SERIAL_IO.print(F(",\"ki\":")); SERIAL_IO.print(ki);
+      SERIAL_IO.print(F(",\"kd\":")); SERIAL_IO.print(kd);
+      SERIAL_IO.println(F("}"));
+      return;
+    }
+    Protocol::sendErr("bad_pid_cmd");
+    return;
+  }
+
   if (line.indexOf("\"cmd\":\"home\"")>=0){ robot.steppers.homeBoth(); Protocol::sendOk("homed"); return; }
   if (line.indexOf("\"cmd\":\"zero_now\"")>=0){ robot.steppers.zeroNow(); Protocol::sendOk("zeroed_now"); return; }
 
