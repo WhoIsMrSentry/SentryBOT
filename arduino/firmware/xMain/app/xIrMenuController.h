@@ -121,9 +121,9 @@ public:
         float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
         long outer_steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
         long inner_steps = (long)(outer_steps * STEERING_INNER_SCALE);
-        // both forward, left inner slower
-        robot.steppers.moveByOne(0, inner_steps);
-        robot.steppers.moveByOne(1, outer_steps);
+        // both forward, left inner slower (ramped)
+        robot.steppers.startRampedDrive(0, 1, 20000UL, 800UL, 0.995f, inner_steps);
+        robot.steppers.startRampedDrive(1, 1, 20000UL, 800UL, 0.995f, outer_steps);
         lcdPrint("TURN", "LEFT"); emitEvent("steer", -1);
         return;
       }
@@ -131,9 +131,9 @@ public:
         float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
         long outer_steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
         long inner_steps = (long)(outer_steps * STEERING_INNER_SCALE);
-        // both forward, right inner slower
-        robot.steppers.moveByOne(0, outer_steps);
-        robot.steppers.moveByOne(1, inner_steps);
+        // both forward, right inner slower (ramped)
+        robot.steppers.startRampedDrive(0, 1, 20000UL, 800UL, 0.995f, outer_steps);
+        robot.steppers.startRampedDrive(1, 1, 20000UL, 800UL, 0.995f, inner_steps);
         lcdPrint("TURN", "RIGHT"); emitEvent("steer", 1);
         return;
       }
@@ -141,8 +141,8 @@ public:
         // Move backward a short distance
         float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
         long steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
-        robot.steppers.moveByOne(0, -steps);
-        robot.steppers.moveByOne(1, -steps);
+        robot.steppers.startRampedDrive(0, -1, 20000UL, 800UL, 0.995f, steps);
+        robot.steppers.startRampedDrive(1, -1, 20000UL, 800UL, 0.995f, steps);
         lcdPrint("DRIVE", "BACK"); emitEvent("drive", -100);
         return;
       }
@@ -150,8 +150,8 @@ public:
         // Move forward a short distance
         float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
         long steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
-        robot.steppers.moveByOne(0, steps);
-        robot.steppers.moveByOne(1, steps);
+        robot.steppers.startRampedDrive(0, 1, 20000UL, 800UL, 0.995f, steps);
+        robot.steppers.startRampedDrive(1, 1, 20000UL, 800UL, 0.995f, steps);
         lcdPrint("DRIVE", "FORWARD"); emitEvent("drive", 100);
         return;
       }

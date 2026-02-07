@@ -134,7 +134,7 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,9
 
 // Microstepping (A4988 MS1/MS2/MS3). If MS pins are set to 5V for 1/16, set MICROSTEP=16.
 #ifndef MICROSTEP
-#define MICROSTEP 16
+#define MICROSTEP 1
 #endif
 
 // Steps per output-shaft revolution (float) = MOTOR_FULLSTEPS * MICROSTEP * (1 + NUM/DEN)
