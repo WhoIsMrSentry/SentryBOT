@@ -17,26 +17,24 @@
 #endif
 #endif
 
-// Servo counts
-#define SERVO_COUNT_TOTAL 8 // 6 leg (L/R hip, knee, ankle) + 2 head (tilt, pan)
-#define SERVO_LEG_COUNT 6
-#define SERVO_HEAD_COUNT 2
+// Servo counts (reduced to only pan/tilt pairs)
+#define SERVO_COUNT_TOTAL 4 // L: tilt,pan  +  R: tilt,pan
+// legacy: removed leg servos (hip,knee,ankle)
 
 // Stepper counts
 #define STEPPER_COUNT 2 // Ankle integrated skates
 
 // Pins – adapt to your wiring
-// Left leg 
-#define PIN_L_HIP   15
-#define PIN_L_KNEE  14
-#define PIN_L_ANKLE 13
-// Right leg 
-#define PIN_R_HIP   0
-#define PIN_R_KNEE  1
-#define PIN_R_ANKLE 2
-// Head: pan+tilt
-#define PIN_HEAD_PAN  3
-#define PIN_HEAD_TILT 12
+// Servos: left and right pan/tilt pairs (pins adapt to your wiring)
+// Left: tilt, pan
+#define PIN_L_TILT  14
+#define PIN_L_PAN   15
+// Right: tilt, pan (reuse previous head pins)
+#define PIN_R_TILT  12
+#define PIN_R_PAN   3
+// Backwards compatibility aliases
+#define PIN_HEAD_TILT PIN_R_TILT
+#define PIN_HEAD_PAN  PIN_R_PAN
 
 // Stepper pins (moved to avoid servo overlap)
 // Updated wiring: STEP/DIR pins
@@ -106,8 +104,8 @@
 #define BOOT_CALIBRATION_PROMPT 1
 
 // Default poses
-static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] = {90,90,90, 90,90,90, 90,90};
-static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,110,60, 90,110,60, 90,90}; // simple folded legs
+static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] = {90,90, 90,90};
+static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 
 // Stepper skate balance PID (inverted pendulum)
 #define SKATE_KP  18.0f   // speed per degree

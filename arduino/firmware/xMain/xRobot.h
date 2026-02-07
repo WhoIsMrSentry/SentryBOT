@@ -5,7 +5,6 @@
 #include <math.h>
 #include "xConfig.h"
 #include "xImu.h"
-#include "xKinematics.h"
 #include "actuators/xServoBus.h"
 #include "actuators/xStepperPair.h"
 
@@ -15,17 +14,13 @@ enum RobotMode { MODE_STAND, MODE_SIT };
 class Robot {
 public:
   void begin(){
-    // Attach servos
-    uint8_t pins[SERVO_COUNT_TOTAL] = {PIN_L_HIP,PIN_L_KNEE,PIN_L_ANKLE, PIN_R_HIP,PIN_R_KNEE,PIN_R_ANKLE, PIN_HEAD_TILT,PIN_HEAD_PAN};
+    // Attach servos (left/right tilt+pan)
+    uint8_t pins[SERVO_COUNT_TOTAL] = {PIN_L_TILT, PIN_L_PAN, PIN_R_TILT, PIN_R_PAN};
     servos.attachAll(pins, POSE_STAND);
     servos.setSpeed(SPEED_DEG_PER_S);
 
     // Steppers
     steppers.begin();
-
-    // IK
-    ik.setup(THIGH_LEN, SHIN_LEN);
-    ik.setOffsets(OFFS_HIP, OFFS_KNEE, OFFS_ANKLE);
 
     // IMU
     Wire.begin();
@@ -46,24 +41,14 @@ public:
   void update(){
     servos.update();
     steppers.update();
-    balancePid();
   }
-
-  // High level actions
-  bool setLegByIK(Side side, float x){
-    IkSolution L = ik.solve(x, 0);
-    if (!L.valid) return false;
-    IkSolution R; LegIK2D::mirror(L,R);
-    if (side==LEFT){ setLeft(L); } else { setRight(R); }
-    return true;
-  }
-
-  void setLeft(const IkSolution &s){ servos.write(0, s.hip); servos.write(1, s.knee); servos.write(2, s.ankle); }
-  void setRight(const IkSolution &s){ servos.write(3, s.hip); servos.write(4, s.knee); servos.write(5, s.ankle); }
 
   void head(float tilt, float pan){
-    servos.write(6, constrain(tilt, HEAD_TILT_MIN, HEAD_TILT_MAX));
-    servos.write(7, constrain(pan,  HEAD_PAN_MIN,  HEAD_PAN_MAX));
+    // Write tilt/pan to both left and right pairs
+    servos.write(0, constrain(tilt, HEAD_TILT_MIN, HEAD_TILT_MAX));
+    servos.write(1, constrain(pan,  HEAD_PAN_MIN,  HEAD_PAN_MAX));
+    servos.write(2, constrain(tilt, HEAD_TILT_MIN, HEAD_TILT_MAX));
+    servos.write(3, constrain(pan,  HEAD_PAN_MIN,  HEAD_PAN_MAX));
   }
 
   void calibrateNeutral(){ servos.writePose(POSE_STAND); }
@@ -98,11 +83,9 @@ public:
   void writeServoLimited(int index, float deg){
     float d = deg;
     switch(index){
-      case 0: case 3: d = constrain(d, HIP_MIN, HIP_MAX); break;
-      case 1: case 4: d = constrain(d, KNEE_MIN, KNEE_MAX); break;
-      case 2: case 5: d = constrain(d, ANKLE_MIN, ANKLE_MAX); break;
-      case 6: d = constrain(d, HEAD_TILT_MIN, HEAD_TILT_MAX); break;
-      case 7: d = constrain(d, HEAD_PAN_MIN, HEAD_PAN_MAX); break;
+      // 0,2 = tilt; 1,3 = pan
+      case 0: case 2: d = constrain(d, HEAD_TILT_MIN, HEAD_TILT_MAX); break;
+      case 1: case 3: d = constrain(d, HEAD_PAN_MIN, HEAD_PAN_MAX); break;
       default: break;
     }
     servos.write(index, d);
@@ -112,24 +95,13 @@ public:
   }
 
   // Mode control with selective detach in Sit
-  void setModeStand(){
-    mode = MODE_STAND; skateBalance = false; balanceEnabled = true;
-    // Reattach all and play stand animation
-    servos.reattachAll();
-  }
-  void setModeSit(){
-    mode = MODE_SIT; balanceEnabled = false; skateBalance = true;
-    // Detached knees/ankles (1,2,4,5); animations removed per configuration
-    servos.detachOne(1); servos.detachOne(2); servos.detachOne(4); servos.detachOne(5);
-    // Reset user drive
-    driveCmd = 0;
-  }
+  void setModeStand(){ mode = MODE_STAND; }
+  void setModeSit(){ mode = MODE_SIT; }
 
   // Expose subsystems
   Imu imu;
   ServoBus servos;
   StepperPair steppers;
-  LegIK2D ik;
   float driveCmd = 0; // user-requested forward (+)/backward (-) velocity (steps/s)
 
 public:
@@ -151,39 +123,11 @@ private:
   float skateSpeedLimit=SKATE_SPEED_LIMIT;
 
   void balancePid(){
-    unsigned long now = millis();
-    if (now - lastPidMs < PID_SAMPLE_MS) return;
-    lastPidMs = now;
+    // Balance controller disabled for pan/tilt-only configuration.
+    (void)balanceEnabled; (void)lastPidMs; (void)iPitch; (void)iRoll;
+    (void)lastPitch; (void)lastRoll; (void)mode; (void)skateBalance;
+    // IMU still available if callers need it
     imu.read();
-    float p = imu.getPitch();
-    float r = imu.getRoll();
-    // Deadband
-    if (fabs(p) < PID_DEADBAND_DEG) p = 0; if (fabs(r) < PID_DEADBAND_DEG) r = 0;
-    // Derivative (per-sample)
-    float dp = p - lastPitch; float dr = r - lastRoll; lastPitch=p; lastRoll=r;
-    // Integrator (for servo PID)
-    iPitch += p; iRoll += r;
-
-    // 1) Servo-based balance (Stand mode or when explicitly enabled)
-    if (balanceEnabled){
-      float outP = pidKpPitch*p + pidKiPitch*iPitch + pidKdPitch*dp;
-      float outR = pidKpRoll*r  + pidKiRoll*iRoll  + pidKdRoll*dr;
-      outP = constrain(outP, -PID_OUT_LIMIT, PID_OUT_LIMIT);
-      outR = constrain(outR, -PID_OUT_LIMIT, PID_OUT_LIMIT);
-      // Apply as corrective offsets on hip servos (0=L hip, 3=R hip)
-      writeServoLimited(0, servos.get(0) - outP - outR);
-      writeServoLimited(3, servos.get(3) - outP + outR);
-    }
-
-    // 2) Skate (stepper) balance in Sit mode: combine user drive with balance correction
-    if (skateBalance && mode==MODE_SIT){
-      float v_corr = skateKp * p + skateKd * dp; // steps/s correction
-      v_corr = constrain(v_corr, -skateSpeedLimit, skateSpeedLimit);
-      float v_cmd = driveCmd + v_corr;
-      v_cmd = constrain(v_cmd, -skateSpeedLimit, skateSpeedLimit);
-      steppers.setSpeedOne(0, v_cmd);
-      steppers.setSpeedOne(1, v_cmd);
-    }
   }
 
   // Simple, smooth stand-up animation

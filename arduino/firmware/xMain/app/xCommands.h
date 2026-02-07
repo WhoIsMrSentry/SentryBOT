@@ -283,10 +283,8 @@ static inline void handleJson(const String &line){
   }
 
   if (line.indexOf("\"cmd\":\"leg_ik\"")>=0){
-    float x=120; Side side=LEFT;
-    int p=line.indexOf("\"x\":"); if(p>=0){ x=line.substring(p+4).toFloat(); }
-    p=line.indexOf("\"side\":\"R\""); if(p>=0){ side=RIGHT; }
-    if (robot.setLegByIK(side,x)) Protocol::sendOk(); else Protocol::sendErr("ik_fail");
+    // Legacy IK command removed in this build (no leg servos)
+    Protocol::sendErr("unsupported");
     return;
   }
 
