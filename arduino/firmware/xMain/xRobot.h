@@ -8,6 +8,9 @@
 #include "actuators/xServoBus.h"
 #include "actuators/xStepperPair.h"
 
+// Status LED mode (defined in xConfig.h)
+extern volatile uint8_t g_statusLedMode;
+
 enum Side { LEFT, RIGHT };
 enum RobotMode { MODE_STAND, MODE_SIT };
 
@@ -32,9 +35,7 @@ public:
 
     lastPidMs = millis();
     mode = MODE_STAND; skateBalance=false;
-    // Initialize runtime-tunable gains from config
-    pidKpPitch = PID_PITCH_KP; pidKiPitch = PID_PITCH_KI; pidKdPitch = PID_PITCH_KD;
-    pidKpRoll  = PID_ROLL_KP;  pidKiRoll  = PID_ROLL_KI;  pidKdRoll  = PID_ROLL_KD;
+    // Skate gains initialized from config
     skateKp = SKATE_KP; skateKi = SKATE_KI; skateKd = SKATE_KD; skateSpeedLimit = SKATE_SPEED_LIMIT;
   }
 
@@ -51,28 +52,25 @@ public:
 
   void calibrateNeutral(){ servos.writePose(POSE_STAND); }
 
-  void setBalance(bool en){ balanceEnabled = en; }
-  bool isBalanceEnabled() const { return balanceEnabled; }
-
   RobotMode getMode() const { return mode; }
 
   void estop(){
     // Detach servos and stop steppers immediately
     servos.detachAll();
     steppers.stop();
-    balanceEnabled = false; skateBalance = false;
+    skateBalance = false;
+    // indicate error/estop via status LED
+    g_statusLedMode = STATUS_LED_BLINK_FAST;
   }
-
   // Runtime tuning
-  void setPidGains(float kpP, float kiP, float kdP, float kpR, float kiR, float kdR){
-    pidKpPitch=kpP; pidKiPitch=kiP; pidKdPitch=kdP; pidKpRoll=kpR; pidKiRoll=kiR; pidKdRoll=kdR;
-  }
   void setSkateGains(float kp, float ki, float kd){ skateKp=kp; skateKi=ki; skateKd=kd; }
   void setSkateSpeedLimit(float lim){ skateSpeedLimit = lim; }
   void setServoSpeed(float dps){ servos.setSpeed(dps); }
 
   void getPidGains(float &kpP, float &kiP, float &kdP, float &kpR, float &kiR, float &kdR) const {
-    kpP=pidKpPitch; kiP=pidKiPitch; kdP=pidKdPitch; kpR=pidKpRoll; kiR=pidKiRoll; kdR=pidKdRoll;
+    // Balance PID removed; return configured constants for compatibility
+    kpP = PID_PITCH_KP; kiP = PID_PITCH_KI; kdP = PID_PITCH_KD;
+    kpR = PID_ROLL_KP;  kiR = PID_ROLL_KI;  kdR = PID_ROLL_KD;
   }
   void getSkateGains(float &kp, float &ki, float &kd) const { kp=skateKp; ki=skateKi; kd=skateKd; }
   float getSkateSpeedLimit() const { return skateSpeedLimit; }
@@ -107,26 +105,13 @@ public:
   float getDriveCmd() const { return driveCmd; }
 
 private:
-  // PID state
-  bool balanceEnabled = false;
   unsigned long lastPidMs = 0;
-  float iPitch=0, iRoll=0;
-  float lastPitch=0, lastRoll=0;
   RobotMode mode{MODE_STAND};
   bool skateBalance=false;
-  // Runtime PID and skate gains
-  float pidKpPitch=PID_PITCH_KP, pidKiPitch=PID_PITCH_KI, pidKdPitch=PID_PITCH_KD;
-  float pidKpRoll =PID_ROLL_KP,  pidKiRoll =PID_ROLL_KI,  pidKdRoll =PID_ROLL_KD;
+  // Runtime skate gains
   float skateKp=SKATE_KP, skateKi=SKATE_KI, skateKd=SKATE_KD;
   float skateSpeedLimit=SKATE_SPEED_LIMIT;
-
-  void balancePid(){
-    // Balance controller disabled for pan/tilt-only configuration.
-    (void)balanceEnabled; (void)lastPidMs; (void)iPitch; (void)iRoll;
-    (void)lastPitch; (void)lastRoll; (void)mode; (void)skateBalance;
-    // IMU still available if callers need it
-    imu.read();
-  }
+  // previous balance controller removed; IMU remains available for telemetry
 
   // Simple, smooth stand-up animation
   void playStandAnimation(){ writePoseLimited(POSE_STAND); waitUntilSettled(1500); }

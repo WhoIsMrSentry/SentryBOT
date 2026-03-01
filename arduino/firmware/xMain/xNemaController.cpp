@@ -52,7 +52,11 @@ void NemaController::setEnabled(bool en){
   if (!_enabled && steppers){
     steppers->setSpeed(0.0f, 0.0f);
   }
+  if (steppers){
+    steppers->setEnable(en);
+  }
 }
+
 
 bool NemaController::isEnabled() const { return _enabled; }
 bool NemaController::isLeftMotorEnabled() const { return leftEnabled; }

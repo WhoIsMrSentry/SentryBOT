@@ -53,7 +53,6 @@ void IrMenuController::refreshLive(Robot &robot){
     if (_sysSub == 0){
       String top = (robot.getMode()==MODE_STAND) ? "SYS STAND" : "SYS SIT";
       String b = String("DRV:") + String((int)robot.getDriveCmd());
-      if (robot.isBalanceEnabled()) b += " PID";
       lcdPrint(top, b);
       return;
     }

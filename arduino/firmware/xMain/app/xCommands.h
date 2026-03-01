@@ -362,6 +362,64 @@ static inline void handleJson(const String &line){
     return;
   }
 
+  // PID commands for closed-loop stepper control
+  if (line.indexOf("\"cmd\":\"pid_enable\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    bool en = (line.indexOf("\"enable\":true")>=0);
+    robot.steppers.enablePid(id, en);
+    Protocol::sendOk(en?"pid_enabled":"pid_disabled");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_set\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    int p=line.indexOf("\"kp\":"); float curKp=0, curKi=0, curKd=0; robot.steppers.getPidGains(id, curKp, curKi, curKd);
+    if(p>=0){ float v=line.substring(p+5).toFloat(); curKp = v; robot.steppers.configurePid(id, curKp, curKi, curKd); }
+    p=line.indexOf("\"ki\":"); if(p>=0){ float v=line.substring(p+5).toFloat(); curKi = v; robot.steppers.configurePid(id, curKp, curKi, curKd); }
+    p=line.indexOf("\"kd\":"); if(p>=0){ float v=line.substring(p+5).toFloat(); curKd = v; robot.steppers.configurePid(id, curKp, curKi, curKd); }
+    p=line.indexOf("\"target\":"); if(p>=0){ float t=line.substring(p+9).toFloat(); robot.steppers.setTargetSpeed(id, t); }
+    Protocol::sendOk("pid_set");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_status\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    float measured = robot.steppers.getMeasuredSpeed(id);
+    float target = robot.steppers.getPidTarget(id);
+    bool stalled = robot.steppers.isStalled(id);
+    String out = String("{\"ok\":true,\"id\":") + id + ",\"measured\":" + String(measured,1) + ",\"target\":" + String(target,1) + ",\"stalled\":" + (stalled?String("true"):String("false")) + "}";
+    SERIAL_IO.println(out);
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_save\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    robot.steppers.savePidToEeprom(id);
+    Protocol::sendOk("pid_saved");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_load\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    bool ok = robot.steppers.loadPidFromEeprom(id);
+    if (ok) Protocol::sendOk("pid_loaded"); else Protocol::sendErr("pid_not_saved");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_clear_stall\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    robot.steppers.clearStall(id);
+    Protocol::sendOk("stall_cleared");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_reset\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    robot.steppers.resetPidIntegrator(id);
+    Protocol::sendOk("pid_reset");
+    return;
+  }
+
 
 
   if (line.indexOf("\"cmd\":\"calibrate\"")>=0){ robot.calibrateNeutral(); Protocol::sendOk("calibrated"); return; }
@@ -503,17 +561,16 @@ static inline void handleJson(const String &line){
 
   if (line.indexOf("\"cmd\":\"get_state\"")>=0){
     robot.imu.read();
-    String out = "{""ok"":true,""mode"":";
+    String out = "{\"ok\":true,\"mode\":";
     out += (robot.getMode()==MODE_STAND?"\"stand\"":"\"sit\"");
-    out += ",""pid"":";
-    out += (robot.isBalanceEnabled()?"true":"false");
-    out += ",""pitch"":";
+    out += ",\"pid\":false,";
+    out += "\"pitch\":";
     out += robot.imu.getPitch();
-    out += ",""roll"":";
+    out += ",\"roll\":";
     out += robot.imu.getRoll();
-    out += ",""pose"": [";
+    out += ",\"pose\": [";
     for (int i=0;i<SERVO_COUNT_TOTAL;i++){ if(i) out += ","; out += (int)robot.servos.get(i); }
-    out += "],""stepper_pos"": [";
+    out += "],\"stepper_pos\": [";
     out += robot.steppers.pos1();
     out += ",";
     out += robot.steppers.pos2();
@@ -548,23 +605,10 @@ static inline void handleJson(const String &line){
   if (line.indexOf("\"cmd\":\"tune\"")>=0){
     int p=line.indexOf("\"servo_speed\":");
     if(p>=0){ float v=line.substring(p+14).toFloat(); robot.setServoSpeed(v); }
-
-    float kpP,kiP,kdP,kpR,kiR,kdR;
-    robot.getPidGains(kpP,kiP,kdP,kpR,kiR,kdR);
-
-    p=line.indexOf("\"kpP\":"); if(p>=0) kpP=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kiP\":"); if(p>=0) kiP=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kdP\":"); if(p>=0) kdP=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kpR\":"); if(p>=0) kpR=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kiR\":"); if(p>=0) kiR=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kdR\":"); if(p>=0) kdR=line.substring(p+6).toFloat();
-
-    robot.setPidGains(kpP,kiP,kdP,kpR,kiR,kdR);
-
+    // Only support skate (stepper) tuning here; balance PID removed
     float skp, ski, skd;
     robot.getSkateGains(skp,ski,skd);
     float smax=robot.getSkateSpeedLimit();
-
     int sp=line.indexOf("\"skate\"");
     if(sp>=0){
       int q=line.indexOf("\"kp\":", sp); if(q>0) skp=line.substring(q+5).toFloat();

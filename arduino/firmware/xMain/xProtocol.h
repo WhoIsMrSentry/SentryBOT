@@ -2,6 +2,7 @@
 #define ROBOT_PROTOCOL_H
 
 #include <Arduino.h>
+#include "xConfig.h"
 
 // Line-delimited JSON protocol (NDJSON).
 // Each line is a JSON object, e.g.:
@@ -55,7 +56,8 @@ private:
   static String buf;
 };
 
-// Static member
-String Protocol::buf;
+// Note: `Protocol::buf` is declared in the class but must be defined
+// in a single translation unit to avoid multiple-definition link errors.
+// See xProtocol.cpp for the single-definition.
 
 #endif // ROBOT_PROTOCOL_H

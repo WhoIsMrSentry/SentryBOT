@@ -48,6 +48,11 @@ static inline void processSongQueue(){
   }
 }
 
+// Status LED mode (managed in loop)
+volatile uint8_t g_statusLedMode = STATUS_LED_OFF;
+unsigned long g_statusLedLastMs = 0;
+bool g_statusLedState = false;
+
 // Proximity beep state for HC-SR04 parking-like feedback
 unsigned long g_lastProxBeepMs = 0;
 bool g_proxContinuousOn = false;
@@ -104,12 +109,31 @@ OledDisplay g_oled;
 
 void setup(){
   SERIAL_IO.begin(ROBOT_SERIAL_BAUD);
+  // Status LED pin
+  pinMode(PIN_STATUS_LED, OUTPUT);
+  g_statusLedMode = STATUS_LED_BLINK_SLOW; // boot activity
   robot.begin();
   // Initialize and attach hall encoders (if enabled) after steppers are started
 #if HALL_ENCODER_ENABLED
-  g_hall0.begin(HALL_PIN_0, 4);
-  g_hall1.begin(HALL_PIN_1, 4);
+  // Load per-wheel pulses-per-rev from EEPROM if present, otherwise use config defaults
+  uint16_t ppr0 = HALL_PULSES_PER_REV_0;
+  uint16_t ppr1 = HALL_PULSES_PER_REV_1;
+  if (EEPROM.read(EEPROM_ADDR_HALL_MAGIC) == EEPROM_HALL_MAGIC){
+    uint16_t e0=0, e1=0;
+    EEPROM.get(EEPROM_ADDR_HALL_PPR_0, e0);
+    EEPROM.get(EEPROM_ADDR_HALL_PPR_1, e1);
+    if (e0 > 0 && e0 < 100) ppr0 = e0;
+    if (e1 > 0 && e1 < 100) ppr1 = e1;
+  }
+  // Begin hall encoders in analog mode if configured
+  g_hall0.begin(HALL_PIN_0, ppr0, (bool)HALL_ANALOG_MODE, HALL_ANALOG_THRESHOLD);
+  g_hall1.begin(HALL_PIN_1, ppr1, (bool)HALL_ANALOG_MODE, HALL_ANALOG_THRESHOLD);
   robot.steppers.attachHallEncoders(&g_hall0, &g_hall1);
+
+  // Auto-load PID gains from EEPROM for each motor (if present)
+  bool l0 = robot.steppers.loadPidFromEeprom(0);
+  bool l1 = robot.steppers.loadPidFromEeprom(1);
+  if (l0 || l1) Protocol::sendOk("pid_loaded");
 #endif
   // Initialize EBYTE radio (nRF24L01 compatible) and NEMA controller
 #if defined(RADIO_CE_PIN) && defined(RADIO_CSN_PIN)
@@ -130,6 +154,8 @@ void setup(){
   }
   #endif
   Protocol::sendOk("ready");
+  // Indicate ready
+  g_statusLedMode = STATUS_LED_SOLID;
 #if LCD_ENABLED
   Wire.begin();
 #if defined(ARDUINO_ARCH_AVR)
@@ -416,5 +442,24 @@ void loop(){
       SERIAL_IO.println(out);
   }
   // periodic maintenance for neopixel request retries/acks
+  // Status LED handling
+  {
+    unsigned long nowLed = millis();
+    switch (g_statusLedMode){
+      case STATUS_LED_SOLID:
+        if (!g_statusLedState){ digitalWrite(PIN_STATUS_LED, HIGH); g_statusLedState = true; }
+        break;
+      case STATUS_LED_OFF:
+        if (g_statusLedState){ digitalWrite(PIN_STATUS_LED, LOW); g_statusLedState = false; }
+        break;
+      case STATUS_LED_BLINK_SLOW:
+        if ((long)(nowLed - g_statusLedLastMs) >= 800){ g_statusLedLastMs = nowLed; g_statusLedState = !g_statusLedState; digitalWrite(PIN_STATUS_LED, g_statusLedState?HIGH:LOW); }
+        break;
+      case STATUS_LED_BLINK_FAST:
+        if ((long)(nowLed - g_statusLedLastMs) >= 200){ g_statusLedLastMs = nowLed; g_statusLedState = !g_statusLedState; digitalWrite(PIN_STATUS_LED, g_statusLedState?HIGH:LOW); }
+        break;
+      default: break;
+    }
+  }
   neopixelTick();
 }

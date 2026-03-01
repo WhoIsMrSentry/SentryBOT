@@ -11,7 +11,8 @@
 #ifndef SERIAL_IO
 	// Detect common Mega2560/MEGA variants and map to Serial1 (RX/TX on pins 19/18)
 #if defined(ARDUINO_AVR_MEGA2560) || defined(ARDUINO_AVR_MEGA) || defined(__AVR_ATmega2560__)
-#define SERIAL_IO Serial1
+// Prefer Serial3 on Mega per user request (TX3=14, RX3=15)
+#define SERIAL_IO Serial3
 #else
 #define SERIAL_IO Serial
 #endif
@@ -37,12 +38,29 @@
 #define PIN_PI_SERVO_2 8
 
 // Stepper pins (moved to avoid servo overlap)
-// Updated wiring: STEP/DIR pins
-// Stepper1: STEP=10 DIR=9, Stepper2: STEP=8 DIR=7
-#define PIN_STEPPER1_STEP 7
-#define PIN_STEPPER1_DIR  8
-#define PIN_STEPPER2_STEP 9
+// New Mega2560 wiring (user-provided)
+// Motor1: DIR=12 STEP=11, Motor2: DIR=10 STEP=9
+#define PIN_STEPPER1_DIR  12
+#define PIN_STEPPER1_STEP 11
 #define PIN_STEPPER2_DIR  10
+#define PIN_STEPPER2_STEP 9
+// Shared enable pin for both NEMA drivers
+#ifndef PIN_STEPPER_ENABLE
+#define PIN_STEPPER_ENABLE 8
+#endif
+// Active low by default (A4988/DRV8825 common)
+#ifndef STEPPER_ENABLE_ACTIVE_LOW
+#define STEPPER_ENABLE_ACTIVE_LOW 1
+#endif
+// Status LED pin
+#ifndef PIN_STATUS_LED
+#define PIN_STATUS_LED 13
+#endif
+// Status LED modes
+#define STATUS_LED_OFF 0
+#define STATUS_LED_SOLID 1
+#define STATUS_LED_BLINK_SLOW 2
+#define STATUS_LED_BLINK_FAST 3
 // Limit switch pins (optional). Use -1 to disable; active LOW by default.
 #ifndef PIN_LIMIT1
 #define PIN_LIMIT1 -1
@@ -95,6 +113,31 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define SKATE_KI  0.0f
 #define SKATE_KD  0.8f    // speed per (deg/s)
 #define SKATE_SPEED_LIMIT 2000.0f // steps/s cap
+
+// =====================
+// Closed-loop stepper PID (Hall feedback)
+// Production-safe defaults: conservative gains, reasonable sampling period.
+#ifndef STEPPER_PID_KP
+#define STEPPER_PID_KP  1.0f
+#endif
+#ifndef STEPPER_PID_KI
+#define STEPPER_PID_KI  0.0f
+#endif
+#ifndef STEPPER_PID_KD
+#define STEPPER_PID_KD  0.05f
+#endif
+#ifndef STEPPER_PID_INTERVAL_MS
+#define STEPPER_PID_INTERVAL_MS 50  // PID update period (ms)
+#endif
+#ifndef STEPPER_PID_MAX_OUTPUT
+// Maximum commanded speed (absolute) the PID can emit (steps/s)
+// Default to skate speed limit for safety
+#define STEPPER_PID_MAX_OUTPUT SKATE_SPEED_LIMIT
+#endif
+#ifndef STEPPER_PID_INTEGRAL_LIMIT
+// Clamp for integral term to avoid windup (in speed units*sec)
+#define STEPPER_PID_INTEGRAL_LIMIT 10000.0f
+#endif
 
 // Steps mapping for rotation/translation commands used by IR controller
 // Compute steps per revolution from motor full steps and gearbox ratio
@@ -150,16 +193,39 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define EEPROM_ADDR_HALL_PPR_1 103 // uint16_t
 #define EEPROM_HALL_MAGIC 0x5A
 
+// EEPROM addresses for stepper PID persistence
+#define EEPROM_ADDR_PID_MAGIC 200
+#define EEPROM_ADDR_PID_KP_0 201 // float (4 bytes)
+#define EEPROM_ADDR_PID_KI_0 205
+#define EEPROM_ADDR_PID_KD_0 209
+#define EEPROM_ADDR_PID_KP_1 213
+#define EEPROM_ADDR_PID_KI_1 217
+#define EEPROM_ADDR_PID_KD_1 221
+#define EEPROM_PID_MAGIC 0xA6
+
+// Stall detection (production-safe defaults)
+#ifndef STEPPER_STALL_TIMEOUT_MS
+#define STEPPER_STALL_TIMEOUT_MS 1000 // ms without pulses while target non-zero => stall
+#endif
+#ifndef STEPPER_STALL_MIN_PULSES_PER_INTERVAL
+#define STEPPER_STALL_MIN_PULSES_PER_INTERVAL 1 // minimal pulses within interval to count as movement
+#endif
+
 // =====================
 // Peripherals (optional)
 // =====================
 
 // Radio (nRF24 / EBYTE E01) default CE/CSN pins (override if needed)
 #ifndef RADIO_CE_PIN
-#define RADIO_CE_PIN 46
+#define RADIO_CE_PIN 47
 #endif
 #ifndef RADIO_CSN_PIN
-#define RADIO_CSN_PIN 47
+#define RADIO_CSN_PIN 48
+#endif
+// Use hardware SPI pins for NRF24 (Mega hardware SPI: MOSI=51, MISO=50, SCK=52)
+// Optional IRQ pin for NRF24 (leave defined if wired)
+#ifndef RADIO_IRQ_PIN
+#define RADIO_IRQ_PIN 43
 #endif
 
 // I2C LCD (16x1 büyük font modül; çoğu 16x1 aslında 8x2 adreslemeye sahiptir)
@@ -216,10 +282,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define ULTRA_ENABLED 1
 #endif
 #ifndef ULTRA_TRIG_PIN
-#define ULTRA_TRIG_PIN 6
+#define ULTRA_TRIG_PIN 3
 #endif
 #ifndef ULTRA_ECHO_PIN
-#define ULTRA_ECHO_PIN 5
+#define ULTRA_ECHO_PIN 2
 #endif
 #ifndef ULTRA_MEASURE_INTERVAL_MS
 #define ULTRA_MEASURE_INTERVAL_MS 50
@@ -245,10 +311,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define LASER_ENABLED 1
 #endif
 #ifndef LASER1_PIN
-#define LASER1_PIN 12
+#define LASER1_PIN 5
 #endif
 #ifndef LASER2_PIN
-#define LASER2_PIN 11
+#define LASER2_PIN 4
 #endif
 #ifndef LASER_ACTIVE_HIGH
 #define LASER_ACTIVE_HIGH 1  // 1: HIGH opens laser, 0: LOW opens laser
@@ -262,7 +328,7 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #endif
 #ifndef IR_PIN
 // IR receiver OUT pin
-#define IR_PIN 2
+#define IR_PIN 23
 #endif
 #ifndef IR_TOKEN_TIMEOUT_MS
 // "*1" -> wait this long to commit token if no more digits come
@@ -277,10 +343,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define BUZZER_ENABLED 1
 #endif
 #ifndef BUZZER_LOUD_PIN
-#define BUZZER_LOUD_PIN 3 // Hardware mapping: loud -> pin 3
+#define BUZZER_LOUD_PIN 7 // Hardware mapping: loud -> pin 7
 #endif
 #ifndef BUZZER_QUIET_PIN
-#define BUZZER_QUIET_PIN 4 // Hardware mapping: quiet -> pin 4
+#define BUZZER_QUIET_PIN 6 // Hardware mapping: quiet -> pin 6
 #endif
 #ifndef BUZZER_USE_TONE
 // 1: use tone() with freq; 0: simple digital on/off
@@ -372,10 +438,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define HALL_ENCODER_ENABLED 1
 #endif
 #ifndef HALL_PIN_0
-#define HALL_PIN_0 -1
+#define HALL_PIN_0 30
 #endif
 #ifndef HALL_PIN_1
-#define HALL_PIN_1 -1
+#define HALL_PIN_1 31
 #endif
 #ifndef HALL_DEBOUNCE_MS
 #define HALL_DEBOUNCE_MS 6
@@ -384,8 +450,9 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 // Hall sensörleri için manyet/pulse sayısı (varsayılan)
 // Varsayılan: tek manyet (1). Eğer her tekerde farklı sayıda manyet varsa
 // runtime calibrate ile teker başına çarpanı belirleyebilirsiniz.
+// Default pulses-per-rev: set to 4 magnets per wheel
 #ifndef HALL_PULSES_PER_REV
-#define HALL_PULSES_PER_REV 1
+#define HALL_PULSES_PER_REV 4
 #endif
 
 // Per-teker alternatif makrolar (isteğe bağlı override)
