@@ -5,7 +5,6 @@
 #include <AccelStepper.h>
 #include "../xConfig.h"
 #include "../peripherals/xHallEncoder.h"
-#include "../xProtocol.h"
 #include <EEPROM.h>
 
 class StepperPair {
