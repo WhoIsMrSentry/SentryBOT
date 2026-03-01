@@ -130,11 +130,9 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define STEPPER_PID_INTERVAL_MS 50  // PID update period (ms)
 #endif
 #ifndef STEPPER_PID_MAX_OUTPUT
-#ifndef STEPPER_PID_MAX_OUTPUT
 // Maximum commanded speed (absolute) the PID can emit (steps/s)
 // Default to skate speed limit for safety
 #define STEPPER_PID_MAX_OUTPUT SKATE_SPEED_LIMIT
-#endif
 #endif
 #ifndef STEPPER_PID_INTEGRAL_LIMIT
 // Clamp for integral term to avoid windup (in speed units*sec)

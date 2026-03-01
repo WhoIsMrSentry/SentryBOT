@@ -26,7 +26,7 @@ Manuel hızlı test akışı
 2. PID'i etkinleştirin (düşük hedef hızla):
   {"cmd":"pid_enable","id":0,"enable":true}
   {"cmd":"pid_set","id":0,"kp":1.0,"ki":0.0,"kd":0.05,"target":20}
-3. Durumu sorgulayın: {"cmd":"pid_status","id":0"}
+3. Durumu sorgulayın: {"cmd":"pid_status","id":0}
 4. Hız artışı yaparken tekerleğin fiziksel davranışını gözleyin. Eğer `stalled:true` dönerse hemen `pid_clear_stall` gönderin ve fiziksel inceleme yapın.
 5. Kazançlardan memnun kalırsanız EEPROM'a kaydedin: {"cmd":"pid_save","id":0}
 
@@ -42,8 +42,8 @@ python .\scripts\serial_stepper_test.py --port COM4 --baud 115200 --id 0 --start
 ```
 
 Log formatı (CSV)
-- timestamp_ms,id,target,measured,stalled
-- Örnek satır: 1677661234567,0,50.0,48.3,false
+- timestamp_ms,id,target,measured,stalled,raw
+- Örnek satır: 1677661234567,0,50.0,48.3,false,{"cmd":"pid_status",...}
 
 Notlar
 - İlk testleri düşük hızlarda (<=100 steps/s) yapın.
