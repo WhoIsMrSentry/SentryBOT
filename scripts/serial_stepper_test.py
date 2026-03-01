@@ -41,7 +41,7 @@ def read_line(timeout=1.0):
         if line:
             try:
                 return line.decode('utf-8').strip()
-            except:
+            except UnicodeDecodeError:
                 return line
     return None
 

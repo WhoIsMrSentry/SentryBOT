@@ -187,11 +187,11 @@ public:
 
   // Enable/disable stepper outputs (shared enable pin)
   void setEnable(bool en){
+    _enabled = en;
     #if defined(PIN_STEPPER_ENABLE) && PIN_STEPPER_ENABLE >= 0
       bool activeLow = (bool)STEPPER_ENABLE_ACTIVE_LOW;
       if (activeLow) digitalWrite(PIN_STEPPER_ENABLE, en?LOW:HIGH);
       else digitalWrite(PIN_STEPPER_ENABLE, en?HIGH:LOW);
-      _enabled = en;
     #endif
   }
 
@@ -268,8 +268,22 @@ public:
   void configurePid(uint8_t id, float kp, float ki, float kd){ if (id>1) return; _pid[id].kp=kp; _pid[id].ki=ki; _pid[id].kd=kd; }
   // Enable/disable closed-loop PID for a motor
   void enablePid(uint8_t id, bool en){ if (id>1) return; _pid[id].enabled = en; if(en){ _pid[id].lastMs = millis(); _pid[id].lastCount = (_hall[id])? _hall[id]->getCount() : 0; _pid[id].integral = 0; _pid[id].lastError=0; _lastMovementMs[id] = millis(); _stalled[id]=false; } }
-  // Set desired speed (steps/s) for closed-loop; also enables PID for that motor
-  void setTargetSpeed(uint8_t id, float stepsPerSec){ if (id>1) return; _pid[id].targetSpeed = stepsPerSec; _pid[id].enabled = true; _lastMovementMs[id] = millis(); _stalled[id]=false; }
+  // Set desired speed (steps/s) for closed-loop; also enables PID for that motor.
+  // If PID was previously disabled, reinitialize its internal state similar to enablePid(..., true).
+  void setTargetSpeed(uint8_t id, float stepsPerSec){
+    if (id>1) return;
+    bool wasEnabled = _pid[id].enabled;
+    _pid[id].targetSpeed = stepsPerSec;
+    if (!wasEnabled) {
+      _pid[id].lastMs    = millis();
+      _pid[id].lastCount = (_hall[id]) ? _hall[id]->getCount() : 0;
+      _pid[id].integral  = 0.0f;
+      _pid[id].lastError = 0.0f;
+    }
+    _pid[id].enabled = true;
+    _lastMovementMs[id] = millis();
+    _stalled[id] = false;
+  }
   // Stop closed-loop control for a motor
   void stopPid(uint8_t id){ if (id>1) return; _pid[id].enabled = false; }
 
