@@ -24,7 +24,7 @@ class DummyClient:
     def fill_neopixel_color(self, r: int, g: int, b: int) -> None:
         self.neopixel_fills.append((r, g, b))
 
-    def set_neopixel(self, effect: str) -> None:
+    def set_neopixel(self, effect: str, emotions=None, color=None, duration=None) -> None:
         self.neopixel_modes.append(effect)
 
     def push_interaction_event(self, event_type: str, data: Dict[str, Any] | None = None) -> None:

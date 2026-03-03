@@ -105,6 +105,54 @@ static inline void handleJson(const String &line){
     return;
   }
 
+  if (line.indexOf("\"cmd\":\"oled\"")>=0){
+#if OLED_ENABLED
+    String action = parseJsonStringAfter(line, "\"action\":\"");
+    String name = parseJsonStringAfter(line, "\"name\":\"");
+    action.toLowerCase();
+    name.toLowerCase();
+
+    if (line.indexOf("\"list\":true")>=0 || action == "list"){
+      String out = String("{\"ok\":true,\"bitmaps\":\"") + Protocol::escape(String(OledDisplay::bitmapCatalog())) + String("\",\"animations\":\"") + Protocol::escape(String(OledDisplay::animationCatalog())) + String("\"}");
+      SERIAL_IO.println(out);
+      return;
+    }
+
+    if (action == "stop"){
+      g_oled.stopAnimation();
+      Protocol::sendOk("oled_anim_stopped");
+      return;
+    }
+
+    if (action == "anim"){
+      if (name.length() == 0) { Protocol::sendErr("no_name"); return; }
+      bool ok = g_oled.startAnimationByName(name);
+      if (ok) Protocol::sendOk("oled_anim_ok");
+      else Protocol::sendErr("unknown_oled_anim");
+      return;
+    }
+
+    if (action == "logo"){
+      g_oled.stopAnimation();
+      g_oled.showLogo();
+      Protocol::sendOk("oled_logo");
+      return;
+    }
+
+    if (name.length() == 0) {
+      // backwards compatibility default
+      name = "normal";
+    }
+
+    bool ok = g_oled.showBitmapByName(name);
+    if (ok) Protocol::sendOk("oled_bitmap_ok");
+    else Protocol::sendErr("unknown_oled_bitmap");
+#else
+    Protocol::sendErr("oled_disabled");
+#endif
+    return;
+  }
+
   if (line.indexOf("\"cmd\":\"rfid_last\"")>=0){
 #if RFID_ENABLED
     String out = String("{\"ok\":true,\"rfid\":\"") + Protocol::escape(g_lastRfid) + "\"}";
