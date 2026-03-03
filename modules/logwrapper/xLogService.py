@@ -112,7 +112,18 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
             warnings.filterwarnings(
                 "ignore",
                 message=r".*pkg_resources is deprecated as an API.*",
-                category=DeprecationWarning,
+                category=Warning,
+            )
+            warnings.filterwarnings(
+                "ignore",
+                message=r".*UnsupportedFieldAttributeWarning.*validate_default.*",
+                category=Warning,
+            )
+            warnings.filterwarnings(
+                "ignore",
+                message=r".*validate_default.*has no effect.*",
+                category=UserWarning,
+                module=r"pydantic\._internal\._generate_schema",
             )
             warnings.filterwarnings(
                 "ignore",

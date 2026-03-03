@@ -27,3 +27,4 @@ capture_warnings: true
 module_levels:
   uvicorn.access: WARNING
   httpx: WARNING
+  comtypes.client._code_cache: WARNING

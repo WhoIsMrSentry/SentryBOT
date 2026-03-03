@@ -114,9 +114,8 @@ class AutonomyBrain(
     def _sense_sound_direction(self):
         try:
             direction = self.client.get_speech_direction()
-            if direction and "angle" in direction:
-                angle = direction["angle"]
-                if abs(angle) > 10:
+            angle = (direction or {}).get("angle") if isinstance(direction, dict) else None
+            if isinstance(angle, (int, float)) and abs(angle) > 10:
                     self._react_to_sound(angle)
         except Exception:
             pass
