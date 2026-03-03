@@ -1,13 +1,16 @@
 from __future__ import annotations
+import logging
 from fastapi import FastAPI
 from .config_loader import load_config
+
+logger = logging.getLogger("gateway.service")
 
 # Optional central logging
 try:
     from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
     _init_global_logging()
-except Exception:
-    pass
+except Exception as exc:
+    logger.debug("global logging init skipped: %s", exc)
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
@@ -22,15 +25,15 @@ def create_app(config_path: str | None = None) -> FastAPI:
         from .services.bootstrap import bootstrap  # type: ignore
         started = bootstrap(app, cfg)
         app.state.started = started  # type: ignore[attr-defined]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("gateway bootstrap failed: %s", exc)
 
     # core API for status/health
     try:
         from .api.router import get_router as get_core_router  # type: ignore
         app.include_router(get_core_router(cfg, app.state.started))  # type: ignore[attr-defined]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("gateway core router mount failed: %s", exc)
 
     return app
 

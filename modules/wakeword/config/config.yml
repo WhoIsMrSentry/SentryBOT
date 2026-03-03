@@ -36,6 +36,7 @@ openwakeword:
   # model_paths can be a list or a map: {label: path}
   model_paths:
     - models/hey_sentribot.onnx
+  inference_framework: onnx
   threshold: 0.5
   smooth_window: 3
   verifier_path: null  # optional path to verifier joblib trained with train_verifier.py

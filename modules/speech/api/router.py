@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import APIRouter, Response
+from fastapi import APIRouter
 import requests
 import threading
 from threading import Timer, Lock
@@ -90,8 +90,8 @@ def get_router(service: SpeechService) -> APIRouter:
     async def direction():
         angle = service.last_angle if hasattr(service, "last_angle") else None
         if angle is None:
-            return Response(status_code=503)
-        return {"angle": angle}
+            return {"ok": False, "angle": None}
+        return {"ok": True, "angle": angle}
 
     @router.post("/speech/track/start")
     async def track_start():

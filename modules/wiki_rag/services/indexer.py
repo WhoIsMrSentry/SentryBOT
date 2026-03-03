@@ -1,5 +1,7 @@
 from __future__ import annotations
 import os
+import io
+import contextlib
 from typing import Any
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader, StorageContext, load_index_from_storage
 from llama_index.llms.ollama import Ollama
@@ -28,6 +30,8 @@ class IndexService:
             index = VectorStoreIndex.from_documents(documents, llm=llm, embed_model=OllamaEmbedding(model_name=self.model))
             index.storage_context.persist(persist_dir=self.persist_dir)
         else:
-            storage_context = StorageContext.from_defaults(persist_dir=self.persist_dir)
-            index = load_index_from_storage(storage_context, llm=llm, embed_model=OllamaEmbedding(model_name=self.model))
+            silent = io.StringIO()
+            with contextlib.redirect_stdout(silent):
+                storage_context = StorageContext.from_defaults(persist_dir=self.persist_dir)
+                index = load_index_from_storage(storage_context, llm=llm, embed_model=OllamaEmbedding(model_name=self.model))
         return index

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import logging
 from collections import deque
+import importlib
 from pathlib import Path
 from typing import Dict, Iterable, Optional
 
@@ -44,20 +45,30 @@ def _score_value(value) -> Optional[float]:
 
 
 def _resolve_model_paths(model_paths) -> Dict[str, str]:
+    module_root = Path(__file__).resolve().parents[1]
+
+    def _abs_path(path: str) -> str:
+        p = Path(path)
+        if not p.is_absolute():
+            p = (module_root / p).resolve()
+        return str(p)
+
     resolved: Dict[str, str] = {}
     if isinstance(model_paths, dict):
         for label, path in model_paths.items():
             if isinstance(path, str) and path:
-                resolved[str(label)] = str(path)
+                resolved[str(label)] = _abs_path(path)
         return resolved
     if isinstance(model_paths, list):
         for path in model_paths:
             if isinstance(path, str) and path:
-                label = Path(path).stem
-                resolved[label] = path
+                abs_path = _abs_path(path)
+                label = Path(abs_path).stem
+                resolved[label] = abs_path
         return resolved
     if isinstance(model_paths, str) and model_paths:
-        resolved[Path(model_paths).stem] = model_paths
+        abs_path = _abs_path(model_paths)
+        resolved[Path(abs_path).stem] = abs_path
     return resolved
 
 
@@ -65,11 +76,32 @@ class OpenWakewordRunner:
     def __init__(self, cfg: dict):
         if OpenWakeWordModel is None or np is None:
             raise RuntimeError("openwakeword and numpy are required for openwakeword engine")
+        # openwakeword package resources preflight (some wheels/environments miss these files)
+        try:
+            ow_pkg = importlib.import_module("openwakeword")
+            pkg_dir = Path(getattr(ow_pkg, "__file__", "")).resolve().parent
+            required = pkg_dir / "resources" / "models" / "melspectrogram.onnx"
+            if not required.exists():
+                raise RuntimeError(
+                    f"openwakeword runtime resource missing: {required}. "
+                    "Reinstall openwakeword or use wakeword.engine=vosk."
+                )
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"openwakeword preflight failed: {exc}")
         model_paths = _resolve_model_paths(cfg.get("model_paths"))
         if not model_paths:
             raise ValueError("openwakeword.model_paths is required")
         self._labels = list(model_paths.keys())
-        self._model = OpenWakeWordModel(wakeword_models=list(model_paths.values()))
+        inference_framework = str(cfg.get("inference_framework", "onnx")).strip().lower() or "onnx"
+        try:
+            self._model = OpenWakeWordModel(
+                wakeword_models=list(model_paths.values()),
+                inference_framework=inference_framework,
+            )
+        except TypeError:
+            self._model = OpenWakeWordModel(wakeword_models=list(model_paths.values()))
         self._threshold = float(cfg.get("threshold", 0.5))
         self._smooth_window = int(cfg.get("smooth_window", 3))
         self._score_history: Dict[str, deque] = {}

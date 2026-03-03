@@ -27,6 +27,12 @@ class OwnerGuardMixin:
         endpoint = rfid_cfg.get("endpoint")
         if not endpoint:
             return
+        now = time.time()
+        poll_interval_s = float(rfid_cfg.get("poll_interval_s", 5.0))
+        last_check = float(self.state.get("rfid_last_check", 0.0) or 0.0)
+        if poll_interval_s > 0 and (now - last_check) < poll_interval_s:
+            return
+        self.state["rfid_last_check"] = now
         if self._owner_seen_recently():
             return
         if self._rfid_active():

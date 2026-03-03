@@ -133,3 +133,4 @@ owner:
   rfid:
     endpoint: "http://localhost:8080/arduino/rfid/authorize"
     grace_s: 120
+    poll_interval_s: 15
