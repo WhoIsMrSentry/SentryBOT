@@ -21,9 +21,13 @@ def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:
 
 
 def _include_vision_bridge(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.vision_bridge.config_loader import load_config as load_vision_cfg  # type: ignore
+    from modules.vision_bridge.services.processor import VisionProcessor  # type: ignore
     from modules.vision_bridge.api.router import get_router as get_vision_router  # type: ignore
-    app.include_router(get_vision_router(started.get("arduino")))
-    started["vision_bridge"] = True
+    vcfg = load_vision_cfg(None)
+    processor = VisionProcessor(vcfg)
+    app.include_router(get_vision_router(processor, started.get("arduino")))
+    started["vision_bridge"] = processor
 
 
 def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
@@ -152,7 +156,10 @@ def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
     ardu = started.get("arduino")
     anim = xAnimateService(serial=ardu) if ardu is not None else xAnimateService()
     if hasattr(anim, "start"):
-        anim.start()
+        try:
+            anim.start()
+        except Exception as exc:
+            logger.warning("animate service failed to start, running degraded: %s", exc)
     started["animate"] = anim
     app.include_router(get_anim_router(anim))
     logger.info("module animate mounted")
