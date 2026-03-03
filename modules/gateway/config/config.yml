@@ -15,6 +15,7 @@ include:
   logs: true
   animate: true
   piservo: true
+  autonomy: true
   ota: true
   mutagen: true
   hardware: true
