@@ -37,7 +37,7 @@ logger = logging.getLogger("ollama.api")
 def get_router(cfg: dict) -> APIRouter:
     r = APIRouter(prefix="/ollama", tags=["ollama"])
 
-    base_url = str(cfg.get("ollama", {}).get("base_url", "http://localhost:11434"))
+    base_url = str(cfg.get("ollama", {}).get("base_url", "http://localhost:11435"))
     model = str(cfg.get("ollama", {}).get("model", "llama3.2:3b"))
     timeout = float(cfg.get("ollama", {}).get("request_timeout", 60.0))
     client = OllamaClient(base_url=base_url, model=model, request_timeout=timeout)

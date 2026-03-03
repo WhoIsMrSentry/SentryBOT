@@ -487,7 +487,7 @@ class VisionProcessor:
         rec = self.memory.get_person(name) or {}
         last_sum = (rec.get("last_summary") or {}).get("text")
         prompt = f"{name} ile karşılaştın. {('Özet: '+last_sum) if last_sum else ''} Türkçe kısacık ve sıcak bir cümle söyle."
-        url = self.config.get("ollama", {}).get("endpoint", "http://localhost:11434/api/generate")
+        url = self.config.get("ollama", {}).get("endpoint", "http://localhost:11435/api/generate")
         model = self.config.get("ollama", {}).get("model", "llama3")
         try:
             with httpx.Client(timeout=4.0) as client:
