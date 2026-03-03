@@ -49,7 +49,7 @@ class SemanticDescriber:
             return None
         self.last_llm_call = now
         prompt = self.build_prompt(objects)
-        url = self.config.get("ollama", {}).get("endpoint", "http://localhost:11434/api/generate")
+        url = self.config.get("ollama", {}).get("endpoint", "http://localhost:11435/api/generate")
         model = self.config.get("ollama", {}).get("model", "llama3")
         try:
             with httpx.Client(timeout=5.0) as client:

@@ -18,7 +18,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "accept_results": True,
     },
     "ollama": {
-        "endpoint": "http://localhost:11434/api/generate",
+        "endpoint": "http://localhost:11435/api/generate",
         "model": "llama3",
     },
     "speak": {
