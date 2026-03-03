@@ -24,8 +24,11 @@ def get_router(svc: xArduinoSerialService) -> APIRouter:
 
     @r.post("/send")
     def send(obj: Dict[str, Any]):
-        svc.send(obj)
-        return {"ok": True}
+        try:
+            svc.send(obj)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     @r.post("/request")
     def request(obj: Dict[str, Any], timeout: float = 1.0):

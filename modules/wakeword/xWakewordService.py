@@ -112,6 +112,7 @@ class WakewordService:
         self._last_trigger_ts = 0.0
         self._active_window = False
         self._thread: Optional[threading.Thread] = None
+        self._degraded_reason: Optional[str] = None
 
         self.capture = AudioCapture(self.cfg.get("audio", {}))
         wake_cfg = self.cfg.get("wakeword", {})
@@ -120,7 +121,17 @@ class WakewordService:
         self._openwakeword = None
         self._recognizer = None
         if self.engine == "openwakeword":
-            self._openwakeword = OpenWakewordRunner(self.cfg.get("openwakeword", {}))
+            try:
+                self._openwakeword = OpenWakewordRunner(self.cfg.get("openwakeword", {}))
+            except Exception as exc:
+                self._degraded_reason = str(exc)
+                logger.warning("wakeword openwakeword unavailable, falling back to vosk: %s", exc)
+                self.engine = "vosk"
+                try:
+                    self._recognizer = Recognizer(_resolve_model_paths(self.cfg.get("recognition", {})))
+                    self._degraded_reason = None
+                except Exception as rec_exc:
+                    self._degraded_reason = str(rec_exc)
         else:
             self._recognizer = Recognizer(_resolve_model_paths(self.cfg.get("recognition", {})))
         self.actions = WakewordActions(self.cfg.get("actions", {}))
@@ -132,6 +143,10 @@ class WakewordService:
             self._listening = True
         self._stop_event.clear()
         try:
+            if self._openwakeword is None and self._recognizer is None:
+                logger.warning("wakeword service running degraded: no engine available")
+                self._degraded_reason = self._degraded_reason or "no wakeword engine available"
+                return
             stream = self.capture.stream()
             if self.engine == "openwakeword" and self._openwakeword is not None:
                 for label in self._openwakeword.run(stream):
@@ -143,6 +158,9 @@ class WakewordService:
                     if self._stop_event.is_set():
                         break
                     self._handle_result(result)
+        except Exception as exc:
+            self._degraded_reason = str(exc)
+            logger.warning("wakeword listener stopped, running degraded: %s", exc)
         finally:
             with self._lock:
                 self._listening = False
@@ -214,6 +232,9 @@ class WakewordService:
                 "active_window": self._active_window,
                 "last_trigger_ts": self._last_trigger_ts,
                 "wakewords": list(self.detector.cfg.words),
+                "engine": self.engine,
+                "degraded": bool(self._degraded_reason),
+                "degraded_reason": self._degraded_reason,
             }
 
 
