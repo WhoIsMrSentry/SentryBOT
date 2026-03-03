@@ -21,7 +21,11 @@ class AnimationsResponse(BaseModel):
 
 
 class AnimateRequest(BaseModel):
-    name: str = Field(..., description="Animation key. Use /neopixel/animations to pick one", example="WAVE")
+    name: str = Field(
+        ...,
+        description="Animation key. Use /neopixel/animations to pick one",
+        json_schema_extra={"example": "WAVE"},
+    )
     color: Optional[str] = Field(None, description='Color as "R,G,B" or "#RRGGBB" (optional)')
     r: Optional[int] = Field(None, ge=0, le=255, description="Red channel (0-255)")
     g: Optional[int] = Field(None, ge=0, le=255, description="Green channel (0-255)")
