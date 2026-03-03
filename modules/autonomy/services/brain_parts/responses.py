@@ -116,6 +116,22 @@ class ResponseTagMixin:
 				self.client.set_lcd(msg=attrs.get("msg"), top=attrs.get("top"), bottom=attrs.get("bottom"), id=attrs.get("id", 0))
 			elif kind == "stepper":
 				self.client.set_stepper(id=attrs.get("id", 0), mode=attrs.get("mode", "pos"), value=attrs.get("value", 0), drive=attrs.get("drive", 200))
+			elif kind == "oled":
+				action = str(attrs.get("action", "show")).strip().lower()
+				name = attrs.get("name")
+				if action == "logo":
+					self.client.oled_logo()
+				elif action == "stop":
+					self.client.oled_stop()
+				elif action in {"anim", "animation"} and isinstance(name, str) and name:
+					self.client.oled_anim(name)
+				elif isinstance(name, str) and name:
+					self.client.oled_show(name)
+			elif kind == "arduino":
+				cmd = attrs.get("cmd")
+				if isinstance(cmd, str) and cmd:
+					payload = dict(attrs)
+					self.client.arduino_send(payload)
 			elif kind in {"stand", "sit", "home", "zero_now"}:
 				self.client.robot_command(kind)
 			elif kind in {"ultra_read", "imu_read", "rfid_last"}:

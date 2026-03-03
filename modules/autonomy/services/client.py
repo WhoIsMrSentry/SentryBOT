@@ -63,17 +63,35 @@ class ServiceClient:
 
     def system_control(self, service: str, action: str):
         """Send system commands like 'start' or 'stop' to a module"""
-        # Mapping generic actions to service-specific endpoints if needed
-        endpoint = f"/{action}"
-        return self._post(service, endpoint)
+        svc = str(service or "").strip().lower()
+        act = str(action or "").strip().lower()
 
-    def set_neopixel(self, effect, emotions=None, color=None):
-        params = {"name": effect}
+        # Route service-specific control paths first
+        route_map = {
+            "speech": {"start": "/speech/start", "stop": "/speech/stop"},
+            "wakeword": {"start": "/wakeword/start", "stop": "/wakeword/stop"},
+            "autonomy": {"start": "/start", "stop": "/stop"},
+            "notifier": {"start": "/start", "stop": "/stop"},
+        }
+        endpoint = route_map.get(svc, {}).get(act)
+        if endpoint:
+            return self._post(svc, endpoint)
+
+        # Fallback generic
+        return self._post(svc, f"/{act}")
+
+    def arduino_send(self, payload: dict):
+        return self._post("arduino", "/send", payload)
+
+    def set_neopixel(self, effect, emotions=None, color=None, duration=None):
+        payload = {"name": effect}
         if emotions:
-            params["emotions"] = emotions
+            payload["emotions"] = emotions
         if color and len(color) == 3:
-            params["r"], params["g"], params["b"] = color
-        return self._post("neopixel", "/animate", params=params)
+            payload["r"], payload["g"], payload["b"] = color
+        if duration is not None:
+            payload["duration"] = duration
+        return self._post("neopixel", "/animate", json=payload)
 
     def fill_neopixel_color(self, r: int, g: int, b: int):
         url = self.urls.get("neopixel")
@@ -137,6 +155,18 @@ class ServiceClient:
         except Exception as e:
             logger.debug(f"Failed to trigger animation {name}: {e}")
             return None
+
+    def oled_show(self, name: str):
+        return self._post("arduino", f"/oled/show/{name}")
+
+    def oled_anim(self, name: str):
+        return self._post("arduino", f"/oled/anim/{name}")
+
+    def oled_stop(self):
+        return self._post("arduino", "/oled/stop")
+
+    def oled_logo(self):
+        return self._post("arduino", "/oled/logo")
 
     def get_latest_vision_results(self, limit=5):
         data = self._get("vision", "/results/latest", params={"limit": limit})

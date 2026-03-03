@@ -289,6 +289,9 @@ void setup(){
 void loop(){
   String line; if (Protocol::readLine(SERIAL_IO, line)) handleJson(line);
   robot.update();
+#if OLED_ENABLED
+  g_oled.update();
+#endif
     // Peripherals polling
   #if RFID_ENABLED
     if (g_rfid.poll()){
