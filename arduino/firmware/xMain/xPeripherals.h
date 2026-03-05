@@ -15,7 +15,6 @@
 #if OLED_ENABLED
 extern class OledDisplay g_oled;
 #endif
-#include "peripherals/logo_Ads_z.h"
 #include "peripherals/xIrKeyReader.h"
 #include "peripherals/xEbyteRadio.h"
 

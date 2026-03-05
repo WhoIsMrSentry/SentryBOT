@@ -5,12 +5,32 @@
 #include "../xConfig.h"
 
 #if defined(OLED_ENABLED) && OLED_ENABLED
-#if __has_include(<Adafruit_SSD1306.h>)
+#ifndef OLED_ALLOW_STUB
+#define OLED_ALLOW_STUB 0
+#endif
+
+#if !OLED_ALLOW_STUB
+#define OLED_SSD1306_AVAILABLE 1
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#if __has_include(<Irisoled.h>)
+#else
+#if defined(__has_include) && __has_include(<Adafruit_SSD1306.h>)
+#define OLED_SSD1306_AVAILABLE 1
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#else
+#define OLED_SSD1306_AVAILABLE 0
+#endif
+#endif
+
+#if OLED_SSD1306_AVAILABLE
+#if defined(__has_include) && __has_include(<Irisoled.h>)
 #include <Irisoled.h>
+#define IRISOLED_LIB_AVAILABLE 1
+#elif defined(__has_include) && __has_include(<IrisOled.h>)
+#include <IrisOled.h>
 #define IRISOLED_LIB_AVAILABLE 1
 #else
 #define IRISOLED_LIB_AVAILABLE 0
@@ -51,12 +71,14 @@ public:
     if (!_display) return;
 #if IRISOLED_LIB_AVAILABLE
     stopAnimation();
-    drawBitmapByPtr(Irisoled::logo);
+    drawBitmapByPtr(Irisoled::normal);
 #else
     _display->clearDisplay();
-    // Custom XBM logo support (draw via drawBitmap)
-    extern const unsigned char image_Ads_z_bits[] U8X8_PROGMEM;
-    _display->drawBitmap(27, 0, image_Ads_z_bits, 74, 64, SSD1306_WHITE);
+    _display->drawRect(0, 0, _w, _h, SSD1306_WHITE);
+    _display->setTextSize(2);
+    _display->setTextColor(SSD1306_WHITE);
+    _display->setCursor(26, 22);
+    _display->print(F("OLED"));
     _display->display();
 #endif
   }
@@ -72,7 +94,7 @@ public:
     String n = name;
     n.trim();
     n.toLowerCase();
-    if (n == "logo") { showLogo(); return true; }
+  if (n == "logo" || n == "normal") { showLogo(); return true; }
     return false;
 #endif
   }
@@ -128,10 +150,12 @@ public:
   }
 
   void stopAnimation(){
+#if IRISOLED_LIB_AVAILABLE
     _anim.running = false;
     _anim.frames = nullptr;
     _anim.count = 0;
     _anim.index = 0;
+#endif
   }
 
   static const char* bitmapCatalog(){
@@ -145,6 +169,16 @@ public:
   static const char* animationCatalog(){
     return "wink,blink,scan,sleep,alert,emotive,icons,all";
   }
+
+  static const char* backendName(){
+#if IRISOLED_LIB_AVAILABLE
+    return "ssd1306_irisoled";
+#else
+    return "ssd1306_only";
+#endif
+  }
+
+  static bool isStub(){ return false; }
 
 private:
   uint8_t _addr{OLED_I2C_ADDR};
@@ -244,6 +278,8 @@ public:
   void update() {}
   static const char* bitmapCatalog(){ return ""; }
   static const char* animationCatalog(){ return ""; }
+  static const char* backendName(){ return "stub_no_ssd1306"; }
+  static bool isStub(){ return true; }
 };
 #endif // include check
 #else
@@ -258,6 +294,8 @@ public:
   void update() {}
   static const char* bitmapCatalog(){ return ""; }
   static const char* animationCatalog(){ return ""; }
+  static const char* backendName(){ return "oled_disabled"; }
+  static bool isStub(){ return true; }
 };
 #endif // OLED_ENABLED
 

@@ -12,9 +12,9 @@
 	// Detect common Mega2560/MEGA variants and map to Serial1 (RX/TX on pins 19/18)
 #if defined(ARDUINO_AVR_MEGA2560) || defined(ARDUINO_AVR_MEGA) || defined(__AVR_ATmega2560__)
 // Prefer Serial3 on Mega per user request (TX3=14, RX3=15)
-#define SERIAL_IO Serial3
-#else
 #define SERIAL_IO Serial
+#else
+#define SERIAL_IO Serial3
 #endif
 #endif
 

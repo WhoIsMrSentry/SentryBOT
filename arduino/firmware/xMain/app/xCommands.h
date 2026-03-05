@@ -113,7 +113,10 @@ static inline void handleJson(const String &line){
     name.toLowerCase();
 
     if (line.indexOf("\"list\":true")>=0 || action == "list"){
-      String out = String("{\"ok\":true,\"bitmaps\":\"") + Protocol::escape(String(OledDisplay::bitmapCatalog())) + String("\",\"animations\":\"") + Protocol::escape(String(OledDisplay::animationCatalog())) + String("\"}");
+      String out = String("{\"ok\":true,\"backend\":\"") + Protocol::escape(String(OledDisplay::backendName()))
+        + String("\",\"stub\":") + String(OledDisplay::isStub() ? "true" : "false")
+        + String(",\"bitmaps\":\"") + Protocol::escape(String(OledDisplay::bitmapCatalog()))
+        + String("\",\"animations\":\"") + Protocol::escape(String(OledDisplay::animationCatalog())) + String("\"}");
       SERIAL_IO.println(out);
       return;
     }

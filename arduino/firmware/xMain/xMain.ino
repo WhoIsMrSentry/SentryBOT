@@ -105,6 +105,22 @@ HallEncoder g_hall1;
 // OLED instance
 #if OLED_ENABLED
 OledDisplay g_oled;
+
+static void logOledI2cScan(){
+  bool any = false;
+  for (uint8_t addr = 0x03; addr <= 0x77; ++addr){
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0){
+      any = true;
+      char hexAddr[5];
+      snprintf(hexAddr, sizeof(hexAddr), "0x%02X", addr);
+      SERIAL_IO.println(String("{\"info\":\"i2c_device\",\"addr\":\"") + hexAddr + String("\"}"));
+    }
+  }
+  if (!any){
+    SERIAL_IO.println(F("{\"info\":\"i2c_device\",\"addr\":null}"));
+  }
+}
 #endif
 
 void setup(){
@@ -204,8 +220,9 @@ void setup(){
 
   // Initialize OLED if present and show logo
 #if OLED_ENABLED
+  SERIAL_IO.println(String("{\"info\":\"oled_backend\",\"backend\":\"") + OledDisplay::backendName() + String("\",\"stub\":") + String(OledDisplay::isStub() ? "true" : "false") + String("}"));
+  logOledI2cScan();
   if (g_oled.begin(OLED_I2C_ADDR, 128, 64)){
-    g_oled.showLogo();
     bootInfo("oled", true);
   } else {
     bootInfo("oled", false);
