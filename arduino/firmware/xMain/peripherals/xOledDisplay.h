@@ -2,35 +2,21 @@
 #define SENTRY_PERIPHERALS_OLED_H
 
 #include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include "../xConfig.h"
 
-#if defined(OLED_ENABLED) && OLED_ENABLED
-#ifndef OLED_ALLOW_STUB
-#define OLED_ALLOW_STUB 0
+#ifndef OLED_RESET_PIN
+#define OLED_RESET_PIN -1
 #endif
 
-#if !OLED_ALLOW_STUB
-#define OLED_SSD1306_AVAILABLE 1
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#else
-#if defined(__has_include) && __has_include(<Adafruit_SSD1306.h>)
-#define OLED_SSD1306_AVAILABLE 1
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#else
-#define OLED_SSD1306_AVAILABLE 0
-#endif
+#ifndef OLED_USE_IRISOLED
+#define OLED_USE_IRISOLED 0
 #endif
 
-#if OLED_SSD1306_AVAILABLE
-#if defined(__has_include) && __has_include(<Irisoled.h>)
+#if OLED_USE_IRISOLED
 #include <Irisoled.h>
-#define IRISOLED_LIB_AVAILABLE 1
-#elif defined(__has_include) && __has_include(<IrisOled.h>)
-#include <IrisOled.h>
 #define IRISOLED_LIB_AVAILABLE 1
 #else
 #define IRISOLED_LIB_AVAILABLE 0
@@ -38,109 +24,145 @@
 
 class OledDisplay {
 public:
-  bool begin(uint8_t addr = OLED_I2C_ADDR, uint8_t w = 128, uint8_t h = 64){
-    _addr = addr; _w = w; _h = h;
-#if defined(ARDUINO_ARCH_AVR)
+  bool begin(uint8_t addr = OLED_I2C_ADDR, uint8_t w = OLED_WIDTH, uint8_t h = OLED_HEIGHT) {
+    _addr = addr;
+    _w = w;
+    _h = h;
+
     Wire.begin();
-#else
-    Wire.begin();
-#endif
-    if (!_display){
-      _display = new Adafruit_SSD1306(_w, _h, &Wire);
+    delay(60);
+
+    if (!_display.begin(SSD1306_SWITCHCAPVCC, _addr)) {
+      return false;
     }
-    if (!_display->begin(SSD1306_SWITCHCAPVCC, _addr)) return false;
-    _display->clearDisplay();
-    _display->setTextSize(1);
-    _display->setTextColor(SSD1306_WHITE);
-    _display->display();
+
+    _display.clearDisplay();
+    _display.setTextColor(SSD1306_WHITE);
+    _display.display();
     return true;
   }
 
-  void update(){
+  void update() {
 #if IRISOLED_LIB_AVAILABLE
-    if (!_display || !_anim.running) return;
+    if (!_anim.running || !_anim.frames || _anim.count == 0) return;
     unsigned long now = millis();
-    if (now - _anim.last_ms < _anim.delay_ms) return;
-    _anim.last_ms = now;
-    const unsigned char* bmp = _nextFrame();
-    if (bmp) drawBitmapByPtr(bmp);
+    if (now - _anim.lastMs < _anim.delayMs) return;
+    _anim.lastMs = now;
+    _anim.index = (uint8_t)((_anim.index + 1) % _anim.count);
+    drawBitmapByPtr(_anim.frames[_anim.index]);
 #endif
   }
 
-  void showLogo(){
-    if (!_display) return;
+  void showLogo() {
 #if IRISOLED_LIB_AVAILABLE
     stopAnimation();
     drawBitmapByPtr(Irisoled::normal);
 #else
-    _display->clearDisplay();
-    _display->drawRect(0, 0, _w, _h, SSD1306_WHITE);
-    _display->setTextSize(2);
-    _display->setTextColor(SSD1306_WHITE);
-    _display->setCursor(26, 22);
-    _display->print(F("OLED"));
-    _display->display();
+    stopAnimation();
+    _display.clearDisplay();
+    _display.setTextSize(2);
+    _display.setTextColor(SSD1306_WHITE);
+    _display.setCursor(16, 24);
+    _display.print(F("SENTRY"));
+    _display.display();
 #endif
   }
 
-  bool showBitmapByName(const String &name){
+  void showTestPattern() {
+    stopAnimation();
+    _display.clearDisplay();
+    for (uint8_t y = 0; y < _h; y += 8) {
+      for (uint8_t x = 0; x < _w; x += 8) {
+        if ((((x / 8) + (y / 8)) & 1) == 0) {
+          _display.fillRect(x, y, 8, 8, SSD1306_WHITE);
+        }
+      }
+    }
+    _display.drawRect(0, 0, _w, _h, SSD1306_WHITE);
+    _display.setTextSize(1);
+    _display.setTextColor(SSD1306_WHITE, SSD1306_BLACK);
+    _display.setCursor(2, 2);
+    _display.print(F("OLED TEST"));
+    _display.display();
+  }
+
+  void rawDiag() {
+    Wire.begin();
+    Wire.beginTransmission(_addr);
+    uint8_t ack = Wire.endTransmission();
+    SERIAL_IO.println(String("{\"diag\":\"i2c_ack\",\"addr\":\"0x") + String(_addr, HEX) + String("\",\"ok\":") + String(ack == 0 ? "true" : "false") + String("}"));
+
+    bool ok = _display.begin(SSD1306_SWITCHCAPVCC, _addr);
+    _display.clearDisplay();
+    _display.fillRect(0, 0, _w, _h, SSD1306_WHITE);
+    _display.display();
+    SERIAL_IO.println(String("{\"diag\":\"ssd1306_begin\",\"ok\":") + String(ok ? "true" : "false") + String("}"));
+  }
+
+  bool showBitmapByName(const String &name) {
+    String n = normalize(name);
+
 #if IRISOLED_LIB_AVAILABLE
-    const unsigned char* bmp = resolveBitmap(name);
+    const unsigned char* bmp = resolveBitmap(n);
     if (!bmp) return false;
     stopAnimation();
     drawBitmapByPtr(bmp);
     return true;
 #else
-    String n = name;
-    n.trim();
-    n.toLowerCase();
-  if (n == "logo" || n == "normal") { showLogo(); return true; }
-    return false;
+    if (n.length() == 0 || n == "normal" || n == "logo") {
+      showLogo();
+      return true;
+    }
+    stopAnimation();
+    _display.clearDisplay();
+    _display.setTextSize(1);
+    _display.setTextColor(SSD1306_WHITE);
+    _display.setCursor(0, 0);
+    _display.print(F("face:"));
+    _display.setCursor(0, 12);
+    _display.print(n);
+    _display.display();
+    return true;
 #endif
   }
 
-  bool startAnimationByName(const String &name){
+  bool startAnimationByName(const String &name) {
 #if IRISOLED_LIB_AVAILABLE
     String n = normalize(name);
-    if (n == "wink"){
+    if (n == "wink") {
       static const unsigned char* const frames[] = { Irisoled::normal, Irisoled::wink_left, Irisoled::normal, Irisoled::wink_right, Irisoled::normal };
-      return setAnim(frames, sizeof(frames)/sizeof(frames[0]), 140);
+      return setAnim(frames, sizeof(frames) / sizeof(frames[0]), 160);
     }
-    if (n == "blink"){
+    if (n == "blink") {
       static const unsigned char* const frames[] = { Irisoled::normal, Irisoled::blink_up, Irisoled::blink, Irisoled::blink_down, Irisoled::normal };
-      return setAnim(frames, sizeof(frames)/sizeof(frames[0]), 120);
+      return setAnim(frames, sizeof(frames) / sizeof(frames[0]), 130);
     }
-    if (n == "scan"){
-      static const unsigned char* const frames[] = { Irisoled::normal, Irisoled::look_left, Irisoled::look_right, Irisoled::look_up, Irisoled::look_down, Irisoled::normal };
-      return setAnim(frames, sizeof(frames)/sizeof(frames[0]), 170);
+    if (n == "scan") {
+      static const unsigned char* const frames[] = { Irisoled::look_left, Irisoled::normal, Irisoled::look_right, Irisoled::normal };
+      return setAnim(frames, sizeof(frames) / sizeof(frames[0]), 180);
     }
-    if (n == "sleep"){
-      static const unsigned char* const frames[] = { Irisoled::sleepy, Irisoled::blink_down, Irisoled::blink, Irisoled::blink_up, Irisoled::sleepy };
-      return setAnim(frames, sizeof(frames)/sizeof(frames[0]), 260);
+    if (n == "sleep") {
+      static const unsigned char* const frames[] = { Irisoled::sleepy, Irisoled::blink_down, Irisoled::blink, Irisoled::sleepy };
+      return setAnim(frames, sizeof(frames) / sizeof(frames[0]), 240);
     }
-    if (n == "alert"){
-      static const unsigned char* const frames[] = { Irisoled::alert, Irisoled::focused, Irisoled::warning, Irisoled::furious, Irisoled::alert };
-      return setAnim(frames, sizeof(frames)/sizeof(frames[0]), 130);
+    if (n == "alert") {
+      static const unsigned char* const frames[] = { Irisoled::alert, Irisoled::focused, Irisoled::warning, Irisoled::alert };
+      return setAnim(frames, sizeof(frames) / sizeof(frames[0]), 130);
     }
-    if (n == "emotive"){
-      static const unsigned char* const frames[] = { Irisoled::happy, Irisoled::excited, Irisoled::surprised, Irisoled::sad, Irisoled::worried, Irisoled::normal };
-      return setAnim(frames, sizeof(frames)/sizeof(frames[0]), 170);
+    if (n == "emotive") {
+      static const unsigned char* const frames[] = { Irisoled::happy, Irisoled::surprised, Irisoled::sad, Irisoled::normal };
+      return setAnim(frames, sizeof(frames) / sizeof(frames[0]), 180);
     }
-    if (n == "icons"){
-      static const unsigned char* const frames[] = { Irisoled::logo, Irisoled::mode, Irisoled::left_signal, Irisoled::right_signal, Irisoled::battery_low, Irisoled::battery, Irisoled::battery_full, Irisoled::warning };
-      return setAnim(frames, sizeof(frames)/sizeof(frames[0]), 260);
+    if (n == "icons") {
+      static const unsigned char* const frames[] = { Irisoled::logo, Irisoled::left_signal, Irisoled::right_signal, Irisoled::battery, Irisoled::warning };
+      return setAnim(frames, sizeof(frames) / sizeof(frames[0]), 260);
     }
-    if (n == "all"){
+    if (n == "all") {
       static const unsigned char* const frames[] = {
-        Irisoled::alert, Irisoled::angry, Irisoled::blink_down, Irisoled::blink_up, Irisoled::blink,
-        Irisoled::bored, Irisoled::despair, Irisoled::disoriented, Irisoled::excited, Irisoled::focused,
-        Irisoled::furious, Irisoled::happy, Irisoled::look_down, Irisoled::look_left, Irisoled::look_right,
-        Irisoled::look_up, Irisoled::normal, Irisoled::sad, Irisoled::scared, Irisoled::sleepy,
-        Irisoled::surprised, Irisoled::wink_left, Irisoled::wink_right, Irisoled::worried,
-        Irisoled::battery_full, Irisoled::battery_low, Irisoled::battery, Irisoled::left_signal,
-        Irisoled::logo, Irisoled::mode, Irisoled::right_signal, Irisoled::warning
+        Irisoled::normal, Irisoled::happy, Irisoled::sad, Irisoled::angry, Irisoled::worried,
+        Irisoled::scared, Irisoled::alert, Irisoled::look_left, Irisoled::look_right, Irisoled::surprised
       };
-      return setAnim(frames, sizeof(frames)/sizeof(frames[0]), 180);
+      return setAnim(frames, sizeof(frames) / sizeof(frames[0]), 170);
     }
     return false;
 #else
@@ -149,7 +171,7 @@ public:
 #endif
   }
 
-  void stopAnimation(){
+  void stopAnimation() {
 #if IRISOLED_LIB_AVAILABLE
     _anim.running = false;
     _anim.frames = nullptr;
@@ -158,19 +180,23 @@ public:
 #endif
   }
 
-  static const char* bitmapCatalog(){
+  static const char* bitmapCatalog() {
 #if IRISOLED_LIB_AVAILABLE
     return "alert,angry,blink_down,blink_up,blink,bored,despair,disoriented,excited,focused,furious,happy,look_down,look_left,look_right,look_up,normal,sad,scared,sleepy,surprised,wink_left,wink_right,worried,battery_full,battery_low,battery,left_signal,logo,mode,right_signal,warning";
 #else
-    return "logo";
+    return "logo,normal";
 #endif
   }
 
-  static const char* animationCatalog(){
+  static const char* animationCatalog() {
+#if IRISOLED_LIB_AVAILABLE
     return "wink,blink,scan,sleep,alert,emotive,icons,all";
+#else
+    return "";
+#endif
   }
 
-  static const char* backendName(){
+  static const char* backendName() {
 #if IRISOLED_LIB_AVAILABLE
     return "ssd1306_irisoled";
 #else
@@ -178,57 +204,53 @@ public:
 #endif
   }
 
-  static bool isStub(){ return false; }
+  static bool isStub() { return false; }
 
 private:
   uint8_t _addr{OLED_I2C_ADDR};
-  uint8_t _w{128}, _h{64};
-  Adafruit_SSD1306 *_display{nullptr};
+  uint8_t _w{OLED_WIDTH};
+  uint8_t _h{OLED_HEIGHT};
+  Adafruit_SSD1306 _display{OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RESET_PIN};
+
+  static String normalize(const String &name) {
+    String n = name;
+    n.toLowerCase();
+    n.trim();
+    n.replace(' ', '_');
+    n.replace('-', '_');
+    return n;
+  }
 
 #if IRISOLED_LIB_AVAILABLE
   struct AnimState {
     const unsigned char* const* frames{nullptr};
     uint8_t count{0};
     uint8_t index{0};
-    uint16_t delay_ms{180};
-    unsigned long last_ms{0};
+    uint16_t delayMs{180};
+    unsigned long lastMs{0};
     bool running{false};
   } _anim;
 
-  static String normalize(const String &s){
-    String n = s;
-    n.trim();
-    n.toLowerCase();
-    return n;
-  }
-
-  bool setAnim(const unsigned char* const* frames, uint8_t count, uint16_t delayMs){
+  bool setAnim(const unsigned char* const* frames, uint8_t count, uint16_t delayMs) {
     if (!frames || count == 0) return false;
     _anim.frames = frames;
     _anim.count = count;
     _anim.index = 0;
-    _anim.delay_ms = delayMs;
-    _anim.last_ms = 0;
+    _anim.delayMs = delayMs;
+    _anim.lastMs = 0;
     _anim.running = true;
     drawBitmapByPtr(_anim.frames[0]);
     return true;
   }
 
-  const unsigned char* _nextFrame(){
-    if (!_anim.running || !_anim.frames || _anim.count == 0) return nullptr;
-    _anim.index = (uint8_t)((_anim.index + 1) % _anim.count);
-    return _anim.frames[_anim.index];
+  void drawBitmapByPtr(const unsigned char* bmp) {
+    if (!bmp) return;
+    _display.clearDisplay();
+    _display.drawBitmap(0, 0, bmp, _w, _h, SSD1306_WHITE);
+    _display.display();
   }
 
-  void drawBitmapByPtr(const unsigned char* bmp){
-    if (!_display || !bmp) return;
-    _display->clearDisplay();
-    _display->drawBitmap(0, 0, bmp, _w, _h, SSD1306_WHITE);
-    _display->display();
-  }
-
-  static const unsigned char* resolveBitmap(const String &name){
-    String n = normalize(name);
+  static const unsigned char* resolveBitmap(const String &n) {
     if (n == "alert") return Irisoled::alert;
     if (n == "angry") return Irisoled::angry;
     if (n == "blink_down") return Irisoled::blink_down;
@@ -263,40 +285,7 @@ private:
     if (n == "warning") return Irisoled::warning;
     return nullptr;
   }
-
 #endif
 };
-#else
-// If Adafruit_SSD1306 not available, provide a stub so firmware still compiles
-class OledDisplay {
-public:
-  bool begin(uint8_t = 0x3C, uint8_t = 128, uint8_t = 64){ return false; }
-  void showLogo() {}
-  bool showBitmapByName(const String &){ return false; }
-  bool startAnimationByName(const String &){ return false; }
-  void stopAnimation() {}
-  void update() {}
-  static const char* bitmapCatalog(){ return ""; }
-  static const char* animationCatalog(){ return ""; }
-  static const char* backendName(){ return "stub_no_ssd1306"; }
-  static bool isStub(){ return true; }
-};
-#endif // include check
-#else
-// OLED disabled -> empty stub
-class OledDisplay {
-public:
-  bool begin(uint8_t=0){ return false; }
-  void showLogo(){}
-  bool showBitmapByName(const String &){ return false; }
-  bool startAnimationByName(const String &){ return false; }
-  void stopAnimation() {}
-  void update() {}
-  static const char* bitmapCatalog(){ return ""; }
-  static const char* animationCatalog(){ return ""; }
-  static const char* backendName(){ return "oled_disabled"; }
-  static bool isStub(){ return true; }
-};
-#endif // OLED_ENABLED
 
-#endif // SENTRY_PERIPHERALS_OLED_H
+#endif

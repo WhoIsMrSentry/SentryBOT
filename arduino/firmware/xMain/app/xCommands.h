@@ -121,24 +121,15 @@ static inline void handleJson(const String &line){
       return;
     }
 
-    if (action == "stop"){
-      g_oled.stopAnimation();
-      Protocol::sendOk("oled_anim_stopped");
-      return;
-    }
-
-    if (action == "anim"){
-      if (name.length() == 0) { Protocol::sendErr("no_name"); return; }
-      bool ok = g_oled.startAnimationByName(name);
-      if (ok) Protocol::sendOk("oled_anim_ok");
-      else Protocol::sendErr("unknown_oled_anim");
-      return;
-    }
-
     if (action == "logo"){
-      g_oled.stopAnimation();
       g_oled.showLogo();
       Protocol::sendOk("oled_logo");
+      return;
+    }
+
+    if (action == "test"){
+      g_oled.showTestPattern();
+      Protocol::sendOk("oled_test");
       return;
     }
 
