@@ -152,7 +152,7 @@ void setup(){
   if (l0 || l1) Protocol::sendOk("pid_loaded");
 #endif
   // Initialize EBYTE radio (nRF24L01 compatible) and NEMA controller
-#if defined(RADIO_CE_PIN) && defined(RADIO_CSN_PIN)
+  #if EBYTE_ENABLED && defined(RADIO_CE_PIN) && defined(RADIO_CSN_PIN)
   g_ebyteRadio.begin(RADIO_CE_PIN, RADIO_CSN_PIN, 100);
 #endif
   // Initialize NEMA controller
@@ -175,7 +175,8 @@ void setup(){
 #if LCD_ENABLED
   Wire.begin();
 #if defined(ARDUINO_ARCH_AVR)
-  Wire.setWireTimeout(25000, true);
+  // Keep I2C from hanging forever but do not hard-reset MCU on timeout.
+  Wire.setWireTimeout(25000, false);
 #endif
   uint8_t lcd1Addr = LCD_I2C_ADDR;
 
@@ -222,8 +223,9 @@ void setup(){
 #if OLED_ENABLED
   SERIAL_IO.println(String("{\"info\":\"oled_backend\",\"backend\":\"") + OledDisplay::backendName() + String("\",\"stub\":") + String(OledDisplay::isStub() ? "true" : "false") + String("}"));
   logOledI2cScan();
-  if (g_oled.begin(OLED_I2C_ADDR, 128, 64)){
+  if (g_oled.begin(OLED_I2C_ADDR, OLED_WIDTH, OLED_HEIGHT)){
     bootInfo("oled", true);
+    g_oled.showLogo();
   } else {
     bootInfo("oled", false);
   }
@@ -444,7 +446,9 @@ void loop(){
     robot.estop();
   }
   // Poll radio and update NEMA controller
+  #if EBYTE_ENABLED
   g_ebyteRadio.poll();
+  #endif
   g_nema.update();
   // Telemetry periodic output
   if (telemetryOn && millis() - lastTelemetryMs >= telemetryInterval){

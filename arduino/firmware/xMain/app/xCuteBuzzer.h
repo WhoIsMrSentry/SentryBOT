@@ -38,14 +38,10 @@ extern bool g_buzzerBothEnabled;
 extern uint16_t g_buzzerFreqLoud;
 extern uint16_t g_buzzerFreqQuiet;
 
-// Optional external library. If not installed, fallback tones/songs are used.
-#if defined(__has_include)
-#if __has_include(<CuteBuzzerSounds.h>)
+// Optional external library controlled by config.
+#if defined(CUTE_BUZZER_LIB_ENABLED) && CUTE_BUZZER_LIB_ENABLED
 #include <CuteBuzzerSounds.h>
 #define SENTRY_CUTE_BUZZER_LIB 1
-#else
-#define SENTRY_CUTE_BUZZER_LIB 0
-#endif
 #else
 #define SENTRY_CUTE_BUZZER_LIB 0
 #endif

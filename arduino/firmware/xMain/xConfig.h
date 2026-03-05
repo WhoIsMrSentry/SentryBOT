@@ -216,6 +216,9 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 // =====================
 
 // Radio (nRF24 / EBYTE E01) default CE/CSN pins (override if needed)
+#ifndef EBYTE_ENABLED
+#define EBYTE_ENABLED 0
+#endif
 #ifndef RADIO_CE_PIN
 #define RADIO_CE_PIN 47
 #endif
@@ -342,6 +345,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #ifndef BUZZER_ENABLED
 #define BUZZER_ENABLED 1
 #endif
+#ifndef CUTE_BUZZER_LIB_ENABLED
+// 1: use CuteBuzzerSounds library if installed, 0: use internal fallback sounds.
+#define CUTE_BUZZER_LIB_ENABLED 0
+#endif
 #ifndef BUZZER_LOUD_PIN
 #define BUZZER_LOUD_PIN 7 // Hardware mapping: loud -> pin 7
 #endif
@@ -429,6 +436,24 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #endif
 #ifndef OLED_I2C_ADDR
 #define OLED_I2C_ADDR 0x3C
+#endif
+#ifndef OLED_WIDTH
+#define OLED_WIDTH 128
+#endif
+#ifndef OLED_HEIGHT
+#define OLED_HEIGHT 64
+#endif
+#ifndef OLED_CONTROLLER
+// Reserved for compatibility. Current firmware uses SSD1306 driver path.
+#define OLED_CONTROLLER 1
+#endif
+#ifndef OLED_RESET_PIN
+// Same style as Adafruit SSD1306 example: set a reset pin, or use -1 if not connected.
+#define OLED_RESET_PIN -1
+#endif
+#ifndef OLED_USE_IRISOLED
+// 1: include Irisoled face bitmap library, 0: text/logo fallback only.
+#define OLED_USE_IRISOLED 0
 #endif
 
 // =====================
