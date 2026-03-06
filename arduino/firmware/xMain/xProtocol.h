@@ -64,6 +64,8 @@ public:
       char c = s[i];
       if (c=='"' || c=='\\') { out.print('\\'); out.print(c); }
       else if (c=='\n') out.print(F("\\n"));
+      else if (c=='\r') out.print(F("\\r"));
+      else if (c=='\t') out.print(F("\\t"));
       else out.print(c);
     }
   }

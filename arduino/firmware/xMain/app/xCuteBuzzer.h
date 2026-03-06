@@ -311,24 +311,26 @@ static inline void _cuteBufAppendEscaped(char *dst, size_t dstSize, size_t &pos,
   if (dstSize == 0 || pos >= dstSize - 1) return;
   for (size_t i = 0; i < (size_t)src.length() && pos < dstSize - 1; ++i) {
     const char c = src[i];
-    if ((c == '\\' || c == '"') && pos + 2 < dstSize) {
+    if (c == '\\' || c == '"' || c == '\n' || c == '\r' || c == '\t') {
+      if (pos + 2 >= dstSize) {
+        break;
+      }
       dst[pos++] = '\\';
-      dst[pos++] = c;
-      continue;
-    }
-    if (c == '\n' && pos + 2 < dstSize) {
-      dst[pos++] = '\\';
-      dst[pos++] = 'n';
-      continue;
-    }
-    if (c == '\r' && pos + 2 < dstSize) {
-      dst[pos++] = '\\';
-      dst[pos++] = 'r';
-      continue;
-    }
-    if (c == '\t' && pos + 2 < dstSize) {
-      dst[pos++] = '\\';
-      dst[pos++] = 't';
+      switch (c) {
+        case '\\':
+        case '"':
+          dst[pos++] = c;
+          break;
+        case '\n':
+          dst[pos++] = 'n';
+          break;
+        case '\r':
+          dst[pos++] = 'r';
+          break;
+        case '\t':
+          dst[pos++] = 't';
+          break;
+      }
       continue;
     }
     dst[pos++] = c;

@@ -106,6 +106,7 @@ class xOledFacesService:
             return True
         try:
             if mode == "logo":
+                self.display.stop_animation()
                 ok = self.display.show_logo()
             elif mode == "animation":
                 ok = self.display.start_animation(name)

@@ -587,8 +587,9 @@ public:
   }
 
   void showRemote(){
-    String status = g_nema.isEnabled() ? "REMOTE ON" : "REMOTE OFF";
+    String status;
     status.reserve(16);
+    status = g_nema.isEnabled() ? "REMOTE ON" : "REMOTE OFF";
     String src = g_ebyteRadio.lastSource;
     if (src.length() == 0) src = "PKT:NONE";
     if (src.length() > 12) src = src.substring(0, 12);
