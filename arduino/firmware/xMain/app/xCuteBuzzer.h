@@ -47,9 +47,14 @@ extern uint16_t g_buzzerFreqQuiet;
 #endif
 
 // Forward declarations for inline helpers (declared later in this header)
-static inline void enqueueNeopixelPending(uint16_t seq, const String &payload);
+static const int _CUTE_PENDING_MAX = 4;
+static const size_t _CUTE_PENDING_PAYLOAD_MAX = 140;
+static inline void enqueueNeopixelPending(uint16_t seq, const char *payload);
 static inline void markNeopixelAck(uint16_t seq);
 static inline void neopixelTick();
+static inline void _cuteBufAppendRaw(char *dst, size_t dstSize, size_t &pos, const char *src);
+static inline void _cuteBufAppendEscaped(char *dst, size_t dstSize, size_t &pos, const String &src);
+static inline void _cuteBufAppendInt(char *dst, size_t dstSize, size_t &pos, int v);
 
 static inline void emitNeopixelRequest(const String &name, const String &color = "", int iterations = 1){
   // Validate iterations and color to avoid malformed or harmful values
@@ -82,13 +87,22 @@ static inline void emitNeopixelRequest(const String &name, const String &color =
   uint16_t seq = g_neopixel_seq++;
   if (g_neopixel_seq == 0) g_neopixel_seq = 1; // avoid zero
 
-  String payload = String("{\"ok\":true,\"event\":\"neopixel_request\",\"name\":\"") + Protocol::escape(name) + "\"";
+  char payload[_CUTE_PENDING_PAYLOAD_MAX];
+  size_t pos = 0;
+  payload[0] = '\0';
+  _cuteBufAppendRaw(payload, sizeof(payload), pos, "{\"ok\":true,\"event\":\"neopixel_request\",\"name\":\"");
+  _cuteBufAppendEscaped(payload, sizeof(payload), pos, name);
+  _cuteBufAppendRaw(payload, sizeof(payload), pos, "\"");
   if (color.length()>0 && isValidColor(color)){
-    payload += String(",\"color\":\"") + Protocol::escape(color) + "\"";
+    _cuteBufAppendRaw(payload, sizeof(payload), pos, ",\"color\":\"");
+    _cuteBufAppendEscaped(payload, sizeof(payload), pos, color);
+    _cuteBufAppendRaw(payload, sizeof(payload), pos, "\"");
   }
-  payload += String(",\"iterations\":") + String(iterations);
-  payload += String(",\"seq\":") + String(seq);
-  payload += "}";
+  _cuteBufAppendRaw(payload, sizeof(payload), pos, ",\"iterations\":");
+  _cuteBufAppendInt(payload, sizeof(payload), pos, iterations);
+  _cuteBufAppendRaw(payload, sizeof(payload), pos, ",\"seq\":");
+  _cuteBufAppendInt(payload, sizeof(payload), pos, (int)seq);
+  _cuteBufAppendRaw(payload, sizeof(payload), pos, "}");
 
   // Enqueue pending payload for the retry engine (inline implementation below)
   enqueueNeopixelPending(seq, payload);
@@ -97,8 +111,9 @@ static inline void emitNeopixelRequest(const String &name, const String &color =
 }
 
 static inline void emitCutePlayed(const String &name){
-  String evt = String("{\"ok\":true,\"event\":\"cute_sound\",\"name\":\"") + Protocol::escape(name) + "\"}";
-  SERIAL_IO.println(evt);
+  SERIAL_IO.print(F("{\"ok\":true,\"event\":\"cute_sound\",\"name\":\""));
+  Protocol::printEscaped(SERIAL_IO, name);
+  SERIAL_IO.println(F("\"}"));
 }
 
 static inline uint8_t activeBuzzerPin(){
@@ -281,15 +296,67 @@ static inline void playCuteSound(CuteSoundKey key, bool emitNeopixel = true){
 
 // Mark a pending neopixel seq as acknowledged by Pi
 // Retry/ack helpers implemented inline to ensure availability during AVR link
-static const int _CUTE_PENDING_MAX = 6;
-struct _CutePendingItem { uint16_t seq; String payload; uint8_t retries; unsigned long lastMs; bool done; };
+struct _CutePendingItem { uint16_t seq; char payload[_CUTE_PENDING_PAYLOAD_MAX]; uint8_t retries; unsigned long lastMs; bool done; };
 static _CutePendingItem _g_cute_pending[_CUTE_PENDING_MAX] = {};
 
-static inline void enqueueNeopixelPending(uint16_t seq, const String &payload){
+static inline void _cuteBufAppendRaw(char *dst, size_t dstSize, size_t &pos, const char *src){
+  if (dstSize == 0 || pos >= dstSize - 1) return;
+  while (*src && pos < dstSize - 1) {
+    dst[pos++] = *src++;
+  }
+  dst[pos] = '\0';
+}
+
+static inline void _cuteBufAppendEscaped(char *dst, size_t dstSize, size_t &pos, const String &src){
+  if (dstSize == 0 || pos >= dstSize - 1) return;
+  for (size_t i = 0; i < (size_t)src.length() && pos < dstSize - 1; ++i) {
+    const char c = src[i];
+    if ((c == '\\' || c == '"') && pos + 2 < dstSize) {
+      dst[pos++] = '\\';
+      dst[pos++] = c;
+      continue;
+    }
+    if (c == '\n' && pos + 2 < dstSize) {
+      dst[pos++] = '\\';
+      dst[pos++] = 'n';
+      continue;
+    }
+    if (c == '\r' && pos + 2 < dstSize) {
+      dst[pos++] = '\\';
+      dst[pos++] = 'r';
+      continue;
+    }
+    if (c == '\t' && pos + 2 < dstSize) {
+      dst[pos++] = '\\';
+      dst[pos++] = 't';
+      continue;
+    }
+    dst[pos++] = c;
+  }
+  dst[pos] = '\0';
+}
+
+static inline void _cuteBufAppendInt(char *dst, size_t dstSize, size_t &pos, int v){
+  char num[16];
+  snprintf(num, sizeof(num), "%d", v);
+  _cuteBufAppendRaw(dst, dstSize, pos, num);
+}
+
+static inline void _cuteCopyPayload(char *dst, size_t dstSize, const char *src){
+  if (dstSize == 0) return;
+  size_t i = 0;
+  while (src[i] && i < (dstSize - 1)) {
+    dst[i] = src[i];
+    ++i;
+  }
+  dst[i] = '\0';
+}
+
+static inline void enqueueNeopixelPending(uint16_t seq, const char *payload){
   for (int i=0;i<_CUTE_PENDING_MAX;i++){
     if (_g_cute_pending[i].done || _g_cute_pending[i].seq==0){
       _g_cute_pending[i].seq = seq;
-      _g_cute_pending[i].payload = payload;
+      _cuteCopyPayload(_g_cute_pending[i].payload, sizeof(_g_cute_pending[i].payload), payload);
       _g_cute_pending[i].retries = 0;
       _g_cute_pending[i].lastMs = millis();
       _g_cute_pending[i].done = false;
@@ -299,7 +366,7 @@ static inline void enqueueNeopixelPending(uint16_t seq, const String &payload){
   int oldest = 0; unsigned long oldestMs = _g_cute_pending[0].lastMs;
   for (int i=1;i<_CUTE_PENDING_MAX;i++) if (_g_cute_pending[i].lastMs < oldestMs){ oldest = i; oldestMs = _g_cute_pending[i].lastMs; }
   _g_cute_pending[oldest].seq = seq;
-  _g_cute_pending[oldest].payload = payload;
+  _cuteCopyPayload(_g_cute_pending[oldest].payload, sizeof(_g_cute_pending[oldest].payload), payload);
   _g_cute_pending[oldest].retries = 0;
   _g_cute_pending[oldest].lastMs = millis();
   _g_cute_pending[oldest].done = false;
@@ -311,7 +378,7 @@ static inline void markNeopixelAck(uint16_t seq){
     if (!_g_cute_pending[i].done && _g_cute_pending[i].seq == seq){
       _g_cute_pending[i].done = true;
       _g_cute_pending[i].seq = 0;
-      _g_cute_pending[i].payload = String("");
+      _g_cute_pending[i].payload[0] = '\0';
       _g_cute_pending[i].retries = 0;
       _g_cute_pending[i].lastMs = 0;
       return;
@@ -332,6 +399,8 @@ static inline void neopixelTick(){
       _g_cute_pending[i].lastMs = now;
     } else if (_g_cute_pending[i].retries >= MAX_RETRIES){
       _g_cute_pending[i].done = true;
+      _g_cute_pending[i].seq = 0;
+      _g_cute_pending[i].payload[0] = '\0';
     }
   }
 }

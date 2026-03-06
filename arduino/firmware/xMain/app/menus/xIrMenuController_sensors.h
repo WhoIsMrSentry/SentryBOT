@@ -15,7 +15,13 @@ void IrMenuController::refreshLive(Robot &robot){
   if (_state == STATE_ULTRA){
 #if ULTRA_ENABLED
     if (isnan(g_ultraCm)) lcdPrint("ULTRA", "NO ECHO");
-    else lcdPrint("ULTRA", String(g_ultraCm, 1) + "cm");
+    else {
+      String line;
+      line.reserve(12);
+      line = String(g_ultraCm, 1);
+      line += "cm";
+      lcdPrint("ULTRA", line);
+    }
 #else
     lcdPrint("ULTRA", "DISABLED");
 #endif
@@ -41,11 +47,29 @@ void IrMenuController::refreshLive(Robot &robot){
     float p = robot.imu.getPitch();
     float r = robot.imu.getRoll();
     if (_imuSub == 0){
-      lcdPrint("IMU", "P:" + String(p, 1) + " R:" + String(r, 1));
+      String line;
+      line.reserve(24);
+      line = "P:";
+      line += String(p, 1);
+      line += " R:";
+      line += String(r, 1);
+      lcdPrint("IMU", line);
     } else if (_imuSub == 1){
-      lcdPrint("IMU", "AX:" + String(robot.imu.getAccX(), 1) + " AY:" + String(robot.imu.getAccY(), 1));
+      String line;
+      line.reserve(24);
+      line = "AX:";
+      line += String(robot.imu.getAccX(), 1);
+      line += " AY:";
+      line += String(robot.imu.getAccY(), 1);
+      lcdPrint("IMU", line);
     } else {
-      lcdPrint("IMU", "AZ:" + String(robot.imu.getAccZ(), 1) + " T:" + String(robot.imu.getTempC(), 0));
+      String line;
+      line.reserve(24);
+      line = "AZ:";
+      line += String(robot.imu.getAccZ(), 1);
+      line += " T:";
+      line += String(robot.imu.getTempC(), 0);
+      lcdPrint("IMU", line);
     }
     return;
   }
@@ -53,7 +77,10 @@ void IrMenuController::refreshLive(Robot &robot){
   if (_state == STATE_SYSTEM){
     if (_sysSub == 0){
       String top = (robot.getMode()==MODE_STAND) ? "SYS STAND" : "SYS SIT";
-      String b = String("DRV:") + String((int)robot.getDriveCmd());
+      String b;
+      b.reserve(14);
+      b = "DRV:";
+      b += String((int)robot.getDriveCmd());
       lcdPrint(top, b);
       return;
     }
@@ -63,13 +90,19 @@ void IrMenuController::refreshLive(Robot &robot){
     #if LCD_ENABLED
       a = String("LCD") + (g_lcd1Ok ? "1" : "-");
     #endif
-      String b = String("IMU:") + (robot.imu.isReady() ? "OK" : "NO");
+      String b;
+      b.reserve(8);
+      b = "IMU:";
+      b += (robot.imu.isReady() ? "OK" : "NO");
       lcdPrint(a, b);
       return;
     }
 
     // sub 2
-    String b = String("SERVO:") + (robot.servos.driverOk() ? "OK" : "NO");
+    String b;
+    b.reserve(12);
+    b = "SERVO:";
+    b += (robot.servos.driverOk() ? "OK" : "NO");
 #if ULTRA_ENABLED
     String top = "UL:";
     if (isnan(g_ultraCm)) top += "NA";

@@ -19,21 +19,37 @@ bool g_linkEverAlive = false;
 bool telemetryOn = false;
 unsigned long telemetryInterval = 100;
 unsigned long lastTelemetryMs = 0;
-// Owner RFID cooldown and song queue
-unsigned long g_lastOwnerRfidMs = 0;
-String g_lastOwnerUid = "";
-const unsigned long OWNER_RFID_COOLDOWN_MS = 5000UL;
+// Song queue
 
-// Song queue (simple ring)
+// Song queue (simple ring) with compact IDs to avoid String heap churn.
+enum SongId : uint8_t {
+  SONG_NONE = 0,
+  SONG_WALLE,
+  SONG_BB8_1,
+  SONG_BB8_2,
+  SONG_BB8_3,
+};
+
 const int SONG_QUEUE_CAP = 8;
-String g_songQueue[SONG_QUEUE_CAP];
+uint8_t g_songQueue[SONG_QUEUE_CAP];
 int g_songQueueStart = 0;
 int g_songQueueCount = 0;
 
-static inline void enqueueSong(const String &s){
+static inline const char* songNameFromId(uint8_t id){
+  switch (id){
+    case SONG_WALLE: return "walle";
+    case SONG_BB8_1: return "bb8_1";
+    case SONG_BB8_2: return "bb8_2";
+    case SONG_BB8_3: return "bb8_3";
+    default: return nullptr;
+  }
+}
+
+static inline void enqueueSong(uint8_t songId){
+  if (songId == SONG_NONE) return;
   if (g_songQueueCount >= SONG_QUEUE_CAP) return;
   int idx = (g_songQueueStart + g_songQueueCount) % SONG_QUEUE_CAP;
-  g_songQueue[idx] = s;
+  g_songQueue[idx] = songId;
   g_songQueueCount++;
 }
 
@@ -41,10 +57,11 @@ static inline void processSongQueue(){
   if (g_songQueueCount == 0) return;
   // g_song is global BuzzerSongPlayer; check isPlaying()
   if (!g_song.isPlaying()){
-    String s = g_songQueue[g_songQueueStart];
+    uint8_t songId = g_songQueue[g_songQueueStart];
     g_songQueueStart = (g_songQueueStart + 1) % SONG_QUEUE_CAP;
     g_songQueueCount--;
-    g_song.play(s, g_buzzerDefaultOut);
+    const char* songName = songNameFromId(songId);
+    if (songName != nullptr) g_song.play(songName, g_buzzerDefaultOut);
   }
 }
 
@@ -102,29 +119,67 @@ IrMenuController g_irMenu;
 HallEncoder g_hall0;
 HallEncoder g_hall1;
 #endif
-// OLED instance
-#if OLED_ENABLED
-OledDisplay g_oled;
 
-static void logOledI2cScan(){
-  bool any = false;
-  for (uint8_t addr = 0x03; addr <= 0x77; ++addr){
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0){
-      any = true;
-      char hexAddr[5];
-      snprintf(hexAddr, sizeof(hexAddr), "0x%02X", addr);
-      SERIAL_IO.println(String("{\"info\":\"i2c_device\",\"addr\":\"") + hexAddr + String("\"}"));
+static String g_rxLine;
+static String g_irKey;
+static String g_lcdLineTmp;
+
+static inline void printJsonEscaped(const String &s){
+  for (size_t i = 0; i < s.length(); ++i){
+    char c = s[i];
+    switch (c){
+      case '"': SERIAL_IO.print(F("\\\"")); break;
+      case '\\': SERIAL_IO.print(F("\\\\")); break;
+      case '\n': SERIAL_IO.print(F("\\n")); break;
+      case '\r': SERIAL_IO.print(F("\\r")); break;
+      case '\t': SERIAL_IO.print(F("\\t")); break;
+      default: SERIAL_IO.print(c); break;
     }
   }
-  if (!any){
-    SERIAL_IO.println(F("{\"info\":\"i2c_device\",\"addr\":null}"));
-  }
 }
+
+static inline bool isOwnerUid(const char *uid){
+  // "F3A186A5" (8 chars)
+  return uid[0]=='F' && uid[1]=='3' && uid[2]=='A' && uid[3]=='1' && uid[4]=='8' && uid[5]=='6' && uid[6]=='A' && uid[7]=='5' && uid[8]=='\0';
+}
+
+static inline void printTelemetryJson(){
+  SERIAL_IO.print(F("{\"ok\":true,\"telemetry\":true,\"pitch\":"));
+  SERIAL_IO.print(robot.imu.getPitch(), 2);
+  SERIAL_IO.print(F(",\"roll\":"));
+  SERIAL_IO.print(robot.imu.getRoll(), 2);
+  SERIAL_IO.print(F(",\"pose\":["));
+  for (int i = 0; i < SERVO_COUNT_TOTAL; ++i){
+    if (i) SERIAL_IO.print(',');
+    SERIAL_IO.print((int)robot.servos.get(i));
+  }
+  SERIAL_IO.print(F("],\"stepper_pos\":["));
+  SERIAL_IO.print(robot.steppers.pos1());
+  SERIAL_IO.print(',');
+  SERIAL_IO.print(robot.steppers.pos2());
+  SERIAL_IO.print(']');
+#if RFID_ENABLED
+  SERIAL_IO.print(F(",\"rfid\":\""));
+  printJsonEscaped(g_lastRfid);
+  SERIAL_IO.print('"');
 #endif
+#if ULTRA_ENABLED
+  SERIAL_IO.print(F(",\"ultra_cm\":"));
+  if (isnan(g_ultraCm)) SERIAL_IO.print(F("null"));
+  else SERIAL_IO.print(g_ultraCm, 1);
+#endif
+  SERIAL_IO.println('}');
+}
 
 void setup(){
   SERIAL_IO.begin(ROBOT_SERIAL_BAUD);
+  g_rxLine.reserve(256);
+  g_irKey.reserve(16);
+  g_lcdLineTmp.reserve(24);
+#if RFID_ENABLED
+  g_lastRfid.reserve(32);
+#endif
+  g_lastSpeech.reserve(128);
   // Status LED pin
   pinMode(PIN_STATUS_LED, OUTPUT);
   g_statusLedMode = STATUS_LED_BLINK_SLOW; // boot activity
@@ -219,17 +274,6 @@ void setup(){
   // Eğer iki ekran da yoksa firmware yine çalışır; sadece LCD çıktısı no-op olur.
   g_lcdStatus.begin("READY", 3000);
 
-  // Initialize OLED if present and show logo
-#if OLED_ENABLED
-  SERIAL_IO.println(String("{\"info\":\"oled_backend\",\"backend\":\"") + OledDisplay::backendName() + String("\",\"stub\":") + String(OledDisplay::isStub() ? "true" : "false") + String("}"));
-  logOledI2cScan();
-  if (g_oled.begin(OLED_I2C_ADDR, OLED_WIDTH, OLED_HEIGHT)){
-    bootInfo("oled", true);
-    g_oled.showLogo();
-  } else {
-    bootInfo("oled", false);
-  }
-#endif
     if (BOOT_STATUS_ENABLED && lcdHubAny()){
     bootUiStep("SentryBOT", "BOOT", BOOT_SPLASH_MS);
 
@@ -306,48 +350,49 @@ void setup(){
 }
 
 void loop(){
-  String line; if (Protocol::readLine(SERIAL_IO, line)) handleJson(line);
+  if (Protocol::readLine(SERIAL_IO, g_rxLine)) handleJson(g_rxLine);
   robot.update();
-#if OLED_ENABLED
-  g_oled.update();
-#endif
     // Peripherals polling
   #if RFID_ENABLED
     if (g_rfid.poll()){
       g_lastRfid = g_rfid.lastUid();
-      String evt = String("{\"ok\":true,\"event\":\"rfid\",\"uid\":\"") + Protocol::escape(g_lastRfid) + "\"}";
-      SERIAL_IO.println(evt);
+      SERIAL_IO.print(F("{\"ok\":true,\"event\":\"rfid\",\"uid\":\""));
+      printJsonEscaped(g_lastRfid);
+      SERIAL_IO.println(F("\"}"));
   #if LCD_ENABLED
       // Show brief RFID on main status LCD (LCD1)
-      String tail = g_lastRfid; if (tail.length()>8) tail = tail.substring(tail.length()-8);
-      g_lcdStatus.showTo(LCD_TGT_1, "RFID", tail, true);
+      char tail[9];
+      size_t rlen = g_lastRfid.length();
+      size_t start = (rlen > 8) ? (rlen - 8) : 0;
+      uint8_t ti = 0;
+      for (size_t p = start; p < rlen && ti < 8; ++p) tail[ti++] = g_lastRfid[p];
+      tail[ti] = '\0';
+      g_lcdLineTmp = tail;
+      g_lcdStatus.showTo(LCD_TGT_1, "RFID", g_lcdLineTmp, true);
 
       // Normalize UID (remove non-alnum, uppercase)
-      String norm = "";
+      char norm[17];
+      uint8_t ni = 0;
       for (size_t _i = 0; _i < g_lastRfid.length(); ++_i){
         char c = g_lastRfid[_i];
         if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')){
           if (c >= 'a' && c <= 'f') c = c - ('a' - 'A');
-          norm += c;
+          if (ni < sizeof(norm) - 1) norm[ni++] = c;
         }
       }
+      norm[ni] = '\0';
 
       // Owner UID (uppercase, no separators)
-      const String owner = String("F3A186A5");
-            unsigned long now = millis();
-            if (norm.equalsIgnoreCase(owner)){
-              // update owner last seen (allow immediate re-reads)
-              g_lastOwnerUid = norm;
-              g_lastOwnerRfidMs = now;
+      if (isOwnerUid(norm)){
         // Greet owner on LCD1
         g_lcdStatus.showTo(LCD_TGT_1, "Merhaba", "Sahip", true);
         playCuteSound(CUTE_SUPER_HAPPY, true);
         // Enqueue sequence: walle then three bb8 variants
-        enqueueSong("walle");
-        enqueueSong("bb8_1");
-        enqueueSong("bb8_2");
-        enqueueSong("bb8_3");
-            }
+        enqueueSong(SONG_WALLE);
+        enqueueSong(SONG_BB8_1);
+        enqueueSong(SONG_BB8_2);
+        enqueueSong(SONG_BB8_3);
+      }
   #endif
     }
   #endif
@@ -359,7 +404,11 @@ void loop(){
       if (!isnan(g_ultraCm) && g_ultraCm>0 && g_ultraCm < AVOID_DISTANCE_CM){
         robot.setDriveCmd(AVOID_REVERSE_SPEED);
   #if LCD_ENABLED
-        g_lcdStatus.show("AVOID", String((int)g_ultraCm) + "cm");
+      char cmBuf[12];
+      ltoa((long)g_ultraCm, cmBuf, 10);
+      g_lcdLineTmp = cmBuf;
+      g_lcdLineTmp += "cm";
+      g_lcdStatus.show("AVOID", g_lcdLineTmp);
   #endif
   // (removed) processSongQueue was here under ULTRA condition; moved to main BUZZER section
       }
@@ -412,9 +461,8 @@ void loop(){
   #endif
 
 #if IR_ENABLED
-  String k;
-  if (g_ir.poll(k)){
-    g_irMenu.onKey(k, robot);
+  if (g_ir.poll(g_irKey)){
+    g_irMenu.onKey(g_irKey, robot);
   }
   g_irMenu.tick(robot);
 #endif
@@ -453,17 +501,7 @@ void loop(){
   // Telemetry periodic output
   if (telemetryOn && millis() - lastTelemetryMs >= telemetryInterval){
     lastTelemetryMs = millis(); robot.imu.read();
-      String out = "{\"ok\":true,\"telemetry\":true,\"pitch\":"; out += robot.imu.getPitch();
-      out += ",\"roll\":"; out += robot.imu.getRoll();
-      out += ",\"pose\": ["; for (int i=0;i<SERVO_COUNT_TOTAL;i++){ if(i) out += ","; out += (int)robot.servos.get(i);} out += "],\"stepper_pos\": ["; out += robot.steppers.pos1(); out += ","; out += robot.steppers.pos2(); out += "]";
-  #if RFID_ENABLED
-      out += ",\"rfid\":\""; out += Protocol::escape(g_lastRfid); out += "\"";
-  #endif
-  #if ULTRA_ENABLED
-      out += ",\"ultra_cm\":"; out += (isnan(g_ultraCm)?String("null"):String(g_ultraCm,1));
-  #endif
-      out += "}";
-      SERIAL_IO.println(out);
+    printTelemetryJson();
   }
   // periodic maintenance for neopixel request retries/acks
   // Status LED handling

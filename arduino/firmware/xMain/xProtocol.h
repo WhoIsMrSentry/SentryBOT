@@ -33,11 +33,18 @@ public:
   }
 
   static void sendOk(const String &msg = "") {
-    if (msg.length()) SERIAL_IO.println(String("{\"ok\":true,\"msg\":\"") + escape(msg) + "\"}");
-    else SERIAL_IO.println(F("{\"ok\":true}"));
+    if (msg.length()){
+      SERIAL_IO.print(F("{\"ok\":true,\"msg\":\""));
+      printEscaped(SERIAL_IO, msg);
+      SERIAL_IO.println(F("\"}"));
+    } else {
+      SERIAL_IO.println(F("{\"ok\":true}"));
+    }
   }
   static void sendErr(const String &err) {
-    SERIAL_IO.println(String("{\"ok\":false,\"err\":\"") + escape(err) + "\"}");
+    SERIAL_IO.print(F("{\"ok\":false,\"err\":\""));
+    printEscaped(SERIAL_IO, err);
+    SERIAL_IO.println(F("\"}"));
   }
 
   // Minimal JSON helper (escape only quotes and backslashes)
@@ -50,6 +57,15 @@ public:
       else r+=c;
     }
     return r;
+  }
+
+  static void printEscaped(Stream &out, const String &s){
+    for (size_t i = 0; i < s.length(); ++i){
+      char c = s[i];
+      if (c=='"' || c=='\\') { out.print('\\'); out.print(c); }
+      else if (c=='\n') out.print(F("\\n"));
+      else out.print(c);
+    }
   }
 
 private:
