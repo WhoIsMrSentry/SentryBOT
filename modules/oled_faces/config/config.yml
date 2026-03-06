@@ -5,6 +5,15 @@ server:
 enabled: true
 poll_interval_s: 0.7
 
+display:
+  enabled: true
+  bus: 1
+  address: 60   # 0x3C
+  width: 128
+  height: 64
+  contrast: 143 # 0x8F
+  assets_dir: modules/oled_faces/assets
+
 boot:
   mode: logo
   name: logo

@@ -1,0 +1,10 @@
+{
+    "frames":  [
+                   "normal",
+                   "blink_up",
+                   "blink",
+                   "blink_down",
+                   "normal"
+               ],
+    "delay_ms":  130
+}

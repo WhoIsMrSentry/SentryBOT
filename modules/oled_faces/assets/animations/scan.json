@@ -1,0 +1,9 @@
+{
+    "frames":  [
+                   "look_left",
+                   "normal",
+                   "look_right",
+                   "normal"
+               ],
+    "delay_ms":  180
+}
