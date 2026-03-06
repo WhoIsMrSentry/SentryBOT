@@ -166,7 +166,9 @@ public:
           if (!ramps[0].active && !ramps[1].active){ setEnable(false); }
           if (i==0) s1.setSpeed(0); else s2.setSpeed(0);
           // Emit a host-visible stall event so the controller can react
-          SERIAL_IO.println(String("{\"evt\":\"stall\",\"id\":") + String(i) + String("}"));
+          SERIAL_IO.print(F("{\"evt\":\"stall\",\"id\":"));
+          SERIAL_IO.print(i);
+          SERIAL_IO.println('}');
         }
       }
     }

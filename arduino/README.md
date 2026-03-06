@@ -2,7 +2,7 @@
 
 Bu dizin, SentryBOT Arduino firmware'ini içerir. Ana sketch `arduino/firmware/xMain/xMain.ino` altındadır. Firmware NDJSON satır-tabanlı (NDJSON) seri protokolüyle haberleşir.
 
-Not: Mevcut firmware davranışı ve pin/kanal eşlemeleri kaynak kodundaki `xConfig.h` ile belirlenir. Eski README içeriklerinde bazı değerler farklı versiyonlardan kalma olabilir; bu dosya güncel `xConfig.h` tanımlarına göre düzenlendi ve ayrıca planladığın donanım değişiklikleri (Hall sensörleri, OLED + 20x4 ekran) için yönergeler eklenmiştir.
+Not: Mevcut firmware davranışı ve pin/kanal eşlemeleri kaynak kodundaki `xConfig.h` ile belirlenir. Eski README içeriklerinde bazı değerler farklı versiyonlardan kalma olabilir; bu dosya güncel `xConfig.h` tanımlarına göre düzenlenmiştir.
 
 ## Özellikler
 - 4 Servo: baş (pan, tilt) + iki adet Pi-servo/aksesuar (varsayılan yapı: easing ile yumuşak hareket)
@@ -14,6 +14,12 @@ Not: Mevcut firmware davranışı ve pin/kanal eşlemeleri kaynak kodundaki `xCo
 - Güvenlik: heartbeat timeout, estop, açı sınırları
 - Kalıcılık: IMU offset EEPROM kaydet/yükle
 - Tuning: PID, servo/stepper parametreleri canlı ayar
+
+## RAM ve String Optimizasyonu
+- Cute neopixel retry kuyruğu artık `String` payload yerine sabit `char` buffer kullanır.
+- Legacy IR menü kopyalarında (sound/servo/sensors) geçici `String` birleştirmeleri azaltıldı.
+
+Bu değişiklikler, AVR tarafta heap parçalanmasını azaltmak ve uzun çalışmada kararlılığı artırmak içindir.
 
 ## Bağlantı ve Kurulum
 1) Seri port: `xConfig.h` içinde `SERIAL_IO` → `Serial` (USB) veya `Serial1` (RPi UART)
@@ -50,15 +56,12 @@ Bu değerler kodun kaynağındaki `xConfig.h` dosyasında tanımlıdır; fizikse
 - Çift lazer aç: `{ "cmd":"laser", "both":true, "on":true }`
 - Kapat: `{ "cmd":"laser", "on":false }`
 
-## Ekran / Menü: Yeni Donanım Planı (20x4 + OLED logo)
-Senin isteğine göre ekran konfigürasyonunu güncelliyoruz:
-- Bir adet 20x4 I2C LCD: durum bilgisi, menüler ve telemetri için ana ekran.
-- Bir adet küçük kare OLED (SSD1306/SH1106): yalnızca logo/statik ikon için.
+## Ekran / Menü
+Bu firmware tarafında 20x4 I2C LCD menü/durum ekranı desteklenir.
 
 Yazılım notları:
-- `xLcdHub` 20x4'ü hedef alacak şekilde güncellenecek. `LCD_COLS`/`LCD_ROWS` değerlerini `xConfig.h` içinde 20/4 olarak ayarlayabilirsin.
-- OLED için `peripherals/xOledDisplay.h` (SSD1306) eklenecek; başlangıçta sadece logo/show fonksiyonu gereklidir.
-- Bu değişiklikler sonrası menü ve IR arayüzü (20x4) üzerinden çalışacaktır; OLED statik görsel amaçlı kalacaktır.
+- `xLcdHub` 20x4'ü hedef alacak şekilde çalışır. `LCD_COLS`/`LCD_ROWS` değerlerini `xConfig.h` içinde 20/4 olarak ayarlayabilirsin.
+- OLED çizimi Arduino tarafında değil, Pi tarafındaki `modules/oled_faces` servisi tarafından sürülür.
 
 ## Dual Buzzer
 - İki buzzer desteği: `BUZZER_LOUD_PIN` ve `BUZZER_QUIET_PIN`.
@@ -88,7 +91,6 @@ Yazılım notları:
 ## Çevre Birimleri
 - RFID (MFRC522): `{ "cmd":"rfid_last" }` ve olay yayını
 - LCD (I2C 20x4): `{ "cmd":"lcd", "top":"LINE1", "bottom":"LINE2" }`
-- OLED (I2C): logo gösterimi (ileride komut eklenebilir)
 - Ultrasonik: `{ "cmd":"ultra_read" }`, kaçınma `{ "cmd":"avoid", "enable":true }`
 
 ----
@@ -116,9 +118,9 @@ Senin planına göre her teker için 4 mıknatıs ve tek bir Hall sensör kullan
 Sonraki adımlar (ben uygulayabilirim):
  - `peripherals/xHallEncoder.h` implementasyonu
  - `actuators/xStepperPair.h`'ın hall-encoder feedback ile refactor edilmesi (PID closed-loop)
- - `peripherals/xOledDisplay.h` (SSD1306) ve `xLcdHub` güncellemesi (20x4 ana ekran, OLED logo)
+ - `xLcdHub` güncellemesi (20x4 ana ekran)
 
-Lütfen hangi adımdan başlamamı istediğini belirt: `hall_encoder_impl`, `stepper_refactor`, `oled_integration`, `hepsini sırayla` veya `önce konuşalım`.
+Lütfen hangi adımdan başlamamı istediğini belirt: `hall_encoder_impl`, `stepper_refactor`, `hepsini sırayla` veya `önce konuşalım`.
 
 ## Lisans
 Üst dizindeki `LICENSE` dosyasına bakın.

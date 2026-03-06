@@ -579,16 +579,31 @@ public:
   }
 
   void showMenu(){
-    lcdPrint("MENU", menuName(_menuIndex) + " OK=ENTER");
+    String line;
+    line.reserve(22);
+    line = menuName(_menuIndex);
+    line += " OK=ENTER";
+    lcdPrint("MENU", line);
   }
 
   void showRemote(){
-    String status = g_nema.isEnabled() ? "REMOTE ON" : "REMOTE OFF";
+    String status;
+    status.reserve(16);
+    status = g_nema.isEnabled() ? "REMOTE ON" : "REMOTE OFF";
     String src = g_ebyteRadio.lastSource;
     if (src.length() == 0) src = "PKT:NONE";
     if (src.length() > 12) src = src.substring(0, 12);
-    String axes = "X" + String(g_ebyteRadio.lastPkt.Rstick_X) + "Y" + String(g_ebyteRadio.lastPkt.Rstick_Y);
-    String bottom = src + " " + axes;
+    String axes;
+    axes.reserve(16);
+    axes = "X";
+    axes += String(g_ebyteRadio.lastPkt.Rstick_X);
+    axes += "Y";
+    axes += String(g_ebyteRadio.lastPkt.Rstick_Y);
+    String bottom;
+    bottom.reserve(36);
+    bottom = src;
+    bottom += ' ';
+    bottom += axes;
     if (g_nema.isLeftMotorEnabled()) bottom += " L";
     if (g_nema.isRightMotorEnabled()) bottom += " R";
     lcdPrint(status, bottom);
@@ -664,7 +679,11 @@ public:
             // show simple progress
             unsigned long el = millis() - t0;
             int pct = (int)constrain((el*100)/dur, 0, 100);
-            lcdPrint(String("CALIB ") + String(pct) + "%", "p0:" + String(g_hall0.getCount()) + " p1:" + String(g_hall1.getCount()));
+            char topBuf[16];
+            char botBuf[24];
+            snprintf(topBuf, sizeof(topBuf), "CALIB %d%%", pct);
+            snprintf(botBuf, sizeof(botBuf), "p0:%lu p1:%lu", (unsigned long)g_hall0.getCount(), (unsigned long)g_hall1.getCount());
+            lcdPrint(String(topBuf), String(botBuf));
             delay(100);
           }
           unsigned long c0 = g_hall0.getCount();
@@ -674,7 +693,9 @@ public:
           EEPROM.update(EEPROM_ADDR_HALL_MAGIC, EEPROM_HALL_MAGIC);
           EEPROM.put(EEPROM_ADDR_HALL_PPR_0, v0);
           EEPROM.put(EEPROM_ADDR_HALL_PPR_1, v1);
-          lcdPrint("CAL DONE", "p0:" + String(c0) + " p1:" + String(c1));
+          char doneBuf[24];
+          snprintf(doneBuf, sizeof(doneBuf), "p0:%lu p1:%lu", (unsigned long)c0, (unsigned long)c1);
+          lcdPrint("CAL DONE", String(doneBuf));
 #if BUZZER_ENABLED
           g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 200);
 #endif
@@ -739,7 +760,15 @@ public:
       float deg = (float)constrain(v, 0, 180);
       robot.writeServoLimited(_servoSel, deg);
       emitEvent("servo_set", _servoSel, (long)deg);
-      lcdPrint("SERVO:" + String(_servoSel + 1), "DEG:" + String((int)deg));
+      String top;
+      top.reserve(12);
+      top = "SERVO:";
+      top += String(_servoSel + 1);
+      String bottom;
+      bottom.reserve(12);
+      bottom = "DEG:";
+      bottom += String((int)deg);
+      lcdPrint(top, bottom);
 #if BUZZER_ENABLED
     if (g_buzzerBothEnabled){
       g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 40);

@@ -157,16 +157,16 @@ class ServiceClient:
             return None
 
     def oled_show(self, name: str):
-        return self._post("arduino", f"/oled/show/{name}")
+        return self._post("oled_faces", "/manual", {"mode": "bitmap", "name": str(name)})
 
     def oled_anim(self, name: str):
-        return self._post("arduino", f"/oled/anim/{name}")
+        return self._post("oled_faces", "/manual", {"mode": "animation", "name": str(name)})
 
     def oled_stop(self):
-        return self._post("arduino", "/oled/stop")
+        return self._post("oled_faces", "/manual", {"mode": "bitmap", "name": "normal"})
 
     def oled_logo(self):
-        return self._post("arduino", "/oled/logo")
+        return self._post("oled_faces", "/manual", {"mode": "logo", "name": "logo"})
 
     def get_latest_vision_results(self, limit=5):
         data = self._get("vision", "/results/latest", params={"limit": limit})

@@ -1,0 +1,10 @@
+{
+    "frames":  [
+                   "normal",
+                   "wink_left",
+                   "normal",
+                   "wink_right",
+                   "normal"
+               ],
+    "delay_ms":  160
+}

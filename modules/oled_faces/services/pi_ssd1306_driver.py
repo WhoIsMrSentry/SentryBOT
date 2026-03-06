@@ -1,0 +1,256 @@
+from __future__ import annotations
+
+import json
+import threading
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+
+class PiSsd1306Driver:
+    """SSD1306 I2C driver that renders Irisoled assets from disk on Raspberry Pi."""
+
+    def __init__(self, cfg: Optional[Dict[str, object]] = None):
+        c = dict(cfg or {})
+        self.enabled = bool(c.get("enabled", True))
+        self.bus_id = int(c.get("bus", 1))
+        self.addr = int(c.get("address", 0x3C))
+        self.width = int(c.get("width", 128))
+        self.height = int(c.get("height", 64))
+        self.contrast = int(c.get("contrast", 0x8F))
+
+        default_assets = Path(__file__).resolve().parent.parent / "assets"
+        self.assets_dir = Path(str(c.get("assets_dir", default_assets))).resolve()
+        self.bitmaps_dir = self.assets_dir / "bitmaps"
+        self.animations_dir = self.assets_dir / "animations"
+
+        self._bus = None
+        self._buffer = bytearray((self.width * self.height) // 8)
+        self._ok = False
+        self._last_error = ""
+
+        self._bitmap_cache: Dict[str, bytes] = {}
+        self._anim_cache: Dict[str, Tuple[List[str], float]] = {}
+
+        self._lock = threading.Lock()
+        self._anim_thread: Optional[threading.Thread] = None
+        self._anim_stop = threading.Event()
+
+    def begin(self) -> bool:
+        if not self.enabled:
+            self._ok = False
+            self._last_error = "display_disabled"
+            return False
+        try:
+            import smbus2  # type: ignore
+
+            self._bus = smbus2.SMBus(self.bus_id)
+            self._init_panel()
+            self.clear()
+            self.flush()
+            self._ok = True
+            self._last_error = ""
+            return True
+        except Exception as exc:
+            self._ok = False
+            self._last_error = str(exc)
+            return False
+
+    def close(self) -> None:
+        self.stop_animation()
+        try:
+            if self._bus is not None:
+                self._bus.close()
+        except Exception:
+            pass
+        self._bus = None
+        self._ok = False
+
+    def status(self) -> Dict[str, object]:
+        return {
+            "enabled": self.enabled,
+            "ok": self._ok,
+            "backend": "pi_ssd1306",
+            "i2c_bus": self.bus_id,
+            "i2c_addr": hex(self.addr),
+            "size": [self.width, self.height],
+            "assets_dir": str(self.assets_dir),
+            "last_error": self._last_error,
+        }
+
+    def show_logo(self) -> bool:
+        return self.show_bitmap("logo")
+
+    def show_bitmap(self, name: str) -> bool:
+        if not self._ok:
+            return False
+        key = str(name or "normal").strip().lower()
+        bmp = self._load_bitmap(key)
+        if bmp is None and key != "normal":
+            bmp = self._load_bitmap("normal")
+        if bmp is None:
+            return False
+        with self._lock:
+            self._buffer[:] = bmp
+            self.flush()
+        return True
+
+    def show_test_pattern(self) -> bool:
+        if not self._ok:
+            return False
+        with self._lock:
+            self.clear()
+            for y in range(0, self.height, 8):
+                for x in range(0, self.width, 8):
+                    if ((x // 8) + (y // 8)) % 2 == 0:
+                        self.fill_rect(x, y, 8, 8, 1)
+            self.flush()
+        return True
+
+    def start_animation(self, name: str) -> bool:
+        if not self._ok:
+            return False
+        key = str(name or "").strip().lower()
+        frames, delay = self._load_animation(key)
+        if not frames:
+            return False
+
+        self.stop_animation()
+        self._anim_stop.clear()
+
+        def _run() -> None:
+            idx = 0
+            while not self._anim_stop.is_set():
+                self.show_bitmap(frames[idx])
+                idx = (idx + 1) % len(frames)
+                self._anim_stop.wait(delay)
+
+        self._anim_thread = threading.Thread(target=_run, name="pi-oled-anim", daemon=True)
+        self._anim_thread.start()
+        return True
+
+    def stop_animation(self) -> None:
+        self._anim_stop.set()
+        if self._anim_thread and self._anim_thread.is_alive():
+            self._anim_thread.join(timeout=0.4)
+        self._anim_thread = None
+
+    def clear(self) -> None:
+        for i in range(len(self._buffer)):
+            self._buffer[i] = 0
+
+    def set_pixel(self, x: int, y: int, on: int = 1) -> None:
+        if x < 0 or y < 0 or x >= self.width or y >= self.height:
+            return
+        idx = x + (y // 8) * self.width
+        bit = 1 << (y & 7)
+        if on:
+            self._buffer[idx] |= bit
+        else:
+            self._buffer[idx] &= ~bit
+
+    def fill_rect(self, x: int, y: int, w: int, h: int, on: int = 1) -> None:
+        for yy in range(y, y + h):
+            for xx in range(x, x + w):
+                self.set_pixel(xx, yy, on)
+
+    def flush(self) -> None:
+        if self._bus is None:
+            return
+        pages = self.height // 8
+        for page in range(pages):
+            self._cmd(0xB0 + page)
+            self._cmd(0x00)
+            self._cmd(0x10)
+            start = page * self.width
+            end = start + self.width
+            self._data(self._buffer[start:end])
+
+    def _cmd(self, c: int) -> None:
+        if self._bus is None:
+            return
+        self._bus.write_byte_data(self.addr, 0x00, c & 0xFF)
+
+    def _data(self, payload: bytes | bytearray) -> None:
+        if self._bus is None:
+            return
+        i = 0
+        n = len(payload)
+        while i < n:
+            chunk = list(payload[i:i + 16])
+            self._bus.write_i2c_block_data(self.addr, 0x40, chunk)
+            i += 16
+
+    def _init_panel(self) -> None:
+        seq = [
+            0xAE,
+            0xD5,
+            0x80,
+            0xA8,
+            self.height - 1,
+            0xD3,
+            0x00,
+            0x40,
+            0x8D,
+            0x14,
+            0x20,
+            0x00,
+            0xA1,
+            0xC8,
+            0xDA,
+            0x12 if self.height == 64 else 0x02,
+            0x81,
+            self.contrast,
+            0xD9,
+            0xF1,
+            0xDB,
+            0x40,
+            0xA4,
+            0xA6,
+            0x2E,
+            0xAF,
+        ]
+        for c in seq:
+            self._cmd(c)
+
+    def _load_bitmap(self, name: str) -> Optional[bytes]:
+        key = str(name).strip().lower()
+        cached = self._bitmap_cache.get(key)
+        if cached is not None:
+            return cached
+
+        path = self.bitmaps_dir / f"{key}.bin"
+        if not path.exists():
+            return None
+
+        try:
+            raw = path.read_bytes()
+            size = len(self._buffer)
+            if len(raw) < size:
+                raw = raw + (b"\x00" * (size - len(raw)))
+            elif len(raw) > size:
+                raw = raw[:size]
+            self._bitmap_cache[key] = raw
+            return raw
+        except Exception:
+            return None
+
+    def _load_animation(self, name: str) -> Tuple[List[str], float]:
+        key = str(name).strip().lower()
+        cached = self._anim_cache.get(key)
+        if cached is not None:
+            return cached
+
+        path = self.animations_dir / f"{key}.json"
+        if not path.exists():
+            return ([], 0.2)
+
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            frames = [str(x).strip().lower() for x in data.get("frames", []) if str(x).strip()]
+            delay_ms = int(data.get("delay_ms", 180))
+            delay = max(0.05, float(delay_ms) / 1000.0)
+            out = (frames, delay)
+            self._anim_cache[key] = out
+            return out
+        except Exception:
+            return ([], 0.2)

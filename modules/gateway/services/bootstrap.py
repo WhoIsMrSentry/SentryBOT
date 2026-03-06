@@ -218,17 +218,10 @@ def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.oled_faces.xOledFacesService import xOledFacesService  # type: ignore
     from modules.oled_faces.api.router import get_router as get_oled_faces_router  # type: ignore
 
-    arduino = started.get("arduino")
     state_store = started.get("state_manager")
     interactions = started.get("interactions")
 
-    svc = xOledFacesService(arduino=arduino, state_store=state_store)
-
-    if arduino is not None and hasattr(arduino, "register_event_handler"):
-        try:
-            arduino.register_event_handler(svc.on_arduino_event)
-        except Exception as exc:
-            logger.warning("oled_faces arduino handler attach failed: %s", exc)
+    svc = xOledFacesService(state_store=state_store)
 
     if interactions is not None and hasattr(interactions, "register_event_handler"):
         try:

@@ -1,11 +1,11 @@
 # OLED Faces Module
 
-Bu modül, robotun canlılık/duygu/durum sinyallerini Arduino SSD1306 OLED ekranında yüz ifadelerine dönüştürür.
+Bu modül, robotun canlılık/duygu/durum sinyallerini Raspberry Pi üzerinde doğrudan I2C SSD1306 OLED ekrana yüz ifadelerine dönüştürür.
 
 ## Kaynaklar
 - Durum: `state_manager` (`operational`, `emotions`)
 - Olaylar: `interactions` event akışı
-- Donanım eventleri: `arduino_serial` event handler
+- Varlıklar: `assets/bitmaps/*.bin` ve `assets/animations/*.json`
 
 ## API
 - `GET /oled_faces/healthz`
@@ -14,4 +14,6 @@ Bu modül, robotun canlılık/duygu/durum sinyallerini Arduino SSD1306 OLED ekra
 - `POST /oled_faces/event` (`type`, opsiyonel `data`)
 
 ## Not
-Arduino firmware tarafında `cmd: "oled"` komutu desteklenmelidir.
+- OLED sürüşü Pi tarafındadır (`display` ayarları: `modules/oled_faces/config/config.yml`).
+- Arduino firmware'de `cmd: "oled"` komutu artık kullanılmaz.
+- Arduino tarafındaki String azaltma optimizasyonları OLED yolunu etkilemez; `oled_faces` API sözleşmesi sabittir.

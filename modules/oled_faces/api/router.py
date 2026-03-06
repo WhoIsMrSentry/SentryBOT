@@ -11,7 +11,7 @@ def get_router(service: Any) -> APIRouter:
     @r.get("/healthz")
     def healthz() -> Dict[str, Any]:
         st = service.status()
-        return {"ok": bool(st.get("has_arduino")), **st}
+        return {**st, "ok": bool(st.get("has_display"))}
 
     @r.get("/status")
     def status() -> Dict[str, Any]:

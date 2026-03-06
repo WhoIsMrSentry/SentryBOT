@@ -24,12 +24,19 @@ String IrMenuController::soundName(uint8_t idx){
 }
 
 void IrMenuController::showSound(){
-  String buzzerState = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
-  String line2 = soundName(_soundIndex);
+  String buzzerState;
+  buzzerState.reserve(8);
+  buzzerState = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
+  String line2;
+  line2.reserve(64);
+  line2 = soundName(_soundIndex);
   if ((SoundItem)_soundIndex == SOUND_BUZZER){
-    line2 += ": " + buzzerState;
-    line2 += " L:" + String((int)g_buzzerFreqLoud);
-    line2 += " Q:" + String((int)g_buzzerFreqQuiet);
+    line2 += ": ";
+    line2 += buzzerState;
+    line2 += " L:";
+    line2 += String((int)g_buzzerFreqLoud);
+    line2 += " Q:";
+    line2 += String((int)g_buzzerFreqQuiet);
     if (g_buzzerBothEnabled) line2 += " BOTH";
   } else {
     line2 += " " + buzzerState;
@@ -38,7 +45,10 @@ void IrMenuController::showSound(){
   if (_freqAdjustMode && _soundIndex == SOUND_BUZZER) line2 += " *=FREQ";
   if ((SoundItem)_soundIndex == SOUND_BUZZER_SETTINGS){
     // concise two-value display
-    line2 = "L:" + String((int)g_buzzerFreqLoud) + " Q:" + String((int)g_buzzerFreqQuiet);
+    line2 = "L:";
+    line2 += String((int)g_buzzerFreqLoud);
+    line2 += " Q:";
+    line2 += String((int)g_buzzerFreqQuiet);
     if (g_buzzerBothEnabled) line2 += " BOTH";
   }
   lcdPrint("SOUND", line2);
@@ -169,14 +179,15 @@ String IrMenuController::textToMorse(const String &text){
     "-----",".----","..---","...--","....-",".....","-....","--...","---..","----."
   };
   String out = "";
+  out.reserve((size_t)text.length() * 6 + 4);
   for (int i=0;i<text.length();i++){
     char c = text[i];
     if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
     if (c >= 'A' && c <= 'Z'){
-      out += String(map[c - 'A']);
+      out += map[c - 'A'];
       out += ' '; // letter gap
     } else if (c >= '0' && c <= '9'){
-      out += String(map[26 + (c - '0')]);
+      out += map[26 + (c - '0')];
       out += ' ';
     } else if (c == ' '){
       out += '/'; // word gap marker -> treated as long gap by tickMorse

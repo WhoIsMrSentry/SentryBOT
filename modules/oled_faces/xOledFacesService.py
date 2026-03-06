@@ -8,15 +8,16 @@ from fastapi import FastAPI
 
 from .config_loader import load_config
 from .services.mapper import FaceMapper, OledAction
+from .services.pi_ssd1306_driver import PiSsd1306Driver
 from .api.router import get_router
 
 
 class xOledFacesService:
-    def __init__(self, arduino: Any = None, state_store: Any = None, config_overrides: Optional[Dict[str, Any]] = None):
+    def __init__(self, state_store: Any = None, config_overrides: Optional[Dict[str, Any]] = None):
         self.cfg = load_config(overrides=config_overrides)
-        self.arduino = arduino
         self.state_store = state_store
         self.mapper = FaceMapper(self.cfg)
+        self.display = PiSsd1306Driver(self.cfg.get("display") if isinstance(self.cfg.get("display"), dict) else {})
 
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -28,6 +29,7 @@ class xOledFacesService:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
+        self.display.begin()
         self._apply(self._boot_action())
         self._thread = threading.Thread(target=self._loop, name="oled-faces", daemon=True)
         self._thread.start()
@@ -36,14 +38,16 @@ class xOledFacesService:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=1.0)
+        self.display.close()
 
     def status(self) -> Dict[str, Any]:
         return {
             "ok": True,
             "enabled": bool(self.cfg.get("enabled", True)),
-            "has_arduino": self.arduino is not None,
+            "has_display": bool(self.display.status().get("ok", False)),
             "has_state_store": self.state_store is not None,
             "last_sent": self._last_sent,
+            "display": self.display.status(),
             "catalog": {
                 "bitmaps": self.mapper.catalog_bitmaps,
                 "animations": self.mapper.catalog_animations,
@@ -55,16 +59,6 @@ class xOledFacesService:
             return
         action = self.mapper.from_interaction_event(event_type)
         self._apply(action)
-
-    def on_arduino_event(self, msg: Dict[str, Any]) -> None:
-        if not self.cfg.get("enabled", True):
-            return
-        event_type = str((msg or {}).get("event", "")).strip().lower()
-        if not event_type:
-            return
-        action = self.mapper.from_arduino_event(event_type)
-        if action is not None:
-            self._apply(action)
 
     def apply_manual(self, mode: str, name: str) -> Dict[str, Any]:
         action = OledAction(mode=str(mode), name=str(name))
@@ -103,7 +97,7 @@ class xOledFacesService:
         return OledAction(mode=boot_mode, name=boot_name)
 
     def _apply(self, action: OledAction) -> bool:
-        if self.arduino is None:
+        if not bool(self.cfg.get("enabled", True)):
             return False
         mode = action.mode.strip().lower()
         name = action.name.strip().lower()
@@ -112,11 +106,18 @@ class xOledFacesService:
             return True
         try:
             if mode == "logo":
-                self.arduino.oled_logo()
+                self.display.stop_animation()
+                ok = self.display.show_logo()
             elif mode == "animation":
-                self.arduino.oled_animate(name)
+                ok = self.display.start_animation(name)
+            elif mode == "test":
+                self.display.stop_animation()
+                ok = self.display.show_test_pattern()
             else:
-                self.arduino.oled_show(name)
+                self.display.stop_animation()
+                ok = self.display.show_bitmap(name)
+            if not ok:
+                return False
             self._last_sent = sent_key
             return True
         except Exception:

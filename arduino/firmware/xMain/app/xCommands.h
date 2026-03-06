@@ -105,52 +105,11 @@ static inline void handleJson(const String &line){
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"oled\"")>=0){
-#if OLED_ENABLED
-    String action = parseJsonStringAfter(line, "\"action\":\"");
-    String name = parseJsonStringAfter(line, "\"name\":\"");
-    action.toLowerCase();
-    name.toLowerCase();
-
-    if (line.indexOf("\"list\":true")>=0 || action == "list"){
-      String out = String("{\"ok\":true,\"backend\":\"") + Protocol::escape(String(OledDisplay::backendName()))
-        + String("\",\"stub\":") + String(OledDisplay::isStub() ? "true" : "false")
-        + String(",\"bitmaps\":\"") + Protocol::escape(String(OledDisplay::bitmapCatalog()))
-        + String("\",\"animations\":\"") + Protocol::escape(String(OledDisplay::animationCatalog())) + String("\"}");
-      SERIAL_IO.println(out);
-      return;
-    }
-
-    if (action == "logo"){
-      g_oled.showLogo();
-      Protocol::sendOk("oled_logo");
-      return;
-    }
-
-    if (action == "test"){
-      g_oled.showTestPattern();
-      Protocol::sendOk("oled_test");
-      return;
-    }
-
-    if (name.length() == 0) {
-      // backwards compatibility default
-      name = "normal";
-    }
-
-    bool ok = g_oled.showBitmapByName(name);
-    if (ok) Protocol::sendOk("oled_bitmap_ok");
-    else Protocol::sendErr("unknown_oled_bitmap");
-#else
-    Protocol::sendErr("oled_disabled");
-#endif
-    return;
-  }
-
   if (line.indexOf("\"cmd\":\"rfid_last\"")>=0){
 #if RFID_ENABLED
-    String out = String("{\"ok\":true,\"rfid\":\"") + Protocol::escape(g_lastRfid) + "\"}";
-    SERIAL_IO.println(out);
+    SERIAL_IO.print(F("{\"ok\":true,\"rfid\":\""));
+    Protocol::printEscaped(SERIAL_IO, g_lastRfid);
+    SERIAL_IO.println(F("\"}"));
 #else
     Protocol::sendErr("rfid_disabled");
 #endif
@@ -159,8 +118,10 @@ static inline void handleJson(const String &line){
 
   if (line.indexOf("\"cmd\":\"ultra_read\"")>=0){
 #if ULTRA_ENABLED
-    String out = String("{\"ok\":true,\"cm\":") + (isnan(g_ultraCm)?String("null"):String(g_ultraCm,1)) + "}";
-    SERIAL_IO.println(out);
+    SERIAL_IO.print(F("{\"ok\":true,\"cm\":"));
+    if (isnan(g_ultraCm)) SERIAL_IO.print(F("null"));
+    else SERIAL_IO.print(g_ultraCm, 1);
+    SERIAL_IO.println('}');
 #else
     Protocol::sendErr("ultra_disabled");
 #endif
@@ -429,8 +390,15 @@ static inline void handleJson(const String &line){
     float measured = robot.steppers.getMeasuredSpeed(id);
     float target = robot.steppers.getPidTarget(id);
     bool stalled = robot.steppers.isStalled(id);
-    String out = String("{\"ok\":true,\"id\":") + id + ",\"measured\":" + String(measured,1) + ",\"target\":" + String(target,1) + ",\"stalled\":" + (stalled?String("true"):String("false")) + "}";
-    SERIAL_IO.println(out);
+    SERIAL_IO.print(F("{\"ok\":true,\"id\":"));
+    SERIAL_IO.print(id);
+    SERIAL_IO.print(F(",\"measured\":"));
+    SERIAL_IO.print(measured, 1);
+    SERIAL_IO.print(F(",\"target\":"));
+    SERIAL_IO.print(target, 1);
+    SERIAL_IO.print(F(",\"stalled\":"));
+    SERIAL_IO.print(stalled ? F("true") : F("false"));
+    SERIAL_IO.println('}');
     return;
   }
 
@@ -470,8 +438,11 @@ static inline void handleJson(const String &line){
 
   if (line.indexOf("\"cmd\":\"imu_read\"")>=0){
     robot.imu.read();
-    String msg = String("pitch=")+robot.imu.getPitch()+",roll="+robot.imu.getRoll();
-    Protocol::sendOk(msg);
+    SERIAL_IO.print(F("{\"ok\":true,\"msg\":\"pitch="));
+    SERIAL_IO.print(robot.imu.getPitch(), 2);
+    SERIAL_IO.print(F(",roll="));
+    SERIAL_IO.print(robot.imu.getRoll(), 2);
+    SERIAL_IO.println(F("\"}"));
     return;
   }
 
@@ -533,7 +504,15 @@ static inline void handleJson(const String &line){
     // Provide computed steps-per-pulse as well
     float sp0 = (c0>0) ? (STEPPER_STEPS_PER_REV / (float)c0) : 0.0f;
     float sp1 = (c1>0) ? (STEPPER_STEPS_PER_REV / (float)c1) : 0.0f;
-    SERIAL_IO.println(String("{\"ok\":true,\"p0\":") + String((unsigned long)c0) + String(",\"p1\":") + String((unsigned long)c1) + String(",\"stepsPerPulse0\":") + String(sp0,3) + String(",\"stepsPerPulse1\":") + String(sp1,3) + String("}"));
+    SERIAL_IO.print(F("{\"ok\":true,\"p0\":"));
+    SERIAL_IO.print((unsigned long)c0);
+    SERIAL_IO.print(F(",\"p1\":"));
+    SERIAL_IO.print((unsigned long)c1);
+    SERIAL_IO.print(F(",\"stepsPerPulse0\":"));
+    SERIAL_IO.print(sp0, 3);
+    SERIAL_IO.print(F(",\"stepsPerPulse1\":"));
+    SERIAL_IO.print(sp1, 3);
+    SERIAL_IO.println('}');
     Protocol::sendOk("encoder_calibrated");
 #else
     Protocol::sendErr("halls_disabled");
@@ -603,21 +582,22 @@ static inline void handleJson(const String &line){
 
   if (line.indexOf("\"cmd\":\"get_state\"")>=0){
     robot.imu.read();
-    String out = "{\"ok\":true,\"mode\":";
-    out += (robot.getMode()==MODE_STAND?"\"stand\"":"\"sit\"");
-    out += ",\"pid\":false,";
-    out += "\"pitch\":";
-    out += robot.imu.getPitch();
-    out += ",\"roll\":";
-    out += robot.imu.getRoll();
-    out += ",\"pose\": [";
-    for (int i=0;i<SERVO_COUNT_TOTAL;i++){ if(i) out += ","; out += (int)robot.servos.get(i); }
-    out += "],\"stepper_pos\": [";
-    out += robot.steppers.pos1();
-    out += ",";
-    out += robot.steppers.pos2();
-    out += "]}";
-    SERIAL_IO.println(out);
+    SERIAL_IO.print(F("{\"ok\":true,\"mode\":"));
+    SERIAL_IO.print(robot.getMode()==MODE_STAND ? F("\"stand\"") : F("\"sit\""));
+    SERIAL_IO.print(F(",\"pid\":false,\"pitch\":"));
+    SERIAL_IO.print(robot.imu.getPitch(), 2);
+    SERIAL_IO.print(F(",\"roll\":"));
+    SERIAL_IO.print(robot.imu.getRoll(), 2);
+    SERIAL_IO.print(F(",\"pose\":["));
+    for (int i=0;i<SERVO_COUNT_TOTAL;i++){
+      if(i) SERIAL_IO.print(',');
+      SERIAL_IO.print((int)robot.servos.get(i));
+    }
+    SERIAL_IO.print(F("],\"stepper_pos\":["));
+    SERIAL_IO.print(robot.steppers.pos1());
+    SERIAL_IO.print(',');
+    SERIAL_IO.print(robot.steppers.pos2());
+    SERIAL_IO.println(F("]}"));
     return;
   }
 
