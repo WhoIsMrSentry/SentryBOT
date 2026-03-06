@@ -24,10 +24,12 @@ String IrMenuController::soundName(uint8_t idx){
 }
 
 void IrMenuController::showSound(){
-  String buzzerState = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
+  String buzzerState;
   buzzerState.reserve(8);
-  String line2 = soundName(_soundIndex);
+  buzzerState = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
+  String line2;
   line2.reserve(64);
+  line2 = soundName(_soundIndex);
   if ((SoundItem)_soundIndex == SOUND_BUZZER){
     line2 += ": ";
     line2 += buzzerState;
