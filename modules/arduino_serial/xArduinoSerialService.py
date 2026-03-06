@@ -360,22 +360,6 @@ class xArduinoSerialService:
             raise ValueError(f"unknown emotion: {emotion}")
         return self.cute(sound)
 
-    # -------- oled controls --------
-    def oled_show(self, name: str) -> Dict[str, Any]:
-        return self.request({"cmd": "oled", "action": "show", "name": str(name).strip().lower()})
-
-    def oled_animate(self, name: str) -> Dict[str, Any]:
-        return self.request({"cmd": "oled", "action": "anim", "name": str(name).strip().lower()})
-
-    def oled_stop(self) -> Dict[str, Any]:
-        return self.request({"cmd": "oled", "action": "stop"})
-
-    def oled_logo(self) -> Dict[str, Any]:
-        return self.request({"cmd": "oled", "action": "logo"})
-
-    def oled_catalog(self) -> Dict[str, Any]:
-        return self.request({"cmd": "oled", "action": "list"})
-
     # -------- internals --------
     def _connect(self) -> None:
         port = self._autodetect_port(self.cfg["port"]) if self.cfg.get("port") in (None, "auto", "AUTO") else self.cfg["port"]

@@ -104,24 +104,4 @@ def get_router(svc: xArduinoSerialService) -> APIRouter:
     def cute_emotion(emotion: str):
         return _safe_call(lambda: svc.play_emotion(emotion))
 
-    @r.post("/oled/show/{name}")
-    def oled_show(name: str):
-        return _safe_call(lambda: svc.oled_show(name))
-
-    @r.post("/oled/anim/{name}")
-    def oled_anim(name: str):
-        return _safe_call(lambda: svc.oled_animate(name))
-
-    @r.post("/oled/stop")
-    def oled_stop():
-        return _safe_call(svc.oled_stop)
-
-    @r.post("/oled/logo")
-    def oled_logo():
-        return _safe_call(svc.oled_logo)
-
-    @r.get("/oled/catalog")
-    def oled_catalog():
-        return _safe_call(svc.oled_catalog)
-
     return r
