@@ -11,10 +11,6 @@
 #include "peripherals/xLaserPair.h"
 #include "peripherals/xBuzzer.h"
 #include "peripherals/xHallEncoder.h"
-#include "peripherals/xOledDisplay.h"
-#if OLED_ENABLED
-extern class OledDisplay g_oled;
-#endif
 #include "peripherals/xIrKeyReader.h"
 #include "peripherals/xEbyteRadio.h"
 

@@ -429,34 +429,6 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 // NeoPixel (WS2812) removed from this firmware build.
 
 // =====================
-// OLED (optional)
-// =====================
-#ifndef OLED_ENABLED
-#define OLED_ENABLED 1
-#endif
-#ifndef OLED_I2C_ADDR
-#define OLED_I2C_ADDR 0x3C
-#endif
-#ifndef OLED_WIDTH
-#define OLED_WIDTH 128
-#endif
-#ifndef OLED_HEIGHT
-#define OLED_HEIGHT 64
-#endif
-#ifndef OLED_CONTROLLER
-// Reserved for compatibility. Current firmware uses SSD1306 driver path.
-#define OLED_CONTROLLER 1
-#endif
-#ifndef OLED_RESET_PIN
-// Same style as Adafruit SSD1306 example: set a reset pin, or use -1 if not connected.
-#define OLED_RESET_PIN -1
-#endif
-#ifndef OLED_USE_IRISOLED
-// 1: include Irisoled face bitmap library, 0: text/logo fallback only.
-#define OLED_USE_IRISOLED 0
-#endif
-
-// =====================
 // Hall encoder (optional)
 // =====================
 #ifndef HALL_ENCODER_ENABLED
