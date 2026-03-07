@@ -1,6 +1,8 @@
 from __future__ import annotations
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from typing import Optional, Dict, Any
+
+from ..contract import validate_arduino_payload
 
 try:
     from ..xArduinoSerialService import xArduinoSerialService
@@ -9,6 +11,11 @@ except Exception:
 
 
 def get_router(svc: xArduinoSerialService) -> APIRouter:
+    def _validate_payload_or_400(obj: Dict[str, Any]) -> None:
+        err = validate_arduino_payload(obj)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+
     r = APIRouter(prefix="/arduino")
 
     def _safe_call(fn):
@@ -30,6 +37,7 @@ def get_router(svc: xArduinoSerialService) -> APIRouter:
 
     @r.post("/send")
     def send(obj: Dict[str, Any]):
+        _validate_payload_or_400(obj)
         def _do_send():
             svc.send(obj)
             return {"ok": True}
@@ -37,6 +45,7 @@ def get_router(svc: xArduinoSerialService) -> APIRouter:
 
     @r.post("/request")
     def request(obj: Dict[str, Any], timeout: float = 1.0):
+        _validate_payload_or_400(obj)
         def _do_request():
             resp = svc.request(obj, timeout=timeout)
             return {"ok": True, "resp": resp}

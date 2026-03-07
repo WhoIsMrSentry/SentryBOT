@@ -7,8 +7,8 @@ Arduino Mega ile NDJSON tabanlı seri haberleşme. Her satır bir JSON mesajı; 
 - Arkaplanda non-blocking okuma thread'i ve otomatik heartbeat
 - Basit FastAPI router (opsiyonel) ve sürücü sınıfı
 - DryCode: modüler yapı, ayrı config.yml
-- Firmware komut kapsamı: hello/hb, set_servo, set_pose(duration), leg_ik, stepper(pos/vel), stepper_cfg,
-    home/zero_now/zero_set, pid on/off, stand/sit, imu_read/imu_cal, eeprom_save/load, tune, policy, track,
+- Firmware komut kapsamı: hello/hb, set_servo, set_pose(duration), stepper(pos/vel), stepper_cfg,
+  home/zero_now/zero_set, pid_enable/pid_set/pid_status, stand/sit, imu_read/imu_cal, eeprom_save/load, tune, policy, track,
   telemetry_start/stop, get_state, estop
     - Sit modunda stepper dengeleme + "drive" (kullanıcı hızı) karışımı desteklenir.
 
@@ -28,6 +28,15 @@ ardu.svc.sit()
 ardu.svc.drive(200)        # ileri gitme isteği (steps/s)
 ardu.stop()
 ```
+
+## Builder Mantigi (Basit Anlatim)
+- `contract.py` icindeki `build_*` fonksiyonlari, Arduino komutunu tek tip formatta uretir.
+- Amaç: Her modulde elle `{"cmd": ...}` yazip farkli format gonderme riskini azaltmak.
+- Ornek:
+    - Eski: Kod icinde dogrudan `{"cmd":"stepper","id":0,...}` yaziliyordu.
+    - Yeni: `build_stepper_cmd(...)` kullaniliyor ve her yerde ayni JSON cikiyor.
+- Sonuc: Hata ayiklama kolaylasir, alan isimleri (`index/deg`, `head_pan`, vb.) karismaz.
+- Not: Builder, komutu sadece uretir; gonderme islemini yine servis (`send/request`) yapar.
 
 ## API (opsiyonel)
 Router oluşturmak için:
@@ -55,6 +64,11 @@ Gateway çalışırken Arduino uçları tek portta sunulur:
 - POST `/arduino/sound/out/{mode}` → Varsayılan buzzer çıkışını değiştir (`loud|quiet`).
 - POST `/arduino/buzzer?freq=2200&ms=60&out=loud` → Tek beep komutu.
 - POST `/arduino/sound/play/{name}?out=quiet` → Firmware şarkı isimlerini çal.
+
+Not:
+- Kritik hareket komutlarında `POST /arduino/request` tercih edilmelidir (ACK/error döner).
+- `POST /arduino/send` fire-and-forget içindir.
+- Gateway, desteklenen Arduino komut aileleri için payload doğrulaması yapar; şekli/alanı hatalı isteklerde `400` döner.
 
 ## Konfig
 `modules/arduino_serial/config/config.yml` içinde varsayılanlar:
