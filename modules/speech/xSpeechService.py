@@ -14,6 +14,7 @@ from modules.speech.services.audio_capture import AudioCapture
 from modules.speech.services.recognizer import Recognizer, RecognitionResult
 from modules.speech.services.direction import DirectionEstimator
 from modules.speech.services.pan_tilt import PanTiltController
+from modules.arduino_serial.contract import build_set_servo_cmd, SERVO_INDEX_PAN
 from fastapi import FastAPI
 from typing import TYPE_CHECKING
 
@@ -205,23 +206,10 @@ class SpeechService:
         # We use a simple requests call here, but in production consider async client or keeping a session
         try:
             import requests
-            # Assuming gateway is at localhost:8080
-            # We need to map 0-180 pan to whatever the arduino expects.
-            # The arduino module expects "set_servo" with pan/tilt.
-            # We only control pan here, tilt is kept at current or default?
-            # Ideally we should know current tilt. For now let's send a specific command or just pan.
-            # The arduino_serial module supports "set_servo" with optional args? 
-            # Let's assume we send both, but we need to know tilt.
-            # For now, let's just log if we can't send, but we try to send.
-            
-            # Better approach: The speech module shouldn't know about HTTP if possible, 
-            # but since it's a service, it can talk to other services.
-            
-            url = "http://localhost:8080/arduino/send"
-            # We default tilt to 90 if we don't know it. 
-            # TODO: Get current tilt from state or keep track of it.
-            payload = {"cmd": "set_servo", "pan": int(angle_deg), "tilt": 90} 
-            requests.post(url, json=payload, timeout=0.1)
+            # Use request endpoint to get ACK/error for motion commands.
+            url = "http://localhost:8080/arduino/request"
+            payload = build_set_servo_cmd(SERVO_INDEX_PAN, int(angle_deg))
+            requests.post(url, json=payload, params={"timeout": 0.1}, timeout=0.2)
         except Exception as e:
             logger.debug(f"Failed to send pan: {e}")
 
