@@ -82,7 +82,6 @@ String g_lastSpeech;
 #if LCD_ENABLED
 LcdDisplay g_lcd1;
   bool g_lcd1Ok = false;
-  uint8_t g_lcdRouteMask = LCD_TGT_1;
 LcdStatus g_lcdStatus;
 #endif
 #if ULTRA_ENABLED
@@ -267,11 +266,7 @@ void setup(){
   }
 
 
-  // Default routing from config (still falls back to detected if requested target isn't present)
-  // Route always to primary display in single-display firmware
-  g_lcdRouteMask = LCD_TGT_1;
-
-  // Eğer iki ekran da yoksa firmware yine çalışır; sadece LCD çıktısı no-op olur.
+  // LCD yoksa firmware çalışmaya devam eder; sadece LCD yazımı atlanır.
   g_lcdStatus.begin("READY", 3000);
 
     if (BOOT_STATUS_ENABLED && lcdHubAny()){
@@ -400,7 +395,7 @@ void loop(){
     if (g_ultra.measureIfDue(ULTRA_MEASURE_INTERVAL_MS)){
       g_ultraCm = g_ultra.lastCm();
     }
-    if (g_avoidEnable && robot.getMode()==MODE_SIT){
+    if (g_avoidEnable && robot.getMode()==MODE_SKATE){
       if (!isnan(g_ultraCm) && g_ultraCm>0 && g_ultraCm < AVOID_DISTANCE_CM){
         robot.setDriveCmd(AVOID_REVERSE_SPEED);
   #if LCD_ENABLED
@@ -410,12 +405,12 @@ void loop(){
       g_lcdLineTmp += "cm";
       g_lcdStatus.show("AVOID", g_lcdLineTmp);
   #endif
-  // (removed) processSongQueue was here under ULTRA condition; moved to main BUZZER section
+  // Song queue processing lives in the main BUZZER section below.
       }
     }
 #if ULTRA_ENABLED && BUZZER_ENABLED
     // Parking-style proximity beeps while sitting in avoid-mode
-    if (g_avoidEnable && robot.getMode()==MODE_SIT){
+    if (g_avoidEnable && robot.getMode()==MODE_SKATE){
       if (!isnan(g_ultraCm) && g_ultraCm>0 && g_ultraCm < AVOID_DISTANCE_CM){
         unsigned long nowp = millis();
         if (g_ultraCm <= AVOID_CONTINUOUS_CM){

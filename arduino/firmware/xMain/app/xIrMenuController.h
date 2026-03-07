@@ -46,7 +46,6 @@ extern HallEncoder g_hall1;
 
 #if LCD_ENABLED
 extern bool g_lcd1Ok;
-extern uint8_t g_lcdRouteMask;
 #endif
 
 extern EbyteRadio g_ebyteRadio;
@@ -176,8 +175,6 @@ public:
       // ignore others
       return;
     }
-
-    // PID menu removed (legacy encoderless tuning)
 
     // Servo flow
     if (_state == STATE_SERVO_SEL || _state == STATE_SERVO_DEG){
@@ -707,8 +704,6 @@ public:
         return;
 #endif
 
-      /* PID menu removed */
-
       case MENU_SYSTEM:
         _state = STATE_SYSTEM;
         _lastUiMs = 0;
@@ -791,8 +786,6 @@ public:
 
   void refreshLive(Robot &robot);
 
-  // PID menu state removed
-
 private:
 
   static int normalizeServoIndex(long v){
@@ -858,9 +851,8 @@ private:
   bool _buzzerNumCapture{false};
   String _buzzerNumToken{""};
 
-  // NeoPixel state removed
   unsigned long _lastProxBeepMs{0};
-  // rotation timeout removed; moves are now position-based
+  // Motion is position-based in current drive flow.
 };
 
 #include "menus/xIrMenuController_sound.h"

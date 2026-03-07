@@ -31,15 +31,15 @@ void EbyteRadio::poll(){
   if (!radio->available()) return;
   uint8_t size = radio->getDynamicPayloadSize();
 
-  // Support two over-the-wire formats:
-  // 1) Legacy: raw MasterPacket1 (5 bytes)
+  // Support two over-the-wire formats for compatibility:
+  // 1) Raw MasterPacket1 (5 bytes)
   // 2) Framed: [seq:1][payload:MasterPacket1][crc16:2] => total 8 bytes
   if (size == sizeof(MasterPacket1)){
     radio->read(&lastPkt, size);
     lastSource = "RF_EBYTE";
     newPacket = true;
     sendAck(0, lastPkt, 0);
-    String s = String("pkt R(Legacy): X=") + lastPkt.Rstick_X + ",Y=" + lastPkt.Rstick_Y + ",B=0x" + String(lastPkt.Buttons, HEX);
+    String s = String("pkt R(Raw): X=") + lastPkt.Rstick_X + ",Y=" + lastPkt.Rstick_Y + ",B=0x" + String(lastPkt.Buttons, HEX);
     SERIAL_IO.println(s);
   } else if (size == (1 + sizeof(MasterPacket1) + 2)){
     uint8_t buf[1 + sizeof(MasterPacket1) + 2];

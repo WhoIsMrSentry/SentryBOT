@@ -8,8 +8,7 @@
 // Each line is a JSON object, e.g.:
 // {"cmd":"hello"}
 // {"cmd":"set_servo","index":0,"deg":90}
-// {"cmd":"set_pose","pose":[90,90,90,90,90,90,90,90],"duration_ms":1000}
-// {"cmd":"leg_ik","x":120,"y":0,"side":"L"}
+// {"cmd":"set_pose","pose":[90,90,90,90],"duration_ms":1000}
 // {"cmd":"stepper","id":0,"mode":"pos","value":1000}
 // {"cmd":"imu_cal"}
 // Replies are also JSON lines with {"ok":true/...} or {"err":"..."}

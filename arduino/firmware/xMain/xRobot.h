@@ -11,8 +11,7 @@
 // Status LED mode (defined in xConfig.h)
 extern volatile uint8_t g_statusLedMode;
 
-enum Side { LEFT, RIGHT };
-enum RobotMode { MODE_STAND, MODE_SIT };
+enum RobotMode { MODE_HEAD_TRACK, MODE_SKATE };
 
 class Robot {
 public:
@@ -34,7 +33,7 @@ public:
     imu.begin(IMU_I2C_ADDR);
 
     lastPidMs = millis();
-    mode = MODE_STAND; skateBalance=false;
+    mode = MODE_HEAD_TRACK;
     // Skate gains initialized from config
     skateKp = SKATE_KP; skateKi = SKATE_KI; skateKd = SKATE_KD; skateSpeedLimit = SKATE_SPEED_LIMIT;
   }
@@ -58,7 +57,6 @@ public:
     // Detach servos and stop steppers immediately
     servos.detachAll();
     steppers.stop();
-    skateBalance = false;
     // indicate error/estop via status LED
     g_statusLedMode = STATUS_LED_BLINK_FAST;
   }
@@ -68,7 +66,7 @@ public:
   void setServoSpeed(float dps){ servos.setSpeed(dps); }
 
   void getPidGains(float &kpP, float &kiP, float &kdP, float &kpR, float &kiR, float &kdR) const {
-    // Balance PID removed; return configured constants for compatibility
+    // Return configured constants for compatibility with existing host calls.
     kpP = PID_PITCH_KP; kiP = PID_PITCH_KI; kdP = PID_PITCH_KD;
     kpR = PID_ROLL_KP;  kiR = PID_ROLL_KI;  kdR = PID_ROLL_KD;
   }
@@ -91,8 +89,9 @@ public:
   }
 
   // Mode control with selective detach in Sit
-  void setModeStand(){ mode = MODE_STAND; }
-  void setModeSit(){ mode = MODE_SIT; }
+  // Backward-compatible API names; internal mode names are hardware-oriented.
+  void setModeStand(){ mode = MODE_HEAD_TRACK; }
+  void setModeSit(){ mode = MODE_SKATE; }
 
   // Expose subsystems
   Imu imu;
@@ -106,26 +105,11 @@ public:
 
 private:
   unsigned long lastPidMs = 0;
-  RobotMode mode{MODE_STAND};
-  bool skateBalance=false;
+  RobotMode mode{MODE_HEAD_TRACK};
   // Runtime skate gains
   float skateKp=SKATE_KP, skateKi=SKATE_KI, skateKd=SKATE_KD;
   float skateSpeedLimit=SKATE_SPEED_LIMIT;
-  // previous balance controller removed; IMU remains available for telemetry
-
-  // Simple, smooth stand-up animation
-  void playStandAnimation(){ writePoseLimited(POSE_STAND); waitUntilSettled(1500); }
-
-  // Sit down animation (gentle fold)
-  void playSitAnimation(){ writePoseLimited(POSE_SIT); waitUntilSettled(1500); }
-
-  void waitUntilSettled(unsigned long maxMs){
-    unsigned long t0 = millis();
-    while (!servos.isSettled() && millis() - t0 < maxMs){
-      servos.update();
-      delay(5);
-    }
-  }
+  // IMU remains available for telemetry.
 };
 
 #endif // ROBOT_ROBOT_H

@@ -65,7 +65,13 @@ static inline void handleJson(const String &line){
     // continue processing other commands
   }
   // Very small manual parse for known keys to avoid heavy JSON libs on AVR
-  if (line.indexOf("\"cmd\":\"hello\"")>=0){ Protocol::sendOk("hello"); return; }
+  if (line.indexOf("\"cmd\":\"hello\"")>=0){
+    SERIAL_IO.print(F("{\"ok\":true,\"msg\":\"hello\",\"fw\":\"xMain\",\"fw_ver\":\"2026.03\",\"servo_count\":"));
+    SERIAL_IO.print((int)SERVO_COUNT_TOTAL);
+    SERIAL_IO.print(F(",\"features\":[\"set_servo_index_deg\",\"set_pose\",\"stepper\",\"pid_enable\",\"pid_set\",\"track\",\"telemetry\",\"rfid\",\"ultra\",\"laser\",\"buzzer\",\"cute\"]}"));
+    SERIAL_IO.println();
+    return;
+  }
   if (line.indexOf("\"cmd\":\"hb\"")>=0){ lastHeartbeatMs = millis(); Protocol::sendOk("hb"); return; }
 
   if (line.indexOf("\"cmd\":\"lcd\"")>=0){
@@ -83,22 +89,6 @@ static inline void handleJson(const String &line){
     } else {
       Protocol::sendErr("no_msg");
     }
-#else
-    Protocol::sendErr("lcd_disabled");
-#endif
-    return;
-  }
-
-  if (line.indexOf("\"cmd\":\"lcd_route\"")>=0){
-#if LCD_ENABLED
-    // {"cmd":"lcd_route","mode":"auto|both|1|2"}
-    String mode = parseJsonStringAfter(line, "\"mode\":\"");
-    mode.toLowerCase();
-    if (mode == "1" || mode == "lcd1") g_lcdRouteMask = LCD_TGT_1;
-    else if (mode == "2" || mode == "lcd2") g_lcdRouteMask = LCD_TGT_2;
-    else if (mode == "both" || mode == "all") g_lcdRouteMask = LCD_TGT_BOTH;
-    else if (mode == "auto") g_lcdRouteMask = LCD_TGT_BOTH;
-    Protocol::sendOk("lcd_route_ok");
 #else
     Protocol::sendErr("lcd_disabled");
 #endif
@@ -284,7 +274,7 @@ static inline void handleJson(const String &line){
   }
 
   if (line.indexOf("\"cmd\":\"set_pose\"")>=0){
-    // Expect pose as 8 ints [..]; optional duration_ms for time-based easing
+    // Expect pose as SERVO_COUNT_TOTAL ints [..]; optional duration_ms for time-based easing
     int lb=line.indexOf('['); int rb=line.indexOf(']');
     if (lb>0 && rb>lb){
       uint8_t pose[SERVO_COUNT_TOTAL];
@@ -319,12 +309,6 @@ static inline void handleJson(const String &line){
       }
     }
     Protocol::sendErr("bad_pose");
-    return;
-  }
-
-  if (line.indexOf("\"cmd\":\"leg_ik\"")>=0){
-    // Legacy IK command removed in this build (no leg servos)
-    Protocol::sendErr("unsupported");
     return;
   }
 
@@ -523,7 +507,7 @@ static inline void handleJson(const String &line){
   if (line.equalsIgnoreCase("cal")) { robot.calibrateNeutral(); Protocol::sendOk("calibrated"); return; }
 
   if (line.indexOf("\"cmd\":\"policy\"")>=0){
-    // MuJoCo/policy hook: optional pose[8] and steppers[2] arrays
+    // MuJoCo/policy hook: optional pose[SERVO_COUNT_TOTAL] and steppers[2] arrays
     int lb=line.indexOf("[", line.indexOf("\"pose\""));
     int rb=line.indexOf("]", lb+1);
     if (lb>0 && rb>lb){
@@ -564,7 +548,7 @@ static inline void handleJson(const String &line){
     // {"cmd":"track","head_tilt":x,"head_pan":y,"drive":v}
     float tilt=90, pan=90;
     long drive=0;
-    // Accept legacy "head_tilt"/"head_pan" keys and newer "tilt"/"pan" keys
+    // Accept both "head_tilt"/"head_pan" and "tilt"/"pan" keys.
     int p=line.indexOf("\"head_tilt\":");
     if(p>=0) tilt=line.substring(p+12).toFloat();
     else { p=line.indexOf("\"tilt\":"); if(p>=0) tilt=line.substring(p+7).toFloat(); }
@@ -583,7 +567,7 @@ static inline void handleJson(const String &line){
   if (line.indexOf("\"cmd\":\"get_state\"")>=0){
     robot.imu.read();
     SERIAL_IO.print(F("{\"ok\":true,\"mode\":"));
-    SERIAL_IO.print(robot.getMode()==MODE_STAND ? F("\"stand\"") : F("\"sit\""));
+    SERIAL_IO.print(robot.getMode()==MODE_HEAD_TRACK ? F("\"stand\"") : F("\"sit\""));
     SERIAL_IO.print(F(",\"pid\":false,\"pitch\":"));
     SERIAL_IO.print(robot.imu.getPitch(), 2);
     SERIAL_IO.print(F(",\"roll\":"));
@@ -627,7 +611,7 @@ static inline void handleJson(const String &line){
   if (line.indexOf("\"cmd\":\"tune\"")>=0){
     int p=line.indexOf("\"servo_speed\":");
     if(p>=0){ float v=line.substring(p+14).toFloat(); robot.setServoSpeed(v); }
-    // Only support skate (stepper) tuning here; balance PID removed
+    // Tune skate (stepper) parameters and servo speed.
     float skp, ski, skd;
     robot.getSkateGains(skp,ski,skd);
     float smax=robot.getSkateSpeedLimit();

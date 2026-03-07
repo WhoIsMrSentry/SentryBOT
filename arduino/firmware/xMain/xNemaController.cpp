@@ -10,7 +10,7 @@ NemaController g_nema(&robot.steppers, &g_ebyteRadio);
 NemaController::NemaController(StepperPair* pair, EbyteRadio* radio): steppers(pair), radio(radio) {}
 
 void NemaController::begin(){
-  if (steppers) steppers->begin();
+  // StepperPair is already initialized by Robot::begin().
 }
 
 void NemaController::applyJoystick(int8_t x, int8_t y){

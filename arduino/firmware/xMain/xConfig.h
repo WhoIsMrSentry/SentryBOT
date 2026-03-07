@@ -4,25 +4,37 @@
 
 // Board serial
 #define ROBOT_SERIAL_BAUD 115200
-// Select serial port (Serial for USB, or Serial1/Serial3 for other boards / RPi UART)
-// Default selection: prefer the first hardware UART on boards that expose it
-// (e.g. Arduino Mega family) so Raspberry Pi can connect to `Serial1` safely.
-// You can still override by defining `SERIAL_IO` before including this header.
-#ifndef SERIAL_IO
-	// Detect common Mega2560/MEGA variants and map to Serial1 (RX/TX on pins 19/18)
+// Select serial port for NDJSON link.
+// SERIAL_IO_PORT options:
+//   0 = Serial
+//   1 = Serial1 (if available)
+//   2 = Serial2 (if available)
+//   3 = Serial3 (if available)
+#ifndef SERIAL_IO_PORT
 #if defined(ARDUINO_AVR_MEGA2560) || defined(ARDUINO_AVR_MEGA) || defined(__AVR_ATmega2560__)
-// Prefer Serial3 on Mega per user request (TX3=14, RX3=15)
-#define SERIAL_IO Serial
+#define SERIAL_IO_PORT 3
 #else
+#define SERIAL_IO_PORT 0
+#endif
+#endif
+
+// You can still override everything by defining SERIAL_IO before including this header.
+#ifndef SERIAL_IO
+#if SERIAL_IO_PORT == 0
+#define SERIAL_IO Serial
+#elif SERIAL_IO_PORT == 1 && (defined(HAVE_HWSERIAL1) || defined(UBRR1H) || defined(USART1_RX_vect))
+#define SERIAL_IO Serial1
+#elif SERIAL_IO_PORT == 2 && (defined(HAVE_HWSERIAL2) || defined(UBRR2H) || defined(USART2_RX_vect))
+#define SERIAL_IO Serial2
+#elif SERIAL_IO_PORT == 3 && (defined(HAVE_HWSERIAL3) || defined(UBRR3H) || defined(USART3_RX_vect))
 #define SERIAL_IO Serial3
+#else
+#define SERIAL_IO Serial
 #endif
 #endif
 
 // Servo counts (pan/tilt + 2x Pi servo)
 #define SERVO_COUNT_TOTAL 4
-
-// Stepper counts
-#define STEPPER_COUNT 2 // Ankle integrated skates
 
 // Pins – adapt to your wiring
 // NOTE: These are PCA9685 channel numbers (0..15) when `SERVO_USE_PCA9685==1`.
@@ -248,22 +260,13 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define LCD_16X1_SPLIT_ROW 1  // 1: use row split (0,1), 0: use position split (0-7, 8-15)
 #endif
 
-// LCD output routing defaults
-// 0: AUTO (detected displays)
-// 1: BOTH (write to both if present; else fallback to detected)
-// 2: ONLY_1 (prefer LCD1; if missing, fallback to detected)
-// 3: ONLY_2 (prefer LCD2; if missing, fallback to detected)
-#ifndef LCD_ROUTE_DEFAULT
-#define LCD_ROUTE_DEFAULT 1
-#endif
-
 // If only ONE LCD is detected on I2C and it looks like a standard 16x2, auto-promote it to 16x2 mode.
 // This prevents "2x8" look when a 16x2 screen is configured as 16x1.
 #ifndef LCD_AUTO_PROMOTE_16X2_IF_SINGLE
 #define LCD_AUTO_PROMOTE_16X2_IF_SINGLE 1
 #endif
 
-// Optional second I2C LCD support removed; single primary LCD (20x4) expected.
+// Single primary I2C LCD (20x4) is expected in this build.
 
 // RFID (MFRC522 - SPI)
 #ifndef RFID_ENABLED
@@ -333,11 +336,6 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 // IR receiver OUT pin
 #define IR_PIN 23
 #endif
-#ifndef IR_TOKEN_TIMEOUT_MS
-// "*1" -> wait this long to commit token if no more digits come
-#define IR_TOKEN_TIMEOUT_MS 900
-#endif
-
 // =====================
 // Dual Buzzer (optional)
 // =====================

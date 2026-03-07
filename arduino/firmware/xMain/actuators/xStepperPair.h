@@ -73,7 +73,7 @@ public:
     if (id == 0) { mode1 = MODE_POS; s1.setSpeed(0); } else { mode2 = MODE_POS; s2.setSpeed(0); }
   }
 
-  // Legacy encoderless PID support removed — use Hall encoder closed-loop instead.
+  // Closed-loop speed control uses Hall encoder feedback.
 
   void stopRampedDrive(uint8_t id){ if (id>1) return; ramps[id].active = false; }
 
@@ -99,10 +99,8 @@ public:
           if (r.remainingFullSteps <= 0){ r.active = false; }
         }
         r.nextToggleMicros = micros() + (unsigned long)r.currentDelay;
-        // record step time into estimator on full-step completion
-        if (!r.stepState){ // completed a full step (after toggle low)
-          // legacy estimator removed
-        }
+        // Full-step completion hook retained for future diagnostics.
+        if (!r.stepState){ /* completed a full step (after toggle low) */ }
       }
     }
     // For motors not in raw ramp mode, use AccelStepper as before

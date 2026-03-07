@@ -10,13 +10,10 @@
 
 // Shared LCD hub routing constants.
 static constexpr uint8_t LCD_TGT_1 = 0x01;
-static constexpr uint8_t LCD_TGT_2 = 0x02; // legacy id: maps to primary display when only one present
-static constexpr uint8_t LCD_TGT_BOTH = (LCD_TGT_1 | LCD_TGT_2);
 
 // Globals owned by xMain.ino
 extern LcdDisplay g_lcd1;
 extern bool g_lcd1Ok;
-extern uint8_t g_lcdRouteMask;
 
 static inline bool i2cDevicePresent(uint8_t addr){
   Wire.beginTransmission(addr);
@@ -54,7 +51,7 @@ static inline void lcdHubPrint(uint8_t requestedMask, const String &top, const S
 }
 
 static inline void lcdHubPrintDefault(const String &top, const String &bottom){
-  lcdHubPrint(g_lcdRouteMask, top, bottom);
+  lcdHubPrint(LCD_TGT_1, top, bottom);
 }
 
 static inline void bootUiStep(const String &top, const String &bottom, unsigned long ms){
@@ -106,21 +103,9 @@ static inline String parseJsonStringAfter(const String &line, const char *key){
 }
 
 static inline uint8_t lcdTargetMaskFromLine(const String &line){
-  // Priority: explicit numeric id, then string target.
-  bool foundId = false;
-  int id = parseJsonIntAfter(line, "\"id\":", 0, &foundId);
-  if (foundId){
-    if (id == 1) return LCD_TGT_1;
-    if (id == 2) return LCD_TGT_2;
-    return LCD_TGT_BOTH;
-  }
-
-  String t = parseJsonStringAfter(line, "\"target\":\"");
-  t.toLowerCase();
-  if (t == "1" || t == "lcd1") return LCD_TGT_1;
-  if (t == "2" || t == "lcd2") return LCD_TGT_2;
-  if (t == "both" || t == "all") return LCD_TGT_BOTH;
-  return g_lcdRouteMask;
+  // Single-display build: route everything to LCD1.
+  (void)line;
+  return LCD_TGT_1;
 }
 
 class LcdStatus {

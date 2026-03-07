@@ -76,7 +76,7 @@ void IrMenuController::refreshLive(Robot &robot){
 
   if (_state == STATE_SYSTEM){
     if (_sysSub == 0){
-      String top = (robot.getMode()==MODE_STAND) ? "SYS STAND" : "SYS SIT";
+      String top = (robot.getMode()==MODE_HEAD_TRACK) ? "SYS STAND" : "SYS SIT";
       String b;
       b.reserve(14);
       b = "DRV:";
