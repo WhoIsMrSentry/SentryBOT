@@ -33,6 +33,13 @@ def test_ack_sent_for_neopixel_request():
     # inject a neopixel_request as if from Arduino
     dt._read_q.append(json.dumps({"event": "neopixel_request", "name": "PULSE", "seq": 42}).encode("utf-8"))
     time.sleep(0.1)
-    # writer thread should have enqueued ack into transport buffer
-    assert b'"ack_seq":42' in dt._buf
+    # Writer thread should have enqueued an ACK JSON line; ignore whitespace formatting.
+    lines = [ln for ln in dt._buf.decode("utf-8", errors="ignore").splitlines() if ln.strip()]
+    parsed = []
+    for ln in lines:
+        try:
+            parsed.append(json.loads(ln))
+        except Exception:
+            continue
+    assert any(obj.get("ack_seq") == 42 for obj in parsed)
     svc.stop()
