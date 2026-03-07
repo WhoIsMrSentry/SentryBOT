@@ -8,9 +8,8 @@ Not: Mevcut firmware davranışı ve pin/kanal eşlemeleri kaynak kodundaki `xCo
 - 4 Servo: baş (pan, tilt) + iki adet Pi-servo/aksesuar (varsayılan yapı: easing ile yumuşak hareket)
 - 2 Stepper (skate): hız ve konum modları, Sit modunda dengeleme
 - IMU: MPU6050 (I2C)
-- IK: (önceki sürümlerde mevcut olan 2D bacak IK desteği bazı konfigürasyonlarda devre dışıdır)
 - NDJSON seri API @115200
-- Modlar: Stand (servo dengeleme), Sit/Skate (stepper dengeleme)
+- Modlar: Stand ve Sit/Skate
 - Güvenlik: heartbeat timeout, estop, açı sınırları
 - Kalıcılık: IMU offset EEPROM kaydet/yükle
 - Tuning: PID, servo/stepper parametreleri canlı ayar
@@ -22,7 +21,9 @@ Not: Mevcut firmware davranışı ve pin/kanal eşlemeleri kaynak kodundaki `xCo
 Bu değişiklikler, AVR tarafta heap parçalanmasını azaltmak ve uzun çalışmada kararlılığı artırmak içindir.
 
 ## Bağlantı ve Kurulum
-1) Seri port: `xConfig.h` içinde `SERIAL_IO` → `Serial` (USB) veya `Serial1` (RPi UART)
+1) Seri port: `xConfig.h` içinde `SERIAL_IO_PORT` ile seçilir.
+  - `0=Serial`, `1=Serial1`, `2=Serial2`, `3=Serial3`
+  - Varsayılan: Mega kartlarda `3` (TX3/RX3), diğer kartlarda `0`
 2) Gerekli kart/kütüphaneler: Arduino Mega 2560 (veya uyumlu), (opsiyonel) MFRC522, LiquidCrystal_I2C, Adafruit_MPU6050, AccelStepper
 3) Yükleme: `arduino/firmware/xMain/xMain.ino`’yu açın, 115200 8N1.
 
@@ -38,15 +39,15 @@ Bu değişiklikler, AVR tarafta heap parçalanmasını azaltmak ve uzun çalış
 Not: Bu firmware sürümü `SERVO_COUNT_TOTAL = 4` ile derlenmiştir. Eğer 8-servo bacak kontrolü veya farklı bir kanal haritası istiyorsan `xConfig.h` ve ilgili kodlarda değişiklik gerekecektir.
 
 ## Güncel Pinler (xConfig.h ile uyumlu)
-- Lazerler: `LASER1_PIN = 12`, `LASER2_PIN = 11` (polarite: `LASER_ACTIVE_HIGH`)
+- Lazerler: `LASER1_PIN = 5`, `LASER2_PIN = 4` (polarite: `LASER_ACTIVE_HIGH`)
 - Stepper STEP/DIR (şu anki `xConfig.h`):
-  - `PIN_STEPPER1_STEP = 7`
-  - `PIN_STEPPER1_DIR  = 8`
+  - `PIN_STEPPER1_STEP = 11`
+  - `PIN_STEPPER1_DIR  = 12`
   - `PIN_STEPPER2_STEP = 9`
   - `PIN_STEPPER2_DIR  = 10`
-- IR: `IR_PIN = 2`
-- Buzzer: `BUZZER_LOUD_PIN = 3`, `BUZZER_QUIET_PIN = 4`
-- Ultrasonik: `ULTRA_TRIG_PIN = 6`, `ULTRA_ECHO_PIN = 5`
+- IR: `IR_PIN = 23`
+- Buzzer: `BUZZER_LOUD_PIN = 7`, `BUZZER_QUIET_PIN = 6`
+- Ultrasonik: `ULTRA_TRIG_PIN = 3`, `ULTRA_ECHO_PIN = 2`
 - RFID (MFRC522): `RFID_SS_PIN = 53`, `RFID_RST_PIN = 49` (opsiyonel)
 
 Bu değerler kodun kaynağındaki `xConfig.h` dosyasında tanımlıdır; fiziksel bağlantılarını bu değerlere göre doğrula.
@@ -75,14 +76,15 @@ Yazılım notları:
 
 ### Menü Kullanımı (kısa)
 - HOME: `OK` menüyü açar; `UP/DOWN` ile gezinir, `OK` girer, `#` geri.
-- Ana menü öğeleri: `SERVO`, `LASER`, `ULTRA`, `IMU`, `RFID`, `SOUND`, `PID`, `SYSTEM`.
+- Ana menü öğeleri: `SERVO`, `LASER`, `ULTRA`, `IMU`, `RFID`, `SOUND`, `REMOTE`, `CALIB`, `SYSTEM`.
 
 ## Komut Referansı (Özet)
 - Ping: `{ "cmd":"hello" }`
 - Heartbeat: `{ "cmd":"hb" }`
 - Tek servo: `{ "cmd":"set_servo", "index":0, "deg":90 }`
-- Poz: `{ "cmd":"set_pose", "pose":[...], "duration_ms":1000 }`
+- Poz (4 servo): `{ "cmd":"set_pose", "pose":[90,90,90,90], "duration_ms":1000 }`
 - Stepper: `{ "cmd":"stepper", "id":0, "mode":"pos|vel", "value":1000, "drive":200 }`
+- Stepper PID: `{ "cmd":"pid_enable", "id":0, "enable":true }`, `{ "cmd":"pid_set", "id":0, "kp":1.0, "ki":0.0, "kd":0.05, "target":100 }`
 - Homing: `{ "cmd":"home" }`, sıfırlama: `{ "cmd":"zero_now" }`, `{ "cmd":"zero_set", "p1":0, "p2":0 }`
 - IMU: `{ "cmd":"imu_read" }`, `{ "cmd":"imu_cal" }`
 - EEPROM: `{ "cmd":"eeprom_save" }`, `{ "cmd":"eeprom_load" }`
@@ -92,35 +94,6 @@ Yazılım notları:
 - RFID (MFRC522): `{ "cmd":"rfid_last" }` ve olay yayını
 - LCD (I2C 20x4): `{ "cmd":"lcd", "top":"LINE1", "bottom":"LINE2" }`
 - Ultrasonik: `{ "cmd":"ultra_read" }`, kaçınma `{ "cmd":"avoid", "enable":true }`
-
-----
-
-Donanım değişikliği: Stepper enkoderleri → Hall effect sensörleri (4 mıknatıs / teker)
--------------------------------------------
-Senin planına göre her teker için 4 mıknatıs ve tek bir Hall sensör kullanılacak. Aşağıda hem donanım hem yazılım açısından öneriler ve kullanıcı adımları bulunmaktadır.
-
-1) Donanım önerisi
-- Her teker üzerine 4 manyetik işaretçi (eşit aralık). Her tekerde bir Hall sensör (tercihen dijital hall sensör) kullan; analog hall sensörü kullanıyorsan çıkışı threshold ile dijitale çevir.
-
-2) Yazılım önerisi
-- Yeni peripheral: `peripherals/xHallEncoder.h` — pin, manyet sayısı/rev, debounce ve pulse-detection sağlar.
-- Eğer dijital hall sensör kullanılıyorsa: `attachInterrupt(digitalPinToInterrupt(pin), isr, RISING)` ile güvenilir pulse sayımı. ISR içinde yalnızca `volatile` sayaç/increment yap; ana döngüde hesapla.
-- `actuators/xStepperPair.h`'deki yazılımsal step-estimatörü kaldırılmalı; yerine hall-encoder feedback bazlı pozisyon/hız ölçümü ve kapalı-döngü PID kullanılmalı.
-
-3) Kullanıcı deneyimi / komutlar
-- IR menüye `encoder_calibrate` eklenmeli: kullanıcı tekeri elle birkaç tur döndürür, sistem manyet sayısını doğrular ve `STEPPER_STEPS_PER_REV` gibi parametreleri otomatik hesaplar.
-
-4) Güvenlik
-- Hall okuyucusunda ani tutarsızlık veya ani sıçrama gözlenirse estop veya yavaşlama devreye girmeli; saf sensör hatası durumunda kullanıcıya uyarı ver.
-
-----
-
-Sonraki adımlar (ben uygulayabilirim):
- - `peripherals/xHallEncoder.h` implementasyonu
- - `actuators/xStepperPair.h`'ın hall-encoder feedback ile refactor edilmesi (PID closed-loop)
- - `xLcdHub` güncellemesi (20x4 ana ekran)
-
-Lütfen hangi adımdan başlamamı istediğini belirt: `hall_encoder_impl`, `stepper_refactor`, `hepsini sırayla` veya `önce konuşalım`.
 
 ## Lisans
 Üst dizindeki `LICENSE` dosyasına bakın.
