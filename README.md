@@ -400,4 +400,4 @@ Destek detaylari icin: `.github/SUPPORT.md`
 
 ## Lisans
 
-Apache 2.0 — ayrıntılar için `LICENSE` dosyasına bakın.
+SentryBOT NC-Atif 1.0 (Ticari Kullanim Yasak, Atif Zorunlu) — ayrintilar icin `LICENSE` dosyasina bakin.

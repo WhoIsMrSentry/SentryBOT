@@ -1,6 +1,6 @@
 # SentryBOT Destek
 
-SentryBOT, acik kaynak bir Raspberry Pi + Arduino robotik platformudur.
+SentryBOT, erisilebilir bir Raspberry Pi + Arduino robotik platformudur.
 
 ## Topluluk ve Yardim
 - Soru ve fikirler icin template'leri kullanarak GitHub issue acin.
