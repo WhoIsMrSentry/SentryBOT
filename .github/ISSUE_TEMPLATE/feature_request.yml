@@ -1,0 +1,44 @@
+name: Ozellik talebi
+description: Yeni bir yetenek veya iyilestirme oner
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem tanimi
+      description: Bu degisiklik hangi kullanici veya sistem problemini cozer?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Onerilen cozum
+      description: Tercih ettiginiz yaklasimi aciklayin.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Dusunulen alternatifler
+      description: Istege bagli alternatifler ve trade-off'lar.
+
+  - type: input
+    id: module_scope
+    attributes:
+      label: Modul kapsami
+      description: Hangi modul(ler) etkilenecek?
+      placeholder: modules/<name>, modules/<name>
+
+  - type: checkboxes
+    id: architecture
+    attributes:
+      label: Mimari ve surec kontrolleri
+      options:
+        - label: Tekrari onlemek icin ilgili modulleri inceledim.
+          required: true
+        - label: Konfig odakli davranisi modul config/config.yml dosyasinda tutacagim.
+          required: true
+        - label: Arduino komutu varsa kontrat builder + validator + test guncellemesi yapacagim.
+          required: false
