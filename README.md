@@ -389,6 +389,15 @@ Repo, modül merkezli çalışma akışını destekleyen etiketleme ve yardımc�
 PR’ler ve öneriler memnuniyetle karşılanır. Yeni modül eklerken DryCode kurallarına ve modül şablonuna uyun. Küçük, okunabilir, test edilebilir değişiklikler tercih edilir.
 
 
+## Sponsor ve Destek
+
+Projeyi surdurulebilir sekilde gelistirmemize destek olmak isterseniz GitHub Sponsors uzerinden sponsor olabilirsiniz:
+
+- https://github.com/sponsors/WhoIsMrSentry
+
+Destek detaylari icin: `.github/SUPPORT.md`
+
+
 ## Lisans
 
 Apache 2.0 — ayrıntılar için `LICENSE` dosyasına bakın.
