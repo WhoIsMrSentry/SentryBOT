@@ -1,5 +1,6 @@
 from __future__ import annotations
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Body
+from pydantic import BaseModel, Field
 from typing import List, Optional
 
 try:
@@ -8,8 +9,110 @@ except Exception:
     from services.runner import NeoRunner  # type: ignore
 
 
+# Pydantic models and helpers at module scope to avoid OpenAPI forward-ref issues
+class AnimationInfo(BaseModel):
+    name: str = Field(..., description="Internal animation key (use this when calling /animate)")
+    title: str = Field(..., description="Human-friendly title shown in UI")
+
+
+class AnimationsResponse(BaseModel):
+    ok: bool
+    animations: List[AnimationInfo]
+
+
+class AnimateRequest(BaseModel):
+    name: str = Field(
+        ...,
+        description="Animation key. Use /neopixel/animations to pick one",
+        json_schema_extra={"example": "WAVE"},
+    )
+    color: Optional[str] = Field(None, description='Color as "R,G,B" or "#RRGGBB" (optional)')
+    r: Optional[int] = Field(None, ge=0, le=255, description="Red channel (0-255)")
+    g: Optional[int] = Field(None, ge=0, le=255, description="Green channel (0-255)")
+    b: Optional[int] = Field(None, ge=0, le=255, description="Blue channel (0-255)")
+    emotions: Optional[List[str]] = Field(None, description="Optional list of emotion names to pick colors from")
+    iterations: Optional[int] = Field(None, description="How many iterations/repeats")
+
+
+class EmotionsResponse(BaseModel):
+    ok: bool
+    emotions: List[str]
+
+
+def _pretty(name: str) -> str:
+    s = name.replace('_', ' ').title()
+    s = s.replace('M Grad', 'Multi Grad').replace('M Wave', 'Multi Wave')
+    s = s.replace('Alt', 'Alternating').replace('Wipe', 'Color Wipe')
+    return s
+
+
+def _recommended_list(all_names: List[str]) -> List[AnimationInfo]:
+    preferred = [
+        'RAINBOW', 'RAINBOW_CYCLE', 'BREATHE', 'METEOR', 'FIRE', 'COMET', 'WAVE', 'PULSE',
+        'TWINKLE', 'WIPE', 'THEATER_CHASE', 'SNOW', 'ALTERNATING', 'GRADIENT',
+        'BOUNCING_BALL', 'RUNNING_LIGHTS', 'STACKED_BARS'
+    ]
+    out: List[AnimationInfo] = []
+    added = set()
+    for n in preferred:
+        if n in all_names:
+            out.append(AnimationInfo(name=n, title=_pretty(n)))
+            added.add(n)
+    for n in all_names:
+        if n in added:
+            continue
+        if len(out) >= 30:
+            break
+        out.append(AnimationInfo(name=n, title=_pretty(n)))
+    return out
+
+
+def _parse_color_fields(req: AnimateRequest):
+    if req.r is not None and req.g is not None and req.b is not None:
+        return (req.r, req.g, req.b)
+    if req.color:
+        s = req.color.strip()
+        if s.startswith('#') and len(s) >= 7:
+            try:
+                v = int(s[1:7], 16)
+                return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+            except Exception:
+                return None
+        parts = s.split(',')
+        if len(parts) == 3:
+            try:
+                return (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
+            except Exception:
+                return None
+    return None
+
+
 def get_router(runner: NeoRunner) -> APIRouter:
     r = APIRouter(prefix="/neopixel")
+    # Expose available animation names for UI/Swagger (friendly view)
+    @r.get("/animations", response_model=AnimationsResponse)
+    def list_animations(show_all: bool = Query(False, description="Set true to return full animation list")):
+        try:
+            from ..services import ANIMATIONS  # type: ignore
+        except Exception:
+            from .services import ANIMATIONS  # type: ignore
+        names = sorted(list(ANIMATIONS.keys()))
+        if show_all:
+            payload = [AnimationInfo(name=n, title=_pretty(n)) for n in names]
+        else:
+            payload = _recommended_list(names)
+        return {"ok": True, "animations": payload}
+
+    @r.get("/emotions", response_model=EmotionsResponse)
+    def list_emotions():
+        try:
+            from ..emotions.loader import EmotionStore  # type: ignore
+        except Exception:
+            from .emotions.loader import EmotionStore  # type: ignore
+        store = EmotionStore()
+        palette = store.load()
+        names = sorted(list(palette.entries_by_emotion.keys()))
+        return {"ok": True, "emotions": names}
 
     @r.get("/healthz")
     def healthz():
@@ -55,10 +158,14 @@ def get_router(runner: NeoRunner) -> APIRouter:
     def emote(
         text: Optional[str] = None,
         emotions: Optional[List[str]] = Query(None, description="Explicit emotions list"),
+        emotion: Optional[str] = Query(None, description="Single emotion name (convenience)",),
         duration: float = 0.25,
     ):
         seq: List[str]
-        if emotions:
+        # Priority: single `emotion` param, then list `emotions`, then text parsing
+        if emotion:
+            seq = [emotion.lower()]
+        elif emotions:
             seq = [e.lower() for e in emotions]
         elif text:
             # naive extraction: check known keywords from a canonical list
@@ -101,16 +208,9 @@ def get_router(runner: NeoRunner) -> APIRouter:
         return {"ok": True, "emotion": emotion, "name": entry.name, "rgb": entry.color}
 
     @r.post("/animate")
-    def animate(
-        name: str,
-        emotions: Optional[List[str]] = Query(None),
-        r: int | None = None,
-        g: int | None = None,
-        b: int | None = None,
-        iterations: int | None = None,
-    ):
-        color = (r, g, b) if r is not None and g is not None and b is not None else None
-        runner.animate(name, emotions=emotions, iterations=iterations, color=color)
-        return {"ok": True, "name": name, "emotions": emotions, "color": color, "iterations": iterations}
+    def animate(body: AnimateRequest = Body(...)):
+        color = _parse_color_fields(body)
+        runner.animate(body.name, emotions=body.emotions, iterations=body.iterations, color=color)
+        return {"ok": True, "name": body.name, "emotions": body.emotions, "color": color, "iterations": body.iterations}
 
     return r

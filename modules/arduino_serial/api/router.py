@@ -1,6 +1,8 @@
 from __future__ import annotations
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from typing import Optional, Dict, Any
+
+from ..contract import validate_arduino_payload
 
 try:
     from ..xArduinoSerialService import xArduinoSerialService
@@ -9,7 +11,18 @@ except Exception:
 
 
 def get_router(svc: xArduinoSerialService) -> APIRouter:
+    def _validate_payload_or_400(obj: Dict[str, Any]) -> None:
+        err = validate_arduino_payload(obj)
+        if err:
+            raise HTTPException(status_code=400, detail=err)
+
     r = APIRouter(prefix="/arduino")
+
+    def _safe_call(fn):
+        try:
+            return fn()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     @r.get("/healthz")
     def healthz():
@@ -24,30 +37,27 @@ def get_router(svc: xArduinoSerialService) -> APIRouter:
 
     @r.post("/send")
     def send(obj: Dict[str, Any]):
-        svc.send(obj)
-        return {"ok": True}
+        _validate_payload_or_400(obj)
+        def _do_send():
+            svc.send(obj)
+            return {"ok": True}
+        return _safe_call(_do_send)
 
     @r.post("/request")
     def request(obj: Dict[str, Any], timeout: float = 1.0):
-        try:
+        _validate_payload_or_400(obj)
+        def _do_request():
             resp = svc.request(obj, timeout=timeout)
             return {"ok": True, "resp": resp}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        return _safe_call(_do_request)
 
     @r.post("/telemetry/start")
     def telemetry_start(interval_ms: int = 100):
-        try:
-            return svc.telemetry_start(interval_ms)
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        return _safe_call(lambda: svc.telemetry_start(interval_ms))
 
     @r.post("/telemetry/stop")
     def telemetry_stop():
-        try:
-            return svc.telemetry_stop()
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        return _safe_call(svc.telemetry_stop)
 
     @r.get("/rfid/last")
     def rfid_last():
@@ -65,23 +75,42 @@ def get_router(svc: xArduinoSerialService) -> APIRouter:
     # Laser controls
     @r.post("/laser/one/{which}")
     def laser_one(which: int):
-        try:
-            return svc.laser_on(which)
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        return _safe_call(lambda: svc.laser_on(which))
 
     @r.post("/laser/both")
     def laser_both():
-        try:
-            return svc.laser_both_on()
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        return _safe_call(svc.laser_both_on)
 
     @r.post("/laser/off")
     def laser_off():
-        try:
-            return svc.laser_off()
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        return _safe_call(svc.laser_off)
+
+    @r.post("/cute/{name}")
+    def cute(name: str):
+        return _safe_call(lambda: svc.cute(name))
+
+    @r.post("/sound/out/{mode}")
+    def sound_out(mode: str):
+        return _safe_call(lambda: svc.sound_output(mode))
+
+    @r.post("/buzzer")
+    def buzzer(freq: int = 2200, ms: int = 60, out: Optional[str] = None):
+        return _safe_call(lambda: svc.buzzer(freq=freq, ms=ms, out=out))
+
+    @r.post("/sound/play/{name}")
+    def sound_play(name: str, out: Optional[str] = None):
+        return _safe_call(lambda: svc.sound_play(name=name, out=out))
+
+    @r.get("/cute/catalog")
+    def cute_catalog():
+        return _safe_call(svc.get_cute_catalog)
+
+    @r.get("/metrics")
+    def metrics():
+        return _safe_call(lambda: svc._metrics)
+
+    @r.post("/cute/emotion/{emotion}")
+    def cute_emotion(emotion: str):
+        return _safe_call(lambda: svc.play_emotion(emotion))
 
     return r

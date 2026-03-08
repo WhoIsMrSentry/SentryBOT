@@ -2,6 +2,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from typing import Optional, Any
 import requests
+from modules.arduino_serial.contract import build_track_cmd
 
 try:
     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
@@ -53,9 +54,7 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
             background_tasks.add_task(_notify_autonomy)
             
         svc = ardu or _get_or_create_ardu()
-        payload = {"cmd": "track", "head_tilt": head_tilt, "head_pan": head_pan}
-        if drive is not None:
-            payload["drive"] = int(drive)
+        payload = build_track_cmd(head_tilt=head_tilt, head_pan=head_pan, drive=(int(drive) if drive is not None else None))
         try:
             resp = svc.request(payload, timeout=1.0)
             return {"ok": bool(resp.get("ok", False)), "resp": resp}
@@ -107,11 +106,13 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
     def latest_results(limit: int = 10):
         if not processor:
             raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not hasattr(processor, "latest_results"):
+            raise HTTPException(status_code=503, detail="Vision processor missing latest_results interface")
         limit = max(0, int(limit))
-        results = processor.latest_results
+        results = list(getattr(processor, "latest_results", []) or [])
         if limit:
             results = results[:limit]
-        return {"results": results, "count": len(processor.latest_results)}
+        return {"results": results, "count": len(results)}
 
     @r.post("/results", tags=["remote"], summary="Ingest remote detection results")
     def ingest_results(request: Request, payload: dict):
@@ -122,6 +123,8 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
         """
         if not processor:
             raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not hasattr(processor, "config") or not hasattr(processor, "ingest_remote_results"):
+            raise HTTPException(status_code=503, detail="Vision processor missing remote ingestion interface")
 
         cfg_remote = processor.config.get("remote", {})
         if not cfg_remote.get("accept_results", True):

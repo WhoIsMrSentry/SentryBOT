@@ -10,13 +10,28 @@ void IrMenuController::showServoPrompt(){
   if (_state == STATE_SERVO_SEL){
     lcdPrint("SERVO", "NUM(1..8) OK");
   } else {
-    lcdPrint("SERVO:" + String(_servoSel + 1), "DEG(0..180) OK");
+    String top;
+    top.reserve(12);
+    top = "SERVO:";
+    top += String(_servoSel + 1);
+    lcdPrint(top, "DEG(0..180) OK");
   }
 }
 
 void IrMenuController::showServoToken(){
   if (_state == STATE_SERVO_SEL) lcdPrint("SERVO", "N:" + _token + " OK=SET");
-  else lcdPrint("SERVO:" + String(_servoSel + 1), "DEG:" + _token + " OK=SET");
+  else {
+    String top;
+    top.reserve(12);
+    top = "SERVO:";
+    top += String(_servoSel + 1);
+    String bottom;
+    bottom.reserve(20);
+    bottom = "DEG:";
+    bottom += _token;
+    bottom += " OK=SET";
+    lcdPrint(top, bottom);
+  }
 }
 
 void IrMenuController::startToken(){

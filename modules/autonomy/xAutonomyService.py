@@ -5,7 +5,7 @@ from .services.brain import AutonomyBrain
 from .api.router import get_router
 
 def create_app(config_path: str | None = None) -> FastAPI:
-    cfg = load_config()
+    cfg = load_config(config_path)
     brain = AutonomyBrain(cfg)
     brain.start()
     
@@ -27,4 +27,8 @@ class xAutonomyService:
 if __name__ == "__main__":
     import uvicorn
     cfg = load_config()
-    uvicorn.run(create_app(), host="0.0.0.0", port=8100)
+    uvicorn.run(
+        create_app(),
+        host=str(cfg.get("server", {}).get("host", "0.0.0.0")),
+        port=int(cfg.get("server", {}).get("port", 8100)),
+    )

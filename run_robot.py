@@ -7,13 +7,15 @@ SentryBOT ana başlatıcı
 """
 import os
 import sys
+import logging
 import uvicorn  # type: ignore
-from pathlib import Path
 
 # Proje kökünü PYTHONPATH'e ekle (script doğrudan çalıştığında)
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
+
+logger = logging.getLogger("run_robot")
 
 
 def main() -> None:
@@ -21,11 +23,10 @@ def main() -> None:
     try:
         from modules.logwrapper import init_logging  # type: ignore
         init_logging()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("init_logging skipped: %s", exc)
 
     # Gateway app'i oluştur (platforms klasörü gereksiz; ana dizinden çalışır)
-    current_platform = None
     from modules.gateway.xGatewayService import create_app  # type: ignore
     from modules.gateway.config_loader import load_config  # type: ignore
 

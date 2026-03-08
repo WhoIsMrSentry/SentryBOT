@@ -4,31 +4,52 @@
 #include "xRobot.h"
 #include <EEPROM.h>
 #include "xPeripherals.h"
+#include "peripherals/xEbyteRadio.h"
+#include "actuators/xNemaController.h"
 
 #include "app/xLcdHub.h"
 #include "app/xIrMenuController.h"
 #include "app/xCommands.h"
+#include "app/xCuteBuzzer.h"
 
 Robot robot;
 unsigned long lastHeartbeatMs = 0;
+bool g_linkAlive = false;
+bool g_linkEverAlive = false;
 bool telemetryOn = false;
 unsigned long telemetryInterval = 100;
 unsigned long lastTelemetryMs = 0;
-// Owner RFID cooldown and song queue
-unsigned long g_lastOwnerRfidMs = 0;
-String g_lastOwnerUid = "";
-const unsigned long OWNER_RFID_COOLDOWN_MS = 5000UL;
+// Song queue
 
-// Song queue (simple ring)
+// Song queue (simple ring) with compact IDs to avoid String heap churn.
+enum SongId : uint8_t {
+  SONG_NONE = 0,
+  SONG_WALLE,
+  SONG_BB8_1,
+  SONG_BB8_2,
+  SONG_BB8_3,
+};
+
 const int SONG_QUEUE_CAP = 8;
-String g_songQueue[SONG_QUEUE_CAP];
+uint8_t g_songQueue[SONG_QUEUE_CAP];
 int g_songQueueStart = 0;
 int g_songQueueCount = 0;
 
-static inline void enqueueSong(const String &s){
+static inline const char* songNameFromId(uint8_t id){
+  switch (id){
+    case SONG_WALLE: return "walle";
+    case SONG_BB8_1: return "bb8_1";
+    case SONG_BB8_2: return "bb8_2";
+    case SONG_BB8_3: return "bb8_3";
+    default: return nullptr;
+  }
+}
+
+static inline void enqueueSong(uint8_t songId){
+  if (songId == SONG_NONE) return;
   if (g_songQueueCount >= SONG_QUEUE_CAP) return;
   int idx = (g_songQueueStart + g_songQueueCount) % SONG_QUEUE_CAP;
-  g_songQueue[idx] = s;
+  g_songQueue[idx] = songId;
   g_songQueueCount++;
 }
 
@@ -36,12 +57,18 @@ static inline void processSongQueue(){
   if (g_songQueueCount == 0) return;
   // g_song is global BuzzerSongPlayer; check isPlaying()
   if (!g_song.isPlaying()){
-    String s = g_songQueue[g_songQueueStart];
+    uint8_t songId = g_songQueue[g_songQueueStart];
     g_songQueueStart = (g_songQueueStart + 1) % SONG_QUEUE_CAP;
     g_songQueueCount--;
-    g_song.play(s, g_buzzerDefaultOut);
+    const char* songName = songNameFromId(songId);
+    if (songName != nullptr) g_song.play(songName, g_buzzerDefaultOut);
   }
 }
+
+// Status LED mode (managed in loop)
+volatile uint8_t g_statusLedMode = STATUS_LED_OFF;
+unsigned long g_statusLedLastMs = 0;
+bool g_statusLedState = false;
 
 // Proximity beep state for HC-SR04 parking-like feedback
 unsigned long g_lastProxBeepMs = 0;
@@ -54,15 +81,7 @@ String g_lastRfid;
 String g_lastSpeech;
 #if LCD_ENABLED
 LcdDisplay g_lcd1;
-#if LCD2_ENABLED
-LcdDisplay g_lcd2;
-#endif
-
-bool g_lcd1Ok = false;
-#if LCD2_ENABLED
-bool g_lcd2Ok = false;
-#endif
-uint8_t g_lcdRouteMask = LCD_TGT_BOTH;
+  bool g_lcd1Ok = false;
 LcdStatus g_lcdStatus;
 #endif
 #if ULTRA_ENABLED
@@ -95,9 +114,103 @@ IrKeyReader g_ir;
 IrMenuController g_irMenu;
 #endif
 
+#if HALL_ENCODER_ENABLED
+HallEncoder g_hall0;
+HallEncoder g_hall1;
+#endif
+
+static String g_rxLine;
+static String g_irKey;
+static String g_lcdLineTmp;
+
+static inline void printJsonEscaped(const String &s){
+  for (size_t i = 0; i < s.length(); ++i){
+    char c = s[i];
+    switch (c){
+      case '"': SERIAL_IO.print(F("\\\"")); break;
+      case '\\': SERIAL_IO.print(F("\\\\")); break;
+      case '\n': SERIAL_IO.print(F("\\n")); break;
+      case '\r': SERIAL_IO.print(F("\\r")); break;
+      case '\t': SERIAL_IO.print(F("\\t")); break;
+      default: SERIAL_IO.print(c); break;
+    }
+  }
+}
+
+static inline bool isOwnerUid(const char *uid){
+  // "F3A186A5" (8 chars)
+  return uid[0]=='F' && uid[1]=='3' && uid[2]=='A' && uid[3]=='1' && uid[4]=='8' && uid[5]=='6' && uid[6]=='A' && uid[7]=='5' && uid[8]=='\0';
+}
+
+static inline void printTelemetryJson(){
+  SERIAL_IO.print(F("{\"ok\":true,\"telemetry\":true,\"pitch\":"));
+  SERIAL_IO.print(robot.imu.getPitch(), 2);
+  SERIAL_IO.print(F(",\"roll\":"));
+  SERIAL_IO.print(robot.imu.getRoll(), 2);
+  SERIAL_IO.print(F(",\"pose\":["));
+  for (int i = 0; i < SERVO_COUNT_TOTAL; ++i){
+    if (i) SERIAL_IO.print(',');
+    SERIAL_IO.print((int)robot.servos.get(i));
+  }
+  SERIAL_IO.print(F("],\"stepper_pos\":["));
+  SERIAL_IO.print(robot.steppers.pos1());
+  SERIAL_IO.print(',');
+  SERIAL_IO.print(robot.steppers.pos2());
+  SERIAL_IO.print(']');
+#if RFID_ENABLED
+  SERIAL_IO.print(F(",\"rfid\":\""));
+  printJsonEscaped(g_lastRfid);
+  SERIAL_IO.print('"');
+#endif
+#if ULTRA_ENABLED
+  SERIAL_IO.print(F(",\"ultra_cm\":"));
+  if (isnan(g_ultraCm)) SERIAL_IO.print(F("null"));
+  else SERIAL_IO.print(g_ultraCm, 1);
+#endif
+  SERIAL_IO.println('}');
+}
+
 void setup(){
   SERIAL_IO.begin(ROBOT_SERIAL_BAUD);
+  g_rxLine.reserve(256);
+  g_irKey.reserve(16);
+  g_lcdLineTmp.reserve(24);
+#if RFID_ENABLED
+  g_lastRfid.reserve(32);
+#endif
+  g_lastSpeech.reserve(128);
+  // Status LED pin
+  pinMode(PIN_STATUS_LED, OUTPUT);
+  g_statusLedMode = STATUS_LED_BLINK_SLOW; // boot activity
   robot.begin();
+  // Initialize and attach hall encoders (if enabled) after steppers are started
+#if HALL_ENCODER_ENABLED
+  // Load per-wheel pulses-per-rev from EEPROM if present, otherwise use config defaults
+  uint16_t ppr0 = HALL_PULSES_PER_REV_0;
+  uint16_t ppr1 = HALL_PULSES_PER_REV_1;
+  if (EEPROM.read(EEPROM_ADDR_HALL_MAGIC) == EEPROM_HALL_MAGIC){
+    uint16_t e0=0, e1=0;
+    EEPROM.get(EEPROM_ADDR_HALL_PPR_0, e0);
+    EEPROM.get(EEPROM_ADDR_HALL_PPR_1, e1);
+    if (e0 > 0 && e0 < 100) ppr0 = e0;
+    if (e1 > 0 && e1 < 100) ppr1 = e1;
+  }
+  // Begin hall encoders in analog mode if configured
+  g_hall0.begin(HALL_PIN_0, ppr0, (bool)HALL_ANALOG_MODE, HALL_ANALOG_THRESHOLD);
+  g_hall1.begin(HALL_PIN_1, ppr1, (bool)HALL_ANALOG_MODE, HALL_ANALOG_THRESHOLD);
+  robot.steppers.attachHallEncoders(&g_hall0, &g_hall1);
+
+  // Auto-load PID gains from EEPROM for each motor (if present)
+  bool l0 = robot.steppers.loadPidFromEeprom(0);
+  bool l1 = robot.steppers.loadPidFromEeprom(1);
+  if (l0 || l1) Protocol::sendOk("pid_loaded");
+#endif
+  // Initialize EBYTE radio (nRF24L01 compatible) and NEMA controller
+  #if EBYTE_ENABLED && defined(RADIO_CE_PIN) && defined(RADIO_CSN_PIN)
+  g_ebyteRadio.begin(RADIO_CE_PIN, RADIO_CSN_PIN, 100);
+#endif
+  // Initialize NEMA controller
+  g_nema.begin();
   // Auto-load IMU offsets if present
   if (EEPROM.read(EEPROM_ADDR_MAGIC)==EEPROM_MAGIC){ float p,r; EEPROM.get(EEPROM_ADDR_IMU_OFF,p); EEPROM.get(EEPROM_ADDR_IMU_OFF+sizeof(float),r); robot.imu.setOffsets(p,r); }
   // Load persisted buzzer frequencies if present
@@ -111,13 +224,15 @@ void setup(){
   }
   #endif
   Protocol::sendOk("ready");
+  // Indicate ready
+  g_statusLedMode = STATUS_LED_SOLID;
 #if LCD_ENABLED
   Wire.begin();
 #if defined(ARDUINO_ARCH_AVR)
-  Wire.setWireTimeout(25000, true);
+  // Keep I2C from hanging forever but do not hard-reset MCU on timeout.
+  Wire.setWireTimeout(25000, false);
 #endif
   uint8_t lcd1Addr = LCD_I2C_ADDR;
-  uint8_t lcd2Addr = LCD2_I2C_ADDR;
 
   // Auto-detect LCD1 address: try configured value first, otherwise scan common I2C addresses.
   bool p1 = false;
@@ -128,7 +243,6 @@ void setup(){
     const uint8_t scanCandidates[] = {0x27, 0x3F, 0x3E, 0x26, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25};
     for (size_t si = 0; si < sizeof(scanCandidates); ++si){
       uint8_t a = scanCandidates[si];
-      if (a == lcd2Addr) continue; // avoid colliding with LCD2 default
       if (i2cDevicePresent(a)){
         lcd1Addr = a;
         p1 = true;
@@ -136,36 +250,9 @@ void setup(){
       }
     }
   }
-#if LCD2_ENABLED
-  bool p2 = false;
-  // Try configured address first
-  if (i2cDevicePresent(lcd2Addr)) {
-    p2 = true;
-  } else {
-    // Try common alternative addresses (some backpacks use 0x27 or 0x3F)
-    const uint8_t altCandidates[] = {0x27, 0x3F, 0x3E, 0x26};
-    for (size_t _i = 0; _i < sizeof(altCandidates); ++_i){
-      uint8_t a = altCandidates[_i];
-      if (a == lcd1Addr) continue; // don't clash with primary
-      if (a == lcd2Addr) continue; // already tried
-      if (i2cDevicePresent(a)){
-        lcd2Addr = a;
-        p2 = true;
-        break;
-      }
-    }
-  }
-#else
-  bool p2 = false;
-#endif
-
   g_lcd1Ok = p1;
-#if LCD2_ENABLED
-  g_lcd2Ok = p2;
-#endif
-
   // Auto-promote: if only one LCD exists, prefer treating it as 16x2 (prevents 2x8 split look on 16x2 modules).
-  bool onlyOne = (p1 && !p2) || (!p1 && p2);
+  bool onlyOne = p1;
 
   if (p1){
     uint8_t cols = LCD_COLS;
@@ -178,26 +265,8 @@ void setup(){
     g_lcd1.begin(lcd1Addr, cols, rows, split);
   }
 
-#if LCD2_ENABLED
-  if (p2){
-    uint8_t cols = LCD2_COLS;
-    uint8_t rows = LCD2_ROWS;
-    bool split = (bool)LCD2_16X1_SPLIT_ROW;
-    if (LCD_AUTO_PROMOTE_16X2_IF_SINGLE && onlyOne && cols == 16 && rows == 1){
-      rows = 2;
-      split = false;
-    }
-    g_lcd2.begin(lcd2Addr, cols, rows, split);
-  }
-#endif
 
-  // Default routing from config (still falls back to detected if requested target isn't present)
-  if (LCD_ROUTE_DEFAULT == 2) g_lcdRouteMask = LCD_TGT_1;
-  else if (LCD_ROUTE_DEFAULT == 3) g_lcdRouteMask = LCD_TGT_2;
-  else if (LCD_ROUTE_DEFAULT == 1) g_lcdRouteMask = LCD_TGT_BOTH;
-  else g_lcdRouteMask = LCD_TGT_BOTH;
-
-  // Eğer iki ekran da yoksa firmware yine çalışır; sadece LCD çıktısı no-op olur.
+  // LCD yoksa firmware çalışmaya devam eder; sadece LCD yazımı atlanır.
   g_lcdStatus.begin("READY", 3000);
 
     if (BOOT_STATUS_ENABLED && lcdHubAny()){
@@ -207,10 +276,6 @@ void setup(){
     bootInfo("lcd1", g_lcd1Ok);
     bootUiStep("LCD1", g_lcd1Ok ? "OK" : "MISSING", g_lcd1Ok ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
 
-  #if LCD2_ENABLED
-    bootInfo("lcd2", g_lcd2Ok);
-    bootUiStep("LCD2", g_lcd2Ok ? "OK" : "MISSING", g_lcd2Ok ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
-  #endif
 
     // I2C modules
     // Check both common MPU6050 addresses (0x68 and 0x69) because AD0 pin
@@ -248,6 +313,7 @@ void setup(){
   g_buzzer.begin(BUZZER_LOUD_PIN, BUZZER_QUIET_PIN);
   g_song.begin(&g_buzzer);
   g_song.setDefaultOut(g_buzzerDefaultOut);
+  cuteBuzzerInit();
 #if BOOT_BEEP
   // Boot beep uses LOUD at test freq
   g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 50);
@@ -255,9 +321,9 @@ void setup(){
 #endif
 #if IR_ENABLED
   g_ir.begin(IR_PIN);
-#if LCD_ENABLED
-  // IR menü olayları LCD2'de gösterilsin (LCD1 genel durum, LCD2 IR menü)
-  g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.showTo(LCD_TGT_2, top, bottom, true); });
+  #if LCD_ENABLED
+  // IR menü olayları ana LCD'de gösterilsin
+  g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.showTo(LCD_TGT_1, top, bottom, true); });
 #endif
   g_irMenu.reset();
 #endif
@@ -279,48 +345,49 @@ void setup(){
 }
 
 void loop(){
-  String line; if (Protocol::readLine(SERIAL_IO, line)) handleJson(line);
+  if (Protocol::readLine(SERIAL_IO, g_rxLine)) handleJson(g_rxLine);
   robot.update();
     // Peripherals polling
   #if RFID_ENABLED
     if (g_rfid.poll()){
       g_lastRfid = g_rfid.lastUid();
-      String evt = String("{\"ok\":true,\"event\":\"rfid\",\"uid\":\"") + Protocol::escape(g_lastRfid) + "\"}";
-      SERIAL_IO.println(evt);
+      SERIAL_IO.print(F("{\"ok\":true,\"event\":\"rfid\",\"uid\":\""));
+      printJsonEscaped(g_lastRfid);
+      SERIAL_IO.println(F("\"}"));
   #if LCD_ENABLED
       // Show brief RFID on main status LCD (LCD1)
-      String tail = g_lastRfid; if (tail.length()>8) tail = tail.substring(tail.length()-8);
-      g_lcdStatus.showTo(LCD_TGT_1, "RFID", tail, true);
+      char tail[9];
+      size_t rlen = g_lastRfid.length();
+      size_t start = (rlen > 8) ? (rlen - 8) : 0;
+      uint8_t ti = 0;
+      for (size_t p = start; p < rlen && ti < 8; ++p) tail[ti++] = g_lastRfid[p];
+      tail[ti] = '\0';
+      g_lcdLineTmp = tail;
+      g_lcdStatus.showTo(LCD_TGT_1, "RFID", g_lcdLineTmp, true);
 
       // Normalize UID (remove non-alnum, uppercase)
-      String norm = "";
+      char norm[17];
+      uint8_t ni = 0;
       for (size_t _i = 0; _i < g_lastRfid.length(); ++_i){
         char c = g_lastRfid[_i];
         if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')){
           if (c >= 'a' && c <= 'f') c = c - ('a' - 'A');
-          norm += c;
+          if (ni < sizeof(norm) - 1) norm[ni++] = c;
         }
       }
+      norm[ni] = '\0';
 
       // Owner UID (uppercase, no separators)
-      const String owner = String("F3A186A5");
-            unsigned long now = millis();
-            if (norm.equalsIgnoreCase(owner)){
-              // update owner last seen (allow immediate re-reads)
-              g_lastOwnerUid = norm;
-              g_lastOwnerRfidMs = now;
+      if (isOwnerUid(norm)){
         // Greet owner on LCD1
         g_lcdStatus.showTo(LCD_TGT_1, "Merhaba", "Sahip", true);
-        // Audible acknowledgement (short beep)
-      #if BUZZER_ENABLED
-        g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 200);
-      #endif
+        playCuteSound(CUTE_SUPER_HAPPY, true);
         // Enqueue sequence: walle then three bb8 variants
-        enqueueSong("walle");
-        enqueueSong("bb8_1");
-        enqueueSong("bb8_2");
-        enqueueSong("bb8_3");
-            }
+        enqueueSong(SONG_WALLE);
+        enqueueSong(SONG_BB8_1);
+        enqueueSong(SONG_BB8_2);
+        enqueueSong(SONG_BB8_3);
+      }
   #endif
     }
   #endif
@@ -328,18 +395,22 @@ void loop(){
     if (g_ultra.measureIfDue(ULTRA_MEASURE_INTERVAL_MS)){
       g_ultraCm = g_ultra.lastCm();
     }
-    if (g_avoidEnable && robot.getMode()==MODE_SIT){
+    if (g_avoidEnable && robot.getMode()==MODE_SKATE){
       if (!isnan(g_ultraCm) && g_ultraCm>0 && g_ultraCm < AVOID_DISTANCE_CM){
         robot.setDriveCmd(AVOID_REVERSE_SPEED);
   #if LCD_ENABLED
-        g_lcdStatus.show("AVOID", String((int)g_ultraCm) + "cm");
+      char cmBuf[12];
+      ltoa((long)g_ultraCm, cmBuf, 10);
+      g_lcdLineTmp = cmBuf;
+      g_lcdLineTmp += "cm";
+      g_lcdStatus.show("AVOID", g_lcdLineTmp);
   #endif
-  // (removed) processSongQueue was here under ULTRA condition; moved to main BUZZER section
+  // Song queue processing lives in the main BUZZER section below.
       }
     }
 #if ULTRA_ENABLED && BUZZER_ENABLED
     // Parking-style proximity beeps while sitting in avoid-mode
-    if (g_avoidEnable && robot.getMode()==MODE_SIT){
+    if (g_avoidEnable && robot.getMode()==MODE_SKATE){
       if (!isnan(g_ultraCm) && g_ultraCm>0 && g_ultraCm < AVOID_DISTANCE_CM){
         unsigned long nowp = millis();
         if (g_ultraCm <= AVOID_CONTINUOUS_CM){
@@ -385,9 +456,8 @@ void loop(){
   #endif
 
 #if IR_ENABLED
-  String k;
-  if (g_ir.poll(k)){
-    g_irMenu.onKey(k, robot);
+  if (g_ir.poll(g_irKey)){
+    g_irMenu.onKey(g_irKey, robot);
   }
   g_irMenu.tick(robot);
 #endif
@@ -402,24 +472,51 @@ void loop(){
   g_song.update();
   g_buzzer.update();
 #endif
-  // NeoPixel support removed
+  
   // Heartbeat timeout safety
+  if (HEARTBEAT_TIMEOUT_MS > 0){
+    bool linkNow = (millis() - lastHeartbeatMs) <= HEARTBEAT_TIMEOUT_MS;
+    if (linkNow && !g_linkAlive){
+      g_linkAlive = true;
+      g_linkEverAlive = true;
+      playCuteSound(CUTE_CONNECTION, true);
+    } else if (!linkNow && g_linkAlive && g_linkEverAlive){
+      g_linkAlive = false;
+      playCuteSound(CUTE_DISCONNECTION, true);
+    }
+  }
   if (HEARTBEAT_TIMEOUT_MS>0 && (millis() - lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS)){
     robot.estop();
   }
+  // Poll radio and update NEMA controller
+  #if EBYTE_ENABLED
+  g_ebyteRadio.poll();
+  #endif
+  g_nema.update();
   // Telemetry periodic output
   if (telemetryOn && millis() - lastTelemetryMs >= telemetryInterval){
     lastTelemetryMs = millis(); robot.imu.read();
-      String out = "{\"ok\":true,\"telemetry\":true,\"pitch\":"; out += robot.imu.getPitch();
-      out += ",\"roll\":"; out += robot.imu.getRoll();
-      out += ",\"pose\": ["; for (int i=0;i<SERVO_COUNT_TOTAL;i++){ if(i) out += ","; out += (int)robot.servos.get(i);} out += "],\"stepper_pos\": ["; out += robot.steppers.pos1(); out += ","; out += robot.steppers.pos2(); out += "]";
-  #if RFID_ENABLED
-      out += ",\"rfid\":\""; out += Protocol::escape(g_lastRfid); out += "\"";
-  #endif
-  #if ULTRA_ENABLED
-      out += ",\"ultra_cm\":"; out += (isnan(g_ultraCm)?String("null"):String(g_ultraCm,1));
-  #endif
-      out += "}";
-      SERIAL_IO.println(out);
+    printTelemetryJson();
   }
+  // periodic maintenance for neopixel request retries/acks
+  // Status LED handling
+  {
+    unsigned long nowLed = millis();
+    switch (g_statusLedMode){
+      case STATUS_LED_SOLID:
+        if (!g_statusLedState){ digitalWrite(PIN_STATUS_LED, HIGH); g_statusLedState = true; }
+        break;
+      case STATUS_LED_OFF:
+        if (g_statusLedState){ digitalWrite(PIN_STATUS_LED, LOW); g_statusLedState = false; }
+        break;
+      case STATUS_LED_BLINK_SLOW:
+        if ((long)(nowLed - g_statusLedLastMs) >= 800){ g_statusLedLastMs = nowLed; g_statusLedState = !g_statusLedState; digitalWrite(PIN_STATUS_LED, g_statusLedState?HIGH:LOW); }
+        break;
+      case STATUS_LED_BLINK_FAST:
+        if ((long)(nowLed - g_statusLedLastMs) >= 200){ g_statusLedLastMs = nowLed; g_statusLedState = !g_statusLedState; digitalWrite(PIN_STATUS_LED, g_statusLedState?HIGH:LOW); }
+        break;
+      default: break;
+    }
+  }
+  neopixelTick();
 }

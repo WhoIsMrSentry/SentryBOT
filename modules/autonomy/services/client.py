@@ -1,7 +1,22 @@
 import requests
 import logging
 
+from modules.arduino_serial.contract import (
+    SERVO_INDEX_PAN,
+    SERVO_INDEX_TILT,
+    build_buzzer_cmd,
+    build_laser_cmd,
+    build_lcd_cmd,
+    build_set_servo_cmd,
+    build_simple_cmd,
+    build_sound_play_cmd,
+    build_stepper_cmd,
+)
+
 logger = logging.getLogger("autonomy.client")
+
+_ROBOT_COMMANDS = {"stand", "sit", "home", "zero_now", "estop", "calibrate", "get_state"}
+_SENSOR_COMMANDS = {"ultra_read", "imu_read", "rfid_last"}
 
 class ServiceClient:
     def __init__(self, base_urls):
@@ -31,49 +46,83 @@ class ServiceClient:
             logger.debug(f"Failed to get from {service}: {e}")
             return None
 
+    def _arduino_request(self, payload, timeout=1.0):
+        data = self._post("arduino", "/request", json=payload, params={"timeout": float(timeout)})
+        if not data:
+            return None
+        if isinstance(data, dict) and "resp" in data:
+            return data.get("resp")
+        return data
+
     def move_head(self, pan, tilt, speed=0.8):
-        return self._post("arduino", "/send", {"cmd": "set_servo", "pan": pan, "tilt": tilt, "speed": speed})
+        # Firmware expects per-servo writes: index 0=pan, 1=tilt.
+        pan_resp = self._arduino_request(build_set_servo_cmd(SERVO_INDEX_PAN, int(pan)))
+        tilt_resp = self._arduino_request(build_set_servo_cmd(SERVO_INDEX_TILT, int(tilt)))
+        return {"ok": bool((pan_resp or {}).get("ok", False)) and bool((tilt_resp or {}).get("ok", False)), "pan": pan_resp, "tilt": tilt_resp}
 
     def set_laser(self, on: bool, id: int = 1, both: bool = False):
-        return self._post("arduino", "/send", {"cmd": "laser", "id": id, "on": on, "both": both})
+        return self._arduino_request(build_laser_cmd(on=on, id_=id, both=both))
 
     def set_buzzer(self, out: str = "loud", freq: int = 2200, ms: int = 60):
-        return self._post("arduino", "/send", {"cmd": "buzzer", "out": out, "freq": freq, "ms": ms})
+        return self._arduino_request(build_buzzer_cmd(out=out, freq=freq, ms=ms))
 
     def play_sound(self, name: str, out: str = "loud"):
-        return self._post("arduino", "/send", {"cmd": "sound_play", "name": name, "out": out})
+        return self._arduino_request(build_sound_play_cmd(name=name, out=out))
 
     def set_lcd(self, msg: str = None, top: str = None, bottom: str = None, id: int = 0):
-        payload = {"cmd": "lcd", "id": id}
-        if msg: payload["msg"] = msg
-        if top: payload["top"] = top
-        if bottom: payload["bottom"] = bottom
-        return self._post("arduino", "/send", payload)
+        payload = build_lcd_cmd(id_=id, msg=msg, top=top, bottom=bottom)
+        return self._arduino_request(payload)
 
     def set_stepper(self, id: int, mode: str, value: int, drive: int = 200):
-        return self._post("arduino", "/send", {"cmd": "stepper", "id": id, "mode": mode, "value": value, "drive": drive})
+        return self._arduino_request(build_stepper_cmd(id_=id, mode=mode, value=value, drive=drive))
 
     def robot_command(self, cmd: str):
         """Send simple commands like 'stand', 'sit', 'home', 'zero_now'"""
-        return self._post("arduino", "/send", {"cmd": cmd})
+        cmd_norm = str(cmd or "").strip().lower()
+        if cmd_norm not in _ROBOT_COMMANDS:
+            logger.debug("Unsupported robot_command requested: %s", cmd)
+            return None
+        return self._arduino_request(build_simple_cmd(cmd_norm))
 
     def read_sensor(self, type: str):
         """Request sensor data: 'ultra_read', 'imu_read', 'rfid_last'"""
-        return self._post("arduino", "/send", {"cmd": type})
+        cmd_norm = str(type or "").strip().lower()
+        if cmd_norm not in _SENSOR_COMMANDS:
+            logger.debug("Unsupported sensor command requested: %s", type)
+            return None
+        return self._arduino_request(build_simple_cmd(cmd_norm))
 
     def system_control(self, service: str, action: str):
         """Send system commands like 'start' or 'stop' to a module"""
-        # Mapping generic actions to service-specific endpoints if needed
-        endpoint = f"/{action}"
-        return self._post(service, endpoint)
+        svc = str(service or "").strip().lower()
+        act = str(action or "").strip().lower()
 
-    def set_neopixel(self, effect, emotions=None, color=None):
-        params = {"name": effect}
+        # Route service-specific control paths first
+        route_map = {
+            "speech": {"start": "/speech/start", "stop": "/speech/stop"},
+            "wakeword": {"start": "/wakeword/start", "stop": "/wakeword/stop"},
+            "autonomy": {"start": "/start", "stop": "/stop"},
+            "notifier": {"start": "/start", "stop": "/stop"},
+        }
+        endpoint = route_map.get(svc, {}).get(act)
+        if endpoint:
+            return self._post(svc, endpoint)
+
+        # Fallback generic
+        return self._post(svc, f"/{act}")
+
+    def arduino_send(self, payload: dict):
+        return self._post("arduino", "/send", payload)
+
+    def set_neopixel(self, effect, emotions=None, color=None, duration=None):
+        payload = {"name": effect}
         if emotions:
-            params["emotions"] = emotions
+            payload["emotions"] = emotions
         if color and len(color) == 3:
-            params["r"], params["g"], params["b"] = color
-        return self._post("neopixel", "/animate", params=params)
+            payload["r"], payload["g"], payload["b"] = color
+        if duration is not None:
+            payload["duration"] = duration
+        return self._post("neopixel", "/animate", json=payload)
 
     def fill_neopixel_color(self, r: int, g: int, b: int):
         url = self.urls.get("neopixel")
@@ -137,6 +186,18 @@ class ServiceClient:
         except Exception as e:
             logger.debug(f"Failed to trigger animation {name}: {e}")
             return None
+
+    def oled_show(self, name: str):
+        return self._post("oled_faces", "/manual", {"mode": "bitmap", "name": str(name)})
+
+    def oled_anim(self, name: str):
+        return self._post("oled_faces", "/manual", {"mode": "animation", "name": str(name)})
+
+    def oled_stop(self):
+        return self._post("oled_faces", "/manual", {"mode": "bitmap", "name": "normal"})
+
+    def oled_logo(self):
+        return self._post("oled_faces", "/manual", {"mode": "logo", "name": "logo"})
 
     def get_latest_vision_results(self, limit=5):
         data = self._get("vision", "/results/latest", params={"limit": limit})

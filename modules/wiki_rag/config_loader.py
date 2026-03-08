@@ -5,7 +5,7 @@ import yaml
 
 DEFAULT_CFG = {
     "server": {"host": "0.0.0.0", "port": 8098},
-    "ollama": {"base_url": "http://localhost:11434", "model": "llama3.2:3b", "request_timeout": 60.0},
+    "ollama": {"base_url": "http://localhost:11435", "model": "llama3.2:3b", "request_timeout": 60.0},
     "storage": {
         "persist_dir": "modules/wiki_rag/storage/index_storage",
         "knowledge_dir": "modules/wiki_rag/storage/knowledge",

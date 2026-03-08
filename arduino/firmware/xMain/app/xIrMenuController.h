@@ -5,6 +5,9 @@
 #include <EEPROM.h>
 #include "../xConfig.h"
 #include "../xRobot.h"
+#include "../peripherals/xEbyteRadio.h"
+#include "../actuators/xNemaController.h"
+#include "xCuteBuzzer.h"
 
 #if IR_ENABLED
 
@@ -35,13 +38,17 @@ extern float g_ultraCm;
 extern String g_lastRfid;
 #endif
 
+#if HALL_ENCODER_ENABLED
+#include "../peripherals/xHallEncoder.h"
+extern HallEncoder g_hall0;
+extern HallEncoder g_hall1;
+#endif
+
 #if LCD_ENABLED
 extern bool g_lcd1Ok;
-extern uint8_t g_lcdRouteMask;
-#if LCD2_ENABLED
-extern bool g_lcd2Ok;
 #endif
-#endif
+
+extern EbyteRadio g_ebyteRadio;
 
 class IrMenuController {
 public:
@@ -115,10 +122,46 @@ public:
         enterMenu();
         return;
       }
-      if (k == "UP"){ robot.setModeStand(); emitEvent("stand"); lcdPrint("MODE", "STAND"); return; }
-      if (k == "DOWN"){ robot.setModeSit(); emitEvent("sit"); lcdPrint("MODE", "SIT"); return; }
-      if (k == "LEFT"){ robot.setDriveCmd(-200); emitEvent("drive", -200); lcdPrint("DRIVE", "-200"); return; }
-      if (k == "RIGHT"){ robot.setDriveCmd(200); emitEvent("drive", 200); lcdPrint("DRIVE", "200"); return; }
+      // Replace stand/sit animations with position-based stepper moves
+      if (k == "LEFT"){
+        // Steering left: move both tracks forward but inner (left) wheel fewer steps
+        float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
+        long outer_steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
+        long inner_steps = (long)(outer_steps * STEERING_INNER_SCALE);
+        // both forward, left inner slower (ramped)
+        robot.steppers.startRampedDrive(0, 1, 20000UL, 800UL, 0.995f, inner_steps);
+        robot.steppers.startRampedDrive(1, 1, 20000UL, 800UL, 0.995f, outer_steps);
+        lcdPrint("TURN", "LEFT"); emitEvent("steer", -1);
+        return;
+      }
+      if (k == "RIGHT"){
+        float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
+        long outer_steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
+        long inner_steps = (long)(outer_steps * STEERING_INNER_SCALE);
+        // both forward, right inner slower (ramped)
+        robot.steppers.startRampedDrive(0, 1, 20000UL, 800UL, 0.995f, outer_steps);
+        robot.steppers.startRampedDrive(1, 1, 20000UL, 800UL, 0.995f, inner_steps);
+        lcdPrint("TURN", "RIGHT"); emitEvent("steer", 1);
+        return;
+      }
+      if (k == "DOWN"){
+        // Move backward a short distance
+        float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
+        long steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
+        robot.steppers.startRampedDrive(0, -1, 20000UL, 800UL, 0.995f, steps);
+        robot.steppers.startRampedDrive(1, -1, 20000UL, 800UL, 0.995f, steps);
+        lcdPrint("DRIVE", "BACK"); emitEvent("drive", -100);
+        return;
+      }
+      if (k == "UP"){
+        // Move forward a short distance
+        float revs_per_deg = STEPPER_STEPS_PER_REV / 360.0f;
+        long steps = (long)(STEERING_FORWARD_DEG * revs_per_deg);
+        robot.steppers.startRampedDrive(0, 1, 20000UL, 800UL, 0.995f, steps);
+        robot.steppers.startRampedDrive(1, 1, 20000UL, 800UL, 0.995f, steps);
+        lcdPrint("DRIVE", "FORWARD"); emitEvent("drive", 100);
+        return;
+      }
       // digits on home just show key feedback
       lcdPrint("IR", "KEY:" + k);
       return;
@@ -160,7 +203,7 @@ public:
       return;
     }
 
-    // NeoPixel support removed
+    
 
     // Laser control
     if (_state == STATE_LASER){
@@ -340,6 +383,20 @@ public:
       return;
     }
 
+    if (_state == STATE_REMOTE){
+      if (k == "OK"){
+        g_nema.setEnabled(!g_nema.isEnabled());
+        emitEvent("remote_ctrl", g_nema.isEnabled() ? 1 : 0);
+        showRemote();
+        return;
+      }
+      if (k == "UP" || k == "DOWN"){
+        showRemote();
+        return;
+      }
+      return;
+    }
+
     // Sensor pages: allow changing subpage on IMU
     if (_state == STATE_IMU){
       if (k == "UP" || k == "DOWN"){
@@ -394,6 +451,12 @@ public:
         refreshLive(robot);
       }
     }
+    if (_state == STATE_REMOTE){
+      if (_lastUiMs == 0 || (_now - _lastUiMs) >= 250UL){
+        _lastUiMs = _now;
+        showRemote();
+      }
+    }
 
     // Non-blocking morse player
     tickMorse();
@@ -408,6 +471,7 @@ public:
     STATE_SERVO_DEG,
     STATE_LASER,
     STATE_SOUND,
+    STATE_REMOTE,
     STATE_ULTRA,
     STATE_IMU,
     STATE_RFID,
@@ -421,6 +485,8 @@ public:
     MENU_IMU,
     MENU_RFID,
     MENU_SOUND,
+    MENU_REMOTE,
+    MENU_CALIBRATE,
     MENU_SYSTEM,
     MENU_COUNT,
   };
@@ -428,6 +494,26 @@ public:
   enum SoundItem : uint8_t {
     SOUND_WALLE = 0,
     SOUND_BB8,
+    SOUND_CUTE_CONNECTION,
+    SOUND_CUTE_DISCONNECT,
+    SOUND_CUTE_BUTTON,
+    SOUND_CUTE_MODE1,
+    SOUND_CUTE_MODE2,
+    SOUND_CUTE_MODE3,
+    SOUND_CUTE_HAPPY,
+    SOUND_CUTE_HAPPY_SHORT,
+    SOUND_CUTE_SUPER_HAPPY,
+    SOUND_CUTE_SAD,
+    SOUND_CUTE_SURPRISE,
+    SOUND_CUTE_OHOOH,
+    SOUND_CUTE_OHOOH2,
+    SOUND_CUTE_CUDDLY,
+    SOUND_CUTE_CONFUSED,
+    SOUND_CUTE_SLEEPING,
+    SOUND_CUTE_FART1,
+    SOUND_CUTE_FART2,
+    SOUND_CUTE_FART3,
+    SOUND_CUTE_JUMP,
     SOUND_MORSE,
     SOUND_BUZZER,
     SOUND_BUZZER_SETTINGS,
@@ -478,6 +564,8 @@ public:
       case MENU_IMU: return "IMU";
       case MENU_RFID: return "RFID";
       case MENU_SOUND: return "SOUND";
+      case MENU_REMOTE: return "REMOTE";
+      case MENU_CALIBRATE: return "CALIB";
       case MENU_SYSTEM: return "SYSTEM";
       default: return "MENU";
     }
@@ -488,8 +576,36 @@ public:
   }
 
   void showMenu(){
-    lcdPrint("MENU", menuName(_menuIndex) + " OK=ENTER");
+    String line;
+    line.reserve(22);
+    line = menuName(_menuIndex);
+    line += " OK=ENTER";
+    lcdPrint("MENU", line);
   }
+
+  void showRemote(){
+    String status;
+    status.reserve(16);
+    status = g_nema.isEnabled() ? "REMOTE ON" : "REMOTE OFF";
+    String src = g_ebyteRadio.lastSource;
+    if (src.length() == 0) src = "PKT:NONE";
+    if (src.length() > 12) src = src.substring(0, 12);
+    String axes;
+    axes.reserve(16);
+    axes = "X";
+    axes += String(g_ebyteRadio.lastPkt.Rstick_X);
+    axes += "Y";
+    axes += String(g_ebyteRadio.lastPkt.Rstick_Y);
+    String bottom;
+    bottom.reserve(36);
+    bottom = src;
+    bottom += ' ';
+    bottom += axes;
+    if (g_nema.isLeftMotorEnabled()) bottom += " L";
+    if (g_nema.isRightMotorEnabled()) bottom += " R";
+    lcdPrint(status, bottom);
+  }
+
 
   void enterSelected(Robot &robot){
     switch ((MenuItem)_menuIndex){
@@ -538,6 +654,55 @@ public:
         _soundIndex = 0;
         showSound();
         return;
+
+      case MENU_REMOTE:
+        _state = STATE_REMOTE;
+        _lastUiMs = 0;
+        showRemote();
+        return;
+
+      case MENU_CALIBRATE:
+#if HALL_ENCODER_ENABLED
+        _state = STATE_SYSTEM; // reuse system screen to show progress
+        {
+          unsigned long dur = 5000UL;
+          lcdPrint("CALIBRATE", "Rotate wheel...");
+          // reset and sample counts
+          extern HallEncoder g_hall0; extern HallEncoder g_hall1;
+          g_hall0.reset(); g_hall1.reset();
+          unsigned long t0 = millis();
+          while (millis() - t0 < dur){
+            g_hall0.update(); g_hall1.update();
+            // show simple progress
+            unsigned long el = millis() - t0;
+            int pct = (int)constrain((el*100)/dur, 0, 100);
+            char topBuf[16];
+            char botBuf[24];
+            snprintf(topBuf, sizeof(topBuf), "CALIB %d%%", pct);
+            snprintf(botBuf, sizeof(botBuf), "p0:%lu p1:%lu", (unsigned long)g_hall0.getCount(), (unsigned long)g_hall1.getCount());
+            lcdPrint(String(topBuf), String(botBuf));
+            delay(100);
+          }
+          unsigned long c0 = g_hall0.getCount();
+          unsigned long c1 = g_hall1.getCount();
+          uint16_t v0 = (uint16_t)constrain((unsigned long)c0, 0UL, 65535UL);
+          uint16_t v1 = (uint16_t)constrain((unsigned long)c1, 0UL, 65535UL);
+          EEPROM.update(EEPROM_ADDR_HALL_MAGIC, EEPROM_HALL_MAGIC);
+          EEPROM.put(EEPROM_ADDR_HALL_PPR_0, v0);
+          EEPROM.put(EEPROM_ADDR_HALL_PPR_1, v1);
+          char doneBuf[24];
+          snprintf(doneBuf, sizeof(doneBuf), "p0:%lu p1:%lu", (unsigned long)c0, (unsigned long)c1);
+          lcdPrint("CAL DONE", String(doneBuf));
+#if BUZZER_ENABLED
+          g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 200);
+#endif
+          Protocol::sendOk("encoder_calibrated");
+        }
+        return;
+#else
+        lcdPrint("CAL", "HALL DISABLED");
+        return;
+#endif
 
       case MENU_SYSTEM:
         _state = STATE_SYSTEM;
@@ -590,7 +755,15 @@ public:
       float deg = (float)constrain(v, 0, 180);
       robot.writeServoLimited(_servoSel, deg);
       emitEvent("servo_set", _servoSel, (long)deg);
-      lcdPrint("SERVO:" + String(_servoSel + 1), "DEG:" + String((int)deg));
+      String top;
+      top.reserve(12);
+      top = "SERVO:";
+      top += String(_servoSel + 1);
+      String bottom;
+      bottom.reserve(12);
+      bottom = "DEG:";
+      bottom += String((int)deg);
+      lcdPrint(top, bottom);
 #if BUZZER_ENABLED
     if (g_buzzerBothEnabled){
       g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 40);
@@ -599,7 +772,7 @@ public:
 #endif
       return;
     }
-    // NeoPixel support removed
+    
   }
 
 #if LCD_ENABLED
@@ -616,7 +789,8 @@ public:
 private:
 
   static int normalizeServoIndex(long v){
-    // Accept both 1-based (1..8) and 0-based (0..7)
+    // Accept both 1-based (1..N) and 0-based (0..N-1) inputs from users
+    if (v >= 1 && v <= SERVO_COUNT_TOTAL) return (int)(v - 1);
     return (int)constrain(v, 0, SERVO_COUNT_TOTAL - 1);
   }
 
@@ -677,8 +851,8 @@ private:
   bool _buzzerNumCapture{false};
   String _buzzerNumToken{""};
 
-  // NeoPixel state removed
   unsigned long _lastProxBeepMs{0};
+  // Motion is position-based in current drive flow.
 };
 
 #include "menus/xIrMenuController_sound.h"

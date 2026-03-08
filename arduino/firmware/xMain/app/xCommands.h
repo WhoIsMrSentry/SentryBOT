@@ -6,6 +6,7 @@
 #include "../xProtocol.h"
 #include "../xRobot.h"
 #include "xIrMenuController.h"
+#include "xCuteBuzzer.h"
 
 // Globals owned by xMain.ino
 extern Robot robot;
@@ -24,6 +25,12 @@ extern IrMenuController g_irMenu;
 #include "../xPeripherals.h"
 extern RfidReader g_rfid;
 extern String g_lastRfid;
+#endif
+
+#if HALL_ENCODER_ENABLED
+#include "../peripherals/xHallEncoder.h"
+extern HallEncoder g_hall0;
+extern HallEncoder g_hall1;
 #endif
 
 #if LCD_ENABLED
@@ -50,8 +57,21 @@ extern BuzzerOut g_buzzerDefaultOut;
 #endif
 
 static inline void handleJson(const String &line){
+  // Handle ACKs for neopixel requests (from Pi): {"ok":true,"ack_seq":<num>}
+  int _ackp = line.indexOf("\"ack_seq\":");
+  if (_ackp >= 0){
+    int sval = line.substring(_ackp+10).toInt();
+    if (sval > 0) markNeopixelAck((uint16_t)sval);
+    // continue processing other commands
+  }
   // Very small manual parse for known keys to avoid heavy JSON libs on AVR
-  if (line.indexOf("\"cmd\":\"hello\"")>=0){ Protocol::sendOk("hello"); return; }
+  if (line.indexOf("\"cmd\":\"hello\"")>=0){
+    SERIAL_IO.print(F("{\"ok\":true,\"msg\":\"hello\",\"fw\":\"xMain\",\"fw_ver\":\"2026.03\",\"servo_count\":"));
+    SERIAL_IO.print((int)SERVO_COUNT_TOTAL);
+    SERIAL_IO.print(F(",\"features\":[\"set_servo_index_deg\",\"set_pose\",\"stepper\",\"pid_enable\",\"pid_set\",\"track\",\"telemetry\",\"rfid\",\"ultra\",\"laser\",\"buzzer\",\"cute\"]}"));
+    SERIAL_IO.println();
+    return;
+  }
   if (line.indexOf("\"cmd\":\"hb\"")>=0){ lastHeartbeatMs = millis(); Protocol::sendOk("hb"); return; }
 
   if (line.indexOf("\"cmd\":\"lcd\"")>=0){
@@ -75,26 +95,11 @@ static inline void handleJson(const String &line){
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"lcd_route\"")>=0){
-#if LCD_ENABLED
-    // {"cmd":"lcd_route","mode":"auto|both|1|2"}
-    String mode = parseJsonStringAfter(line, "\"mode\":\"");
-    mode.toLowerCase();
-    if (mode == "1" || mode == "lcd1") g_lcdRouteMask = LCD_TGT_1;
-    else if (mode == "2" || mode == "lcd2") g_lcdRouteMask = LCD_TGT_2;
-    else if (mode == "both" || mode == "all") g_lcdRouteMask = LCD_TGT_BOTH;
-    else if (mode == "auto") g_lcdRouteMask = LCD_TGT_BOTH;
-    Protocol::sendOk("lcd_route_ok");
-#else
-    Protocol::sendErr("lcd_disabled");
-#endif
-    return;
-  }
-
   if (line.indexOf("\"cmd\":\"rfid_last\"")>=0){
 #if RFID_ENABLED
-    String out = String("{\"ok\":true,\"rfid\":\"") + Protocol::escape(g_lastRfid) + "\"}";
-    SERIAL_IO.println(out);
+    SERIAL_IO.print(F("{\"ok\":true,\"rfid\":\""));
+    Protocol::printEscaped(SERIAL_IO, g_lastRfid);
+    SERIAL_IO.println(F("\"}"));
 #else
     Protocol::sendErr("rfid_disabled");
 #endif
@@ -103,8 +108,10 @@ static inline void handleJson(const String &line){
 
   if (line.indexOf("\"cmd\":\"ultra_read\"")>=0){
 #if ULTRA_ENABLED
-    String out = String("{\"ok\":true,\"cm\":") + (isnan(g_ultraCm)?String("null"):String(g_ultraCm,1)) + "}";
-    SERIAL_IO.println(out);
+    SERIAL_IO.print(F("{\"ok\":true,\"cm\":"));
+    if (isnan(g_ultraCm)) SERIAL_IO.print(F("null"));
+    else SERIAL_IO.print(g_ultraCm, 1);
+    SERIAL_IO.println('}');
 #else
     Protocol::sendErr("ultra_disabled");
 #endif
@@ -147,12 +154,14 @@ static inline void handleJson(const String &line){
     if (line.indexOf("\"out\":\"loud\"")>=0 || line.indexOf("\"mode\":\"loud\"")>=0){
       g_buzzerDefaultOut = BUZZER_OUT_LOUD;
       g_song.setDefaultOut(g_buzzerDefaultOut);
+      cuteBuzzerInit();
       Protocol::sendOk("sound_out_loud");
       return;
     }
     if (line.indexOf("\"out\":\"quiet\"")>=0 || line.indexOf("\"mode\":\"quiet\"")>=0){
       g_buzzerDefaultOut = BUZZER_OUT_QUIET;
       g_song.setDefaultOut(g_buzzerDefaultOut);
+      cuteBuzzerInit();
       Protocol::sendOk("sound_out_quiet");
       return;
     }
@@ -179,10 +188,16 @@ static inline void handleJson(const String &line){
     int p=line.indexOf("\"freq\":");
     int freq=2200;
     if(p>=0) freq=line.substring(p+7).toInt();
+    // clamp safe frequency range
+    if (freq < 200) freq = 200;
+    if (freq > 4000) freq = 4000;
 
     p=line.indexOf("\"ms\":");
     int ms=60;
     if(p>=0) ms=line.substring(p+5).toInt();
+    // clamp duration
+    if (ms < 1) ms = 1;
+    if (ms > 60000) ms = 60000;
 
     BuzzerOut out = g_buzzerDefaultOut;
     if (line.indexOf("\"out\":\"loud\"")>=0) out = BUZZER_OUT_LOUD;
@@ -234,6 +249,21 @@ static inline void handleJson(const String &line){
     return;
   }
 
+  if (line.indexOf("\"cmd\":\"cute\"")>=0){
+#if BUZZER_ENABLED
+    int p=line.indexOf("\"name\":\"");
+    String name = "";
+    if (p>=0){ int e=line.indexOf('"', p+8); if (e>p) name = line.substring(p+8, e); }
+    if (name.length()==0){ Protocol::sendErr("no_name"); return; }
+    bool ok = playCuteSoundByName(name, true);
+    if (ok) Protocol::sendOk("cute_played");
+    else Protocol::sendErr("unknown_cute_name");
+#else
+    Protocol::sendErr("buzzer_disabled");
+#endif
+    return;
+  }
+
   if (line.indexOf("\"cmd\":\"set_servo\"")>=0){
     int idx=-1; float deg=90;
     int p=line.indexOf("\"index\":"); if(p>=0){ idx=line.substring(p+8).toInt(); }
@@ -244,7 +274,7 @@ static inline void handleJson(const String &line){
   }
 
   if (line.indexOf("\"cmd\":\"set_pose\"")>=0){
-    // Expect pose as 8 ints [..]; optional duration_ms for time-based easing
+    // Expect pose as SERVO_COUNT_TOTAL ints [..]; optional duration_ms for time-based easing
     int lb=line.indexOf('['); int rb=line.indexOf(']');
     if (lb>0 && rb>lb){
       uint8_t pose[SERVO_COUNT_TOTAL];
@@ -282,14 +312,6 @@ static inline void handleJson(const String &line){
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"leg_ik\"")>=0){
-    float x=120; Side side=LEFT;
-    int p=line.indexOf("\"x\":"); if(p>=0){ x=line.substring(p+4).toFloat(); }
-    p=line.indexOf("\"side\":\"R\""); if(p>=0){ side=RIGHT; }
-    if (robot.setLegByIK(side,x)) Protocol::sendOk(); else Protocol::sendErr("ik_fail");
-    return;
-  }
-
   if (line.indexOf("\"cmd\":\"stepper\"")>=0){
     // modes: pos, vel
     bool vel = line.indexOf("\"mode\":\"vel\"")>=0;
@@ -305,6 +327,8 @@ static inline void handleJson(const String &line){
     Protocol::sendOk();
     return;
   }
+
+
 
   if (line.indexOf("\"cmd\":\"home\"")>=0){ robot.steppers.homeBoth(); Protocol::sendOk("homed"); return; }
   if (line.indexOf("\"cmd\":\"zero_now\"")>=0){ robot.steppers.zeroNow(); Protocol::sendOk("zeroed_now"); return; }
@@ -325,19 +349,72 @@ static inline void handleJson(const String &line){
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"pid\"")>=0){
-    bool enable = (line.indexOf("\"enable\":true")>=0);
-#if LCD_ENABLED
-    int p=line.indexOf("\"msg\":\"");
-    if (p>=0){
-      int e=line.indexOf('"', p+7);
-      String m = (e>p? line.substring(p+7,e):"");
-      g_lcdStatus.show(m);
-    }
-#endif
-    Protocol::sendOk(enable?"pid_on":"pid_off");
+  // PID commands for closed-loop stepper control
+  if (line.indexOf("\"cmd\":\"pid_enable\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    bool en = (line.indexOf("\"enable\":true")>=0);
+    robot.steppers.enablePid(id, en);
+    Protocol::sendOk(en?"pid_enabled":"pid_disabled");
     return;
   }
+
+  if (line.indexOf("\"cmd\":\"pid_set\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    int p=line.indexOf("\"kp\":"); float curKp=0, curKi=0, curKd=0; robot.steppers.getPidGains(id, curKp, curKi, curKd);
+    if(p>=0){ float v=line.substring(p+5).toFloat(); curKp = v; robot.steppers.configurePid(id, curKp, curKi, curKd); }
+    p=line.indexOf("\"ki\":"); if(p>=0){ float v=line.substring(p+5).toFloat(); curKi = v; robot.steppers.configurePid(id, curKp, curKi, curKd); }
+    p=line.indexOf("\"kd\":"); if(p>=0){ float v=line.substring(p+5).toFloat(); curKd = v; robot.steppers.configurePid(id, curKp, curKi, curKd); }
+    p=line.indexOf("\"target\":"); if(p>=0){ float t=line.substring(p+9).toFloat(); robot.steppers.setTargetSpeed(id, t); }
+    Protocol::sendOk("pid_set");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_status\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    float measured = robot.steppers.getMeasuredSpeed(id);
+    float target = robot.steppers.getPidTarget(id);
+    bool stalled = robot.steppers.isStalled(id);
+    SERIAL_IO.print(F("{\"ok\":true,\"id\":"));
+    SERIAL_IO.print(id);
+    SERIAL_IO.print(F(",\"measured\":"));
+    SERIAL_IO.print(measured, 1);
+    SERIAL_IO.print(F(",\"target\":"));
+    SERIAL_IO.print(target, 1);
+    SERIAL_IO.print(F(",\"stalled\":"));
+    SERIAL_IO.print(stalled ? F("true") : F("false"));
+    SERIAL_IO.println('}');
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_save\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    robot.steppers.savePidToEeprom(id);
+    Protocol::sendOk("pid_saved");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_load\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    bool ok = robot.steppers.loadPidFromEeprom(id);
+    if (ok) Protocol::sendOk("pid_loaded"); else Protocol::sendErr("pid_not_saved");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_clear_stall\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    robot.steppers.clearStall(id);
+    Protocol::sendOk("stall_cleared");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"pid_reset\"")>=0){
+    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+    robot.steppers.resetPidIntegrator(id);
+    Protocol::sendOk("pid_reset");
+    return;
+  }
+
+
 
   if (line.indexOf("\"cmd\":\"calibrate\"")>=0){ robot.calibrateNeutral(); Protocol::sendOk("calibrated"); return; }
   if (line.indexOf("\"cmd\":\"stand\"")>=0){ robot.setModeStand(); Protocol::sendOk("stand"); return; }
@@ -345,8 +422,11 @@ static inline void handleJson(const String &line){
 
   if (line.indexOf("\"cmd\":\"imu_read\"")>=0){
     robot.imu.read();
-    String msg = String("pitch=")+robot.imu.getPitch()+",roll="+robot.imu.getRoll();
-    Protocol::sendOk(msg);
+    SERIAL_IO.print(F("{\"ok\":true,\"msg\":\"pitch="));
+    SERIAL_IO.print(robot.imu.getPitch(), 2);
+    SERIAL_IO.print(F(",roll="));
+    SERIAL_IO.print(robot.imu.getRoll(), 2);
+    SERIAL_IO.println(F("\"}"));
     return;
   }
 
@@ -384,10 +464,50 @@ static inline void handleJson(const String &line){
     return;
   }
 
+  if (line.indexOf("\"cmd\":\"encoder_calibrate\"")>=0){
+#if HALL_ENCODER_ENABLED
+    int p = line.indexOf("\"duration_ms\":");
+    unsigned long dur = 5000UL;
+    if (p>=0) dur = (unsigned long)line.substring(p+14).toInt();
+    // Reset counts
+    g_hall0.reset(); g_hall1.reset();
+    unsigned long t0 = millis();
+    while (millis() - t0 < dur){
+      g_hall0.update(); g_hall1.update();
+      delay(5);
+    }
+    unsigned long c0 = g_hall0.getCount();
+    unsigned long c1 = g_hall1.getCount();
+    // Store as uint16_t (sane for typical pulse counts)
+    uint16_t v0 = (uint16_t)constrain((unsigned long)c0, 0UL, 65535UL);
+    uint16_t v1 = (uint16_t)constrain((unsigned long)c1, 0UL, 65535UL);
+    EEPROM.update(EEPROM_ADDR_HALL_MAGIC, EEPROM_HALL_MAGIC);
+    EEPROM.put(EEPROM_ADDR_HALL_PPR_0, v0);
+    EEPROM.put(EEPROM_ADDR_HALL_PPR_1, v1);
+    // result assembled below for serial output
+    // Provide computed steps-per-pulse as well
+    float sp0 = (c0>0) ? (STEPPER_STEPS_PER_REV / (float)c0) : 0.0f;
+    float sp1 = (c1>0) ? (STEPPER_STEPS_PER_REV / (float)c1) : 0.0f;
+    SERIAL_IO.print(F("{\"ok\":true,\"p0\":"));
+    SERIAL_IO.print((unsigned long)c0);
+    SERIAL_IO.print(F(",\"p1\":"));
+    SERIAL_IO.print((unsigned long)c1);
+    SERIAL_IO.print(F(",\"stepsPerPulse0\":"));
+    SERIAL_IO.print(sp0, 3);
+    SERIAL_IO.print(F(",\"stepsPerPulse1\":"));
+    SERIAL_IO.print(sp1, 3);
+    SERIAL_IO.println('}');
+    Protocol::sendOk("encoder_calibrated");
+#else
+    Protocol::sendErr("halls_disabled");
+#endif
+    return;
+  }
+
   if (line.equalsIgnoreCase("cal")) { robot.calibrateNeutral(); Protocol::sendOk("calibrated"); return; }
 
   if (line.indexOf("\"cmd\":\"policy\"")>=0){
-    // MuJoCo/policy hook: optional pose[8] and steppers[2] arrays
+    // MuJoCo/policy hook: optional pose[SERVO_COUNT_TOTAL] and steppers[2] arrays
     int lb=line.indexOf("[", line.indexOf("\"pose\""));
     int rb=line.indexOf("]", lb+1);
     if (lb>0 && rb>lb){
@@ -428,9 +548,15 @@ static inline void handleJson(const String &line){
     // {"cmd":"track","head_tilt":x,"head_pan":y,"drive":v}
     float tilt=90, pan=90;
     long drive=0;
-    int p=line.indexOf("\"head_tilt\":"); if(p>=0) tilt=line.substring(p+12).toFloat();
-    p=line.indexOf("\"head_pan\":"); if(p>=0) pan=line.substring(p+11).toFloat();
+    // Accept both "head_tilt"/"head_pan" and "tilt"/"pan" keys.
+    int p=line.indexOf("\"head_tilt\":");
+    if(p>=0) tilt=line.substring(p+12).toFloat();
+    else { p=line.indexOf("\"tilt\":"); if(p>=0) tilt=line.substring(p+7).toFloat(); }
+    p=line.indexOf("\"head_pan\":");
+    if(p>=0) pan=line.substring(p+11).toFloat();
+    else { p=line.indexOf("\"pan\":"); if(p>=0) pan=line.substring(p+6).toFloat(); }
     p=line.indexOf("\"drive\":"); if(p>=0) drive=line.substring(p+9).toInt();
+    // robot.head expects (tilt, pan)
     robot.head(tilt, pan);
     // In sit/skate, set user drive command (mixed with balance correction)
     robot.setDriveCmd((float)drive);
@@ -440,22 +566,22 @@ static inline void handleJson(const String &line){
 
   if (line.indexOf("\"cmd\":\"get_state\"")>=0){
     robot.imu.read();
-    String out = "{""ok"":true,""mode"":";
-    out += (robot.getMode()==MODE_STAND?"\"stand\"":"\"sit\"");
-    out += ",""pid"":";
-    out += (robot.isBalanceEnabled()?"true":"false");
-    out += ",""pitch"":";
-    out += robot.imu.getPitch();
-    out += ",""roll"":";
-    out += robot.imu.getRoll();
-    out += ",""pose"": [";
-    for (int i=0;i<SERVO_COUNT_TOTAL;i++){ if(i) out += ","; out += (int)robot.servos.get(i); }
-    out += "],""stepper_pos"": [";
-    out += robot.steppers.pos1();
-    out += ",";
-    out += robot.steppers.pos2();
-    out += "]}";
-    SERIAL_IO.println(out);
+    SERIAL_IO.print(F("{\"ok\":true,\"mode\":"));
+    SERIAL_IO.print(robot.getMode()==MODE_HEAD_TRACK ? F("\"stand\"") : F("\"sit\""));
+    SERIAL_IO.print(F(",\"pid\":false,\"pitch\":"));
+    SERIAL_IO.print(robot.imu.getPitch(), 2);
+    SERIAL_IO.print(F(",\"roll\":"));
+    SERIAL_IO.print(robot.imu.getRoll(), 2);
+    SERIAL_IO.print(F(",\"pose\":["));
+    for (int i=0;i<SERVO_COUNT_TOTAL;i++){
+      if(i) SERIAL_IO.print(',');
+      SERIAL_IO.print((int)robot.servos.get(i));
+    }
+    SERIAL_IO.print(F("],\"stepper_pos\":["));
+    SERIAL_IO.print(robot.steppers.pos1());
+    SERIAL_IO.print(',');
+    SERIAL_IO.print(robot.steppers.pos2());
+    SERIAL_IO.println(F("]}"));
     return;
   }
 
@@ -485,23 +611,10 @@ static inline void handleJson(const String &line){
   if (line.indexOf("\"cmd\":\"tune\"")>=0){
     int p=line.indexOf("\"servo_speed\":");
     if(p>=0){ float v=line.substring(p+14).toFloat(); robot.setServoSpeed(v); }
-
-    float kpP,kiP,kdP,kpR,kiR,kdR;
-    robot.getPidGains(kpP,kiP,kdP,kpR,kiR,kdR);
-
-    p=line.indexOf("\"kpP\":"); if(p>=0) kpP=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kiP\":"); if(p>=0) kiP=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kdP\":"); if(p>=0) kdP=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kpR\":"); if(p>=0) kpR=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kiR\":"); if(p>=0) kiR=line.substring(p+6).toFloat();
-    p=line.indexOf("\"kdR\":"); if(p>=0) kdR=line.substring(p+6).toFloat();
-
-    robot.setPidGains(kpP,kiP,kdP,kpR,kiR,kdR);
-
+    // Tune skate (stepper) parameters and servo speed.
     float skp, ski, skd;
     robot.getSkateGains(skp,ski,skd);
     float smax=robot.getSkateSpeedLimit();
-
     int sp=line.indexOf("\"skate\"");
     if(sp>=0){
       int q=line.indexOf("\"kp\":", sp); if(q>0) skp=line.substring(q+5).toFloat();

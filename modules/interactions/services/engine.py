@@ -42,6 +42,7 @@ class InteractionEngine:
         self._last_net_burst: float = 0.0
         self.monitor_cfg = dict(cfg.get("monitor", {}))
         self._last_arduino_check = 0.0
+        self._event_handlers: List[Any] = []
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -61,6 +62,16 @@ class InteractionEngine:
             self._ctx["event"] = type_
             if data:
                 self._ctx.setdefault("event_data", {}).update(data)
+        for handler in list(self._event_handlers):
+            try:
+                handler(type_, data or {})
+            except Exception:
+                pass
+
+    def register_event_handler(self, handler) -> None:
+        if handler is None:
+            return
+        self._event_handlers.append(handler)
 
     def set_state(self, **kwargs: Any) -> None:
         with self._lock:

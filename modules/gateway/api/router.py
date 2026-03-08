@@ -25,7 +25,7 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
                     path = f"/{name}/healthz" if name not in ("telemetry", "diagnostics") else f"/{name}/healthz"
                 elif name == "camera":
                     path = "/camera/healthz"
-                elif name in ("speak", "speech"):
+                elif name in ("speak", "speech", "wakeword"):
                     path = f"/{name}/status"
                 elif name in ("wiki_rag",):
                     path = "/wiki_rag/healthz"
@@ -73,6 +73,7 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
             "piservo": ("GET", "/piservo/healthz"),
             "speech": ("GET", "/speech/status"),
             "speak": ("GET", "/speak/status"),
+            "wakeword": ("GET", "/wakeword/status"),
             "vision_bridge": None,
             "interactions": None,
             "ollama": ("GET", "/ollama/healthz"),

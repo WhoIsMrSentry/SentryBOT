@@ -1,180 +1,99 @@
 # SentryBOT Arduino Firmware
 
-Bu dizin, biped robot firmware'ini içerir. Ana sketch `arduino/firmware/xMain/xMain.ino` altındadır. Firmware NDJSON seri protokolüyle haberleşir, 8 servo + 2 stepper, IMU tabanlı dengeleme, IK ve çeşitli çevre birimlerini destekler.
+Bu dizin, SentryBOT Arduino firmware'ini içerir. Ana sketch `arduino/firmware/xMain/xMain.ino` altındadır. Firmware NDJSON satır-tabanlı (NDJSON) seri protokolüyle haberleşir.
+
+Not: Mevcut firmware davranışı ve pin/kanal eşlemeleri kaynak kodundaki `xConfig.h` ile belirlenir. Eski README içeriklerinde bazı değerler farklı versiyonlardan kalma olabilir; bu dosya güncel `xConfig.h` tanımlarına göre düzenlenmiştir.
 
 ## Özellikler
-- 8 Servo: L/R kalça, diz, bilek + baş tilt/pan (easing ile yumuşak)
+- 4 Servo: baş (pan, tilt) + iki adet Pi-servo/aksesuar (varsayılan yapı: easing ile yumuşak hareket)
 - 2 Stepper (skate): hız ve konum modları, Sit modunda dengeleme
 - IMU: MPU6050 (I2C)
-- IK: 2D bacak ters kinematik + mirror
 - NDJSON seri API @115200
-- Modlar: Stand (servo dengeleme), Sit/Skate (stepper dengeleme)
+- Modlar: Stand ve Sit/Skate
 - Güvenlik: heartbeat timeout, estop, açı sınırları
 - Kalıcılık: IMU offset EEPROM kaydet/yükle
 - Tuning: PID, servo/stepper parametreleri canlı ayar
 
+## RAM ve String Optimizasyonu
+- Cute neopixel retry kuyruğu artık `String` payload yerine sabit `char` buffer kullanır.
+- Legacy IR menü kopyalarında (sound/servo/sensors) geçici `String` birleştirmeleri azaltıldı.
+
+Bu değişiklikler, AVR tarafta heap parçalanmasını azaltmak ve uzun çalışmada kararlılığı artırmak içindir.
+
 ## Bağlantı ve Kurulum
-1) Seri port: `xConfig.h` içinde `SERIAL_IO` → `Serial` (USB) veya `Serial1` (RPi UART)
-2) Gerekli kart/kütüphaneler: Arduino Mega 2560, (opsiyonel) MFRC522, LiquidCrystal_I2C
+1) Seri port: `xConfig.h` içinde `SERIAL_IO_PORT` ile seçilir.
+  - `0=Serial`, `1=Serial1`, `2=Serial2`, `3=Serial3`
+  - Varsayılan: Mega kartlarda `3` (TX3/RX3), diğer kartlarda `0`
+2) Gerekli kart/kütüphaneler: Arduino Mega 2560 (veya uyumlu), (opsiyonel) MFRC522, LiquidCrystal_I2C, Adafruit_MPU6050, AccelStepper
 3) Yükleme: `arduino/firmware/xMain/xMain.ino`’yu açın, 115200 8N1.
 
 ## Servo Kontrolü (I2C PCA9685)
-- `SERVO_USE_PCA9685` = 1 iken tüm servolar I2C üzerinden PCA9685 ile sürülür (varsayılan: 1).
-- `PCA9685_ADDR` (varsayılan 0x40), `SERVO_FREQ_HZ` (50Hz), `SERVO_MIN_US`/`SERVO_MAX_US` (500..2500us) `xConfig.h`’den ayarlanır.
-- Kanal eşlemesi için mevcut `PIN_*` tanımları PCA9685 kanal numarası (0..15) olarak kullanılır:
-  - L HIP=0, L KNEE=1, L ANKLE=2
-  - R HIP=15, R KNEE=14, R ANKLE=13
-  - HEAD PAN=3, HEAD TILT=12
-- Doğrudan Arduino Servo pinlerine dönmek isterseniz `SERVO_USE_PCA9685=0` yapın ve `PIN_*` değerlerini servo pinleriyle değiştirin.
+- `SERVO_USE_PCA9685` = 1 iken servolar I2C üzerinden PCA9685 ile sürülür (varsayılan: 1).
+- `PCA9685_ADDR`, `SERVO_FREQ_HZ`, `SERVO_MIN_US`/`SERVO_MAX_US` `xConfig.h`’den ayarlanır.
+- Mevcut `xConfig.h` konfigürasyonu için ana kanal eşlemesi:
+  - `PIN_PAN` = 6 (head pan)
+  - `PIN_TILT` = 9 (head tilt)
+  - `PIN_PI_SERVO_1` = 7 (pi-servo 1)
+  - `PIN_PI_SERVO_2` = 8 (pi-servo 2)
 
-Not:
-- PCA9685 (servo sürücü) I2C üzerinde algılanamazsa firmware donmaz; servo yazmaları fail-safe olarak no-op olur ve LCD'de uyarı gösterilir.
+Not: Bu firmware sürümü `SERVO_COUNT_TOTAL = 4` ile derlenmiştir. Eğer 8-servo bacak kontrolü veya farklı bir kanal haritası istiyorsan `xConfig.h` ve ilgili kodlarda değişiklik gerekecektir.
+
+## Güncel Pinler (xConfig.h ile uyumlu)
+- Lazerler: `LASER1_PIN = 5`, `LASER2_PIN = 4` (polarite: `LASER_ACTIVE_HIGH`)
+- Stepper STEP/DIR (şu anki `xConfig.h`):
+  - `PIN_STEPPER1_STEP = 11`
+  - `PIN_STEPPER1_DIR  = 12`
+  - `PIN_STEPPER2_STEP = 9`
+  - `PIN_STEPPER2_DIR  = 10`
+- IR: `IR_PIN = 23`
+- Buzzer: `BUZZER_LOUD_PIN = 7`, `BUZZER_QUIET_PIN = 6`
+- Ultrasonik: `ULTRA_TRIG_PIN = 3`, `ULTRA_ECHO_PIN = 2`
+- RFID (MFRC522): `RFID_SS_PIN = 53`, `RFID_RST_PIN = 49` (opsiyonel)
+
+Bu değerler kodun kaynağındaki `xConfig.h` dosyasında tanımlıdır; fiziksel bağlantılarını bu değerlere göre doğrula.
 
 ## Lazer Kontrolü
 - Tek lazer aç: `{ "cmd":"laser", "id":1, "on":true }` (veya id=2)
 - Çift lazer aç: `{ "cmd":"laser", "both":true, "on":true }`
 - Kapat: `{ "cmd":"laser", "on":false }`
-- Pin ve polarite: `LASER1_PIN`, `LASER2_PIN`, `LASER_ACTIVE_HIGH` (`xConfig.h`).
 
-## Güncel Pinler (Son Değişiklik)
-- Lazerler: `LASER1_PIN=12`, `LASER2_PIN=11`
-- Step/Dir: `PIN_STEPPER1_STEP=10`, `PIN_STEPPER1_DIR=9`, `PIN_STEPPER2_STEP=8`, `PIN_STEPPER2_DIR=7`
-- IR: `IR_PIN=2`
-- Buzzer: `BUZZER_LOUD_PIN=3` (loud), `BUZZER_QUIET_PIN=4` (quiet)
-- Ultrasonik: `ULTRA_TRIG_PIN=6`, `ULTRA_ECHO_PIN=5`
+## Ekran / Menü
+Bu firmware tarafında 20x4 I2C LCD menü/durum ekranı desteklenir.
 
-## Dual Buzzer (Sesli/Sessiz)
-- İki buzzer desteği vardır: `BUZZER_LOUD_PIN` ve `BUZZER_QUIET_PIN`.
-- Bu seçim yazılımsal “mute” değil; fiziksel olarak iki ayrı çıkış seçilir (loud/quiet).
-- Varsayılan çıkış seçimi (JSON): `{ "cmd":"sound", "out":"loud|quiet" }`
-- Tek seferlik beep (JSON): `{ "cmd":"buzzer", "out":"loud|quiet", "freq":2200, "ms":60 }`
- - Tek seferlik beep (JSON): `{ "cmd":"buzzer", "out":"loud|quiet", "freq":2200, "ms":60 }`
- - Eş zamanlı her iki buzzerı ayarlamak (opsiyonel): `{ "cmd":"sound", "both":true }` veya `{ "cmd":"sound", "both":false }`
-- Hazır ses çal (JSON): `{ "cmd":"sound_play", "name":"walle|bb8", "out":"loud|quiet" }`
+Yazılım notları:
+- `xLcdHub` 20x4'ü hedef alacak şekilde çalışır. `LCD_COLS`/`LCD_ROWS` değerlerini `xConfig.h` içinde 20/4 olarak ayarlayabilirsin.
+- OLED çizimi Arduino tarafında değil, Pi tarafındaki `modules/oled_faces` servisi tarafından sürülür.
+
+## Dual Buzzer
+- İki buzzer desteği: `BUZZER_LOUD_PIN` ve `BUZZER_QUIET_PIN`.
+- Komut örnekleri:
+  - `{ "cmd":"buzzer", "out":"loud", "freq":2200, "ms":60 }`
+  - `{ "cmd":"sound_play", "name":"walle" }`
 
 ## IR Remote Kontrol (Menü + Parametre)
 - IR alıcı pini: `IR_PIN` (varsayılan 2)
 - Tuşlar firmware içinde şu string’lere çevrilir: `0..9`, `*`, `#`, `UP`, `DOWN`, `LEFT`, `RIGHT`, `OK`.
-- `LCD_ENABLED=1` ise IR menü geçişleri ve parametreler LCD'de 2 satır halinde gösterilir (son mesaj ~3 sn tutulur; `UNKNOWN` spam'ı yazdırılmaz).
 
-### Yeni Menü Kullanımı (Önerilen)
-- HOME: `OK` menüyü açar.
-- HOME hızlı kontrol: `UP/DOWN` = Stand/Sit, `LEFT/RIGHT` = Drive -200/+200.
-- Menü ekranı: `UP/DOWN` ile gez, `OK` ile gir, `#` ile geri/çık.
-
-Menü sayfaları:
-- `SERVO`: servo no (1..8) seç → derece (0..180) gir.
-- `LASER`: `OK` toggle, `UP` aç, `DOWN` kapa.
-- `ULTRA`: HC-SR04 mesafesini canlı gösterir.
-- `IMU`: pitch/roll + accel (AX/AY/AZ) + sıcaklık sayfaları (UP/DOWN ile değişir).
- - `RFID`: son okunan UID’nin son 8 karakterini gösterir.
- - `SOUND`: `WALLE` / `BB8` çal; `MORSE` ile kumandadan mors test (OK ile morse moduna gir, sonra rakamlara bas).
- - `BRAIN SPEECH`: Dışarıdan gönderilen metni buzzer ile (Morse/Braille-speak tarzı) çalabilme.
-
-### Brain Speech (Beyinden Gelen Konuşmayı Buzzer ile Duyurma)
-SentryBOT’a dışarıdan (ör: Python gateway) bir konuşma metni gönderip, bunu buzzer’dan Braille Speak/Morse gibi tonlu olarak duyurabilirsiniz.
-
-Kullanım:
-
-- Arduino’ya NDJSON komutuyla metin gönderin:
-  ```json
-  {"cmd": "speech", "text": "merhaba sentry"}
-  ```
-- Son metin RAM’de tutulur, IR menüsünde SOUND/MORSE sayfasında veya komutla buzzer’dan çalınabilir.
-- Çalmak için:
-  ```json
-  {"cmd": "speech_play"}
-  ```
-- Buzzer, metni Morse koduna çevirip non-blocking olarak oynatır. IR ve LCD menüsü etkilenmez.
-
-Python Gateway ile örnek:
-
-```python
-from modules.arduino_serial import send_brain_speech
-send_brain_speech("merhaba sentry")
-```
-
-veya doğrudan NDJSON ile:
-
-```python
-arduino_serial.send_command({"cmd": "speech", "text": "merhaba sentry"})
-arduino_serial.send_command({"cmd": "speech_play"})
-```
-
-Notlar:
-
-- Metin uzunluğu kısıtlıdır (tipik <64 karakter).
-- Buzzer çalarken IR menüsü ve LCD sabit kalır (pinned).
-- SOUND/MORSE menüsünden de son metni tekrar çalabilirsiniz.
-
-### Kullanım Mantığı (Token)
-- Komut girişi `*` ile başlar ve sayılar bir "token" olarak toplanır.
-- Token şu durumlarda otomatik işlenir:
-  - `IR_TOKEN_TIMEOUT_MS` (varsayılan 900ms) boyunca yeni rakam gelmezse
-  - veya `*` / `OK` / `#` basılırsa
-
-Örnek akış:
-- `*1` → Menü 1 (Servo)
-- `*4` → Servo seçimi (4. servo; 1-based)
-- `*90` → 90 dereceye götür
-
-### Menü Referansı
-- Menü 1 (Servo): token1=servo(1..8 veya 0..7), token2=deg(0..180)
-- Menü 2 (Drive): token=speed (steps/s) → `driveCmd`
-- Menü 3 (Laser): token 1=on (both), token 0=off
-- Menü 4 (Mode): 1=stand, 2=sit, 3=pid on, 4=pid off
-- Menü 5 (Sound): 1=loud, 2=quiet
+### Menü Kullanımı (kısa)
+- HOME: `OK` menüyü açar; `UP/DOWN` ile gezinir, `OK` girer, `#` geri.
+- Ana menü öğeleri: `SERVO`, `LASER`, `ULTRA`, `IMU`, `RFID`, `SOUND`, `REMOTE`, `CALIB`, `SYSTEM`.
 
 ## Komut Referansı (Özet)
 - Ping: `{ "cmd":"hello" }`
 - Heartbeat: `{ "cmd":"hb" }`
 - Tek servo: `{ "cmd":"set_servo", "index":0, "deg":90 }`
-- Poz: `{ "cmd":"set_pose", "pose":[..8..], "duration_ms":1000 }`
-- IK: `{ "cmd":"leg_ik", "x":120, "side":"L" }`
+- Poz (4 servo): `{ "cmd":"set_pose", "pose":[90,90,90,90], "duration_ms":1000 }`
 - Stepper: `{ "cmd":"stepper", "id":0, "mode":"pos|vel", "value":1000, "drive":200 }`
-- Stepper cfg: `{ "cmd":"stepper_cfg", "maxSpeed":2000, "accel":1000 }`
-- Homing: `{ "cmd":"home" }` / Sıfırla: `{ "cmd":"zero_now" }` / `{ "cmd":"zero_set", "p1":0, "p2":0 }`
-- Mod: `{ "cmd":"stand" }` / `{ "cmd":"sit" }`
-- IMU: `{ "cmd":"imu_read" }` / `{ "cmd":"imu_cal" }`
-- PID: `{ "cmd":"pid", "enable":true }`
-- Durum: `{ "cmd":"get_state" }`
+- Stepper PID: `{ "cmd":"pid_enable", "id":0, "enable":true }`, `{ "cmd":"pid_set", "id":0, "kp":1.0, "ki":0.0, "kd":0.05, "target":100 }`
+- Homing: `{ "cmd":"home" }`, sıfırlama: `{ "cmd":"zero_now" }`, `{ "cmd":"zero_set", "p1":0, "p2":0 }`
+- IMU: `{ "cmd":"imu_read" }`, `{ "cmd":"imu_cal" }`
+- EEPROM: `{ "cmd":"eeprom_save" }`, `{ "cmd":"eeprom_load" }`
 - Telemetri: `{ "cmd":"telemetry_start", "interval_ms":50 }` / `{ "cmd":"telemetry_stop" }`
-- Tuning: `{ "cmd":"tune", "pid":{...}, "skate":{...}, "servoSpeed":60 }`
-- EEPROM: `{ "cmd":"eeprom_save" }` / `{ "cmd":"eeprom_load" }`
-- Estop: `{ "cmd":"estop" }`
 
 ## Çevre Birimleri
 - RFID (MFRC522): `{ "cmd":"rfid_last" }` ve olay yayını
-- LCD (I2C): `{ "cmd":"lcd", "msg":"HELLO" }`
+- LCD (I2C 20x4): `{ "cmd":"lcd", "top":"LINE1", "bottom":"LINE2" }`
 - Ultrasonik: `{ "cmd":"ultra_read" }`, kaçınma `{ "cmd":"avoid", "enable":true }`
-
-### Dual LCD (I2C)
-- 2 adet I2C LCD desteklenir: `LCD_I2C_ADDR` (mevcut ekran) + `LCD2_I2C_ADDR` (yeni ekran).
-- Firmware açılışta I2C üzerinden ekranları algılar; biri yoksa diğeriyle devam eder.
-- İki ekran da bağlıysa aynı mesajlar iki ekrana da basılır.
-- Tek bir 16x2 LCD bağlıysa ve yanlışlıkla 16x1 gibi konfigüre edilmişse, firmware bunu otomatik 16x2 moda alır (2x8 görünümü engeller).
-
-#### Seri Komut ile Hedef Seçimi
-- Varsayılan yönlendirme (sonraki LCD mesajları hangi ekrana gitsin):
-  - `{ "cmd":"lcd_route", "mode":"both" }` (ikisine)
-  - `{ "cmd":"lcd_route", "mode":"1" }` (LCD1)
-  - `{ "cmd":"lcd_route", "mode":"2" }` (LCD2)
-
-- Tek mesajı hedefleyerek yazdırma:
-  - LCD1: `{ "cmd":"lcd", "id":1, "msg":"HELLO" }`
-  - LCD2: `{ "cmd":"lcd", "id":2, "msg":"WORLD" }`
-  - İkisi: `{ "cmd":"lcd", "id":0, "msg":"BOTH" }`
-
-- 2 satır yazdırma:
-  - `{ "cmd":"lcd", "id":1, "top":"MENU:1", "bottom":"SERVO?" }`
-
-## Notlar
-- VS Code’ta `Arduino.h` uyarısı IntelliSense kaynaklıdır; Arduino IDE derlemesini etkilemez.
-- RPi üzerinden UART bağlarken seviye dönüştürücü ve ortak GND şart.
-- Heartbeat’i (50–100ms) kesmeyin; aksi halde estop tetiklenir.
-
-## Boot Ekranı (Tanılama)
-- `BOOT_STATUS_ENABLED=1` ise açılışta LCD'de algılanan modüller (LCD, IMU, PCA9685) ve eksikler kısa bir "boot checklist" olarak gösterilir.
 
 ## Lisans
 Üst dizindeki `LICENSE` dosyasına bakın.

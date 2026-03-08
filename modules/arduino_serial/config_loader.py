@@ -9,7 +9,7 @@ except Exception:  # pragma: no cover
     yaml = None
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "port": "COM3",  # Windows default guess; override via env or config
+    "port": "AUTO",  # Prefer autodetect; override via env or config
     "baudrate": 115200,
     "timeout": 0.05,  # read timeout seconds
     "write_timeout": 0.1,

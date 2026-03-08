@@ -27,6 +27,7 @@ endpoints:
   ollama: "http://localhost:8080/ollama"
   speech: "http://localhost:8080/speech"
   interactions: "http://localhost:8080/interactions"
+  oled_faces: "http://localhost:8080/oled_faces"
   state_manager: "http://localhost:8080/state"
   animate: "http://localhost:8080/animate"
   vision: "http://localhost:8080/vision"
@@ -133,3 +134,4 @@ owner:
   rfid:
     endpoint: "http://localhost:8080/arduino/rfid/authorize"
     grace_s: 120
+    poll_interval_s: 15

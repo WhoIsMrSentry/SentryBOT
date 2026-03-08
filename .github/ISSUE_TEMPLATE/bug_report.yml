@@ -1,0 +1,65 @@
+name: Hata bildirimi
+description: SentryBOT icin tekrar edilebilir bir hata bildir
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Ozet
+      description: Ne bozuk?
+      placeholder: Hatayi kisa ve net sekilde acikla
+    validations:
+      required: true
+
+  - type: input
+    id: module
+    attributes:
+      label: Etkilenen modul
+      description: Ornek: modules/speech, modules/arduino_serial
+      placeholder: modules/<name>
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Yeniden uretim adimlari
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Beklenen davranis
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Gerceklesen davranis
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Loglar ve izler
+      description: Ilgili log, stack trace veya API yanitlarini ekleyin.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Kontrol listesi
+      options:
+        - label: Mevcut issue'leri kontrol ettim, tekrar bulamadim.
+          required: true
+        - label: Hatayi yeniden uretmek icin yeterli bilgi ekledim.
+          required: true
+        - label: Arduino komutu varsa modules/arduino_serial/contract.py builder kullanimini kontrol ettim.
+          required: false

@@ -85,6 +85,14 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- Kapsam: Donanım/simülatör otomatik; ileri seviye animasyonlar ve duygusal renk paletleri.
 		- API: `/neopixel/fill`, `/neopixel/effect`, `/neopixel/emote`, `/neopixel/animate`
 		- Sınırlar: LED sayısı ve hız config’den alınır; ağır animasyonlarda CPU yükü artabilir.
+
+		# NeoPixel API (user-facing notes)
+		- `GET /neopixel/animations` — returns a curated, human-friendly list of available animations. Use `?show_all=true` to see every registered animation key.
+		- `GET /neopixel/emotions` — returns a simple list of emotion names (e.g. `admiration`, `joy`). Color codes are intentionally hidden from the UI; the service will pick a random palette variant when an emotion is triggered.
+		- `POST /neopixel/animate` — accepts a JSON body with fields `name` (animation key), optional `color` ("R,G,B" or "#RRGGBB") or `r,g,b` channels, optional `emotions` (list) and `iterations`.
+		  Example body: `{ "name": "WAVE", "color": "0,255,255", "iterations": 2 }`
+		- `POST /neopixel/emote` — convenience endpoint. Accepts `emotion` (single name), `emotions` (list) or `text`. If an `emotion` is provided, the server will randomly select one of the palette variants for that emotion and display it (no palette codes are returned in the API response for UI simplicity).
+		- Behavior: The driver will attempt to play animations using the native Pi driver when available (hardware-accelerated). If the native driver does not support an animation name the server will fall back to Python implementations.
 	- Interactions (modules/interactions)
 		- Kapsam: Kurallara göre NeoPixel efektleri tetikleme; CPU sıcaklık/yük, ağ burst, olaylar.
 		- API: `/interactions/event`, `/interactions/effect`, `/interactions/base`, `/interactions/state`
@@ -381,6 +389,15 @@ Repo, modül merkezli çalışma akışını destekleyen etiketleme ve yardımc�
 PR’ler ve öneriler memnuniyetle karşılanır. Yeni modül eklerken DryCode kurallarına ve modül şablonuna uyun. Küçük, okunabilir, test edilebilir değişiklikler tercih edilir.
 
 
+## Sponsor ve Destek
+
+Projeyi surdurulebilir sekilde gelistirmemize destek olmak isterseniz GitHub Sponsors uzerinden sponsor olabilirsiniz:
+
+- https://github.com/sponsors/WhoIsMrSentry
+
+Destek detaylari icin: `.github/SUPPORT.md`
+
+
 ## Lisans
 
-Apache 2.0 — ayrıntılar için `LICENSE` dosyasına bakın.
+SentryBOT NC-Atif 1.0 (Ticari Kullanim Yasak, Atif Zorunlu) — ayrintilar icin `LICENSE` dosyasina bakin.

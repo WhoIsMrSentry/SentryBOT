@@ -1,0 +1,10 @@
+{
+    "frames":  [
+                   "logo",
+                   "left_signal",
+                   "right_signal",
+                   "battery",
+                   "warning"
+               ],
+    "delay_ms":  260
+}

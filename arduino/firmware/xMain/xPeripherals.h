@@ -10,7 +10,10 @@
 #include "peripherals/xLcdDisplay.h"
 #include "peripherals/xLaserPair.h"
 #include "peripherals/xBuzzer.h"
+#include "peripherals/xHallEncoder.h"
 #include "peripherals/xIrKeyReader.h"
-// NeoPixel peripheral removed — feature disabled and code deleted
+#include "peripherals/xEbyteRadio.h"
 
+// Ebyte radio instance (nRF24L01 compatible)
+extern EbyteRadio g_ebyteRadio;
 #endif // ROBOT_PERIPHERALS_H

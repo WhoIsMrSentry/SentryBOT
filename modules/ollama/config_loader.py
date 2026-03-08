@@ -5,7 +5,7 @@ import yaml
 
 DEFAULT_CFG = {
     "server": {"host": "0.0.0.0", "port": 8099},
-    "ollama": {"base_url": "http://localhost:11434", "model": "llama3.2:3b", "request_timeout": 60.0},
+    "ollama": {"base_url": "http://localhost:11435", "model": "llama3.2:3b", "request_timeout": 60.0},
     "persona": {"default": "glados", "dir": "modules/ollama/config/personalities"},
 }
 

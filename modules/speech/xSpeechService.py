@@ -1,7 +1,7 @@
 from __future__ import annotations
 import argparse
 import logging
-from threading import Event
+from threading import Event, Lock
 try:
     import audioop
 except Exception:
@@ -14,6 +14,7 @@ from modules.speech.services.audio_capture import AudioCapture
 from modules.speech.services.recognizer import Recognizer, RecognitionResult
 from modules.speech.services.direction import DirectionEstimator
 from modules.speech.services.pan_tilt import PanTiltController
+from modules.arduino_serial.contract import build_set_servo_cmd, SERVO_INDEX_PAN
 from fastapi import FastAPI
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,9 @@ class SpeechService:
     def __init__(self, config_path: Optional[str] = None):
         self.cfg = load_config(config_path)
         self._stop_event = Event()
+        self._listening = False
+        self._listen_lock = Lock()
+        self._thread = None
         self.capture = AudioCapture(self.cfg.get("audio", {}))
         self.recognizer = Recognizer(self.cfg.get("recognition", {}))
         # Direction estimator (optional, needs stereo)
@@ -52,13 +56,21 @@ class SpeechService:
 
         For production, consider running capture in its own thread and feeding a queue.
         """
+        with self._listen_lock:
+            if self._listening:
+                return
+            self._listening = True
         self._stop_event.clear()
-        stream: Iterable[bytes] = self.capture.stream()
-        for result in self.recognizer.run(self._direction_wrapper(stream)):
-            if on_result:
-                on_result(result)
-            if self._stop_event.is_set():
-                break
+        try:
+            stream: Iterable[bytes] = self.capture.stream()
+            for result in self.recognizer.run(self._direction_wrapper(stream)):
+                if on_result:
+                    on_result(result)
+                if self._stop_event.is_set():
+                    break
+        finally:
+            with self._listen_lock:
+                self._listening = False
 
     def _direction_wrapper(self, stream):
         if not self._direction:
@@ -139,12 +151,18 @@ class SpeechService:
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         import threading
+        with self._listen_lock:
+            if self._listening:
+                return
         t = threading.Thread(target=self.start, kwargs={"on_result": on_result}, daemon=True)
+        self._thread = t
         t.start()
 
     def stop(self) -> None:
         self._stop_event.set()
         self.capture.stop()
+        with self._listen_lock:
+            self._listening = False
 
     def listen_once(self, timeout_sec: float = 5.0) -> Optional[RecognitionResult]:
         """Listen until first final result or timeout."""
@@ -161,6 +179,11 @@ class SpeechService:
     @property
     def last_angle(self) -> float | None:
         return self._last_angle
+
+    @property
+    def listening(self) -> bool:
+        with self._listen_lock:
+            return self._listening
 
     # Pan-tilt controls
     def track_start(self) -> None:
@@ -183,23 +206,10 @@ class SpeechService:
         # We use a simple requests call here, but in production consider async client or keeping a session
         try:
             import requests
-            # Assuming gateway is at localhost:8080
-            # We need to map 0-180 pan to whatever the arduino expects.
-            # The arduino module expects "set_servo" with pan/tilt.
-            # We only control pan here, tilt is kept at current or default?
-            # Ideally we should know current tilt. For now let's send a specific command or just pan.
-            # The arduino_serial module supports "set_servo" with optional args? 
-            # Let's assume we send both, but we need to know tilt.
-            # For now, let's just log if we can't send, but we try to send.
-            
-            # Better approach: The speech module shouldn't know about HTTP if possible, 
-            # but since it's a service, it can talk to other services.
-            
-            url = "http://localhost:8080/arduino/send"
-            # We default tilt to 90 if we don't know it. 
-            # TODO: Get current tilt from state or keep track of it.
-            payload = {"cmd": "set_servo", "pan": int(angle_deg), "tilt": 90} 
-            requests.post(url, json=payload, timeout=0.1)
+            # Use request endpoint to get ACK/error for motion commands.
+            url = "http://localhost:8080/arduino/request"
+            payload = build_set_servo_cmd(SERVO_INDEX_PAN, int(angle_deg))
+            requests.post(url, json=payload, params={"timeout": 0.1}, timeout=0.2)
         except Exception as e:
             logger.debug(f"Failed to send pan: {e}")
 

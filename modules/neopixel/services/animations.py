@@ -311,3 +311,65 @@ def stacked_bars(driver: NeoDriver, wait_ms: int = 50, color: Color | None = Non
             driver.set(i, 0, 0, 0)
         driver.show()
         time.sleep(max(0.0, wait_ms / 1000.0))
+
+
+# Helper registry mapping Arduino-style names to functions with simple parameter parsing
+def _parse_color_arg(arg) -> Color:
+    if arg is None:
+        return (255, 255, 255)
+    if isinstance(arg, tuple) or isinstance(arg, list):
+        return (int(arg[0]) & 255, int(arg[1]) & 255, int(arg[2]) & 255)
+    if isinstance(arg, str):
+        s = arg.strip()
+        if s.startswith('#') and len(s) in (7, 9):
+            v = int(s[1:7], 16)
+            return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+        parts = s.split(',')
+        if len(parts) == 3:
+            return (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
+    # fallback white
+    return (255, 255, 255)
+
+
+def run_animation(driver: NeoDriver, name: str, *args, **kwargs) -> None:
+    """Run animation by name (case-insensitive). Args are passed to target function.
+    Supports simple color strings like "r,g,b" or "#RRGGBB" for first color parameter.
+    """
+    name_up = name.strip().upper()
+    fn = ANIMATIONS.get(name_up)
+    if not fn:
+        raise KeyError(f"Unknown animation: {name}")
+
+    # allow first positional arg to be color string
+    if args:
+        first = args[0]
+        if isinstance(first, str) and (',' in first or first.startswith('#')):
+            c = _parse_color_arg(first)
+            new_args = (c,) + args[1:]
+            return fn(driver, *new_args, **kwargs)
+    return fn(driver, *args, **kwargs)
+
+
+# canonical name mapping similar to Arduino sketch names
+ANIMATIONS = {
+    "RAINBOW": rainbow,
+    "RAINBOW_CYCLE": rainbow_cycle,
+    "BREATHE": breathe,
+    "METEOR": meteor_rain,
+    "FIRE": fire_flicker,
+    "COMET": comet,
+    "WAVE": wave,
+    "PULSE": pulse,
+    "TWINKLE": twinkle,
+    "WIPE": color_wipe,
+    "BLINK": random_blink,
+    "CHASE": theater_chase,
+    "SNOW": snow,
+    "ALT": alternating_colors,
+    "GRADIENT": multi_color_gradient,
+    "M_GRAD": multi_color_gradient,
+    "M_WAVE": multi_color_wave,
+    "BOUNCE": bouncing_ball,
+    "RUN": running_lights,
+    "STACK": stacked_bars,
+}

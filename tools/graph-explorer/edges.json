@@ -6,6 +6,11 @@
   },
   {
     "source": "autonomy",
+    "target": "arduino_serial",
+    "type": "serial"
+  },
+  {
+    "source": "autonomy",
     "target": "ollama",
     "type": "llm"
   },
@@ -86,6 +91,11 @@
   },
   {
     "source": "gateway",
+    "target": "oled_faces",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
     "target": "ollama",
     "type": "llm"
   },
@@ -131,6 +141,11 @@
   },
   {
     "source": "gateway",
+    "target": "wakeword",
+    "type": "http"
+  },
+  {
+    "source": "gateway",
     "target": "wiki_rag",
     "type": "http"
   },
@@ -143,11 +158,6 @@
     "source": "mutagen",
     "target": "logwrapper",
     "type": "http"
-  },
-  {
-    "source": "neopixel",
-    "target": "arduino_serial",
-    "type": "serial"
   },
   {
     "source": "neopixel",
@@ -166,6 +176,11 @@
   },
   {
     "source": "piservo",
+    "target": "arduino_serial",
+    "type": "serial"
+  },
+  {
+    "source": "piservo",
     "target": "logwrapper",
     "type": "http"
   },
@@ -173,6 +188,11 @@
     "source": "speak",
     "target": "logwrapper",
     "type": "http"
+  },
+  {
+    "source": "speech",
+    "target": "arduino_serial",
+    "type": "serial"
   },
   {
     "source": "speech",
@@ -193,6 +213,16 @@
     "source": "vision_bridge",
     "target": "ollama",
     "type": "llm"
+  },
+  {
+    "source": "wakeword",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
+    "source": "wakeword",
+    "target": "speech",
+    "type": "event"
   },
   {
     "source": "wiki_rag",

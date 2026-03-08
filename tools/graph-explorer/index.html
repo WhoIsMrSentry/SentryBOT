@@ -7,8 +7,8 @@
   <title>SentryBOT Graph Explorer (Standalone)</title>
   <style>
     :root {
-      --bg: #0f172a;
-      --panel: #0b1220;
+      --bg: #070b16;
+      --panel: #0c1428;
       --text: #e2e8f0;
       --muted: #94a3b8;
       --entry: #9333ea;
@@ -20,13 +20,20 @@
       --event: #3b82f6;
       --llm: #84cc16;
       --health: #a78bfa;
+        --uart: #f97316; /* Added UART color */
+        --submodule: #2dd4bf; /* Added Submodule color */
     }
 
     html,
     body {
       margin: 0;
       height: 100%;
-      background: var(--bg);
+      background-color: var(--bg);
+      background-image:
+        radial-gradient(1200px 700px at 8% 12%, rgba(56, 189, 248, 0.16), transparent 60%),
+        radial-gradient(900px 520px at 86% 18%, rgba(99, 102, 241, 0.18), transparent 58%),
+        radial-gradient(1000px 650px at 52% 100%, rgba(30, 58, 138, 0.22), transparent 62%),
+        linear-gradient(165deg, #040916 0%, #0a1226 52%, #081120 100%);
       color: var(--text);
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
       overflow: hidden;
@@ -60,7 +67,9 @@
       display: flex;
       gap: 8px;
       pointer-events: auto;
-      background: #111827aa;
+      background: rgba(12, 18, 34, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      box-shadow: 0 8px 24px rgba(2, 6, 23, 0.45);
       padding: 6px;
       border-radius: 8px;
       backdrop-filter: blur(4px);
@@ -71,7 +80,9 @@
       flex-wrap: wrap;
       gap: 6px;
       pointer-events: auto;
-      background: #111827aa;
+      background: rgba(12, 18, 34, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      box-shadow: 0 8px 24px rgba(2, 6, 23, 0.45);
       padding: 6px;
       border-radius: 8px;
       backdrop-filter: blur(4px);
@@ -95,8 +106,8 @@
     }
 
     .toggle.active {
-      background: #059669;
-      border-color: #10b981;
+      background: #1d4ed8;
+      border-color: #60a5fa;
       color: white;
     }
 
@@ -104,12 +115,30 @@
       position: absolute;
       bottom: 10px;
       right: 10px;
-      background: #111827aa;
+      background: rgba(12, 18, 34, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      box-shadow: 0 8px 24px rgba(2, 6, 23, 0.45);
       padding: 6px 8px;
       border-radius: 6px;
       font-size: 12px;
       pointer-events: auto;
       backdrop-filter: blur(4px);
+    }
+
+    .legend-title {
+      font-size: 11px;
+      color: var(--muted);
+      margin: 4px 0 6px 0;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    #edgeLegendList {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+      max-width: 380px;
     }
 
     .pill {
@@ -166,6 +195,14 @@
 
     .health {
       color: var(--health);
+    }
+
+    .uart {
+      color: var(--uart);
+    }
+
+    .submodule {
+      color: var(--submodule);
     }
 
     /* Modal Styles */
@@ -255,13 +292,20 @@
       <!-- Modules will be injected here -->
     </div>
     <input type="color" id="colorPicker" style="visibility: hidden; position: absolute;">
+    <input type="color" id="edgeColorPicker" style="visibility: hidden; position: absolute;">
   </div>
 
   <div class="legend">
+    <div class="legend-title">Node Types</div>
     <span class="pill entry">entry</span>
     <span class="pill service">service</span>
     <span class="pill module">module</span>
+    <span class="pill submodule">submodule</span> <!-- Added Submodule legend -->
+    <div class="legend-title">Edge Colors (click to change)</div>
+    <div id="edgeLegendList"></div>
+    <div class="legend-title">Edge Types</div>
     <span class="pill mount">mount</span>
+    <span class="pill uart">uart</span> <!-- Added UART legend -->
     <span class="pill http">http</span>
     <span class="pill serial">serial</span>
     <span class="pill event">event</span>
@@ -304,25 +348,58 @@
     let scene; // zoom/pan container
     let zoom;  // persistent zoom behavior
     let sim, nodes = [], links = [];
+    let baseNodes = [], baseLinks = [];
+    let allExpanded = false;
     let pinMode = false;
     let centerMode = false;
     const DEFAULT_IGNORE = [".venv", "venv", ".pytest_cache", ".vscode", "__pycache__", ".git", "node_modules", ".DS_Store", "dist", "build", ".ipynb_checkpoints"];
 
     // Module Colors State
-    const DEFAULT_COLORS = {
-      "animate": "#ef4444", "arduino_serial": "#f97316", "calibration": "#f59e0b", "camera": "#84cc16",
-      "config_center": "#10b981", "diagnostics": "#06b6d4", "gateway": "#3b82f6", "hardware": "#6366f1",
-      "interactions": "#8b5cf6", "logwrapper": "#d946ef", "mutagen": "#f43f5e", "neopixel": "#ec4899",
-      "notifier": "#db2777", "ollama": "#be185d", "ota": "#9d174d", "piservo": "#7f1d1d",
-      "scheduler": "#7c2d12", "speak": "#78350f", "speech": "#451a03", "state_manager": "#134e4a",
-      "telemetry": "#064e3b", "vision_bridge": "#042f2e", "wiki_rag": "#1e3a8a"
+    const MODULE_COLOR_OVERRIDES = {
+      arduino: '#2dd4bf',
+      arduino_serial: '#fb923c',
+      gateway: '#38bdf8',
+      logwrapper: '#d946ef',
     };
-    let moduleColors = { ...DEFAULT_COLORS };
+    const ARDUINO_SUBMODULES = [
+      'buzzer', 'lcd', 'nrf', 'rfid', 'imu', 'ultrasonic', 'servo_bus', 'stepper_pair', 'ir_menu', 'neopixel_bridge'
+    ];
+    let moduleColors = {};
+    const DEFAULT_EDGE_COLORS = {
+      mount: '#64748b',
+      component: '#22d3ee',
+      uart: '#fb923c',
+      http: '#60a5fa',
+      serial: '#f43f5e',
+      event: '#a78bfa',
+      llm: '#34d399',
+      health: '#c4b5fd',
+      boot: '#94a3b8',
+    };
+    const EDGE_COLOR_KEYS = ['http', 'uart', 'serial', 'event', 'llm', 'health', 'mount', 'component', 'boot', 'gateway_in', 'gateway_out'];
+    const EDGE_COLOR_LABELS = {
+      http: 'http',
+      uart: 'uart',
+      serial: 'serial',
+      event: 'event',
+      llm: 'llm',
+      health: 'health',
+      mount: 'mount',
+      component: 'component',
+      boot: 'boot',
+      gateway_in: 'gateway_in',
+      gateway_out: 'gateway_out',
+    };
+    let edgeColors = { ...DEFAULT_EDGE_COLORS };
+    let gatewayIncomingColor = '#e11d48';
+    let gatewayOutgoingColor = '#0ea5e9';
+    let logwrapperEdgeColor = '#a21caf';
 
     // Colors
     const colorByKind = (n) => {
       if (n.kind === 'entry') return '#9333ea';
       if (n.kind === 'service') return '#06b6d4';
+      if (n.kind === 'submodule') return '#2dd4bf';
       if (n.kind === 'module') {
         if (String(n.id).startsWith('file:modules/')) {
           const parts = n.id.split('/');
@@ -335,14 +412,106 @@
       }
       return '#94a3b8';
     };
-    const colorByType = (t) => ({ mount: '#94a3b8', http: '#f59e0b', serial: '#ef4444', event: '#3b82f6', llm: '#84cc16', health: '#a78bfa' }[t] || '#64748b');
+    const colorByType = (t) => edgeColors[t] || '#64748b';
+
+    function nodeIdOf(endpoint) {
+      if (!endpoint) return '';
+      if (typeof endpoint === 'string') return endpoint;
+      return endpoint.id || '';
+    }
+
+    function isGatewayIncomingEdge(d) {
+      return nodeIdOf(d.target) === 'gateway';
+    }
+
+    function isGatewayOutgoingEdge(d) {
+      return nodeIdOf(d.source) === 'gateway';
+    }
+
+    function isLogwrapperEdge(d) {
+      const s = nodeIdOf(d.source);
+      const t = nodeIdOf(d.target);
+      return s === 'logwrapper' || t === 'logwrapper';
+    }
+
+    function nodeColorById(id) {
+      if (!id) return '#94a3b8';
+      if (id === 'run_robot') return '#9333ea';
+      if (id === 'gateway') return '#06b6d4';
+      if (id.startsWith('arduino:')) return '#2dd4bf';
+      if (id.startsWith('file:modules/')) {
+        const parts = id.split('/');
+        if (parts.length > 1) return moduleColors[parts[1]] || '#22c55e';
+      }
+      return moduleColors[id] || '#22c55e';
+    }
+
+    function colorByEdge(d) {
+      const base = isGatewayIncomingEdge(d)
+        ? gatewayIncomingColor
+        : (isGatewayOutgoingEdge(d)
+          ? gatewayOutgoingColor
+          : (isLogwrapperEdge(d) ? logwrapperEdgeColor : colorByType(d.type)));
+
+      // Aynı edge tipinde bile bağlantı hedef/kaynağına göre hafif ton farkı oluştur.
+      const sourceId = nodeIdOf(d.source);
+      const targetId = nodeIdOf(d.target);
+      const tintRef = isGatewayOutgoingEdge(d)
+        ? nodeColorById(targetId)
+        : (isGatewayIncomingEdge(d) ? nodeColorById(sourceId) : nodeColorById(targetId));
+
+      return d3.interpolateRgb(base, tintRef)(0.34);
+    }
+
+    function edgeAlphaFor(d) {
+      if (isGatewayIncomingEdge(d)) return 0.92;
+      if (isGatewayOutgoingEdge(d)) return 0.84;
+      if (isLogwrapperEdge(d)) return 0.82;
+      if (['http', 'serial', 'uart', 'event', 'llm'].includes(d.type)) return 0.68;
+      if (d.type === 'component') return 0.52;
+      return 0.4;
+    }
+
+    function edgeStrokeColor(d) {
+      const base = d3.color(colorByEdge(d));
+      if (!base) return colorByEdge(d);
+      base.opacity = edgeAlphaFor(d);
+      return base.formatRgb();
+    }
+
+    function markerIdForEdge(d) {
+      if (isGatewayIncomingEdge(d)) return 'arrow-to-gateway-in';
+      if (isGatewayOutgoingEdge(d)) return 'arrow-to-gateway-out';
+      return `arrow-${d.type || 'mount'}`;
+    }
 
     // Sentetik modül yapısı (DryCode standartları)
     const MODULES = [
-      "animate", "arduino_serial", "autonomy", "calibration", "camera", "config_center", "diagnostics", "gateway", "hardware", "interactions", "logwrapper", "mutagen", "neopixel", "notifier", "ollama", "ota", "piservo", "scheduler", "speak", "speech", "state_manager", "telemetry", "vision_bridge", "wiki_rag"
+      "animate", "arduino", "arduino_serial", "autonomy", "calibration", "camera", "config_center", "diagnostics", "hardware", "interactions", "logwrapper", "mutagen", "neopixel", "notifier", "oled_faces", "ollama", "ota", "piservo", "scheduler", "speak", "speech", "state_manager", "telemetry", "vision_bridge", "wakeword", "wiki_rag"
     ];
+
+    function buildDistinctModuleColors(modules) {
+      const colors = {};
+      const lightnessSteps = [56, 62, 50, 58];
+      const saturationSteps = [80, 74, 86, 78];
+      const baseHue = 20;
+      const goldenAngle = 137.508;
+
+      modules.forEach((mod, idx) => {
+        const hue = Math.round((baseHue + idx * goldenAngle) % 360);
+        const sat = saturationSteps[idx % saturationSteps.length];
+        const light = lightnessSteps[idx % lightnessSteps.length];
+        colors[mod] = `hsl(${hue} ${sat}% ${light}%)`;
+      });
+
+      return { ...colors, ...MODULE_COLOR_OVERRIDES };
+    }
+
+    moduleColors = buildDistinctModuleColors(MODULES);
+
     function camel(s) { return s.split('_').map(x => x.charAt(0).toUpperCase() + x.slice(1)).join(''); }
     function moduleFiles(mod) {
+      if (mod === 'arduino') return [];
       const base = `modules/${mod}`;
       const list = [
         `${base}/README.md`,
@@ -378,6 +547,25 @@
       });
     }
 
+    function renderEdgeLegend() {
+      const container = byId('edgeLegendList');
+      container.innerHTML = '';
+
+      EDGE_COLOR_KEYS.forEach((key) => {
+        const color = key === 'gateway_in'
+          ? gatewayIncomingColor
+          : (key === 'gateway_out' ? gatewayOutgoingColor : (edgeColors[key] || '#64748b'));
+        const pill = document.createElement('span');
+        pill.className = 'pill interactive';
+        pill.style.color = color;
+        pill.style.borderColor = color;
+        pill.textContent = EDGE_COLOR_LABELS[key];
+        pill.title = 'Bağlantı rengini değiştirmek için tıkla';
+        pill.onclick = () => openEdgeColorPicker(key);
+        container.appendChild(pill);
+      });
+    }
+
     let activeColorModule = null;
     function openColorPicker(mod) {
       activeColorModule = mod;
@@ -398,7 +586,112 @@
       }
     };
 
+    let activeEdgeColorKey = null;
+    function openEdgeColorPicker(edgeKey) {
+      activeEdgeColorKey = edgeKey;
+      const picker = byId('edgeColorPicker');
+      picker.value = edgeKey === 'gateway_in'
+        ? gatewayIncomingColor
+        : (edgeKey === 'gateway_out' ? gatewayOutgoingColor : (edgeColors[edgeKey] || '#64748b'));
+      picker.click();
+    }
+
+    function refreshEdgeColors() {
+      const g = scene || svg;
+      g.selectAll('line')
+        .attr('stroke', d => edgeStrokeColor(d))
+        .attr('marker-end', d => `url(#${markerIdForEdge(d)})`);
+    }
+
+    byId('edgeColorPicker').oninput = (e) => {
+      if (!activeEdgeColorKey) return;
+      const newColor = e.target.value;
+      if (activeEdgeColorKey === 'gateway_in') gatewayIncomingColor = newColor;
+      else if (activeEdgeColorKey === 'gateway_out') gatewayOutgoingColor = newColor;
+      else edgeColors[activeEdgeColorKey] = newColor;
+
+      renderEdgeLegend();
+      refreshEdgeColors();
+    };
+
     // Graph helpers
+    function buildModuleAdjacency(modIds) {
+      const moduleSet = new Set(modIds);
+      const adjacency = new Map(modIds.map((id) => [id, new Set()]));
+
+      for (const l of links) {
+        const s = nodeIdOf(l.source);
+        const t = nodeIdOf(l.target);
+        if (!moduleSet.has(s) || !moduleSet.has(t) || s === t) continue;
+        adjacency.get(s).add(t);
+        adjacency.get(t).add(s);
+      }
+      return adjacency;
+    }
+
+    function circularIndexDistance(a, b, n) {
+      const d = Math.abs(a - b);
+      return Math.min(d, n - d);
+    }
+
+    function scoreModuleOrder(order, adjacency) {
+      const pos = new Map(order.map((id, i) => [id, i]));
+      const n = order.length;
+      let score = 0;
+
+      for (const id of order) {
+        const neighbors = adjacency.get(id) || new Set();
+        for (const other of neighbors) {
+          // Her bağlantıyı tek kez say.
+          if (id < other) score += circularIndexDistance(pos.get(id), pos.get(other), n);
+        }
+      }
+      return score;
+    }
+
+    function optimizeModuleOrderForSeparation(modIds) {
+      if (modIds.length <= 3) return [...modIds];
+
+      const adjacency = buildModuleAdjacency(modIds);
+      let order = [...modIds].sort((a, b) => {
+        const da = (adjacency.get(a) || new Set()).size;
+        const db = (adjacency.get(b) || new Set()).size;
+        if (db !== da) return db - da;
+        return a.localeCompare(b);
+      });
+
+      let best = [...order];
+      let bestScore = scoreModuleOrder(best, adjacency);
+      let improved = true;
+      let passes = 0;
+
+      // Küçük N için deterministik swap-iyileştirme: bağlı modülleri halkada uzaklaştır.
+      while (improved && passes < 7) {
+        improved = false;
+        passes += 1;
+
+        for (let i = 0; i < order.length - 1; i += 1) {
+          for (let j = i + 1; j < order.length; j += 1) {
+            const candidate = [...order];
+            const tmp = candidate[i];
+            candidate[i] = candidate[j];
+            candidate[j] = tmp;
+
+            const score = scoreModuleOrder(candidate, adjacency);
+            if (score > bestScore) {
+              best = candidate;
+              bestScore = score;
+              improved = true;
+            }
+          }
+        }
+
+        order = [...best];
+      }
+
+      return best;
+    }
+
     function resetSimulation() {
       svg.selectAll('*').remove();
       const width = svg.node().clientWidth || 800;
@@ -427,6 +720,7 @@
       const radiusOfNode = (n) => {
         if (n.kind === 'entry') return 0;
         if (n.kind === 'service') return 100;
+        if (n.kind === 'submodule') return 300;
         if (n.kind === 'module' && String(n.id).startsWith('file:')) return 350;
         if (n.kind === 'module') return 250;
         return 300;
@@ -437,25 +731,53 @@
         .force('link', d3.forceLink(links).id(d => d.id).distance(linkDistance).strength(linkStrength))
         .force('center', d3.forceCenter(width / 2, height / 2).strength(centerMode ? 0 : 0.05)) // Merkez modunda center force kapat
         .force('radial', d3.forceRadial(radiusOfNode, width / 2, height / 2).strength(centerMode ? 0 : 0.8))
-        .force('collision', d3.forceCollide().radius(d => String(d.id).startsWith('file:') ? 12 : (d.kind === 'module' ? 35 : 30)).iterations(2));
+        .force('collision', d3.forceCollide().radius(d => String(d.id).startsWith('file:') ? 12 : (d.kind === 'submodule' ? 20 : (d.kind === 'module' ? 36 : 30))).iterations(3));
 
       const defs = scene.append('defs');
-      const marker = defs.append('marker')
-        .attr('id', 'arrow')
+      const EDGE_TYPES = ['mount', 'component', 'uart', 'http', 'serial', 'event', 'llm', 'health', 'boot'];
+      EDGE_TYPES.forEach((type) => {
+        defs.append('marker')
+          .attr('id', `arrow-${type}`)
+          .attr('viewBox', '0 0 10 10')
+          .attr('refX', '10').attr('refY', '5')
+          .attr('markerWidth', '6').attr('markerHeight', '6')
+          .attr('orient', 'auto-start-reverse')
+          .append('path').attr('d', 'M 0 0 L 10 5 L 0 10 z').attr('fill', 'context-stroke');
+      });
+
+      defs.append('marker')
+        .attr('id', 'arrow-to-gateway-in')
         .attr('viewBox', '0 0 10 10')
         .attr('refX', '10').attr('refY', '5')
         .attr('markerWidth', '6').attr('markerHeight', '6')
         .attr('orient', 'auto-start-reverse')
-        .append('path').attr('d', 'M 0 0 L 10 5 L 0 10 z').attr('fill', '#94a3b8');
+        .append('path').attr('d', 'M 0 0 L 10 5 L 0 10 z').attr('fill', 'context-stroke');
+
+      defs.append('marker')
+        .attr('id', 'arrow-to-gateway-out')
+        .attr('viewBox', '0 0 10 10')
+        .attr('refX', '10').attr('refY', '5')
+        .attr('markerWidth', '6').attr('markerHeight', '6')
+        .attr('orient', 'auto-start-reverse')
+        .append('path').attr('d', 'M 0 0 L 10 5 L 0 10 z').attr('fill', 'context-stroke');
 
       const link = scene.append('g')
         .selectAll('line')
         .data(links)
         .enter().append('line')
-        .attr('stroke-width', d => (['http', 'serial', 'event', 'llm'].includes(d.type) ? 2.5 : 1.0)) // İşlevsel bağlar daha kalın
-        .attr('stroke', d => colorByType(d.type))
-        .attr('opacity', d => (['http', 'serial', 'event', 'llm'].includes(d.type) ? 1.0 : 0.4)) // İşlevsel bağlar daha belirgin, yapısal bağlar silik
-        .attr('marker-end', 'url(#arrow)');
+        .attr('stroke-width', d => {
+          if (isGatewayIncomingEdge(d)) return 3.4;
+          if (isGatewayOutgoingEdge(d)) return 3.0;
+          if (['http', 'serial', 'uart', 'event', 'llm'].includes(d.type)) return 2.5;
+          if (d.type === 'component') return 1.8;
+          return 1.0;
+        })
+        .attr('stroke', d => edgeStrokeColor(d))
+        .attr('stroke-dasharray', d => (d.type === 'uart' ? '8,3' : (d.type === 'serial' ? '4,3' : null)))
+        .attr('stroke-linecap', 'round')
+        .attr('stroke-linejoin', 'round')
+        .style('mix-blend-mode', 'screen')
+        .attr('marker-end', d => `url(#${markerIdForEdge(d)})`);
 
       const node = scene.append('g').selectAll('g')
         .data(nodes)
@@ -480,15 +802,15 @@
           }
         });
 
-      node.append('circle').attr('r', d => String(d.id).startsWith('file:') ? 8 : 18)
+      node.append('circle').attr('r', d => String(d.id).startsWith('file:') ? 8 : (d.kind === 'submodule' ? 10 : 18))
         .attr('fill', d => colorByKind(d))
         .attr('stroke', '#0b1220').attr('stroke-width', 2)
         .append('title').text(d => d.label);
 
       node.append('text')
-        .attr('x', d => String(d.id).startsWith('file:') ? 12 : 22)
+        .attr('x', d => String(d.id).startsWith('file:') ? 12 : (d.kind === 'submodule' ? 14 : 22))
         .attr('y', 5)
-        .attr('fill', '#e2e8f0').attr('font-size', d => String(d.id).startsWith('file:') ? 10 : 12)
+        .attr('fill', '#e2e8f0').attr('font-size', d => String(d.id).startsWith('file:') ? 10 : (d.kind === 'submodule' ? 10 : 12))
         .text(d => d.label);
 
       sim.on('tick', () => {
@@ -506,31 +828,16 @@
       const cx = width / 2, cy = height / 2;
 
       // 1. Gateway ve Entry Merkezde
-      const gateway = nodes.find(n => n.id === 'gw_service');
+      const gateway = nodes.find(n => n.id === 'gateway');
       const entry = nodes.find(n => n.kind === 'entry');
       if (gateway) { gateway.fx = cx; gateway.fy = cy; }
       if (entry) { entry.fx = cx; entry.fy = cy - 80; }
 
-      // 2. Modülleri Halka Diz (Akıllı Sıralama)
-      const mods = nodes.filter(n => n.kind === 'module' && !String(n.id).startsWith('file:'));
-
-      // İlişkili modülleri yan yana getiren özel sıralama
-      const SMART_ORDER = [
-        "wiki_rag", "ollama", "speak", "speech", "interactions", "neopixel", // AI & Interaction Kümesi
-        "animate", "arduino_serial", "vision_bridge", // Serial/Donanım Kümesi
-        "camera", "piservo", "hardware",
-        "gateway", "diagnostics", "telemetry", "logwrapper", "state_manager", "config_center",
-        "calibration", "mutagen", "notifier", "ota", "scheduler"
-      ];
-
-      mods.sort((a, b) => {
-        const ia = SMART_ORDER.indexOf(a.id);
-        const ib = SMART_ORDER.indexOf(b.id);
-        if (ia !== -1 && ib !== -1) return ia - ib;
-        if (ia !== -1) return -1;
-        if (ib !== -1) return 1;
-        return a.label.localeCompare(b.label);
-      });
+      // 2. Modülleri Halka Diz (bağlantılı modüller birbirinden uzak olsun)
+      const mods = nodes.filter(n => n.kind === 'module' && !String(n.id).startsWith('file:') && n.id !== 'arduino');
+      const optimizedOrder = optimizeModuleOrderForSeparation(mods.map((m) => m.id));
+      const rank = new Map(optimizedOrder.map((id, i) => [id, i]));
+      mods.sort((a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999));
 
       const R_MOD = 220;
       mods.forEach((m, i) => {
@@ -539,6 +846,52 @@
         m.fy = cy + R_MOD * Math.sin(ang);
         m.angle = ang; // Sakla
       });
+
+      function swapModulePlacement(aId, bId) {
+        const a = mods.find((m) => m.id === aId);
+        const b = mods.find((m) => m.id === bId);
+        if (!a || !b) return;
+        const tx = a.fx;
+        const ty = a.fy;
+        const ta = a.angle;
+        a.fx = b.fx;
+        a.fy = b.fy;
+        a.angle = b.angle;
+        b.fx = tx;
+        b.fy = ty;
+        b.angle = ta;
+      }
+
+      // İstenen manuel düzenler.
+      swapModulePlacement('neopixel', 'ollama');
+      swapModulePlacement('arduino_serial', 'hardware');
+
+      // Arduino'yu arduino_serial düğümünün altına yerleştir.
+      const arduinoNode = nodes.find(n => n.id === 'arduino');
+      const arduinoSerialNode = nodes.find(n => n.id === 'arduino_serial');
+      if (arduinoNode) {
+        if (arduinoSerialNode && Number.isFinite(arduinoSerialNode.fx) && Number.isFinite(arduinoSerialNode.fy)) {
+          arduinoNode.fx = arduinoSerialNode.fx + 350;
+          arduinoNode.fy = arduinoSerialNode.fy + 390;
+          arduinoNode.angle = arduinoSerialNode.angle ?? 0;
+        } else {
+          // Fallback: sağ tarafta ayrı kümelenme
+          arduinoNode.fx = cx + R_MOD + 480;
+          arduinoNode.fy = cy + 20;
+          arduinoNode.angle = 0;
+        }
+      }
+
+      // Arduino alt modülleri (lcd/buzzer/nrf vb.) arduino düğümü etrafında yerleştirilir.
+      const submods = nodes.filter(n => n.kind === 'submodule' && String(n.id).startsWith('arduino:'));
+      if (arduinoNode && submods.length > 0) {
+        const ringR = 92;
+        submods.forEach((n, idx) => {
+          const ang = (idx / submods.length) * 2 * Math.PI;
+          n.fx = arduinoNode.fx + ringR * Math.cos(ang);
+          n.fy = arduinoNode.fy + ringR * Math.sin(ang);
+        });
+      }
 
       // 3. Dosyaları Modülden Dışarı Doğru Işın Gibi Diz (Star/Spoke)
       mods.forEach(m => {
@@ -549,8 +902,9 @@
         files.sort((a, b) => a.label.localeCompare(b.label));
 
         files.forEach((f, j) => {
-          // Modülden dışarı doğru düz çizgi
-          const dist = R_MOD + 60 + (j * 30); // Her dosya için mesafe artır
+          // Pi modülleri için önceki düzen: modülden dışarı tek hat.
+          // Arduino'nun kendi alt-modül kümesi ayrı mantıkla yerleşiyor.
+          const dist = R_MOD + 60 + (j * 30);
           f.fx = cx + dist * Math.cos(m.angle);
           f.fy = cy + dist * Math.sin(m.angle);
         });
@@ -605,20 +959,41 @@
       nodes.length = 0; links.length = 0;
       // Core nodes
       nodes.push({ id: 'run_robot', label: 'run_robot.py', kind: 'entry' });
-      nodes.push({ id: 'gw_service', label: 'Gateway', kind: 'service' });
-      links.push({ source: 'run_robot', target: 'gw_service', type: 'boot' });
+      nodes.push({ id: 'gateway', label: 'Gateway', kind: 'service' });
+      links.push({ source: 'run_robot', target: 'gateway', type: 'boot' });
 
       // Modules (statik liste)
       const modules = MODULES;
       const moduleNodes = [];
       for (const m of modules) {
         moduleNodes.push({ id: m, label: m, kind: 'module' });
-        links.push({ source: 'gw_service', target: m, type: 'mount' });
+        links.push({ source: 'gateway', target: m, type: 'mount' });
       }
       nodes.push(...moduleNodes);
 
+      const arduinoSubNodes = ARDUINO_SUBMODULES.map((name) => ({
+        id: `arduino:${name}`,
+        label: name,
+        kind: 'submodule',
+      }));
+      nodes.push(...arduinoSubNodes);
+      for (const n of ARDUINO_SUBMODULES) {
+        links.push({ source: 'arduino', target: `arduino:${n}`, type: 'component' });
+      }
+
+      // Serial'den ayrı bus oku: arduino_serial -> arduino
+      links.push({ source: 'arduino_serial', target: 'arduino', type: 'uart' });
+
+      const nodeIdSet = new Set(nodes.map(n => n.id));
+
         // Heuristic edges (mirrors server wiring)
-        function addEdge(s, t, type) { links.push({ source: s, target: t, type }); }
+        function addEdge(s, t, type) {
+          if (!nodeIdSet.has(s) || !nodeIdSet.has(t)) {
+            console.warn('Skipping edge with unknown endpoint:', s, '->', t);
+            return;
+          }
+          links.push({ source: s, target: t, type });
+        }
 
         // Try to load edges from edges.json (generated by tools/graph-explorer/generate_edges.py)
         // Fallback to inline EDGES if fetch fails.
@@ -640,7 +1015,7 @@
               { source: 'speech', target: 'ollama', type: 'http' },
               { source: 'ollama', target: 'speak', type: 'http' },
               { source: 'wiki_rag', target: 'ollama', type: 'llm' },
-              { source: 'diagnostics', target: 'gw_service', type: 'health' },
+              { source: 'diagnostics', target: 'gateway', type: 'health' },
               { source: 'autonomy', target: 'ollama', type: 'llm' },
               { source: 'neopixel', target: 'arduino_serial', type: 'serial' },
               { source: 'vision_bridge', target: 'ollama', type: 'llm' },
@@ -651,11 +1026,16 @@
           for (const e of edges) addEdge(e.source, e.target, e.type || 'http');
         }
 
-        // Kick off load
-        loadEdgesAndAdd();
+        // Load dynamic edges before simulation init.
+        await loadEdgesAndAdd();
+
+      baseNodes = nodes.map(n => ({ ...n }));
+      baseLinks = links.map(l => ({ ...l }));
+      updateShowAllButton();
 
       resetSimulation();
       renderModuleLegend(); // Render legend initially
+      renderEdgeLegend();
     }
 
     // Başlangıç: Modülleri çember üzerinde başlangıç noktalarına koy (sabitleme yok)
@@ -664,6 +1044,9 @@
       const height = svg.node().clientHeight || 600;
       const cx = width / 2, cy = height / 2;
       const mods = nodes.filter(n => n.kind === 'module' && !n.id.startsWith('file:'));
+      const optimizedOrder = optimizeModuleOrderForSeparation(mods.map((m) => m.id));
+      const rank = new Map(optimizedOrder.map((id, i) => [id, i]));
+      mods.sort((a, b) => (rank.get(a.id) ?? 999) - (rank.get(b.id) ?? 999));
       const R = 250; // Geniş çember
       const N = Math.max(1, mods.length);
       mods.forEach((m, i) => {
@@ -717,20 +1100,47 @@
       }
     }
 
+    function updateShowAllButton() {
+      const btn = byId('btnShowAll');
+      btn.textContent = allExpanded ? 'Gizle' : 'Hepsini Göster';
+    }
+
+    function restoreBaseGraph() {
+      nodes = baseNodes.map(n => ({ ...n }));
+      links = baseLinks.map(l => ({ ...l }));
+      allExpanded = false;
+      updateShowAllButton();
+      resetSimulation();
+      if (centerMode) applyCenterLayout();
+    }
+
     // Show all files (careful!) – limited expansion by important folders
-    async function showAll() {
-      // Modülleri çember üzerinde seed et ve tüm dosyaları çok halkalı yerleştir
+    async function toggleShowAll() {
+      if (allExpanded) {
+        restoreBaseGraph();
+        return;
+      }
+
+      // Modülleri çember üzerinde seed et ve tüm dosyaları çok halkalı yerleştir.
       seedModulesCircle();
       const mods = nodes.filter(n => n.kind === 'module' && !n.id.startsWith('file:'));
       for (const m of mods) {
         const near = moduleFiles(m.id).map(p => ({ path: p, kind: p.endsWith('/') ? 'dir' : 'file' }));
         const { created, newLinks } = expandFilesAround(m, near);
-        nodes.push(...created); links.push(...newLinks);
+        nodes.push(...created);
+        links.push(...newLinks);
       }
+
+      allExpanded = true;
+      updateShowAllButton();
       resetSimulation();
 
-      // Biraz bekleyip grafiği ekrana sığdır
-      setTimeout(() => zoomToFit(30), 900);
+      if (centerMode) {
+        applyCenterLayout();
+      } else {
+        // Biraz bekleyip grafiği ekrana sığdır.
+        setTimeout(() => zoomToFit(30), 900);
+      }
     }
 
     // Ekrana sığdırma (zoom/pan ayarı)
@@ -754,7 +1164,7 @@
     // İlk yüklemede sentetik grafiği kur
     (async () => { await buildGraphFromFs([]); })();
 
-    byId('btnShowAll').onclick = showAll;
+    byId('btnShowAll').onclick = toggleShowAll;
     byId('btnPin').onclick = (e) => { pinMode = !pinMode; e.currentTarget.classList.toggle('active', pinMode); };
     byId('btnCenterMode').onclick = (e) => {
       centerMode = !centerMode;
@@ -762,7 +1172,11 @@
       if (centerMode) applyCenterLayout();
       else releaseCenterLayout();
     };
-    byId('btnReset').onclick = () => resetSimulation();
+    byId('btnReset').onclick = () => {
+      resetSimulation();
+      if (centerMode) applyCenterLayout();
+      if (allExpanded && !centerMode) setTimeout(() => zoomToFit(30), 500);
+    };
     byId('btnHelp').onclick = () => byId('modalHelp').style.display = 'flex';
   </script>
 </body>

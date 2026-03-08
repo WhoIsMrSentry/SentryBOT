@@ -42,7 +42,7 @@ robot:
   host: "localhost"  # Change to Robot IP when running remotely
 
 ollama:
-  endpoint: "http://localhost:11434/api/generate"
+  endpoint: "http://localhost:11435/api/generate"
   model: "llama3"
 
 speak:

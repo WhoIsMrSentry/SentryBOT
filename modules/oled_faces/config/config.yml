@@ -1,0 +1,68 @@
+server:
+  host: 0.0.0.0
+  port: 8102
+
+enabled: true
+poll_interval_s: 0.7
+
+display:
+  enabled: true
+  bus: 1
+  address: 60   # 0x3C
+  width: 128
+  height: 64
+  contrast: 143 # 0x8F
+  assets_dir: modules/oled_faces/assets
+
+boot:
+  mode: logo
+  name: logo
+
+idle_bitmap: normal
+fallback_unknown: alert
+
+state_map:
+  idle: { mode: bitmap, name: normal }
+  boot: { mode: logo, name: logo }
+  listening: { mode: animation, name: scan }
+  thinking: { mode: bitmap, name: focused }
+  speaking: { mode: animation, name: emotive }
+  sleeping: { mode: animation, name: sleep }
+  alert: { mode: animation, name: alert }
+  low_battery: { mode: bitmap, name: battery_low }
+  charging: { mode: bitmap, name: battery }
+  charged: { mode: bitmap, name: battery_full }
+
+# interactions + inferred emotion mappings
+event_map:
+  wakeword.detected: { mode: animation, name: scan }
+  speech.start: { mode: animation, name: emotive }
+  speech.end: { mode: bitmap, name: normal }
+  vision.person: { mode: bitmap, name: focused }
+  autonomy.calm: { mode: bitmap, name: normal }
+  autonomy.excited: { mode: bitmap, name: excited }
+  autonomy.angry: { mode: bitmap, name: furious }
+  error: { mode: bitmap, name: warning }
+  warning: { mode: bitmap, name: alert }
+  owner.scan: { mode: bitmap, name: look_left }
+  owner.rfid: { mode: animation, name: wink }
+  owner.temp_granted: { mode: bitmap, name: happy }
+  owner.temp_revoked: { mode: bitmap, name: worried }
+  owner.locked: { mode: bitmap, name: scared }
+  emotion:happy: { mode: bitmap, name: happy }
+  emotion:sad: { mode: bitmap, name: sad }
+  emotion:surprised: { mode: bitmap, name: surprised }
+  emotion:sleepy: { mode: bitmap, name: sleepy }
+  emotion:confused: { mode: bitmap, name: disoriented }
+  emotion:angry: { mode: bitmap, name: angry }
+  emotion:furious: { mode: bitmap, name: furious }
+  emotion:bored: { mode: bitmap, name: bored }
+  emotion:despair: { mode: bitmap, name: despair }
+  emotion:worried: { mode: bitmap, name: worried }
+  emotion:scared: { mode: bitmap, name: scared }
+  emotion:focused: { mode: bitmap, name: focused }
+  emotion:excited: { mode: bitmap, name: excited }
+
+arduino_event_map:
+  rfid: { mode: animation, name: wink }
+  neopixel_request: { mode: bitmap, name: mode }

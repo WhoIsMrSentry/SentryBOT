@@ -21,9 +21,13 @@ def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:
 
 
 def _include_vision_bridge(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.vision_bridge.config_loader import load_config as load_vision_cfg  # type: ignore
+    from modules.vision_bridge.services.processor import VisionProcessor  # type: ignore
     from modules.vision_bridge.api.router import get_router as get_vision_router  # type: ignore
-    app.include_router(get_vision_router(started.get("arduino")))
-    started["vision_bridge"] = True
+    vcfg = load_vision_cfg(None)
+    processor = VisionProcessor(vcfg)
+    app.include_router(get_vision_router(processor, started.get("arduino")))
+    started["vision_bridge"] = processor
 
 
 def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
@@ -80,6 +84,16 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
     started["speech"] = svc
     app.include_router(get_speech_router(svc))
     logger.info("module speech mounted")
+
+
+def _include_wakeword(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.wakeword.xWakewordService import WakewordService  # type: ignore
+    from modules.wakeword.api import get_router as get_wakeword_router  # type: ignore
+    svc = WakewordService()
+    svc.start_background()
+    started["wakeword"] = svc
+    app.include_router(get_wakeword_router(svc))
+    logger.info("module wakeword mounted")
 
 
 def _include_ollama(app: FastAPI, started: Dict[str, object]) -> None:
@@ -142,7 +156,10 @@ def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
     ardu = started.get("arduino")
     anim = xAnimateService(serial=ardu) if ardu is not None else xAnimateService()
     if hasattr(anim, "start"):
-        anim.start()
+        try:
+            anim.start()
+        except Exception as exc:
+            logger.warning("animate service failed to start, running degraded: %s", exc)
     started["animate"] = anim
     app.include_router(get_anim_router(anim))
     logger.info("module animate mounted")
@@ -197,6 +214,31 @@ def _include_notifier(app: FastAPI, started: Dict[str, object]) -> None:
     logger.info("module notifier mounted")
 
 
+def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.oled_faces.xOledFacesService import xOledFacesService  # type: ignore
+    from modules.oled_faces.api.router import get_router as get_oled_faces_router  # type: ignore
+
+    state_store = started.get("state_manager")
+    interactions = started.get("interactions")
+
+    svc = xOledFacesService(state_store=state_store)
+
+    if interactions is not None and hasattr(interactions, "register_event_handler"):
+        try:
+            interactions.register_event_handler(svc.on_interaction_event)
+        except Exception as exc:
+            logger.warning("oled_faces interactions handler attach failed: %s", exc)
+
+    try:
+        svc.start()
+    except Exception as exc:
+        logger.warning("oled_faces failed to start, running degraded: %s", exc)
+
+    started["oled_faces"] = svc
+    app.include_router(get_oled_faces_router(svc))
+    logger.info("module oled_faces mounted")
+
+
 def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
     """Start and wire modules according to cfg.include and return started dict."""
     started: Dict[str, object] = {}
@@ -221,6 +263,8 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         _try(lambda: _include_speak(app, started), "speak")
     if include.get("speech"):
         _try(lambda: _include_speech(app, started), "speech")
+    if include.get("wakeword"):
+        _try(lambda: _include_wakeword(app, started), "wakeword")
     if include.get("ollama"):
         _try(lambda: _include_ollama(app, started), "ollama")
     if include.get("logs"):
@@ -279,6 +323,9 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             app.include_router(get_router(store))
         _try(_mount_state, "state_manager")
 
+    if include.get("oled_faces"):
+        _try(lambda: _include_oled_faces(app, started), "oled_faces")
+
     if include.get("scheduler"):
         _try(lambda: app.include_router(__import__("modules.scheduler.api.router", fromlist=["get_router"]).get_router(
             __import__("modules.scheduler.config_loader", fromlist=["load_config"]).load_config(None)
@@ -299,5 +346,70 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             __import__("modules.config_center.config_loader", fromlist=["load_config"]).load_config(None)
         )), "config_center")
         started["config_center"] = True
+
+    arduino = started.get("arduino")
+    neopixel = started.get("neopixel")
+    if arduino is not None and neopixel is not None and hasattr(arduino, "register_event_handler"):
+        # rate-limited queue to prevent NeoPixel overload from Arduino bursts
+        import threading
+        _np_lock = threading.Lock()
+        _np_queue: list[Dict[str, Any]] = []
+        _np_last_ms = 0
+        _np_min_interval_ms = int(cfg.get("neopixel", {}).get("min_interval_ms", 100))
+        _np_max_queue = int(cfg.get("neopixel", {}).get("max_queue", 32))
+
+        def _enqueue_np(req: Dict[str, Any]) -> None:
+            nonlocal _np_queue
+            with _np_lock:
+                if len(_np_queue) >= _np_max_queue:
+                    # drop oldest to make room
+                    _np_queue.pop(0)
+                _np_queue.append(req)
+
+        def _flush_queue() -> None:
+            nonlocal _np_last_ms
+            now_ms = int(__import__("time").time() * 1000)
+            with _np_lock:
+                if not _np_queue:
+                    return
+                if now_ms - _np_last_ms < _np_min_interval_ms:
+                    return
+                req = _np_queue.pop(0)
+            try:
+                name = str(req.get("name", "")).strip()
+                iterations = int(req.get("iterations", 1) or 1)
+                # clamp iterations
+                if iterations < 1: iterations = 1
+                if iterations > 10: iterations = 10
+                color = None
+                if isinstance(req.get("color"), str):
+                    parts = [p.strip() for p in str(req.get("color")).split(",")]
+                    if len(parts) == 3:
+                        color = (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
+                if name:
+                    neopixel.animate(name=name, iterations=iterations, color=color)
+                elif color is not None:
+                    neopixel.fill(*color)
+            except Exception as exc:
+                logger.debug("neopixel request handling failed during flush: %s", exc)
+            _np_last_ms = int(__import__("time").time() * 1000)
+
+        def _on_arduino_event(msg: Dict[str, Any]) -> None:
+            if not isinstance(msg, dict):
+                return
+            if msg.get("event") != "neopixel_request":
+                return
+            try:
+                # enqueue and attempt a flush
+                _enqueue_np(msg)
+                _flush_queue()
+            except Exception as exc:
+                logger.debug("neopixel request handling failed: %s", exc)
+
+        try:
+            arduino.register_event_handler(_on_arduino_event)
+            logger.info("arduino->neopixel event bridge mounted (rate-limited)")
+        except Exception as exc:
+            logger.warning("arduino->neopixel bridge mount failed: %s", exc)
 
     return started

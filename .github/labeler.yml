@@ -9,6 +9,44 @@
   - changed-files:
       - any-glob-to-any-file: modules/arduino_serial/**
   - head-branch: [".*arduino[_-]?serial.*"]
+"module: arduino":
+  - changed-files:
+      - any-glob-to-any-file: arduino/**
+  - head-branch: [".*arduino.*"]
+"module: arduino/firmware":
+  - changed-files:
+      - any-glob-to-any-file: arduino/firmware/**
+  - head-branch: [".*arduino[_/-]?firmware.*"]
+"module: arduino/firmware/xMain":
+  - changed-files:
+      - any-glob-to-any-file: arduino/firmware/xMain/**
+  - head-branch: [".*xMain.*"]
+"module: arduino/ir":
+  - changed-files:
+      - any-glob-to-any-file: arduino/**/ir*/**
+      - any-glob-to-any-file: arduino/**/*ir*.*
+  - head-branch: [".*\bir\b.*", ".*irmenu.*"]
+"module: arduino/imu":
+  - changed-files:
+      - any-glob-to-any-file: arduino/**/imu/**
+      - any-glob-to-any-file: arduino/**/*imu*.*
+  - head-branch: [".*imu.*"]
+"module: arduino/tools":
+  - changed-files:
+      - any-glob-to-any-file: arduino/tools/**
+  - head-branch: [".*arduino[_/-]?tools.*"]
+
+# Generic repo-area labels for PR classification
+"area: docs":
+  - changed-files:
+      - any-glob-to-any-file: docs/**
+      - any-glob-to-any-file: "**/*.md"
+  - head-branch: [".*docs.*"]
+"area: ci":
+  - changed-files:
+      - any-glob-to-any-file: .github/**
+      - any-glob-to-any-file: ci/**
+  - head-branch: [".*ci.*"]
 "module: calibration":
   - changed-files:
       - any-glob-to-any-file: modules/calibration/**

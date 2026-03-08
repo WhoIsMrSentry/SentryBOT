@@ -25,9 +25,9 @@ class ArduinoDriver:
         return self.svc.hello()
 
     def set_head(self, tilt: float, pan: float) -> Dict[str, Any]:
-        # 6 tilt, 7 pan indexes per firmware README
-        self.svc.set_servo(6, float(tilt))
-        return self.svc.set_servo(7, float(pan))
+        # Current firmware mapping: index 0=pan, 1=tilt.
+        self.svc.set_servo(0, float(pan))
+        return self.svc.set_servo(1, float(tilt))
 
     def estop(self) -> Dict[str, Any]:
         return self.svc.estop()

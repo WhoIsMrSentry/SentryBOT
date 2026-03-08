@@ -8,18 +8,21 @@ include:
   interactions: true
   speak: true
   speech: true
+  wakeword: true
   ollama: true
   wiki_rag: true
   camera: true
   logs: true
   animate: true
   piservo: true
+  autonomy: true
   ota: true
   mutagen: true
   hardware: true
   telemetry: true
   diagnostics: true
   state_manager: true
+  oled_faces: true
   scheduler: true
   notifier: true
   calibration: true
