@@ -6,6 +6,7 @@ Küçük, tek sorumluluklu bileşenler (DryCode). Hem kütüphane hem servis ola
 - TTS motorları: pyttsx3 (offline), Piper (harici ikili/model; offline, doğal)
 - MAX98357A I2S amplifikatör üzerinden ses çıkışı (ALSA cihazı)
 - Harici ses çalma: base64 WAV veri oynatma
+- Konuşma sırasında canlılık senkronu: `/interactions/event` ve `/interactions/effect` ile LED tepkisi
 - Temiz API: `/speak/say` (TTS) ve `/speak/play` (codec + base64)
 - Modüler yapı: TTS, Player, Decoder ayrık ve test edilebilir
 
@@ -59,7 +60,31 @@ tts:
 		noise_scale: null
 		noise_w: null
 
+liveliness:
+	enabled: true
+	interactions_base_url: http://localhost:8080/interactions
+	speech_effect:
+		name: PULSE
+		tone_effect_map:
+			fast: COMET
+			neutral: PULSE
+			calm: BREATHE
+			tired: THEATER_CHASE
+		min_duration_ms: 400
+		max_duration_ms: 7000
+		chars_per_second: 16
+		force: false
+
 ```
+
+`liveliness.enabled: true` iken `speak` akışı otomatik olarak:
+- konuşma başında `speech.start` event gönderir,
+- metin uzunluğu ve tone bilgisine göre efekt süresi hesaplayıp `/interactions/effect` tetikler,
+- konuşma bitince `speech.end` event gönderir.
+
+`tone_effect_map` sayesinde konuşma tonu (`rate`/`volume`) farklı efektlere eşlenebilir.
+`emphasis_effect_map` ile `!` ve `?` gibi vurgu işaretleri için kısa ek efektler gönderilir.
+`rhythm` bloğu ile metin uzunluğuna göre beat sayısı hesaplanıp mikro efekt vuruşları üretilir.
 
 ## Donanım ve Kurulum Notları
 - MAX98357A I2S DAC ALSA’da bir çıkış cihayı olarak görünmelidir.
