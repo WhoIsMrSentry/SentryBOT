@@ -1,0 +1,18 @@
+actions:
+  - name: LOOK_AROUND
+    weight: 5
+    min_interval_s: 6
+  - name: BLINK
+    weight: 4
+    min_interval_s: 5
+  - name: STRETCH
+    weight: 2
+    min_interval_s: 14
+  - name: SIGH
+    weight: 2
+    min_interval_s: 14
+    emotion_hint: tired
+  - name: MONOLOGUE
+    weight: 1
+    min_interval_s: 28
+    emotion_hint: neutral

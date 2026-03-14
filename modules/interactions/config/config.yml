@@ -20,6 +20,13 @@ hardware:
 
 tick_interval_ms: 800
 
+quiet_hours:
+  enabled: true
+  start: "23:00"
+  end: "07:00"
+  suppress_effects: true
+  allow_events: ["error", "warning", "owner.locked"]
+
 thresholds:
   cpu_temp: { warm: 65, hot: 75, hysteresis: 3 }
   cpu_load: { high: 0.9, window_s: 60 }
@@ -31,6 +38,11 @@ defaults:
     base: { name: BREATHE, color: "#30E3CA", speed: slow }
 
 rules:
+  - id: quiet_hours_idle
+    when: { quiet_hours_active: true }
+    action: { base: { name: BREATHE, color: "#08131A", speed: slow } }
+    priority: high
+
   - id: cpu_hot
     when: { cpu_temp_gte: 75 }
     action: { base: { name: BREATHE, color: "#FF0000", speed: slow } }

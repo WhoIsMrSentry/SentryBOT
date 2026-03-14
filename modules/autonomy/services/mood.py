@@ -49,5 +49,25 @@ class MoodManager:
             return "tired"
         return "neutral"
 
+    def get_body_language_profile(self):
+        emotion = self.get_dominant_emotion()
+        profiles = (
+            self.config.get("defaults", {})
+            .get("body_language", {})
+            .get("profiles", {})
+        )
+        profile = profiles.get(emotion) if isinstance(profiles, dict) else None
+        if isinstance(profile, dict):
+            return profile
+        fallback = {
+            "joy": {"pan_delta": 6, "tilt_delta": 4, "event": "autonomy.joy"},
+            "curiosity": {"pan_delta": 8, "tilt_delta": 3, "event": "autonomy.curious"},
+            "fear": {"pan_delta": 10, "tilt_delta": 6, "event": "autonomy.alert"},
+            "tired": {"pan_delta": 2, "tilt_delta": 2, "event": "autonomy.tired"},
+            "sadness": {"pan_delta": 3, "tilt_delta": 5, "event": "autonomy.sad"},
+            "neutral": {"pan_delta": 4, "tilt_delta": 3, "event": "autonomy.neutral"},
+        }
+        return fallback.get(emotion, fallback["neutral"])
+
     def __getitem__(self, key):
         return self.state.get(key)
