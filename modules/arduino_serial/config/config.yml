@@ -6,9 +6,13 @@ write_timeout: 0.1
 reconnect_sec: 2.0
 heartbeat_ms: 100
 auto_heartbeat: true
+# Request/retry tuning (milliseconds for timeouts where noted)
+request_max_retries: 0    # number of additional retries after first attempt
+request_timeout_ms: 1000 # default timeout for requests (ms) if not provided
 telemetry:
   enabled: false
   interval_ms: 100
+  endpoint: null  # optional HTTP endpoint to POST telemetry events, e.g. http://localhost:8090/telemetry/events
 log_level: INFO
 rfid:
   allowed_uids: []
