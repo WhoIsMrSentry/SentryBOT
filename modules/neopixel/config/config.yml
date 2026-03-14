@@ -9,6 +9,9 @@ hardware:
   backend: pi
   device: "/dev/spidev0.0"
   num_leds: 30
+  segments:
+    - { name: jewel, start: 0, count: 7 }
+    - { name: stick, start: 7, count: 23 }
   speed_khz: 800
   ws2812_spi_khz: 2400
   order: "GRB"  # GRB|RGB|BRG
@@ -30,3 +33,17 @@ defaults:
     b: 0
     wait: 0.05
     cycles: 10
+
+presets:
+  owner_welcome:
+    jewel: { effect: "PULSE", color: "#00AAFF" }
+    stick: { color: "#104070" }
+  calm_idle:
+    jewel: { color: "#2A6A8A" }
+    stick: { color: "#102030" }
+  curious_scan:
+    jewel: { effect: "TWINKLE", color: "#30E3CA" }
+    stick: { color: "#103838" }
+
+presets_meta:
+  version: 1
