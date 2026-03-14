@@ -58,6 +58,14 @@ rules:
     priority: high
     cooldown_ms: 1000
 
+  - id: speech_start_cute
+    when: { event: speech.start }
+    # Play a visual effect and request a 'cute' sound from Arduino via an event payload.
+    action:
+      effect: { name: RAINBOW_CYCLE, duration_ms: 1000 }
+      arduino: { cute: happy }
+    priority: high
+    cooldown_ms: 1000
   - id: speech_end
     when: { event: speech.end }
     action: { effect: { name: COMET, duration_ms: 600 } }

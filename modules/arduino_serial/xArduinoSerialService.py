@@ -7,6 +7,10 @@ import os
 import logging
 from queue import Queue, Empty
 from typing import Any, Dict, Optional, Callable, List
+try:
+    import requests
+except Exception:
+    requests = None
 
 from .config_loader import load_config
 from .contract import (
@@ -165,33 +169,54 @@ class xArduinoSerialService:
         self._metrics["tx_count"] += 1
 
     def request(self, obj: Dict[str, Any], timeout: float = 1.0) -> Dict[str, Any]:
-        self.send(obj)
-        t0 = time.time()
+        # Support config-driven retries and default timeout
+        max_retries = int(self.cfg.get("request_max_retries", 0) or 0)
+        # allow per-call timeout (seconds); if caller passed default, prefer configured ms
+        if timeout is None or timeout == 1.0:
+            cfg_ms = int(self.cfg.get("request_timeout_ms", 1000) or 1000)
+            timeout = float(cfg_ms) / 1000.0
+
         want_cmd = obj.get("cmd")
-        while True:
-            elapsed = time.time() - t0
-            remaining = timeout - elapsed
-            if remaining <= 0:
-                break
+        last_exc: Optional[Exception] = None
+        for attempt in range(0, max_retries + 1):
+            # send each attempt
+            self.send(obj)
+            t0 = time.time()
             try:
-                msg = self._rx_queue.get(timeout=remaining)
-                # Filter out initial boot "ready" message once, so it doesn't satisfy the first request.
-                if not obj.get("allow_ready", False) and isinstance(msg, dict) and msg.get("ok") is True and msg.get("msg") == "ready":
-                    # Only drop once per service lifecycle
-                    if not self._saw_boot_ready:
-                        self._saw_boot_ready = True
+                while True:
+                    elapsed = time.time() - t0
+                    remaining = timeout - elapsed
+                    if remaining <= 0:
+                        break
+                    try:
+                        msg = self._rx_queue.get(timeout=remaining)
+                        # Filter out initial boot "ready" message once, so it doesn't satisfy the first request.
+                        if not obj.get("allow_ready", False) and isinstance(msg, dict) and msg.get("ok") is True and msg.get("msg") == "ready":
+                            if not self._saw_boot_ready:
+                                self._saw_boot_ready = True
+                                continue
+                        # Ignore heartbeat acks unless we explicitly requested hb
+                        if want_cmd != "hb" and isinstance(msg, dict) and msg.get("ok") is True and msg.get("msg") == "hb":
+                            continue
+                        if isinstance(msg, dict) and ("ok" in msg or "err" in msg):
+                            return msg
                         continue
-                # Ignore heartbeat acks unless we explicitly requested hb
-                if want_cmd != "hb" and isinstance(msg, dict) and msg.get("ok") is True and msg.get("msg") == "hb":
-                    continue
-                # Prefer messages that look like a command reply: must contain 'ok' or 'err'
-                if isinstance(msg, dict) and ("ok" in msg or "err" in msg):
-                    return msg
-                # Otherwise ignore (likely telemetry) and keep waiting
+                    except Empty:
+                        # no message in remaining interval, will check overall timeout
+                        pass
+                # timed out for this attempt
+                last_exc = TimeoutError("No response from Arduino (attempt %d)" % (attempt + 1))
+            except Exception as exc:
+                last_exc = exc
+
+            # if we get here, attempt failed; if more retries remain, backoff briefly and retry
+            if attempt < max_retries:
+                time.sleep(0.05)
                 continue
-            except Empty:
-                # timed out waiting for a message in remaining interval; loop will break if overall timeout expired
-                pass
+
+        # all attempts exhausted
+        if last_exc:
+            raise last_exc
         raise TimeoutError("No response from Arduino")
 
     def try_get(self, timeout: float = 0.0) -> Optional[Dict[str, Any]]:
@@ -506,6 +531,11 @@ class xArduinoSerialService:
                     try:
                         self._write_queue.put(( _json.dumps({"ok": True, "ack_seq": int(seq)}) + "\n" ).encode("utf-8"))
                         self._metrics["acks_sent"] += 1
+                        # Emit telemetry event for ACK if configured
+                        try:
+                            self._emit_telemetry_event("arduino_ack", {"seq": int(seq)})
+                        except Exception:
+                            pass
                     except Exception:
                         # swallow errors; ACK is best-effort
                         pass
@@ -513,12 +543,22 @@ class xArduinoSerialService:
                 pass
         if event_name == "rfid":
             self._record_rfid(msg.get("uid"))
+            try:
+                self._emit_telemetry_event("arduino_rfid", {"uid": msg.get("uid")})
+            except Exception:
+                pass
         if event_name:
             for handler in list(self._event_handlers):
                 try:
                     handler(msg)
                 except Exception as exc:
                     self._logger.debug("event handler failed: %s", exc)
+        # emit telemetry for critical events like estop
+        if msg.get("cmd") == "estop" or event_name == "estop":
+            try:
+                self._emit_telemetry_event("arduino_estop", msg)
+            except Exception:
+                pass
         if msg.get("telemetry") and msg.get("rfid"):
             self._record_rfid(msg.get("rfid"))
 
@@ -572,3 +612,22 @@ class xArduinoSerialService:
             except Exception:
                 time.sleep(0.01)
                 continue
+
+    def _emit_telemetry_event(self, event_type: str, payload: dict) -> None:
+        try:
+            cfg = self.cfg.get("telemetry", {}) or {}
+            if not cfg.get("enabled", False):
+                return
+            endpoint = cfg.get("endpoint")
+            if not endpoint:
+                return
+            if requests is None:
+                return
+            body = {"type": event_type, "payload": payload, "ts": time.time()}
+            # best-effort, no raise
+            try:
+                requests.post(endpoint, json=body, timeout=0.5)
+            except Exception:
+                pass
+        except Exception:
+            pass
