@@ -11,6 +11,7 @@ from .memory import ShortTermMemory
 from .brain_parts.animations import AnimationSupportMixin
 from .brain_parts.owner_guard import OwnerGuardMixin
 from .brain_parts.responses import ResponseTagMixin
+from .brain_parts.scenes import SceneMixin
 from .brain_parts.timeline import TimelineMixin
 from .brain_parts.vision import VisionMixin
 from .brain_parts.vocal import VocalMixin
@@ -23,6 +24,7 @@ class AutonomyBrain(
     TimelineMixin,
     OwnerGuardMixin,
     ResponseTagMixin,
+    SceneMixin,
     VisionMixin,
     VocalMixin,
 ):
