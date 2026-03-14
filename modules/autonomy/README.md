@@ -8,13 +8,16 @@
  - **Algı Birleştirme (Perception Aggregation):** Mikrofon (yön ve metin) verilerini sürekli tarar (`_sense`).
  - **Görsel Farkındalık:** Vision Bridge sonuçlarını periyodik olarak çekerek ortamda bir kişi/nesne belirdiğinde merak ve mutluluğu günceller, gerekiyorsa kişi ile sohbet başlatır.
  - **Canlılık Belirtileri:**
-   - **Mikro-hareketler:** Nefes alma benzeri küçük servo hareketleri.
+  - **Mikro-hareketler:** Duyguya göre değişen küçük servo hareketleri (joy daha enerjik, tired daha sakin).
    - **Ses Takibi:** Ses gelen yöne otomatik kafa çevirme.
    - **Sıkılma:** Boşta kaldığında etrafı izleme, iç çekme veya monolog yapma.
+  - **Idle Behavior Tree:** Boşta kalınca ağırlıklı davranış ağacı ile `look_around/blink/stretch/sigh/monologue` seçimi.
+  - **Scene Orchestration:** Konuşma + ışık + hareket tek sahne akışında senkron yürütülür (özellikle vision selamlamaları).
  - **Duygu Yayını:** `MoodManager` (HAPPINESS, ENERGY, CURIOSITY, FEAR) dominant duyguyu `state_manager` ve `interactions` modüllerine aktararak LED/palet ve diğer istemcilerle paylaşıyor.
 - **Duygusal Işık Senkronizasyonu:** NeoPixel animasyonları artık robotun dominant duygusuna göre (`joy`, `sadness`, `fear` vb.) otomatik renk seçimi yapabiliyor.
 - **Sistem-Genel Modül Kontrolü:** Ollama üzerinden gelen `system` aksiyonları ile `notifier`, `camera` gibi modüller çalışma esnasında durdurulup başlatılabilir.
 - **Ses Tonu Çeşitliliği:** Mutluluk, yorgunluk, merak gibi duygulara göre TTS hız/volüm parametreleri otomatik ayarlanır.
+- **Gece Konuşma Kısma:** Quiet-hours sırasında konuşma tonu otomatik olarak sakin moda alınır ve çok uzun cümleler kısaltılır.
  - **Zaman Çizgisi Hafızası:** Gün boyunca kişi ve sohbet sayılarını, ilginç soruları kaydeder; uykuya geçmeden önce kısa bir sözlü özet paylaşır.
  - **Dinamik Odak:** Vision Bridge yeni bir hareket/yüz gördüğünde kısa “focus” animasyonu ve LED olayı tetikler; animasyon servisi yoksa servo tabanlı küçük jest yapılır.
  - **Sahip Koruması:** `owner` konfigürasyonu aktifken robot esnek hitap biçimleriyle (Baba / Emir / WhoIsMrSentry) konuşur, sahibi görüşte değilse istekleri reddeder, RFID veya sözlü izin gelirse kısıtlamaları kaldırır, ısrarcı kişileri rapor eder, gerekirse geçici sahip atar ve Baba’yı aramak için kafasını sağ/sol tarar.
@@ -42,6 +45,66 @@
   - `restricted_keywords` hassas komutları listeler; Baba ortada yoksa veya yalnızca geçici sahip aktifse bu isteklere cevap verilmez.
   - `temporary` bloğu “`<isim> geçici sahip`” komutunu işler, süre (`duration_s`), tetiklenecek animasyon ve kapalı tutulacak özellikleri tanımlar. Sahip geri döndüğünde veya RFID onaylandığında geçici yetkiler sıfırlanır.
   - `rfid.endpoint` yetkilendirme API’sini gösterir; Gateway varsayılanı `http://localhost:8080/arduino/rfid/authorize` olup Arduino seri servisi son kart UID’sini kontrol eder ve `{"authorized": true}` dönerse `grace_s` kadar süreyle tüm kısıtlamalar açılır.
+- `speech_quiet_hours`: Gece konuşma davranışı.
+  - `enabled`: true ise etkin.
+  - `start` / `end`: `HH:MM` formatında saat aralığı.
+  - `tone`: konuşma isteğine tone verilmemişse varsayılan ton.
+  - `max_chars`: konuşma metni üst sınırı (uzun metinler kısaltılır).
+  - `prefix`: istenirse metin başına eklenecek kısa önek.
+- `behaviors.idle_tree`: Boşta davranış planlayıcısı.
+  - `enabled`: etkin/pasif.
+  - `interval_s`: iki idle aksiyon arasındaki minimum aralık.
+  - `fallback_to_llm`: planner uygun aksiyon bulamazsa LLM kararına düş.
+  - `path`: idle davranış YAML dosyası yolu.
+- `defaults.body_language.profiles`: dominant emotion -> mikro hareket profili (`pan_delta`, `tilt_delta`, `event`).
+- `scenes`: Çok adımlı sahne tanımları (`event/effect/base/anim/head/speak/sleep`).
+  - Varsayılan: `vision_greeting_known`, `vision_greeting_unknown`.
+  - Segment adımları: `segment_fill` ve `segment_anim` ile göz/gövde ayrık tepkiler.
+- `offline_mode`: LLM/RAG servisi geçici erişilemezse yerel fallback yanıtları.
+  - `enabled`: etkin/pasif.
+  - `availability_ttl_s`: servis erişilebilirlik sonucu kaç saniye cache edilecek.
+  - `fallback_replies`: çevrimdışı durumda konuşulacak kısa cümleler.
+  - `persona_replies`: dominant duyguya göre çevrimdışı cümle havuzu.
+
+- `vision_hooks.focus`: vision odak jitter azaltma.
+  - `jitter_min` / `jitter_max`: rastgele pan sapma aralığı.
+  - `deadband_deg`: çok küçük hareketleri atla.
+  - `smoothing`: hedef pan geçişini yumuşatma katsayısı.
+- `vision_hooks.dynamic_cooldown`: mesafeye göre kişi tekrar selamlama cooldown'u.
+  - Yakın kişilerde daha hızlı, uzak kişilerde daha yavaş tekrar selamlama.
+
+- Cinematic scene seçimi:
+  - owner -> `vision_greeting_owner`
+  - known & close -> `vision_greeting_known_close`
+  - known -> `vision_greeting_known`
+  - unknown & close -> `vision_greeting_unknown_close`
+  - unknown -> `vision_greeting_unknown`
+
+### Idle Behavior Dosyası
+`modules/autonomy/config/idle_behaviors.yml` içinde her aksiyon için ağırlık ve cooldown tanımlanır:
+
+```yaml
+actions:
+  - name: LOOK_AROUND
+    weight: 5
+    min_interval_s: 6
+  - name: MONOLOGUE
+    weight: 1
+    min_interval_s: 28
+```
+
+### Scene Örneği
+`config.yml` içinde:
+
+```yaml
+scenes:
+  vision_greeting_known:
+    steps:
+      - { type: effect, name: "COMET", duration_ms: 700 }
+      - { type: anim, name: "vision_focus" }
+      - { type: speak, text: "{greeting}", emotion: "joy" }
+      - { type: base, name: "BREATHE", color: "#1E90FF" }
+```
 
 ### LED Palet Yönetimi
 - **Config bloğu:** `defaults.lights.palettes` altında RGB listeleri tutulur. `lights.default_mode` ile LED animasyon fallback’i belirlenir.

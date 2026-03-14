@@ -10,10 +10,24 @@ class AnimationSupportMixin:
 
     def _perform_micro_movement(self) -> None:
         """Subtle servo movements to simulate breathing/aliveness."""
-        delta_tilt = random.randint(-2, 2)
-        target_tilt = 90 + delta_tilt
+        profile = {}
+        if hasattr(self, "mood") and hasattr(self.mood, "get_body_language_profile"):
+            profile = self.mood.get_body_language_profile() or {}
+        pan_delta = max(1, int(profile.get("pan_delta", 4)))
+        tilt_delta = max(1, int(profile.get("tilt_delta", 3)))
+
+        center_pan = int(self.state.get("current_pan", 90))
+        center_tilt = int(self.state.get("current_tilt", 90))
+        target_pan = max(45, min(135, center_pan + random.randint(-pan_delta, pan_delta)))
+        target_tilt = max(65, min(125, center_tilt + random.randint(-tilt_delta, tilt_delta)))
+
+        self.state["current_pan"] = target_pan
         self.state["current_tilt"] = target_tilt
-        self.client.move_head(self.state["current_pan"], target_tilt)
+        self.client.move_head(target_pan, target_tilt)
+
+        evt = profile.get("event")
+        if isinstance(evt, str) and evt and random.random() < 0.18:
+            self.client.push_interaction_event(evt)
 
     def _trigger_animation(self, name: str, speed: float = 1.0, loop: bool = False) -> bool:
         resp = self.client.run_animation(name, speed=speed, loop=loop)

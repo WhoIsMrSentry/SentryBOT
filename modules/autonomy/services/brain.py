@@ -4,8 +4,10 @@ import logging
 import random
 import datetime
 import json
+from typing import List
 
 from .client import ServiceClient
+from .idle_behaviors import IdleBehaviorPlanner
 from .mood import MoodManager
 from .memory import ShortTermMemory
 from .brain_parts.animations import AnimationSupportMixin
@@ -35,7 +37,8 @@ class AutonomyBrain(
 
         # Components
         self.mood = MoodManager(config)
-        self.client = ServiceClient(config.get("endpoints", {}))
+        self.client = ServiceClient(config.get("endpoints", {}), config=config)
+        self.idle_planner = IdleBehaviorPlanner(config)
         self.memory = ShortTermMemory(max_items=20)
         self._vision_cfg = config.get("vision_hooks", {})
         self.owner_cfg = config.get("owner", {})
@@ -67,6 +70,7 @@ class AutonomyBrain(
         self._attempt_log = []
         self._owner_report_pending = False
         self._last_owner_scan = 0.0
+        self._last_idle_action = 0.0
         self._reset_daily_timeline()
 
     def start(self):
@@ -171,10 +175,25 @@ class AutonomyBrain(
                 self.state["is_bored"] = True
                 self.mood.modify("curiosity", 10)
                 self.memory.add_event("I became bored because nothing happened for a while.")
-            if random.random() < 0.2:
-                self._make_agentic_decision()
+            idle_cfg = self.config.get("behaviors", {}).get("idle_tree", {})
+            idle_interval = float(idle_cfg.get("interval_s", 6.0))
+            if now - self._last_idle_action >= idle_interval:
+                if self._run_idle_behavior(now):
+                    self._last_idle_action = now
+                elif bool(idle_cfg.get("fallback_to_llm", True)) and random.random() < 0.2:
+                    self._make_agentic_decision()
         else:
             self.state["is_bored"] = False
+
+    def _run_idle_behavior(self, now: float) -> bool:
+        choice = self.idle_planner.pick(now=now)
+        if choice is None:
+            return False
+        logger.info("Idle behavior selected: %s", choice.name)
+        self.idle_planner.stamp(choice.name, now=now)
+        self.memory.add_event(f"Idle action: {choice.name}")
+        self._execute_action(choice.name)
+        return True
 
     def _make_agentic_decision(self):
         """Ask LLM what to do based on internal state."""
@@ -248,7 +267,12 @@ class AutonomyBrain(
         offset = max(-70, min(70, angle))
         target_pan = max(0, min(180, 90 + offset))
         self.state["current_pan"] = target_pan
-        self.client.move_head(target_pan, self.state["current_tilt"])
+        ran = self._run_scene(
+            "curious_scan",
+            context={"angle": int(angle), "target_pan": int(target_pan)},
+        )
+        if not ran:
+            self.client.move_head(target_pan, self.state["current_tilt"])
         self.client.push_interaction_event("autonomy.excited")
         self.state["last_interaction"] = time.time()
         self.mood.modify("curiosity", 5)
@@ -262,6 +286,9 @@ class AutonomyBrain(
         self.mood.modify("happiness", 5)
         self.memory.add_event(f"User said: {text}")
         self._log_conversation(text)
+        low = str(text or "").lower()
+        if any(k in low for k in ["hey sentry", "hey sentrybot", "sentry", "sentrybot"]):
+            self._run_scene("wakeword_reaction", context={"text": text})
         speaker = self._guess_active_person()
         if speaker:
             self.state["last_speaker"] = speaker
@@ -283,6 +310,16 @@ class AutonomyBrain(
         is_question = "?" in text or any(
             key in text.lower() for key in ["nedir", "kimdir", "nasıl", "what", "who", "how"]
         )
+
+        offline_cfg = self.config.get("offline_mode", {})
+        if bool(offline_cfg.get("enabled", False)):
+            target_service = "wiki_rag" if is_question and self.config.get("wikirag", {}).get("enabled", False) else "ollama"
+            if not self.client.is_service_available(target_service):
+                fallback = self._offline_reply(text, target_service)
+                self.client.push_interaction_event("autonomy.offline", {"service": target_service})
+                self._speak_with_mood(fallback, emotion="neutral")
+                self.memory.add_event(f"Offline fallback reply used for {target_service}: {fallback}")
+                return
 
         response_text = ""
         response_actions = None
@@ -312,6 +349,41 @@ class AutonomyBrain(
                     logger.info("LLM response only triggered physical actions.")
         except Exception as exc:
             logger.error("Failed to generate reply: %s", exc)
+
+    def _offline_reply(self, text: str, service: str) -> str:
+        cfg = self.config.get("offline_mode", {})
+        context = self._offline_context_label(text)
+        contextual = cfg.get("contextual_replies", {}) if isinstance(cfg.get("contextual_replies", {}), dict) else {}
+        ctx_pool = contextual.get(context)
+        if isinstance(ctx_pool, list) and ctx_pool:
+            return str(random.choice(ctx_pool))
+        persona = cfg.get("persona_replies", {}) if isinstance(cfg.get("persona_replies", {}), dict) else {}
+        mood_key = str(self.mood.get_dominant_emotion() or "neutral")
+        mood_replies = persona.get(mood_key)
+        if isinstance(mood_replies, list) and mood_replies:
+            return str(random.choice(mood_replies))
+        neutral_replies = persona.get("neutral")
+        if isinstance(neutral_replies, list) and neutral_replies:
+            return str(random.choice(neutral_replies))
+        replies: List[str] = cfg.get("fallback_replies", []) if isinstance(cfg.get("fallback_replies", []), list) else []
+        if replies:
+            return str(random.choice(replies))
+        if "?" in str(text):
+            return "Su an baglanti yok, ama birazdan tekrar deneyebilirim."
+        return f"Su an {service} ulasilamiyor, yine de buradayim."
+
+    @staticmethod
+    def _offline_context_label(text: str) -> str:
+        t = str(text or "").strip().lower()
+        if not t:
+            return "generic"
+        if "?" in t:
+            return "question"
+        if any(k in t for k in ["merhaba", "selam", "hey", "gunaydin", "iyi aksamlar"]):
+            return "greeting"
+        if any(k in t for k in ["yap", "ac", "kapat", "calistir", "dur", "git", "don"]):
+            return "command"
+        return "generic"
 
     def apply_llm_response(
         self,
@@ -352,8 +424,10 @@ class AutonomyBrain(
             self.state["is_sleeping"] = True
             self.memory.add_event("Going to sleep now.")
             self.client.push_interaction_event("autonomy.sleep")
-            self.client.move_head(90, 120)
-            self._speak_with_mood("İyi geceler.", emotion="tired")
+            ran = self._run_scene("sleepy_entry", context={"hour": hour})
+            if not ran:
+                self.client.move_head(90, 120)
+                self._speak_with_mood("İyi geceler.", emotion="tired")
             self.client.set_speech_tracking(False)
 
         elif not should_sleep and self.state["is_sleeping"]:
@@ -362,5 +436,6 @@ class AutonomyBrain(
             self.memory.add_event("Waking up from sleep.")
             self.mood.modify("energy", 100)
             self.client.push_interaction_event("autonomy.wake")
-            self._speak_with_mood("Günaydın.", emotion="joy")
+            if not self._run_scene("wake_entry", context={"hour": hour}):
+                self._speak_with_mood("Günaydın.", emotion="joy")
             self.client.set_speech_tracking(True)

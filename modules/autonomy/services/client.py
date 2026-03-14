@@ -1,5 +1,7 @@
 import requests
 import logging
+from datetime import datetime
+import time
 
 from modules.arduino_serial.contract import (
     SERVO_INDEX_PAN,
@@ -19,8 +21,12 @@ _ROBOT_COMMANDS = {"stand", "sit", "home", "zero_now", "estop", "calibrate", "ge
 _SENSOR_COMMANDS = {"ultra_read", "imu_read", "rfid_last"}
 
 class ServiceClient:
-    def __init__(self, base_urls):
+    def __init__(self, base_urls, config=None):
         self.urls = base_urls
+        cfg = config or {}
+        self.speech_quiet_cfg = dict(cfg.get("speech_quiet_hours", {}))
+        self.offline_cfg = dict(cfg.get("offline_mode", {}))
+        self._availability_cache = {}
 
     def _post(self, service, endpoint, json=None, params=None):
         url = self.urls.get(service)
@@ -124,6 +130,42 @@ class ServiceClient:
             payload["duration"] = duration
         return self._post("neopixel", "/animate", json=payload)
 
+    def set_neopixel_segment_effect(self, segment: str, effect: str, color=None, emotions=None, iterations=None):
+        payload = {"name": effect, "segment": str(segment)}
+        if emotions:
+            payload["emotions"] = emotions
+        if color and len(color) == 3:
+            payload["r"], payload["g"], payload["b"] = color
+        if iterations is not None:
+            payload["iterations"] = int(iterations)
+        return self._post("neopixel", "/animate", payload)
+
+    def fill_neopixel_segment_color(self, segment: str, r: int, g: int, b: int):
+        url = self.urls.get("neopixel")
+        if not url:
+            return None
+        try:
+            requests.post(
+                f"{url}/fill",
+                params={"r_": int(r), "g": int(g), "b": int(b), "segment": str(segment)},
+                timeout=1.0,
+            )
+            return {"ok": True}
+        except Exception as exc:
+            logger.debug(f"Failed to fill neopixel segment color: {exc}")
+            return None
+
+    def apply_neopixel_preset(self, name: str):
+        url = self.urls.get("neopixel")
+        if not url:
+            return None
+        try:
+            resp = requests.post(f"{url}/preset/apply", params={"name": str(name)}, timeout=1.0)
+            return resp.json() if resp.status_code == 200 else None
+        except Exception as exc:
+            logger.debug(f"Failed to apply neopixel preset: {exc}")
+            return None
+
     def fill_neopixel_color(self, r: int, g: int, b: int):
         url = self.urls.get("neopixel")
         if not url:
@@ -137,8 +179,52 @@ class ServiceClient:
         except Exception as exc:
             logger.debug(f"Failed to fill neopixel color: {exc}")
 
+    @staticmethod
+    def _parse_hhmm(value):
+        text = str(value or "").strip()
+        parts = text.split(":")
+        if len(parts) != 2:
+            return None
+        try:
+            hh = int(parts[0])
+            mm = int(parts[1])
+        except Exception:
+            return None
+        if hh < 0 or hh > 23 or mm < 0 or mm > 59:
+            return None
+        return hh, mm
+
+    def _quiet_hours_active(self):
+        cfg = self.speech_quiet_cfg
+        if not bool(cfg.get("enabled", False)):
+            return False
+        start = self._parse_hhmm(cfg.get("start", "23:00"))
+        end = self._parse_hhmm(cfg.get("end", "07:00"))
+        if start is None or end is None:
+            return False
+        now_dt = datetime.now()
+        now = now_dt.hour * 60 + now_dt.minute
+        start_m = start[0] * 60 + start[1]
+        end_m = end[0] * 60 + end[1]
+        if start_m == end_m:
+            return True
+        if start_m < end_m:
+            return start_m <= now < end_m
+        return now >= start_m or now < end_m
+
     def speak(self, text, tone=None, engine=None):
+        text_value = str(text or "")
+        if self._quiet_hours_active():
+            max_chars = int(self.speech_quiet_cfg.get("max_chars", 120))
+            prefix = str(self.speech_quiet_cfg.get("prefix", "")).strip()
+            if max_chars > 0 and len(text_value) > max_chars:
+                text_value = text_value[: max_chars - 3].rstrip() + "..."
+            if prefix:
+                text_value = f"{prefix}{text_value}"
+            if tone is None:
+                tone = self.speech_quiet_cfg.get("tone", "calm")
         payload = {"text": text}
+        payload["text"] = text_value
         if tone:
             payload["tone"] = tone
         if engine:
@@ -157,6 +243,16 @@ class ServiceClient:
 
     def push_interaction_event(self, event_type, data=None):
         return self._post("interactions", "/event", {"type": event_type, "data": data})
+
+    def set_interaction_effect(self, name: str, duration_ms: int = 800, force: bool = False):
+        payload = {"name": str(name), "duration_ms": int(duration_ms), "force": bool(force)}
+        return self._post("interactions", "/effect", payload)
+
+    def set_interaction_base(self, name: str, color=None):
+        payload = {"name": str(name)}
+        if color is not None:
+            payload["color"] = color
+        return self._post("interactions", "/base", payload)
 
     def set_speech_tracking(self, enabled):
         endpoint = "/track/start" if enabled else "/track/stop"
@@ -186,6 +282,32 @@ class ServiceClient:
         except Exception as e:
             logger.debug(f"Failed to trigger animation {name}: {e}")
             return None
+
+    def is_service_available(self, service: str) -> bool:
+        svc = str(service or "").strip().lower()
+        if not svc:
+            return False
+        ttl = float(self.offline_cfg.get("availability_ttl_s", 5.0))
+        now = time.time()
+        cached = self._availability_cache.get(svc)
+        if isinstance(cached, tuple) and len(cached) == 2:
+            ts, ok = cached
+            if now - float(ts) <= ttl:
+                return bool(ok)
+
+        url = self.urls.get(svc)
+        if not url:
+            self._availability_cache[svc] = (now, False)
+            return False
+
+        endpoint = "/status" if svc == "speak" else "/healthz"
+        try:
+            resp = requests.get(f"{url}{endpoint}", timeout=0.6)
+            ok = resp.status_code == 200
+        except Exception:
+            ok = False
+        self._availability_cache[svc] = (now, ok)
+        return ok
 
     def oled_show(self, name: str):
         return self._post("oled_faces", "/manual", {"mode": "bitmap", "name": str(name)})
