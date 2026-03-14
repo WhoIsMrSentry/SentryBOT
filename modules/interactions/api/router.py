@@ -29,7 +29,8 @@ def get_router(engine: InteractionEngine) -> APIRouter:
     def effect(payload: Dict[str, Any]):
         name = str(payload.get("name", "COMET"))
         dur = int(payload.get("duration_ms", 800))
-        engine.push_event("manual.effect", {"name": name, "duration_ms": dur})
+        force = bool(payload.get("force", False))
+        engine.trigger_effect(name=name, duration_ms=dur, force=force)
         return {"ok": True}
 
     @r.post("/base", tags=["interactions"], summary="Base")

@@ -58,4 +58,8 @@ def eval_condition(cond: Dict[str, Any], ctx: Dict[str, Any]) -> bool:
         ac = get("arduino_connected")
         if ac is None or bool(cond["arduino_connected"]) != bool(ac):
             return False
+    if "quiet_hours_active" in cond:
+        qh = get("quiet_hours_active")
+        if qh is None or bool(cond["quiet_hours_active"]) != bool(qh):
+            return False
     return True
