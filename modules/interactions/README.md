@@ -7,6 +7,7 @@ Durumlara/olaylara göre NeoPixel animasyonlarını otomatik seçen hafif bir ku
 - Base (sürekli) + Transient (kısa) efekt katmanı, öncelik ve cooldown ile.
 - Sistem metrikleri: CPU sıcaklık/yük, ağ burst sezgisi.
 - Olay besleme: `POST /interactions/event` ile (ör: `speech.start`, `error`).
+- Quiet Hours (gece modu): belirli saatlerde dikkat dağıtan transient efektleri baskılar.
 - Donanım haritalama: Jewel (7) + Stick (16 tek sıra). Şimdilik tüm strip’e animasyon uygular.
 
 ## Kurulum
@@ -17,6 +18,7 @@ Durumlara/olaylara göre NeoPixel animasyonlarını otomatik seçen hafif bir ku
 - GET `/interactions/state`: aktif base/effect ve son metrikler.
 - POST `/interactions/event` `{ type, data? }`: olay tetikle (ör: `speech.start`).
 - POST `/interactions/effect` `{ name, duration_ms? }`: manuel kısa efekt.
+  - Opsiyonel: `{ force: true }` ile quiet-hours sırasında da efekt zorlanabilir.
 - POST `/interactions/base` `{ name, color? }`: geçici base override.
 
 ### Gateway Entegrasyonu
@@ -79,9 +81,25 @@ POST /interactions/event
 3. Renge özel davranmak isterseniz `base.color: "#RRGGBB"` verebilirsiniz (uyumlu animasyonlarda dolgu yapılır, aksi halde animasyon adı oynatılır).
 
 ## Notlar
-- Quiet hours varsayılan olarak kapalıdır (isteğe göre eklenebilir).
+- Quiet hours varsayılan olarak açıktır (`23:00-07:00`) ve yalnızca kritik olay efektlerine izin verir.
 - NeoPixel servisi yoksa istekler sessizce yok sayılır (No-Op mod).
 - İleride segment/mask desteklemek için NeoPixel API genişletimi önerilir.
+
+## Quiet Hours Konfigürasyonu
+`modules/interactions/config/config.yml` içinde:
+
+```yaml
+quiet_hours:
+  enabled: true
+  start: "23:00"
+  end: "07:00"
+  suppress_effects: true
+  allow_events: ["error", "warning", "owner.locked"]
+```
+
+- `suppress_effects: true` iken transient efektler baskılanır.
+- `allow_events` listesi, gece modu sırasında da çalışmasına izin verilen olay adlarıdır.
+- Base (sabit) aydınlatma için `quiet_hours_idle` kuralı dim bir görünüm uygular.
 
 ---
 Bu modül DryCode prensiplerine uygundur: tek sorumluluklu dosyalar, config odaklı, sade API.
