@@ -32,6 +32,12 @@ class AnimateRequest(BaseModel):
     b: Optional[int] = Field(None, ge=0, le=255, description="Blue channel (0-255)")
     emotions: Optional[List[str]] = Field(None, description="Optional list of emotion names to pick colors from")
     iterations: Optional[int] = Field(None, description="How many iterations/repeats")
+    segment: Optional[str] = Field(None, description="Optional segment name (e.g. jewel, stick)")
+
+
+class PresetUpsertRequest(BaseModel):
+    name: str = Field(..., description="Preset name")
+    spec: dict = Field(..., description="Preset segment mapping")
 
 
 class EmotionsResponse(BaseModel):
@@ -118,14 +124,68 @@ def get_router(runner: NeoRunner) -> APIRouter:
     def healthz():
         return {"ok": True, "num_leds": runner.driver.num_leds}
 
+    @r.get("/segments")
+    def segments():
+        return {"ok": True, "segments": runner.list_segments()}
+
+    @r.get("/presets")
+    def presets():
+        return {"ok": True, "presets": runner.list_presets(), "version": runner.preset_version()}
+
+    @r.post("/preset/apply")
+    def apply_preset(name: str = Query(..., description="preset name")):
+        ok = runner.apply_preset(name)
+        if not ok:
+            return {"ok": False, "error": "unknown preset", "name": name}
+        return {"ok": True, "name": name}
+
+    @r.get("/preset/get")
+    def get_preset(name: str = Query(..., description="preset name")):
+        data = runner.get_preset(name)
+        if data is None:
+            return {"ok": False, "error": "unknown preset", "name": name}
+        return {"ok": True, "name": name, "spec": data, "version": runner.preset_version()}
+
+    @r.post("/preset/set")
+    def set_preset(
+        body: PresetUpsertRequest = Body(...),
+        persist: bool = Query(True, description="Persist to config file"),
+    ):
+        ok = runner.set_preset(body.name, body.spec, persist=persist)
+        if not ok:
+            return {"ok": False, "error": "invalid preset payload"}
+        return {"ok": True, "name": body.name, "persisted": bool(persist), "version": runner.preset_version()}
+
+    @r.delete("/preset/delete")
+    def delete_preset(
+        name: str = Query(..., description="preset name"),
+        persist: bool = Query(True, description="Persist to config file"),
+    ):
+        ok = runner.delete_preset(name, persist=persist)
+        if not ok:
+            return {"ok": False, "error": "unknown preset", "name": name}
+        return {"ok": True, "name": name, "persisted": bool(persist), "version": runner.preset_version()}
+
     @r.post("/clear")
     def clear():
         runner.clear()
         return {"ok": True}
 
     @r.post("/fill")
-    def fill(r_: int = 0, g: int = 0, b: int = 0):
-        runner.fill(r_, g, b)
+    def fill(r_: int = 0, g: int = 0, b: int = 0, segment: Optional[str] = None):
+        if segment:
+            ok = runner.fill_segment(segment, r_, g, b)
+            if not ok:
+                return {"ok": False, "error": "unknown segment", "segment": segment}
+        else:
+            runner.fill(r_, g, b)
+        return {"ok": True}
+
+    @r.post("/segment/clear")
+    def clear_segment(name: str = Query(..., description="segment name")):
+        ok = runner.clear_segment(name)
+        if not ok:
+            return {"ok": False, "error": "unknown segment", "segment": name}
         return {"ok": True}
 
     @r.post("/rainbow")
@@ -210,7 +270,14 @@ def get_router(runner: NeoRunner) -> APIRouter:
     @r.post("/animate")
     def animate(body: AnimateRequest = Body(...)):
         color = _parse_color_fields(body)
-        runner.animate(body.name, emotions=body.emotions, iterations=body.iterations, color=color)
-        return {"ok": True, "name": body.name, "emotions": body.emotions, "color": color, "iterations": body.iterations}
+        runner.animate(body.name, emotions=body.emotions, iterations=body.iterations, color=color, segment=body.segment)
+        return {
+            "ok": True,
+            "name": body.name,
+            "emotions": body.emotions,
+            "color": color,
+            "iterations": body.iterations,
+            "segment": body.segment,
+        }
 
     return r

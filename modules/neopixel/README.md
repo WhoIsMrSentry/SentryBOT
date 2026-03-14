@@ -124,3 +124,23 @@ runner.animate("ALTERNATING", emotions=["anger", "gratitude"], iterations=10)
 
 ## Gateway ile Kullanım
 Gateway çalışırken NeoPixel API uçları tek portta `/neopixel/*` altında sunulur. `interactions` modülü de gateway’de açıksa, kurallar NeoPixel efektlerini otomatik tetikler; modülü ayrı bir servis olarak çalıştırmaya gerek yoktur.
+
+## Segment Desteği (Göz/Gövde Ayrımı)
+NeoPixel API artık segment tanımlarını destekler:
+
+- `GET /neopixel/segments` -> tanımlı segment listesi
+- `POST /neopixel/fill?r_=0&g=0&b=255&segment=jewel` -> sadece segmente renk uygular
+- `POST /neopixel/segment/clear?name=stick` -> sadece segmenti temizler
+- `POST /neopixel/animate` body içinde `segment` alanı verilebilir
+
+## Preset Kütüphanesi
+
+- `GET /neopixel/presets` -> hazır preset isimleri
+- `POST /neopixel/preset/apply?name=owner_welcome` -> segment preset uygular
+- `GET /neopixel/preset/get?name=owner_welcome` -> preset içeriği
+- `POST /neopixel/preset/set` -> runtime preset ekle/güncelle
+- `DELETE /neopixel/preset/delete?name=owner_welcome` -> runtime preset sil
+
+Presetler `config/config.yml` içindeki `presets` bloğundan yüklenir.
+
+`config/config.yml` içinde `hardware.segments` tanımı ile eşlenir.
