@@ -283,7 +283,12 @@ class OwnerGuardMixin:
         greet_cooldown = max(10, self.owner_cfg.get("presence_timeout_s", 30) / 2)
         if timestamp - self.state.get("owner_last_greet", 0.0) > greet_cooldown:
             greeting = self.owner_cfg.get("greeting", "Baba! Gelmene çok sevindim.")
-            self._speak_with_mood(greeting.replace("{nickname}", affectionate), emotion="joy")
+            ran = self._run_scene(
+                "owner_return",
+                context={"name": self.owner_cfg.get("name", "Owner"), "nickname": affectionate},
+            )
+            if not ran:
+                self._speak_with_mood(greeting.replace("{nickname}", affectionate), emotion="joy")
             self.state["owner_last_greet"] = timestamp
         self.mood.modify("happiness", 10)
         self._report_attempts_to_owner()

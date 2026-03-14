@@ -39,7 +39,7 @@ class VisionMixin:
             return
         now = time.time()
         self._current_people[name] = now
-        cooldown = self._vision_cfg.get("person_cooldown_s", 25)
+        cooldown = self._compute_person_cooldown(result)
         last_seen = self._people_last_seen.get(name, 0.0)
         if now - last_seen < cooldown:
             return
@@ -58,7 +58,13 @@ class VisionMixin:
             utterance = self._compose_greeting_for_person(name, result)
             if utterance:
                 emotion = "joy" if name != "Unknown" else "curiosity"
-                self._speak_with_mood(utterance, emotion=emotion)
+                scene_name = self._pick_vision_scene(name, result)
+                ran = self._run_scene(
+                    scene_name,
+                    context={"name": name, "greeting": utterance, "emotion": emotion},
+                )
+                if not ran:
+                    self._speak_with_mood(utterance, emotion=emotion)
                 self.memory.add_event(f"{name} ile konuştum: {utterance}")
         if self._is_owner_name(name):
             self._on_owner_seen(now)
@@ -104,7 +110,49 @@ class VisionMixin:
         if self._trigger_animation("vision_focus"):
             return
         self.client.push_interaction_event("vision.focus", {"label": result.get("label")})
-        jitter = random.randint(-5, 5)
-        target = max(0, min(180, self.state["current_pan"] + jitter))
+        cfg = self._vision_cfg.get("focus", {}) if isinstance(self._vision_cfg.get("focus", {}), dict) else {}
+        min_j = int(cfg.get("jitter_min", -3))
+        max_j = int(cfg.get("jitter_max", 3))
+        deadband = int(cfg.get("deadband_deg", 2))
+        smooth = float(cfg.get("smoothing", 0.55))
+
+        current = int(self.state.get("current_pan", 90))
+        jitter = random.randint(min_j, max_j)
+        proposed = max(0, min(180, current + jitter))
+        if abs(proposed - current) < max(0, deadband):
+            return
+
+        target = int(round((current * smooth) + (proposed * (1.0 - smooth))))
+        self.state["current_pan"] = target
         self.client.move_head(target, self.state["current_tilt"])
         self._blink_fallback()
+
+    def _compute_person_cooldown(self, result: Dict[str, Any]) -> float:
+        base = float(self._vision_cfg.get("person_cooldown_s", 25))
+        dyn = self._vision_cfg.get("dynamic_cooldown", {}) if isinstance(self._vision_cfg.get("dynamic_cooldown", {}), dict) else {}
+        if not bool(dyn.get("enabled", False)):
+            return base
+        near_dist = float(dyn.get("near_distance_m", 1.2))
+        far_dist = float(dyn.get("far_distance_m", 3.0))
+        near_mul = float(dyn.get("near_multiplier", 0.6))
+        far_mul = float(dyn.get("far_multiplier", 1.3))
+        dist = result.get("distance_m")
+        if not isinstance(dist, (int, float)):
+            return base
+        if dist <= near_dist:
+            return max(2.0, base * near_mul)
+        if dist >= far_dist:
+            return max(2.0, base * far_mul)
+        return base
+
+    def _pick_vision_scene(self, name: str, result: Dict[str, Any]) -> str:
+        if self._is_owner_name(name):
+            return "vision_greeting_owner"
+        dist = result.get("distance_m")
+        if name == "Unknown":
+            if isinstance(dist, (int, float)) and dist <= 1.2:
+                return "vision_greeting_unknown_close"
+            return "vision_greeting_unknown"
+        if isinstance(dist, (int, float)) and dist <= 1.2:
+            return "vision_greeting_known_close"
+        return "vision_greeting_known"
