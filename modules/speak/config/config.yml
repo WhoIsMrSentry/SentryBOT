@@ -35,4 +35,36 @@ tts:
     language: tr
     speaker_wav: null          # ses kopyalama için referans wav yolu (opsiyonel)
 
+liveliness:
+  enabled: true
+  interactions_base_url: http://localhost:8080/interactions
+  speech_effect:
+    name: PULSE
+    tone_effect_map:
+      fast: COMET
+      neutral: PULSE
+      calm: BREATHE
+      tired: THEATER_CHASE
+    emphasis_effect_map:
+      exclamation: COMET
+      question: TWINKLE
+    rhythm:
+      enabled: true
+      mode: clauses           # words | clauses
+      effect: PULSE
+      words_per_beat: 3
+      clauses_per_beat: 1
+      max_beats: 4
+      duration_ms: 150
+      max_pause_marks: 4
+      pause_effect_map:
+        ",": TWINKLE
+        ";": TWINKLE
+        ":": BREATHE
+        ".": BREATHE
+    min_duration_ms: 400
+    max_duration_ms: 7000
+    chars_per_second: 16
+    force: false
+
 # note: external compressed audio decoding removed; /speak/play expects base64 WAV
