@@ -13,14 +13,17 @@ logger = logging.getLogger("vision_bridge")
 try:
     import face_recognition
     FACE_REC_AVAILABLE = True
-except ImportError:
+except Exception as exc:
     FACE_REC_AVAILABLE = False
-    logger.warning("face_recognition library not found. Face recognition features will be disabled.")
+    logger.warning("face_recognition unavailable (%s). Face recognition features will be disabled.", exc)
 
 try:
     from .face_manager import FaceManager
-except ImportError:
-    from services.face_manager import FaceManager
+except Exception:
+    try:
+        from services.face_manager import FaceManager
+    except Exception:
+        FaceManager = None  # type: ignore
 try:
     from .semantic_describer import SemanticDescriber
 except ImportError:
@@ -54,7 +57,7 @@ class VisionProcessor:
             logger.info("[vision_bridge] Remote mode: skipping local model load")
 
         self.face_manager = None
-        if FACE_REC_AVAILABLE and self.processing_mode == "local":
+        if FACE_REC_AVAILABLE and self.processing_mode == "local" and FaceManager is not None:
             self.face_manager = FaceManager()
         
         self._stop_event = threading.Event()

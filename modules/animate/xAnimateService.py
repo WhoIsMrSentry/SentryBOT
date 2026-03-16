@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import os
 import time
+import logging
 from typing import Any, Dict, List, Optional
 
 try:
     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
+    from modules.arduino_serial.contract import (  # type: ignore
+        SERVO_COUNT,
+        SERVO_INDEX_PAN,
+        SERVO_INDEX_TILT,
+    )
 except Exception:
     from ..arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
+    from ..arduino_serial.contract import (  # type: ignore
+        SERVO_COUNT,
+        SERVO_INDEX_PAN,
+        SERVO_INDEX_TILT,
+    )
 
 from .config_loader import load_config
 
@@ -15,6 +26,15 @@ try:
     import yaml  # type: ignore
 except Exception:  # pragma: no cover
     yaml = None
+
+logger = logging.getLogger("animate")
+
+
+def _clamp_deg(value: Any, default: int = 90) -> int:
+    try:
+        return max(0, min(180, int(value)))
+    except Exception:
+        return int(default)
 
 
 class xAnimateService:
@@ -70,14 +90,20 @@ class xAnimateService:
                 for step in anim.get("steps", []):
                     if not self._running:
                         break
-                    pose: List[int] = list(step.get("pose", []))
+                    pose_raw: List[int] = list(step.get("pose", []))
+                    pose = self._normalize_pose(pose_raw)
                     dur_ms: int = int(step.get("duration_ms", 0))
                     hold_ms: int = int(step.get("hold_ms", 0))
                     if dur_ms > 0:
                         dur_ms = max(1, int(dur_ms / max(0.01, speed_mul)))
                     # send pose
                     if pose:
-                        self.serial.set_pose(pose, duration_ms=dur_ms if dur_ms > 0 else None)
+                        try:
+                            self.serial.set_pose(pose, duration_ms=dur_ms if dur_ms > 0 else None)
+                        except Exception as exc:
+                            logger.warning("animate degraded: pose step skipped (%s)", exc)
+                            self._running = False
+                            break
                     # hold
                     if hold_ms > 0:
                         time.sleep(max(0.0, hold_ms / 1000.0))
@@ -97,3 +123,26 @@ class xAnimateService:
             if os.path.exists(p):
                 return p
         raise FileNotFoundError(name)
+
+    @staticmethod
+    def _normalize_pose(pose: List[int]) -> List[int]:
+        """Normalize animation pose to 4-servo contract.
+
+        Legacy animations contain 8 values where last 2 are head tilt/pan.
+        Current Arduino contract expects 4 values: [pan, tilt, s2, s3].
+        """
+        if not pose:
+            return []
+        if len(pose) == SERVO_COUNT:
+            return [_clamp_deg(v) for v in pose]
+        if len(pose) == 8:
+            tilt = _clamp_deg(pose[6])
+            pan = _clamp_deg(pose[7])
+            out = [90] * SERVO_COUNT
+            if SERVO_INDEX_PAN < SERVO_COUNT:
+                out[SERVO_INDEX_PAN] = pan
+            if SERVO_INDEX_TILT < SERVO_COUNT:
+                out[SERVO_INDEX_TILT] = tilt
+            return out
+        # Unknown pose size: ignore the step instead of crashing the API route.
+        return []
