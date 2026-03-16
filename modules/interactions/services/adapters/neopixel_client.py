@@ -29,12 +29,12 @@ class NeoHttpClient:
         self._post("/fill", params={"r_": r, "g": g, "b": b})
 
     def animate(self, name: str, emotions: Optional[list[str]] = None, iterations: Optional[int] = None) -> None:
-        params: Dict[str, Any] = {"name": name}
+        payload: Dict[str, Any] = {"name": name}
         if emotions:
-            params["emotions"] = emotions
+            payload["emotions"] = emotions
         if iterations is not None:
-            params["iterations"] = iterations
-        self._post("/animate", params=params)
+            payload["iterations"] = iterations
+        self._post("/animate", json=payload)
 
     # Friendly helpers
     def set_base(self, name: str, color: Optional[str | tuple[int, int, int]] = None, speed: Optional[str] = None) -> None:

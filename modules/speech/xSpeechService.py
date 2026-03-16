@@ -68,6 +68,8 @@ class SpeechService:
                     on_result(result)
                 if self._stop_event.is_set():
                     break
+        except Exception as exc:
+            logger.warning("speech degraded: recognizer stopped (%s)", exc)
         finally:
             with self._listen_lock:
                 self._listening = False
