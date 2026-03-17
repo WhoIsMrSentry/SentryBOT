@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -19,24 +19,36 @@ class OllamaClient:
         # fallback so the gateway can call a remote Ollama server without extra deps.
         self._client = Client(host=self.base_url) if Client is not None else None
 
-    def chat(self, messages: List[Dict[str, str]], format: Optional[Any] = None) -> Dict[str, Any]:
+    def chat(
+        self,
+        messages: List[Dict[str, str]],
+        format: Optional[Any] = None,
+        *,
+        options: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        selected_model = model or self.model
+        merged_options: Dict[str, Any] = {"temperature": 0.6}
+        if isinstance(options, dict):
+            merged_options.update(options)
+
         if self._client is not None:
             return self._client.chat(
-                model=self.model,
+                model=selected_model,
                 messages=messages,
                 format=format,
-                options={"temperature": 0.6},
+                options=merged_options,
             )
 
         # HTTP fallback (Ollama REST API)
         # Ref: POST {base_url}/api/chat
         url = f"{self.base_url}/api/chat"
         payload: Dict[str, Any] = {
-            "model": self.model,
+            "model": selected_model,
             "messages": messages,
             "stream": False,
             "format": format,
-            "options": {"temperature": 0.6},
+            "options": merged_options,
         }
         resp = requests.post(url, json=payload, timeout=float(self.timeout))
         resp.raise_for_status()
