@@ -9,10 +9,12 @@ import requests
 try:
     from ..services.clients import OllamaClient
     from ..services.chat import PersonaProvider, OllamaChatService
+    from ..services.translator import OllamaTranslator
     from ..models.sentry_schema import SentryResponse
 except Exception:
     from services.clients import OllamaClient  # type: ignore
     from services.chat import PersonaProvider, OllamaChatService  # type: ignore
+    from services.translator import OllamaTranslator  # type: ignore
     from models.sentry_schema import SentryResponse  # type: ignore
 
 
@@ -41,13 +43,15 @@ def get_router(cfg: dict) -> APIRouter:
     model = str(cfg.get("ollama", {}).get("model", "llama3.2:3b"))
     timeout = float(cfg.get("ollama", {}).get("request_timeout", 60.0))
     client = OllamaClient(base_url=base_url, model=model, request_timeout=timeout)
+    translator = OllamaTranslator(client, cfg.get("translation", {}) or {})
     actions_cfg = cfg.get("actions", {}) or {}
     action_endpoint = str(actions_cfg.get("endpoint", "")).strip()
     action_timeout = float(actions_cfg.get("timeout", 1.5))
     default_apply = bool(actions_cfg.get("default_apply", False))
 
-    persona_text = _load_persona_text(cfg)
-    chat = OllamaChatService(client, PersonaProvider(persona_text), max_history=6)
+    active_persona = str(cfg.get("persona", {}).get("default", "sentry"))
+    persona_text = _load_persona_text(cfg, active_persona)
+    chat = OllamaChatService(client, PersonaProvider(persona_text, persona_name=active_persona), max_history=6)
     # Preload persona texts and optional urls placeholders
     _persona_cache: Dict[str, str] = {}
     base_persona_dir = str(cfg.get("persona", {}).get("dir", "modules/ollama/config/personalities"))
@@ -68,17 +72,21 @@ def get_router(cfg: dict) -> APIRouter:
     def healthz():
         return {"ok": True, "base_url": base_url, "model": model}
 
-    def _format_chat_payload(result: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_chat_payload(result: Dict[str, Any], translation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "ok": True, 
             "answer": result.get("text", ""),
             "text": result.get("text", ""),
-            "thoughts": result.get("thoughts", "")
+            "thoughts": result.get("thoughts", ""),
+            "persona": active_persona,
+            "model": model,
         }
         if result.get("actions"):
             payload["actions"] = result["actions"]
         if "raw" in result:
             payload["raw"] = result.get("raw")
+        if translation:
+            payload["translation"] = translation
         return payload
 
     def _maybe_dispatch_actions(result: Dict[str, Any], apply_flag: bool) -> None:
@@ -99,24 +107,79 @@ def get_router(cfg: dict) -> APIRouter:
             logger.warning("Failed to dispatch persona actions: %s", exc)
 
     @r.get("/chat")
-    def chat_get(query: str = Query(...), apply_actions: Optional[bool] = None, structured: bool = False):
+    def chat_get(
+        query: str = Query(...),
+        apply_actions: Optional[bool] = None,
+        structured: bool = False,
+        source_lang: Optional[str] = None,
+        response_lang: Optional[str] = None,
+    ):
+        source = translator.normalize_lang(source_lang, fallback=translator.cfg.default_source_lang)
+        if source == "auto":
+            source = translator.detect_language(query)
+        target = translator.normalize_lang(response_lang or source, fallback=translator.cfg.default_source_lang)
+        query_en = translator.to_bridge(query, source)
         model_schema = SentryResponse if structured else None
-        result = chat.chat(query, schema_model=model_schema)
+        result = chat.chat(query_en, schema_model=model_schema)
+        answer_en = str(result.get("text", ""))
+        localized_answer = translator.from_bridge(answer_en, target)
+        result["text"] = localized_answer
         flag = default_apply if apply_actions is None else apply_actions
         _maybe_dispatch_actions(result, flag)
-        return _format_chat_payload(result)
+        translation_meta = {
+            "enabled": bool(translator.cfg.enabled),
+            "request_lang": source,
+            "bridge_lang": translator.BRIDGE_LANG,
+            "response_lang": target,
+            "query_bridge": query_en,
+            "answer_bridge": answer_en,
+            "auto_detected": bool(source_lang and str(source_lang).strip().lower() == "auto"),
+        }
+        return _format_chat_payload(result, translation=translation_meta)
 
     @r.post("/chat")
-    def chat_post(query: str, apply_actions: Optional[bool] = None, structured: bool = False):
+    def chat_post(
+        query: str,
+        apply_actions: Optional[bool] = None,
+        structured: bool = False,
+        source_lang: Optional[str] = None,
+        response_lang: Optional[str] = None,
+    ):
+        source = translator.normalize_lang(source_lang, fallback=translator.cfg.default_source_lang)
+        if source == "auto":
+            source = translator.detect_language(query)
+        target = translator.normalize_lang(response_lang or source, fallback=translator.cfg.default_source_lang)
+        query_en = translator.to_bridge(query, source)
         model_schema = SentryResponse if structured else None
-        result = chat.chat(query, schema_model=model_schema)
+        result = chat.chat(query_en, schema_model=model_schema)
+        answer_en = str(result.get("text", ""))
+        localized_answer = translator.from_bridge(answer_en, target)
+        result["text"] = localized_answer
         flag = default_apply if apply_actions is None else apply_actions
         _maybe_dispatch_actions(result, flag)
-        return _format_chat_payload(result)
+        translation_meta = {
+            "enabled": bool(translator.cfg.enabled),
+            "request_lang": source,
+            "bridge_lang": translator.BRIDGE_LANG,
+            "response_lang": target,
+            "query_bridge": query_en,
+            "answer_bridge": answer_en,
+            "auto_detected": bool(source_lang and str(source_lang).strip().lower() == "auto"),
+        }
+        return _format_chat_payload(result, translation=translation_meta)
+
+    @r.post("/translate")
+    def translate(text: str, source_lang: str = "auto", target_lang: str = "en"):
+        source = translator.normalize_lang(source_lang, fallback=translator.cfg.default_source_lang)
+        target = translator.normalize_lang(target_lang, fallback=translator.BRIDGE_LANG)
+        if source_lang == "auto":
+            source = translator.detect_language(text)
+        out = translator.translate(text, source, target)
+        return {"ok": True, "text": out, "source_lang": source, "target_lang": target}
 
     @r.get("/persona")
     def get_persona():
-        return {"ok": True, "persona": persona_text[:4096]}
+        return {"ok": True, "active": active_persona, "persona": persona_text[:4096]}
 
     @r.get("/personas")
     def list_personas() -> dict:
@@ -126,18 +189,19 @@ def get_router(cfg: dict) -> APIRouter:
             for name in os.listdir(base):
                 if os.path.isdir(os.path.join(base, name)):
                     items.append(name)
-        return {"ok": True, "items": items, "active": cfg.get("persona", {}).get("default")}
+        return {"ok": True, "items": items, "active": active_persona}
 
     @r.post("/persona/select")
     def select_persona(name: str):
-        nonlocal persona_text, chat
+        nonlocal persona_text, chat, active_persona
         pdir = _persona_dir(cfg, name)
         path = os.path.join(pdir, "persona.txt")
         if not os.path.exists(path):
             return {"ok": False, "error": "persona not found"}
+        active_persona = str(name)
         persona_text = _persona_cache.get(name) or _load_persona_text(cfg, name)
         _persona_cache[name] = persona_text
-        chat = OllamaChatService(client, PersonaProvider(persona_text), max_history=6)
+        chat = OllamaChatService(client, PersonaProvider(persona_text, persona_name=active_persona), max_history=6)
         return {"ok": True, "active": name}
 
     @r.post("/persona/create_from_url")

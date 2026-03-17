@@ -13,6 +13,7 @@ audio:
 
 recognition:
   # You can set either language or model_path. If model_path is missing, language will be used to auto-pick a model.
+  source_language: tr          # reported as source language for downstream translation pipeline
   language: tr                 # tr, en, en-us, de, es, fr, it, ru, ar, etc.
   model_path: null             # explicit path overrides language mapping
   # Optional per-language mapping to override defaults

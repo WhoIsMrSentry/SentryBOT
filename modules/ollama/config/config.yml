@@ -12,3 +12,8 @@ actions:
   endpoint: http://localhost:8100/autonomy/apply_actions
   default_apply: true
   timeout: 1.5
+translation:
+  enabled: true
+  default_source_lang: tr
+  model: ""
+  cache_size: 128

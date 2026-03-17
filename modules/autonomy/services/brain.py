@@ -50,6 +50,7 @@ class AutonomyBrain(
             "is_sleeping": False,
             "last_speech_text": "",
             "last_speech_time": 0,
+            "last_speech_language": "tr",
             "current_pan": 90,
             "current_tilt": 90,
             "last_emotion": None,
@@ -131,11 +132,13 @@ class AutonomyBrain(
             speech = self.client.get_last_speech()
             if speech and speech.get("final") and speech.get("text"):
                 text = speech["text"]
+                lang = str(speech.get("language") or self.state.get("last_speech_language") or "tr")
                 elapsed = time.time() - self.state["last_speech_time"]
                 if text != self.state["last_speech_text"] and elapsed > 2:
                     self.state["last_speech_text"] = text
                     self.state["last_speech_time"] = time.time()
-                    self._react_to_speech(text)
+                    self.state["last_speech_language"] = lang
+                    self._react_to_speech(text, source_lang=lang)
         except Exception:
             pass
 
@@ -279,13 +282,14 @@ class AutonomyBrain(
         self.mood.modify("energy", 2)
         self.memory.add_event(f"Heard sound at angle {angle}")
 
-    def _react_to_speech(self, text):
+    def _react_to_speech(self, text, source_lang: str | None = None):
         """React to heard text."""
         logger.info("Heard: %s", text)
         self.state["last_interaction"] = time.time()
         self.mood.modify("happiness", 5)
         self.memory.add_event(f"User said: {text}")
         self._log_conversation(text)
+        lang = str(source_lang or self.state.get("last_speech_language") or "tr")
         low = str(text or "").lower()
         if any(k in low for k in ["hey sentry", "hey sentrybot", "sentry", "sentrybot"]):
             self._run_scene("wakeword_reaction", context={"text": text})
@@ -298,7 +302,7 @@ class AutonomyBrain(
         blocked_response = self._maybe_block_request(text)
         if blocked_response:
             message, emotion = blocked_response
-            self._speak_with_mood(message, emotion=emotion)
+            self._speak_with_mood(message, emotion=emotion, language=lang)
             return
 
         if self._handle_owner_commands(text, speaker):
@@ -317,7 +321,7 @@ class AutonomyBrain(
             if not self.client.is_service_available(target_service):
                 fallback = self._offline_reply(text, target_service)
                 self.client.push_interaction_event("autonomy.offline", {"service": target_service})
-                self._speak_with_mood(fallback, emotion="neutral")
+                self._speak_with_mood(fallback, emotion="neutral", language=lang)
                 self.memory.add_event(f"Offline fallback reply used for {target_service}: {fallback}")
                 return
 
@@ -327,22 +331,39 @@ class AutonomyBrain(
         try:
             if is_question and self.config.get("wikirag", {}).get("enabled", False):
                 logger.info("Routing to WikiRAG...")
-                resp = self.client.chat_rag(text)
+                rag_query = text
+                tr = self.client.translate(text, source_lang="auto", target_lang="en")
+                detected_lang = lang
+                if isinstance(tr, dict) and tr.get("ok"):
+                    if tr.get("text"):
+                        rag_query = str(tr.get("text"))
+                    if tr.get("source_lang"):
+                        detected_lang = str(tr.get("source_lang"))
+                resp = self.client.chat_rag(rag_query)
                 if resp and "answer" in resp:
                     response_text = resp["answer"]
                     response_actions = resp.get("actions")
                     raw_response = resp.get("raw")
+                    if detected_lang.lower() != "en" and response_text:
+                        tr_back = self.client.translate(response_text, source_lang="en", target_lang=detected_lang)
+                        if isinstance(tr_back, dict) and tr_back.get("ok") and tr_back.get("text"):
+                            response_text = str(tr_back.get("text"))
+                            lang = detected_lang
             else:
                 logger.info("Routing to Ollama...")
-                resp = self.client.chat(text)
+                resp = self.client.chat(text, source_lang="auto", response_lang=None)
                 if resp and "answer" in resp:
                     response_text = resp["answer"]
                     response_actions = resp.get("actions")
                     raw_response = resp.get("raw")
+                    trans = resp.get("translation") if isinstance(resp, dict) else None
+                    if isinstance(trans, dict) and trans.get("response_lang"):
+                        lang = str(trans.get("response_lang"))
 
             if response_text:
-                clean_text = self.apply_llm_response(response_text, response_actions, raw_response, speak=True)
+                clean_text = self.apply_llm_response(response_text, response_actions, raw_response, speak=False)
                 if clean_text:
+                    self._speak_with_mood(clean_text, language=lang)
                     logger.info("Reply: %s", clean_text)
                     self.memory.add_event(f"I replied: {clean_text}")
                 else:

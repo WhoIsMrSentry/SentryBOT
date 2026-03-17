@@ -34,7 +34,7 @@ def get_router(service: SpeechService) -> APIRouter:
     async def status():
         return {"listening": service.listening}
 
-    last: dict | None = {"text": None}
+    last: dict | None = {"text": None, "language": getattr(service, "source_language", "tr")}
     speaking = False
     speaking_lock = Lock()
 
@@ -61,7 +61,12 @@ def get_router(service: SpeechService) -> APIRouter:
 
     def _cb(r):
         nonlocal last
-        last = {"text": r.text, "final": r.is_final, "confidence": r.confidence}
+        last = {
+            "text": r.text,
+            "final": r.is_final,
+            "confidence": r.confidence,
+            "language": getattr(service, "source_language", "tr"),
+        }
         if r.is_final and r.text:
             threading.Thread(target=_notify_autonomy, daemon=True).start()
             if _mark_speaking(True):
