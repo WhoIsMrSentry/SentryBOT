@@ -47,6 +47,12 @@ ollama:
 
 speak:
   endpoint: "http://localhost:8083/speak/say"
+translation:
+  enabled: false
+  endpoint: "http://localhost:8080/ollama/translate"
+  source_lang: auto
+  target_lang: tr
+  timeout: 1.5
 actions:
   endpoint: "http://localhost:8100/autonomy/apply_actions"
   default_apply: true
