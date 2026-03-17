@@ -31,11 +31,11 @@ class FakeServiceClient:
     def push_interaction_event(self, ev):
         self.calls.append(("event", ev))
 
-    def speak(self, text, tone=None, engine=None):
+    def speak(self, text, tone=None, engine=None, language=None):
         self.calls.append(("speak", text))
         return {"ok": True}
 
-    def chat(self, query, apply_actions: bool = False):
+    def chat(self, query, apply_actions: bool = False, source_lang=None, response_lang=None):
         # simple canned response
         return {"answer": "Ben iyiyim, teşekkürler.", "actions": None}
 

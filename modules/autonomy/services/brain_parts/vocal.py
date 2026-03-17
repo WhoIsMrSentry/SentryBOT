@@ -41,12 +41,12 @@ class VocalMixin:
         except Exception as exc:
             logger.error("Monologue failed: %s", exc)
 
-    def _speak_with_mood(self, text: str, emotion: str | None = None) -> None:
+    def _speak_with_mood(self, text: str, emotion: str | None = None, language: str | None = None) -> None:
         if not text:
             return
         tone = self._tone_profile(emotion)
         try:
-            self.client.speak(text, tone=tone)
+            self.client.speak(text, tone=tone, language=language)
         except Exception as exc:  # pragma: no cover - best effort speech
             logger.debug("Failed to speak with tone %s: %s", tone, exc)
 
