@@ -41,6 +41,8 @@ class SpeechService:
         self._thread = None
         self.capture = AudioCapture(self.cfg.get("audio", {}))
         self.recognizer = Recognizer(self.cfg.get("recognition", {}))
+        rec_cfg = self.cfg.get("recognition", {}) or {}
+        self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
         # Direction estimator (optional, needs stereo)
         dir_cfg = self.cfg.get("direction", {})
         self.direction_enabled = bool(dir_cfg.get("enabled", False)) and self.capture.cfg.channels >= 2
