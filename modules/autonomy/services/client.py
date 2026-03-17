@@ -212,7 +212,7 @@ class ServiceClient:
             return start_m <= now < end_m
         return now >= start_m or now < end_m
 
-    def speak(self, text, tone=None, engine=None):
+    def speak(self, text, tone=None, engine=None, language=None):
         text_value = str(text or "")
         if self._quiet_hours_active():
             max_chars = int(self.speech_quiet_cfg.get("max_chars", 120))
@@ -229,10 +229,16 @@ class ServiceClient:
             payload["tone"] = tone
         if engine:
             payload["engine"] = engine
+        if language:
+            payload["language"] = str(language)
         return self._post("speak", "/say", payload)
 
-    def chat(self, query, apply_actions: bool = False):
+    def chat(self, query, apply_actions: bool = False, source_lang: str | None = None, response_lang: str | None = None):
         params = {"query": query, "apply_actions": str(bool(apply_actions)).lower()}
+        if source_lang:
+            params["source_lang"] = str(source_lang)
+        if response_lang:
+            params["response_lang"] = str(response_lang)
         return self._post("ollama", "/chat", None, params=params)
 
     def get_speech_direction(self):
@@ -261,6 +267,14 @@ class ServiceClient:
     def chat_rag(self, query, apply_actions: bool = False):
         params = {"query": query, "apply_actions": str(bool(apply_actions)).lower()}
         return self._post("wiki_rag", "/chat", None, params=params)
+
+    def translate(self, text, source_lang: str, target_lang: str):
+        params = {
+            "text": str(text or ""),
+            "source_lang": str(source_lang or "auto"),
+            "target_lang": str(target_lang or "en"),
+        }
+        return self._post("ollama", "/translate", None, params=params)
 
     def select_persona(self, name):
         return self._post("ollama", "/persona/select", {"name": name})

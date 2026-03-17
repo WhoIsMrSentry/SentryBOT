@@ -11,11 +11,21 @@ logger = logging.getLogger("ollama.chat")
 
 
 class PersonaProvider:
-    def __init__(self, persona_text: str) -> None:
+    def __init__(self, persona_text: str, persona_name: str = "sentry") -> None:
         self.persona_text = persona_text
+        self.persona_name = persona_name
 
-    def system_prompt(self) -> Dict[str, str]:
-        return {"role": "system", "content": self.persona_text}
+    def system_prompts(self) -> List[Dict[str, str]]:
+        return [
+            {"role": "system", "content": self.persona_text},
+            {
+                "role": "system",
+                "content": (
+                    "Active persona name: "
+                    f"{self.persona_name}. Keep replies aligned with this persona."
+                ),
+            },
+        ]
 
 
 class OllamaChatService:
@@ -31,7 +41,7 @@ class OllamaChatService:
         response_format: Optional[Any] = None,
         schema_model: Optional[Type[BaseModel]] = None,
     ) -> Dict[str, Any]:
-        messages: List[Dict[str, str]] = [self.persona.system_prompt()]
+        messages: List[Dict[str, str]] = list(self.persona.system_prompts())
         if extra_history:
             messages.extend(extra_history)
         messages.extend(self.memory.as_list())

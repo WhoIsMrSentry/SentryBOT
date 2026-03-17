@@ -21,11 +21,11 @@ class _OfflineClient:
     def push_interaction_event(self, event_type, data=None):
         self.events.append((event_type, data))
 
-    def speak(self, text, tone=None, engine=None):
+    def speak(self, text, tone=None, engine=None, language=None):
         self.spoken.append(text)
         return {"ok": True}
 
-    def chat(self, query, apply_actions: bool = False):
+    def chat(self, query, apply_actions: bool = False, source_lang=None, response_lang=None):
         self.chat_called += 1
         return {"answer": "should-not-happen"}
 

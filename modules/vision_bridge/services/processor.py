@@ -293,9 +293,29 @@ class VisionProcessor:
         self.last_blind_announcement = now
 
     def _send_tts(self, text: str):
+        out_text = str(text or "")
+        tcfg = self.config.get("translation", {}) if isinstance(self.config.get("translation", {}), dict) else {}
+        if out_text and bool(tcfg.get("enabled", False)):
+            endpoint = str(tcfg.get("endpoint", "http://localhost:8080/ollama/translate"))
+            source_lang = str(tcfg.get("source_lang", "auto"))
+            target_lang = str(tcfg.get("target_lang", "tr"))
+            timeout = float(tcfg.get("timeout", 1.5))
+            try:
+                resp = requests.post(
+                    endpoint,
+                    params={"text": out_text, "source_lang": source_lang, "target_lang": target_lang},
+                    timeout=timeout,
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, dict) and data.get("ok") and data.get("text"):
+                        out_text = str(data.get("text"))
+            except Exception as exc:
+                logger.debug("vision_bridge translation failed: %s", exc)
+
         url = self.config.get("speak", {}).get("endpoint") or "http://localhost:8083/speak/say"
         try:
-            requests.post(url, json={"text": text}, timeout=1.0)
+            requests.post(url, json={"text": out_text}, timeout=1.0)
         except Exception as e:
             logger.error(f"Failed to send TTS: {e}")
 
