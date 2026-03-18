@@ -110,7 +110,15 @@ class NeoDriver:
         """Attempts to play a hardware-accelerated animation.
         Returns True if the backend handled it, False if we need to fall back to software.
         """
-        return self._strip.animate(name.lower(), r, g, b, iterations, speed_ms)
+        # Some Pi5Neo versions don't expose `animate`; fall back to software
+        # animations in runner instead of raising AttributeError.
+        fn = getattr(self._strip, "animate", None)
+        if callable(fn):
+            try:
+                return bool(fn(name.lower(), r, g, b, iterations, speed_ms))
+            except Exception:
+                return False
+        return False
 
     # Helpers
     def _map_color(self, r: int, g: int, b: int) -> Tuple[int, int, int]:

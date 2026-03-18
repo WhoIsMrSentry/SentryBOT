@@ -11,8 +11,8 @@ import pytest
 from modules.oled_faces.services.pi_ssd1306_driver import PiSsd1306Driver
 
 
-def _make_driver(assets_dir: str | None = None, enabled: bool = False) -> PiSsd1306Driver:
-    cfg: dict = {"enabled": enabled}
+def _make_driver(assets_dir: str | None = None, enabled: bool = False, bitmap_format: str = "raw_page") -> PiSsd1306Driver:
+    cfg: dict = {"enabled": enabled, "bitmap_format": bitmap_format}
     if assets_dir is not None:
         cfg["assets_dir"] = assets_dir
     return PiSsd1306Driver(cfg)
@@ -78,7 +78,7 @@ class TestLoadBitmap:
         self.bitmaps_dir.mkdir()
         self.animations_dir = Path(self.tmp) / "animations"
         self.animations_dir.mkdir()
-        self.driver = _make_driver(assets_dir=self.tmp)
+        self.driver = _make_driver(assets_dir=self.tmp, bitmap_format="raw_page")
 
     def _write_bitmap(self, name: str, data: bytes):
         (self.bitmaps_dir / f"{name}.bin").write_bytes(data)
@@ -119,6 +119,21 @@ class TestLoadBitmap:
         (self.bitmaps_dir / "cached.bin").write_bytes(b"\x22" * size)
         result2 = self.driver._load_bitmap("cached")
         assert result1 == result2
+
+    def test_irisoled_xbm_layout_is_converted(self):
+        # Recreate driver in Irisoled/XBM mode for conversion test.
+        self.driver = _make_driver(assets_dir=self.tmp, bitmap_format="irisoled_xbm")
+        # Build a minimal XBM-like raw frame with only pixel (0, 0) enabled.
+        # XBM row-major source: byte0 bit0 => (x=0, y=0).
+        size = len(self.driver._buffer)
+        raw = bytearray(b"\x00" * size)
+        raw[0] = 0x01
+        self._write_bitmap("xbm_single", bytes(raw))
+
+        result = self.driver._load_bitmap("xbm_single")
+        assert result is not None
+        # SSD1306 page buffer index for (0,0) is byte 0 bit 0.
+        assert result[0] & 0x01
 
 
 # ---------------------------------------------------------------------------

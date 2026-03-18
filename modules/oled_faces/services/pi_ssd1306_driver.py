@@ -17,6 +17,12 @@ class PiSsd1306Driver:
         self.width = int(c.get("width", 128))
         self.height = int(c.get("height", 64))
         self.contrast = int(c.get("contrast", 0x8F))
+        # Irisoled C++ assets are intended for Adafruit drawBitmap (XBM-like
+        # row-major bit packing). Convert to SSD1306 page layout on load.
+        self.bitmap_format = str(c.get("bitmap_format", "irisoled_xbm")).strip().lower()
+        self.bitmap_mirror_x = bool(c.get("bitmap_mirror_x", False))
+        self.bitmap_mirror_y = bool(c.get("bitmap_mirror_y", False))
+        self.bitmap_invert = bool(c.get("bitmap_invert", False))
 
         default_assets = Path(__file__).resolve().parent.parent / "assets"
         self.assets_dir = Path(str(c.get("assets_dir", default_assets))).resolve()
@@ -74,6 +80,7 @@ class PiSsd1306Driver:
             "i2c_addr": hex(self.addr),
             "size": [self.width, self.height],
             "assets_dir": str(self.assets_dir),
+            "bitmap_format": self.bitmap_format,
             "last_error": self._last_error,
         }
 
@@ -229,10 +236,45 @@ class PiSsd1306Driver:
                 raw = raw + (b"\x00" * (size - len(raw)))
             elif len(raw) > size:
                 raw = raw[:size]
-            self._bitmap_cache[key] = raw
-            return raw
+            out = raw
+            if self.bitmap_format in {"irisoled_xbm", "xbm", "xbm_lsb"}:
+                out = self._convert_xbm_to_page_buffer(raw)
+            if self.bitmap_invert:
+                out = bytes((~b) & 0xFF for b in out)
+            self._bitmap_cache[key] = out
+            return out
         except Exception:
             return None
+
+    def _convert_xbm_to_page_buffer(self, raw: bytes) -> bytes:
+        """Convert XBM-style row-major bitmap to SSD1306 page layout.
+
+        Irisoled bitmaps are consumed by Adafruit `drawBitmap`, which expects
+        horizontal bytes and LSB-first bit order per byte. SSD1306 GDDRAM,
+        however, is page-oriented (8 vertical pixels per byte). This converter
+        bridges that layout difference.
+        """
+        w = self.width
+        h = self.height
+        row_bytes = w // 8
+        size = (w * h) // 8
+        if len(raw) < size:
+            raw = raw + (b"\x00" * (size - len(raw)))
+        elif len(raw) > size:
+            raw = raw[:size]
+
+        out = bytearray(size)
+        for y in range(h):
+            sy = (h - 1 - y) if self.bitmap_mirror_y else y
+            for x in range(w):
+                sx = (w - 1 - x) if self.bitmap_mirror_x else x
+                src_idx = sy * row_bytes + (sx // 8)
+                src_bit = 1 << (sx & 7)  # XBM is LSB-first in each byte
+                on = (raw[src_idx] & src_bit) != 0
+                if on:
+                    dst_idx = x + (y // 8) * w
+                    out[dst_idx] |= 1 << (y & 7)
+        return bytes(out)
 
     def _load_animation(self, name: str) -> Tuple[List[str], float]:
         key = str(name).strip().lower()

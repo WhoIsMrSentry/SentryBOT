@@ -13,6 +13,11 @@ display:
   height: 64
   contrast: 143 # 0x8F
   assets_dir: modules/oled_faces/assets
+  # Irisoled bitmap arrays are XBM-style; convert on load for SSD1306 page RAM.
+  bitmap_format: irisoled_xbm
+  bitmap_mirror_x: false
+  bitmap_mirror_y: false
+  bitmap_invert: false
 
 boot:
   mode: logo
@@ -47,6 +52,10 @@ event_map:
   autonomy.stretch: { mode: bitmap, name: look_up }
   autonomy.bored: { mode: bitmap, name: bored }
   autonomy.monologue: { mode: animation, name: emotive }
+  autonomy.sleep: { mode: animation, name: sleep }
+  autonomy.wake: { mode: bitmap, name: normal }
+  autonomy.offline: { mode: bitmap, name: worried }
+  vision.focus: { mode: bitmap, name: focused }
   error: { mode: bitmap, name: warning }
   warning: { mode: bitmap, name: alert }
   owner.scan: { mode: bitmap, name: look_left }

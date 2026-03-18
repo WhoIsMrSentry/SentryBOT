@@ -167,6 +167,29 @@ rules:
     priority: low
     cooldown_ms: 2500
 
+  - id: autonomy_sleep
+    when: { event: autonomy.sleep }
+    action: { base: { name: BREATHE, color: "#04070A", speed: slow } }
+    priority: high
+
+  - id: autonomy_wake
+    when: { event: autonomy.wake }
+    action: { effect: { name: COMET, duration_ms: 900 } }
+    priority: medium
+    cooldown_ms: 1800
+
+  - id: autonomy_offline
+    when: { event: autonomy.offline }
+    action: { effect: { name: PULSE, duration_ms: 850 } }
+    priority: medium
+    cooldown_ms: 2500
+
+  - id: vision_focus
+    when: { event: vision.focus }
+    action: { effect: { name: COMET, duration_ms: 500 } }
+    priority: low
+    cooldown_ms: 900
+
   - id: autonomy_angry
     when: { event: autonomy.angry }
     action: { base: { name: BREATHE, color: "#FF3300", speed: slow } }
