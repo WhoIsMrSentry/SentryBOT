@@ -5,7 +5,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
-from .clients import OllamaClient
+from .clients import LLMClientProtocol
 
 try:
     from langdetect import detect as _detect_lang  # type: ignore
@@ -30,7 +30,7 @@ class OllamaTranslator:
 
     BRIDGE_LANG = "en"
 
-    def __init__(self, client: OllamaClient, cfg: Dict):
+    def __init__(self, client: LLMClientProtocol, cfg: Dict):
         self.client = client
         self.cfg = TranslatorConfig(
             enabled=bool(cfg.get("enabled", True)),

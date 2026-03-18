@@ -7,12 +7,12 @@ from typing import Optional, List, Dict, Any
 import requests
 
 try:
-    from ..services.clients import OllamaClient
+    from ..services.clients import create_llm_client
     from ..services.chat import PersonaProvider, OllamaChatService
     from ..services.translator import OllamaTranslator
     from ..models.sentry_schema import SentryResponse
 except Exception:
-    from services.clients import OllamaClient  # type: ignore
+    from services.clients import create_llm_client  # type: ignore
     from services.chat import PersonaProvider, OllamaChatService  # type: ignore
     from services.translator import OllamaTranslator  # type: ignore
     from models.sentry_schema import SentryResponse  # type: ignore
@@ -39,10 +39,18 @@ logger = logging.getLogger("ollama.api")
 def get_router(cfg: dict) -> APIRouter:
     r = APIRouter(prefix="/ollama", tags=["ollama"])
 
-    base_url = str(cfg.get("ollama", {}).get("base_url", "http://localhost:11435"))
-    model = str(cfg.get("ollama", {}).get("model", "llama3.2:3b"))
-    timeout = float(cfg.get("ollama", {}).get("request_timeout", 60.0))
-    client = OllamaClient(base_url=base_url, model=model, request_timeout=timeout)
+    provider_name = "ollama"
+    try:
+        client, provider_name = create_llm_client(cfg)
+    except Exception as exc:
+        logger.warning("LLM provider init failed, fallback to ollama: %s", exc)
+        fallback_cfg = {
+            "llm": {"provider": "ollama"},
+            "ollama": cfg.get("ollama", {}) or {},
+        }
+        client, provider_name = create_llm_client(fallback_cfg)
+
+    model = str(getattr(client, "model", cfg.get("ollama", {}).get("model", "unknown")))
     translator = OllamaTranslator(client, cfg.get("translation", {}) or {})
     actions_cfg = cfg.get("actions", {}) or {}
     action_endpoint = str(actions_cfg.get("endpoint", "")).strip()
@@ -70,7 +78,12 @@ def get_router(cfg: dict) -> APIRouter:
 
     @r.get("/healthz")
     def healthz():
-        return {"ok": True, "base_url": base_url, "model": model}
+        info: Dict[str, Any] = {"ok": True, "provider": provider_name, "model": model}
+        if provider_name == "ollama":
+            info["base_url"] = str(cfg.get("ollama", {}).get("base_url", "http://localhost:11435"))
+        elif provider_name == "google_ai_studio":
+            info["base_url"] = str(cfg.get("google_ai_studio", {}).get("base_url", "https://generativelanguage.googleapis.com"))
+        return info
 
     def _format_chat_payload(result: Dict[str, Any], translation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -80,6 +93,7 @@ def get_router(cfg: dict) -> APIRouter:
             "thoughts": result.get("thoughts", ""),
             "persona": active_persona,
             "model": model,
+            "provider": provider_name,
         }
         if result.get("actions"):
             payload["actions"] = result["actions"]
