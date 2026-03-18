@@ -3,7 +3,7 @@ import json
 from typing import Dict, List, Optional, Any, Type
 import logging
 from pydantic import BaseModel
-from .clients import OllamaClient
+from .clients import LLMClientProtocol
 from .memory import ChatMemory
 from .tags import extract_llm_tags
 
@@ -29,7 +29,7 @@ class PersonaProvider:
 
 
 class OllamaChatService:
-    def __init__(self, client: OllamaClient, persona: PersonaProvider, max_history: int = 6) -> None:
+    def __init__(self, client: LLMClientProtocol, persona: PersonaProvider, max_history: int = 6) -> None:
         self.client = client
         self.persona = persona
         self.memory = ChatMemory(max_turns=max_history)

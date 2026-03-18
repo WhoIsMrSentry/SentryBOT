@@ -1,5 +1,6 @@
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import requests
 
@@ -64,3 +65,124 @@ class OllamaClient:
                 content = ""
             return {"message": {"content": content}, "raw": data}
         return {"message": {"content": str(data)}, "raw": data}
+
+
+class LLMClientProtocol(Protocol):
+    model: str
+
+    def chat(
+        self,
+        messages: List[Dict[str, str]],
+        format: Optional[Any] = None,
+        *,
+        options: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        ...
+
+
+class GoogleAIStudioClient:
+    """Google AI Studio (Gemini) REST istemcisi."""
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str,
+        base_url: str = "https://generativelanguage.googleapis.com",
+        request_timeout: float = 60.0,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.timeout = request_timeout
+
+    @staticmethod
+    def _to_gemini_parts(messages: List[Dict[str, str]]) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+        system_chunks: List[str] = []
+        contents: List[Dict[str, Any]] = []
+
+        for m in messages:
+            role = str(m.get("role", "user"))
+            text = str(m.get("content", ""))
+            if not text.strip():
+                continue
+
+            if role == "system":
+                system_chunks.append(text)
+                continue
+
+            gemini_role = "model" if role == "assistant" else "user"
+            contents.append({"role": gemini_role, "parts": [{"text": text}]})
+
+        system_instruction = "\n\n".join(system_chunks).strip() or None
+        return system_instruction, contents
+
+    def chat(
+        self,
+        messages: List[Dict[str, str]],
+        format: Optional[Any] = None,
+        *,
+        options: Optional[Dict[str, Any]] = None,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        selected_model = model or self.model
+        system_instruction, contents = self._to_gemini_parts(messages)
+
+        if not contents:
+            contents = [{"role": "user", "parts": [{"text": ""}]}]
+
+        generation_config: Dict[str, Any] = {"temperature": 0.6}
+        if isinstance(options, dict):
+            if "temperature" in options:
+                generation_config["temperature"] = options["temperature"]
+
+        if isinstance(format, dict):
+            generation_config["responseMimeType"] = "application/json"
+            generation_config["responseSchema"] = format
+
+        payload: Dict[str, Any] = {
+            "contents": contents,
+            "generationConfig": generation_config,
+        }
+        if system_instruction:
+            payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+
+        url = f"{self.base_url}/v1beta/models/{selected_model}:generateContent"
+        resp = requests.post(
+            url,
+            params={"key": self.api_key},
+            json=payload,
+            timeout=float(self.timeout),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        text = ""
+        try:
+            parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
+            text = "\n".join(str(p.get("text", "")) for p in parts if isinstance(p, dict)).strip()
+        except Exception:
+            text = ""
+
+        return {"message": {"content": text}, "raw": data}
+
+
+def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
+    llm_cfg = cfg.get("llm", {}) or {}
+    provider = str(llm_cfg.get("provider", "ollama")).strip().lower() or "ollama"
+
+    if provider in {"google", "google_ai_studio", "gemini"}:
+        gcfg = cfg.get("google_ai_studio", {}) or {}
+        api_key = str(gcfg.get("api_key", "")).strip() or str(os.environ.get("GOOGLE_API_KEY", "")).strip()
+        model = str(gcfg.get("model", "gemini-1.5-flash")).strip() or "gemini-1.5-flash"
+        base_url = str(gcfg.get("base_url", "https://generativelanguage.googleapis.com")).strip()
+        timeout = float(gcfg.get("request_timeout", 60.0))
+        if not api_key:
+            raise RuntimeError("Google AI Studio selected but api_key is missing")
+        return GoogleAIStudioClient(api_key=api_key, model=model, base_url=base_url, request_timeout=timeout), "google_ai_studio"
+
+    ocfg = cfg.get("ollama", {}) or {}
+    base_url = str(ocfg.get("base_url", "http://localhost:11435"))
+    model = str(ocfg.get("model", "llama3.2:3b"))
+    timeout = float(ocfg.get("request_timeout", 60.0))
+    return OllamaClient(base_url=base_url, model=model, request_timeout=timeout), "ollama"
