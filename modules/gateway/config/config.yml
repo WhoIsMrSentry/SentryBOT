@@ -27,3 +27,5 @@ include:
   notifier: true
   calibration: true
   config_center: true
+speech:
+  listening: true

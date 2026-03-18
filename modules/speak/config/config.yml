@@ -13,7 +13,7 @@ audio_out:
 tts:
   engine: pyttsx3       # pyttsx3 | piper | xtts | dummy
   language: tr
-  voice: null           # optional voice id
+  voice: source         # optional voice id — default olarak kaynak sesi kullanılacak
   rate: 170
   volume: 1.0
   samplerate: 22050

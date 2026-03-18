@@ -266,12 +266,12 @@ owner:
     formal: "Emir"
     handle: "WhoIsMrSentry"
   presence_timeout_s: 45
-  require_presence: true
+  require_presence: false
   permission_grace_s: 900
   max_requests_without_owner: 3
   cooldown_s: 20
   speaker_window_s: 10
-  polite_message: "Baba olmadan isteğini yerine getiremiyorum."
+  polite_message: "Sahip yokken de isteğini yerine getirebilirim."
   angry_message: "Baba yokken beni zorlamanı istemiyorum."
   cooldown_message: "Baba gelene kadar konuşmak istemiyorum."
   greeting: "Baba! Geldiğine çok sevindim."

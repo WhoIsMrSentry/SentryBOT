@@ -8,28 +8,51 @@ from typing import Deque, Iterable, List, Optional
 class InMemoryLogHandler(logging.Handler):
     """Basit halka buffer log handler.
 
+    Backwards-compatible davranış korundu: `tail()` eski gibi formatlanmış string listesi döner.
+    Ek olarak yapılandırılmış kayıtlar için `tail_struct()` ve `iter_struct()` eklendi.
+
     - thread-safe: logging.Handler zaten lock içerir
-    - formatlanmış stringleri saklar (emit sonrası)
+    - formatlanmış stringleri ve parçalara ayrılmış meta veriyi saklar (emit sonrası)
     """
 
     def __init__(self, maxlen: int = 1000, level: int = logging.NOTSET) -> None:
         super().__init__(level=level)
-        self.buffer: Deque[str] = deque(maxlen=maxlen)
+        # iç buffer dict'ler tutar: {formatted, name, levelname, message, asctime}
+        self.buffer: Deque[dict] = deque(maxlen=maxlen)
 
     def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
         try:
-            msg = self.format(record)
+            formatted = self.format(record)
         except Exception:  # pragma: no cover
-            msg = record.getMessage()
-        self.buffer.append(msg)
+            formatted = record.getMessage()
+        entry = {
+            "formatted": formatted,
+            "name": getattr(record, "name", ""),
+            "level": getattr(record, "levelname", ""),
+            "message": record.getMessage(),
+            "asctime": getattr(record, "asctime", ""),
+        }
+        self.buffer.append(entry)
 
     def tail(self, n: int = 100) -> List[str]:
+        """Geriye dönük en son n formatlanmış string'i döner (geri uyumluluk)."""
         if n <= 0:
             return []
         start = max(0, len(self.buffer) - n)
-        return list(list(self.buffer)[start:])
+        return [e["formatted"] for e in list(self.buffer)[start:]]
 
     def iter(self) -> Iterable[str]:
+        """Eski iter benzeri, formatlanmış string'ler döner."""
+        return (e["formatted"] for e in self.buffer)
+
+    # Yeni API: yapılandırılmış kayıtlara erişim
+    def tail_struct(self, n: int = 100) -> List[dict]:
+        if n <= 0:
+            return []
+        start = max(0, len(self.buffer) - n)
+        return list(self.buffer)[start:]
+
+    def iter_struct(self) -> Iterable[dict]:
         return iter(self.buffer)
 
 

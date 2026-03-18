@@ -82,6 +82,20 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.speech.api import get_router as get_speech_router  # type: ignore
     svc = SpeechService()
     started["speech"] = svc
+    # If gateway config requests speech to start listening on boot, start it.
+    try:
+        # cfg is passed to bootstrap and available in outer scope; read flag if present
+        # default: do not auto-start listening here (wakeword handles triggers)
+        # We attempt to read top-level 'speech' config under gateway config for this flag.
+        from modules.gateway import config_loader as _gw_cfg  # type: ignore
+        gwcfg = _gw_cfg.load_config(None)
+        if isinstance(gwcfg.get("speech"), dict) and bool(gwcfg.get("speech", {}).get("listening", False)):
+            try:
+                svc.start_background()
+            except Exception:
+                pass
+    except Exception:
+        pass
     app.include_router(get_speech_router(svc))
     logger.info("module speech mounted")
 
