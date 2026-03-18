@@ -10,14 +10,22 @@ display:
   bus: 1
   address: 60   # 0x3C
   width: 128
-  height: 64
+  height: 32
   contrast: 143 # 0x8F
   assets_dir: modules/oled_faces/assets
-  # Irisoled bitmap arrays are XBM-style; convert on load for SSD1306 page RAM.
-  bitmap_format: irisoled_xbm
+  bitmaps_subdir: bitmaps_128x32_clean
+  # This repo's *.bin assets are already SSD1306 page-buffer layout.
+  # Use irisoled_xbm only when loading raw C-array/XBM exports directly.
+  bitmap_format: raw_page
+  # lsb: Adafruit drawBitmap / XBM default, msb: alternative converter mode.
+  bitmap_bit_order: lsb
   bitmap_mirror_x: false
   bitmap_mirror_y: false
   bitmap_invert: false
+  # Panel alignment/orientation tuning (hardware dependent).
+  column_offset: 0
+  seg_remap: true
+  com_scan_dec: true
 
 boot:
   mode: logo

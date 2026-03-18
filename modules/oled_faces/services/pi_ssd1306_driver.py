@@ -20,13 +20,19 @@ class PiSsd1306Driver:
         # Irisoled C++ assets are intended for Adafruit drawBitmap (XBM-like
         # row-major bit packing). Convert to SSD1306 page layout on load.
         self.bitmap_format = str(c.get("bitmap_format", "irisoled_xbm")).strip().lower()
+        self.bitmap_bit_order = str(c.get("bitmap_bit_order", "lsb")).strip().lower()
         self.bitmap_mirror_x = bool(c.get("bitmap_mirror_x", False))
         self.bitmap_mirror_y = bool(c.get("bitmap_mirror_y", False))
         self.bitmap_invert = bool(c.get("bitmap_invert", False))
+        # Panel wiring/config tuning knobs.
+        self.column_offset = int(c.get("column_offset", 0))
+        self.seg_remap = bool(c.get("seg_remap", True))
+        self.com_scan_dec = bool(c.get("com_scan_dec", True))
 
         default_assets = Path(__file__).resolve().parent.parent / "assets"
         self.assets_dir = Path(str(c.get("assets_dir", default_assets))).resolve()
-        self.bitmaps_dir = self.assets_dir / "bitmaps"
+        self.bitmaps_subdir = str(c.get("bitmaps_subdir", "bitmaps")).strip() or "bitmaps"
+        self.bitmaps_dir = self.assets_dir / self.bitmaps_subdir
         self.animations_dir = self.assets_dir / "animations"
 
         self._bus = None
@@ -80,7 +86,12 @@ class PiSsd1306Driver:
             "i2c_addr": hex(self.addr),
             "size": [self.width, self.height],
             "assets_dir": str(self.assets_dir),
+            "bitmaps_subdir": self.bitmaps_subdir,
             "bitmap_format": self.bitmap_format,
+            "bitmap_bit_order": self.bitmap_bit_order,
+            "column_offset": self.column_offset,
+            "seg_remap": self.seg_remap,
+            "com_scan_dec": self.com_scan_dec,
             "last_error": self._last_error,
         }
 
@@ -164,10 +175,13 @@ class PiSsd1306Driver:
         if self._bus is None:
             return
         pages = self.height // 8
+        # Some panels/controllers are shifted by a few columns (common with
+        # SH1106-like wiring). Keep configurable for image alignment tuning.
+        col = max(0, min(127, int(self.column_offset)))
         for page in range(pages):
             self._cmd(0xB0 + page)
-            self._cmd(0x00)
-            self._cmd(0x10)
+            self._cmd(col & 0x0F)
+            self._cmd(0x10 | ((col >> 4) & 0x0F))
             start = page * self.width
             end = start + self.width
             self._data(self._buffer[start:end])
@@ -201,8 +215,8 @@ class PiSsd1306Driver:
             0x14,
             0x20,
             0x00,
-            0xA1,
-            0xC8,
+            0xA1 if self.seg_remap else 0xA0,
+            0xC8 if self.com_scan_dec else 0xC0,
             0xDA,
             0x12 if self.height == 64 else 0x02,
             0x81,
@@ -269,7 +283,10 @@ class PiSsd1306Driver:
             for x in range(w):
                 sx = (w - 1 - x) if self.bitmap_mirror_x else x
                 src_idx = sy * row_bytes + (sx // 8)
-                src_bit = 1 << (sx & 7)  # XBM is LSB-first in each byte
+                if self.bitmap_bit_order == "msb":
+                    src_bit = 1 << (7 - (sx & 7))
+                else:
+                    src_bit = 1 << (sx & 7)
                 on = (raw[src_idx] & src_bit) != 0
                 if on:
                     dst_idx = x + (y // 8) * w

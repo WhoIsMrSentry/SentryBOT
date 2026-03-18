@@ -135,6 +135,19 @@ class TestLoadBitmap:
         # SSD1306 page buffer index for (0,0) is byte 0 bit 0.
         assert result[0] & 0x01
 
+    def test_irisoled_xbm_msb_mode_supported(self):
+        # In msb mode, pixel (0,0) maps to byte0 bit7 in source.
+        self.driver = _make_driver(assets_dir=self.tmp, bitmap_format="irisoled_xbm")
+        self.driver.bitmap_bit_order = "msb"
+        size = len(self.driver._buffer)
+        raw = bytearray(b"\x00" * size)
+        raw[0] = 0x80
+        self._write_bitmap("xbm_single_msb", bytes(raw))
+
+        result = self.driver._load_bitmap("xbm_single_msb")
+        assert result is not None
+        assert result[0] & 0x01
+
 
 # ---------------------------------------------------------------------------
 # _load_animation JSON parsing
