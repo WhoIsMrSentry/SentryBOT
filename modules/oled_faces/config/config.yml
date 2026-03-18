@@ -19,7 +19,7 @@ boot:
   name: logo
 
 idle_bitmap: normal
-fallback_unknown: alert
+fallback_unknown: normal
 
 state_map:
   idle: { mode: bitmap, name: normal }

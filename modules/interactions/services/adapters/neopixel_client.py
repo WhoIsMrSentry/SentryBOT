@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import logging
 from typing import Any, Dict, Optional
 
 try:
@@ -9,17 +10,23 @@ except Exception:  # pragma: no cover
     requests = None  # type: ignore
 
 
+logger = logging.getLogger("interactions.neopixel_client")
+
+
 class NeoHttpClient:
     def __init__(self, base_url: str) -> None:
         self.base = base_url.rstrip("/")
 
     def _post(self, path: str, json: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> None:
         if requests is None:
+            logger.warning("neopixel http client disabled: requests not available")
             return
         try:
-            requests.post(self.base + path, json=json, params=params, timeout=1.5)
-        except Exception:
-            pass
+            resp = requests.post(self.base + path, json=json, params=params, timeout=1.5)
+            if resp.status_code >= 400:
+                logger.warning("neopixel request failed: %s %s -> %s", "POST", self.base + path, resp.status_code)
+        except Exception as exc:
+            logger.warning("neopixel request error: %s %s (%s)", "POST", self.base + path, exc)
 
     # Basic controls
     def clear(self) -> None:

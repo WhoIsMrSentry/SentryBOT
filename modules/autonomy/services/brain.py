@@ -251,24 +251,71 @@ class AutonomyBrain(
     def _execute_action(self, action):
         if action == "LOOK_AROUND":
             self.client.push_interaction_event("autonomy.look_around")
+            self._emit_idle_visuals("look_around")
             if not self._trigger_animation("look_around"):
                 self._head_scan_fallback()
         elif action == "BLINK":
             # Always emit a visual event so LED/OLED can react even if
             # servo animation endpoint reports success while degrading.
             self.client.push_interaction_event("autonomy.blink")
+            self._emit_idle_visuals("blink")
             if not self._trigger_animation("blink"):
                 self._blink_fallback()
         elif action == "SIGH":
             self._speak_with_mood("Hıııh.", emotion="tired")
             self.client.push_interaction_event("autonomy.bored")
+            self._emit_idle_visuals("bored")
         elif action == "STRETCH":
             self.client.push_interaction_event("autonomy.stretch")
+            self._emit_idle_visuals("stretch")
             if not self._trigger_animation("stretch"):
                 self._stretch_fallback()
         elif action == "MONOLOGUE":
             self.client.push_interaction_event("autonomy.monologue")
+            self._emit_idle_visuals("monologue")
             self._generate_monologue()
+
+    def _emit_idle_visuals(self, action: str) -> None:
+        """Direct best-effort LED/OLED hints for idle actions.
+
+        Interactions engine remains primary route, but this keeps visible
+        feedback alive when interactions adapter/config is degraded.
+        """
+        key = str(action or "").strip().lower()
+        neo_map = {
+            "blink": "RANDOM_BLINK",
+            "look_around": "COMET",
+            "stretch": "WAVE",
+            "bored": "PULSE",
+            "monologue": "TWINKLE",
+        }
+        oled_anim_map = {
+            "blink": "blink",
+            "look_around": "scan",
+            "monologue": "emotive",
+        }
+        oled_bitmap_map = {
+            "stretch": "look_up",
+            "bored": "bored",
+        }
+
+        try:
+            effect = neo_map.get(key)
+            if effect:
+                self.client.set_neopixel(effect)
+        except Exception:
+            pass
+
+        try:
+            anim = oled_anim_map.get(key)
+            if anim:
+                self.client.oled_anim(anim)
+                return
+            bmp = oled_bitmap_map.get(key)
+            if bmp:
+                self.client.oled_show(bmp)
+        except Exception:
+            pass
 
     def _react_to_sound(self, angle):
         """Turn head towards sound source."""
