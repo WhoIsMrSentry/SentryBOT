@@ -80,11 +80,12 @@ class xAnimateService:
             raise ValueError("invalid animation file")
         return data
 
-    def run(self, name: str, speed: float | None = None, loop: Optional[bool] = None) -> None:
+    def run(self, name: str, speed: float | None = None, loop: Optional[bool] = None) -> bool:
         anim = self.load(name)
         speed_mul = speed if speed is not None else float(self.cfg.get("default_speed", 1.0))
         do_loop = bool(anim.get("loop", False) if loop is None else loop)
         self._running = True
+        degraded = False
         try:
             while self._running:
                 for step in anim.get("steps", []):
@@ -102,6 +103,7 @@ class xAnimateService:
                             self.serial.set_pose(pose, duration_ms=dur_ms if dur_ms > 0 else None)
                         except Exception as exc:
                             logger.warning("animate degraded: pose step skipped (%s)", exc)
+                            degraded = True
                             self._running = False
                             break
                     # hold
@@ -111,6 +113,7 @@ class xAnimateService:
                     break
         finally:
             self._running = False
+        return not degraded
 
     def stop_run(self) -> None:
         self._running = False

@@ -42,6 +42,11 @@ event_map:
   autonomy.calm: { mode: bitmap, name: normal }
   autonomy.excited: { mode: bitmap, name: excited }
   autonomy.angry: { mode: bitmap, name: furious }
+  autonomy.blink: { mode: animation, name: blink }
+  autonomy.look_around: { mode: animation, name: scan }
+  autonomy.stretch: { mode: bitmap, name: look_up }
+  autonomy.bored: { mode: bitmap, name: bored }
+  autonomy.monologue: { mode: animation, name: emotive }
   error: { mode: bitmap, name: warning }
   warning: { mode: bitmap, name: alert }
   owner.scan: { mode: bitmap, name: look_left }

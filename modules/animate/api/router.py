@@ -18,8 +18,8 @@ def get_router(anim: xAnimateService) -> APIRouter:
     @r.post("/run")
     def run(name: str, speed: float = 1.0, loop: bool = Query(False)):
         # run blocking in this thread for simplicity (caller should spawn)
-        anim.run(name, speed=speed, loop=loop)
-        return {"ok": True}
+        ok = anim.run(name, speed=speed, loop=loop)
+        return {"ok": bool(ok)}
 
     @r.post("/stop")
     def stop():

@@ -250,18 +250,24 @@ class AutonomyBrain(
 
     def _execute_action(self, action):
         if action == "LOOK_AROUND":
+            self.client.push_interaction_event("autonomy.look_around")
             if not self._trigger_animation("look_around"):
                 self._head_scan_fallback()
         elif action == "BLINK":
+            # Always emit a visual event so LED/OLED can react even if
+            # servo animation endpoint reports success while degrading.
+            self.client.push_interaction_event("autonomy.blink")
             if not self._trigger_animation("blink"):
                 self._blink_fallback()
         elif action == "SIGH":
             self._speak_with_mood("Hıııh.", emotion="tired")
             self.client.push_interaction_event("autonomy.bored")
         elif action == "STRETCH":
+            self.client.push_interaction_event("autonomy.stretch")
             if not self._trigger_animation("stretch"):
                 self._stretch_fallback()
         elif action == "MONOLOGUE":
+            self.client.push_interaction_event("autonomy.monologue")
             self._generate_monologue()
 
     def _react_to_sound(self, angle):
