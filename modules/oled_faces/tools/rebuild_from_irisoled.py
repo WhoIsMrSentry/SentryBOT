@@ -14,7 +14,7 @@ def parse_header_bytes(path: Path) -> bytes:
     return bytes(vals)
 
 
-def decode_xbm_rows_lsb(raw: bytes, width: int, height: int) -> list[list[int]]:
+def decode_xbm_rows_msb(raw: bytes, width: int, height: int) -> list[list[int]]:
     row_bytes = width // 8
     need = row_bytes * height
     if len(raw) < need:
@@ -29,7 +29,8 @@ def decode_xbm_rows_lsb(raw: bytes, width: int, height: int) -> list[list[int]]:
             b = raw[base + xb]
             x0 = xb * 8
             for bit in range(8):
-                if b & (1 << bit):
+                # Adafruit GFX uses MSB-first (1 << (7 - bit))
+                if b & (1 << (7 - bit)):
                     pix[y][x0 + bit] = 1
     return pix
 
@@ -93,7 +94,7 @@ def build(irisoled_root: Path, out_dir: Path, src_w: int, src_h: int, dst_w: int
     written = 0
     for hp in headers:
         raw = parse_header_bytes(hp)
-        pix = decode_xbm_rows_lsb(raw, src_w, src_h)
+        pix = decode_xbm_rows_msb(raw, src_w, src_h)
         small = downscale_binary_or(pix, src_w, src_h, dst_w, dst_h)
         out = encode_page_buffer(small, dst_w, dst_h)
         (out_dir / to_name(hp)).write_bytes(out)
