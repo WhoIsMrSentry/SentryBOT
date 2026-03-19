@@ -15,6 +15,47 @@ except Exception:
 
 logger = logging.getLogger("speech.audio")
 
+# Shared capture registry to avoid opening the same ALSA device multiple times
+_SHARED_CAPTURES: dict = {}
+
+def get_shared_capture(cfg: Dict) -> "AudioCapture":
+    device = cfg.get("device") or "default"
+    key = f"{device}:{int(cfg.get('samplerate', 16000))}:{int(cfg.get('channels',1))}"
+    pair = _SHARED_CAPTURES.get(key)
+    if pair:
+        inst, ref = pair
+        _SHARED_CAPTURES[key] = (inst, ref + 1)
+        return inst
+    inst = AudioCapture(cfg)
+    inst._shared_key = key
+    _SHARED_CAPTURES[key] = (inst, 1)
+    return inst
+
+def release_shared_capture(inst: "AudioCapture") -> None:
+    key = getattr(inst, "_shared_key", None)
+    if not key:
+        try:
+            inst.stop()
+        except Exception:
+            pass
+        return
+    pair = _SHARED_CAPTURES.get(key)
+    if not pair:
+        try:
+            inst.stop()
+        except Exception:
+            pass
+        return
+    _, ref = pair
+    if ref <= 1:
+        try:
+            inst.stop()
+        except Exception:
+            pass
+        del _SHARED_CAPTURES[key]
+    else:
+        _SHARED_CAPTURES[key] = (inst, ref - 1)
+
 
 @dataclass
 class AudioConfig:
@@ -40,6 +81,7 @@ class AudioCapture:
         self._stream = None
         self._stopped = False
         self._alsa_thread = None
+        self._pcm = None
 
     def _ensure_backend(self):
         if sd is None:
@@ -55,6 +97,12 @@ class AudioCapture:
             pass
 
     def start(self):
+        # If already started, do nothing (idempotent)
+        if self._stream is not None:
+            return
+        if self._alsa_thread is not None and not self._stopped:
+            return
+
         # Prefer sounddevice (PortAudio) when available, but fall back to pyalsaaudio
         blocksize = int(self.cfg.samplerate * self.cfg.frame_ms / 1000)
         if sd is not None:
@@ -84,19 +132,21 @@ class AudioCapture:
                 'int32': alsaaudio.PCM_FORMAT_S32_LE,
             }
             fmt = fmt_map.get(self.cfg.dtype, alsaaudio.PCM_FORMAT_S16_LE)
-            pcm = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, device=self.cfg.device)
-            pcm.setchannels(self.cfg.channels)
-            pcm.setrate(self.cfg.samplerate)
-            pcm.setformat(fmt)
-            # period size roughly equals blocksize
-            pcm.setperiodsize(max(64, blocksize))
+            # store PCM on instance so shared captures don't reopen device
+            # Use named parameters to avoid DeprecationWarning from pyalsaaudio
+            self._pcm = alsaaudio.PCM(type=alsaaudio.PCM_CAPTURE,
+                                      device=self.cfg.device,
+                                      channels=self.cfg.channels,
+                                      rate=self.cfg.samplerate,
+                                      format=fmt,
+                                      periodsize=max(64, blocksize))
 
             def _alsa_reader():
                 self._stopped = False
                 try:
                     while not self._stopped:
                         try:
-                            length, data = pcm.read()
+                            length, data = self._pcm.read()
                             if length > 0 and data:
                                 try:
                                     self._q.put_nowait(bytes(data))
@@ -107,9 +157,11 @@ class AudioCapture:
                             time.sleep(0.01)
                 finally:
                     try:
-                        pcm.close()
+                        if self._pcm is not None:
+                            self._pcm.close()
                     except Exception:
                         pass
+                    self._pcm = None
 
             import time
             import threading
@@ -133,6 +185,12 @@ class AudioCapture:
             except Exception:
                 pass
             self._alsa_thread = None
+        if self._pcm is not None:
+            try:
+                self._pcm.close()
+            except Exception:
+                pass
+            self._pcm = None
         # drain queue
         while not self._q.empty():
             try:

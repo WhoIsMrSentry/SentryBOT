@@ -11,7 +11,8 @@ audio:
 
 recognition:
   language: tr
-  model_path: null
+  # point to speech module's model to reuse existing download
+  model_path: ../speech/models/vosk-tr
   language_models:
     tr: models/vosk-tr
     en: models/vosk-en

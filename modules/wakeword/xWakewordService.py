@@ -23,7 +23,7 @@ from fastapi import FastAPI
 from modules.wakeword.config_loader import load_config
 from modules.wakeword.services.wakeword_detector import WakewordDetector
 from modules.wakeword.services.openwakeword_runner import OpenWakewordRunner
-from modules.speech.services.audio_capture import AudioCapture
+from modules.speech.services.audio_capture import AudioCapture, get_shared_capture, release_shared_capture
 from modules.speech.services.recognizer import Recognizer, RecognitionResult
 
 try:
@@ -119,7 +119,7 @@ class WakewordService:
         self._thread: Optional[threading.Thread] = None
         self._degraded_reason: Optional[str] = None
 
-        self.capture = AudioCapture(self.cfg.get("audio", {}))
+        self.capture = get_shared_capture(self.cfg.get("audio", {}))
         wake_cfg = self.cfg.get("wakeword", {})
         self.engine = str(wake_cfg.get("engine", "vosk")).lower()
         self.detector = WakewordDetector(wake_cfg)
@@ -140,6 +140,7 @@ class WakewordService:
         else:
             self._recognizer = Recognizer(_resolve_model_paths(self.cfg.get("recognition", {})))
         self.actions = WakewordActions(self.cfg.get("actions", {}))
+        logger.info("wakeword engine=%s detector_words=%s degraded=%s", self.engine, list(self.detector.cfg.words), bool(self._degraded_reason))
 
     def start(self) -> None:
         with self._lock:
@@ -153,10 +154,12 @@ class WakewordService:
                 self._degraded_reason = self._degraded_reason or "no wakeword engine available"
                 return
             stream = self.capture.stream()
+            logger.debug("wakeword listening using engine=%s; capture cfg=%s", self.engine, getattr(self.capture, 'cfg', None))
             if self.engine == "openwakeword" and self._openwakeword is not None:
                 for label in self._openwakeword.run(stream):
                     if self._stop_event.is_set():
                         break
+                    logger.info("openwakeword detected: %s", label)
                     self._on_wakeword(label)
             else:
                 # Recognizer (Vosk) expects mono PCM. Capture may be stereo for DOA,
@@ -169,6 +172,7 @@ class WakewordService:
                         try:
                             if getattr(self.capture.cfg, 'channels', None) is not None and self.capture.cfg.channels >= 2 and audioop is not None:
                                 mono = audioop.tomono(chunk, 2, 1.0, 0.0)
+                                logger.debug("downmixing stereo->mono, chunk_len=%d", len(chunk))
                                 yield mono
                             else:
                                 yield chunk
@@ -216,6 +220,7 @@ class WakewordService:
 
     def _on_wakeword(self, wakeword: str) -> None:
         now = _now()
+        logger.info("wakeword candidate: %s at %f", wakeword, now)
         with self._lock:
             if self._active_window:
                 return
@@ -227,6 +232,12 @@ class WakewordService:
 
     def _command_window(self, wakeword: str) -> None:
         try:
+            # Stop wakeword's capture before starting speech to avoid ALSA device contention.
+            try:
+                logger.debug("releasing shared capture before speech window")
+                release_shared_capture(self.capture)
+            except Exception:
+                logger.debug("failed to stop capture before starting speech")
             self.actions.emit_event("wakeword.detected", wakeword)
             self.actions.start_speech()
             if self.actions.listen_window_sec <= 0:
@@ -238,6 +249,14 @@ class WakewordService:
                 time.sleep(max(0.05, self.actions.poll_interval_ms / 1000.0))
             self.actions.stop_speech()
         finally:
+            # Restart wakeword capture after speech window
+            try:
+                # re-acquire shared capture object and resume background listening
+                logger.debug("re-acquiring shared capture after speech window")
+                self.capture = get_shared_capture(self.cfg.get("audio", {}))
+                self.start_background()
+            except Exception:
+                logger.debug("failed to restart wakeword capture after speech")
             with self._lock:
                 self._active_window = False
 

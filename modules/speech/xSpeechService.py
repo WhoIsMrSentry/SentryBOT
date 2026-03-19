@@ -10,7 +10,7 @@ except Exception:
 from typing import Optional, Callable, Iterable
 
 from modules.speech.config_loader import load_config
-from modules.speech.services.audio_capture import AudioCapture
+from modules.speech.services.audio_capture import AudioCapture, get_shared_capture, release_shared_capture
 from modules.speech.services.recognizer import Recognizer, RecognitionResult
 from modules.speech.services.direction import DirectionEstimator
 from modules.speech.services.pan_tilt import PanTiltController
@@ -39,7 +39,7 @@ class SpeechService:
         self._listening = False
         self._listen_lock = Lock()
         self._thread = None
-        self.capture = AudioCapture(self.cfg.get("audio", {}))
+        self.capture = get_shared_capture(self.cfg.get("audio", {}))
         self.recognizer = Recognizer(self.cfg.get("recognition", {}))
         rec_cfg = self.cfg.get("recognition", {}) or {}
         self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
@@ -164,7 +164,7 @@ class SpeechService:
 
     def stop(self) -> None:
         self._stop_event.set()
-        self.capture.stop()
+        release_shared_capture(self.capture)
         with self._listen_lock:
             self._listening = False
 
