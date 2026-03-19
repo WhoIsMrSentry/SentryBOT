@@ -13,13 +13,24 @@ display:
   height: 64
   contrast: 143 # 0x8F
   assets_dir: modules/oled_faces/assets
+  bitmaps_subdir: bitmaps
+  # Pre-converted to SSD1306 page-buffer layout for zero-copy transfers.
+  bitmap_format: raw_page
+  bitmap_bit_order: lsb
+  bitmap_mirror_x: false
+  bitmap_mirror_y: false
+  bitmap_invert: false
+  # Panel alignment/orientation tuning (hardware dependent).
+  column_offset: 0
+  seg_remap: true
+  com_scan_dec: true
 
 boot:
   mode: logo
   name: logo
 
 idle_bitmap: normal
-fallback_unknown: alert
+fallback_unknown: normal
 
 state_map:
   idle: { mode: bitmap, name: normal }
@@ -42,6 +53,15 @@ event_map:
   autonomy.calm: { mode: bitmap, name: normal }
   autonomy.excited: { mode: bitmap, name: excited }
   autonomy.angry: { mode: bitmap, name: furious }
+  autonomy.blink: { mode: animation, name: blink }
+  autonomy.look_around: { mode: animation, name: scan }
+  autonomy.stretch: { mode: bitmap, name: look_up }
+  autonomy.bored: { mode: bitmap, name: bored }
+  autonomy.monologue: { mode: animation, name: emotive }
+  autonomy.sleep: { mode: animation, name: sleep }
+  autonomy.wake: { mode: bitmap, name: normal }
+  autonomy.offline: { mode: bitmap, name: worried }
+  vision.focus: { mode: bitmap, name: focused }
   error: { mode: bitmap, name: warning }
   warning: { mode: bitmap, name: alert }
   owner.scan: { mode: bitmap, name: look_left }

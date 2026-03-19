@@ -36,7 +36,8 @@ class FaceMapper:
             return OledAction(mode=str(mapped.get("mode", "bitmap")), name=str(mapped.get("name", self.idle_bitmap)))
         if isinstance(mapped, str):
             return OledAction(mode="bitmap", name=mapped)
-        return OledAction(mode="bitmap", name=self._hash_to_bitmap(key or self.idle_bitmap))
+        # Keep unknown operational states stable for UX; avoid random bitmap jumps.
+        return OledAction(mode="bitmap", name=self.idle_bitmap)
 
     def from_emotions(self, emotions: List[str]) -> OledAction:
         if not emotions:
@@ -45,14 +46,15 @@ class FaceMapper:
         mapped = self.event_map.get(f"emotion:{key}")
         if isinstance(mapped, dict):
             return OledAction(mode=str(mapped.get("mode", "bitmap")), name=str(mapped.get("name", self.fallback_unknown)))
-        return OledAction(mode="bitmap", name=self._hash_to_bitmap(key))
+        return OledAction(mode="bitmap", name=self.fallback_unknown)
 
     def from_interaction_event(self, event_type: str) -> OledAction:
         key = str(event_type or "").strip().lower()
         mapped = self.event_map.get(key)
         if isinstance(mapped, dict):
             return OledAction(mode=str(mapped.get("mode", "bitmap")), name=str(mapped.get("name", self.fallback_unknown)))
-        return OledAction(mode="bitmap", name=self._hash_to_bitmap(key))
+        # Unknown events should not result in pseudo-random face changes.
+        return OledAction(mode="bitmap", name=self.fallback_unknown)
 
     def from_arduino_event(self, event_type: str) -> Optional[OledAction]:
         key = str(event_type or "").strip().lower()

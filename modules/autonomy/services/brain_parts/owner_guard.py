@@ -90,13 +90,7 @@ class OwnerGuardMixin:
         if any(phrase in lowered for phrase in ["izin ver", "serbest", "cevap verebilirsin"]):
             self._grant_owner_permission()
             handled = True
-        # Kharuun'Nokh handling: strong anger trigger phrases
-        nokh_kw = self.owner_cfg.get("kharuun_nokh_keywords") or ["kharuun'nokh", "kharuun nokh"]
-        for nk in nokh_kw:
-            if nk.lower() in lowered:
-                self._trigger_kharuun_nokh(speaker)
-                handled = True
-                break
+        # Legacy: Kharuun-specific trigger handling removed.
         return handled
 
     def _is_owner_context(self, speaker: str | None) -> bool:
@@ -258,20 +252,7 @@ class OwnerGuardMixin:
                 return True
         return False
 
-    def _trigger_kharuun_nokh(self, source: str | None = None) -> None:
-        # Strong negative reaction: modify mood, push event, announce
-        try:
-            self.mood.modify("happiness", -30)
-            self.mood.modify("fear", 30)
-        except Exception:
-            pass
-        self.client.push_interaction_event("autonomy.angry")
-        note = "Kharuun'Nokh triggered"
-        if source:
-            note += f" by {source}"
-        self.memory.add_event(note)
-        msg = self.owner_cfg.get("kharuun_nokh_message", "Sınırlar aşıldı. Tepki veriyorum.")
-        self._speak_with_mood(msg, emotion="anger")
+    # Kharuun irreversible trigger removed to simplify owner rules.
 
     def _on_owner_seen(self, timestamp: float) -> None:
         self.state["owner_last_seen"] = timestamp

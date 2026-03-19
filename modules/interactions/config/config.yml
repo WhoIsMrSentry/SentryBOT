@@ -137,6 +137,59 @@ rules:
     priority: medium
     cooldown_ms: 1500
 
+  - id: autonomy_blink
+    when: { event: autonomy.blink }
+    action: { effect: { name: RANDOM_BLINK, duration_ms: 450 } }
+    priority: medium
+    cooldown_ms: 600
+
+  - id: autonomy_look_around
+    when: { event: autonomy.look_around }
+    action: { effect: { name: COMET, duration_ms: 700 } }
+    priority: medium
+    cooldown_ms: 1200
+
+  - id: autonomy_stretch
+    when: { event: autonomy.stretch }
+    action: { effect: { name: WAVE, duration_ms: 900 } }
+    priority: medium
+    cooldown_ms: 1600
+
+  - id: autonomy_bored
+    when: { event: autonomy.bored }
+    action: { effect: { name: PULSE, duration_ms: 1000 } }
+    priority: medium
+    cooldown_ms: 2200
+
+  - id: autonomy_monologue
+    when: { event: autonomy.monologue }
+    action: { effect: { name: TWINKLE, duration_ms: 900 } }
+    priority: low
+    cooldown_ms: 2500
+
+  - id: autonomy_sleep
+    when: { event: autonomy.sleep }
+    action: { base: { name: BREATHE, color: "#04070A", speed: slow } }
+    priority: high
+
+  - id: autonomy_wake
+    when: { event: autonomy.wake }
+    action: { effect: { name: COMET, duration_ms: 900 } }
+    priority: medium
+    cooldown_ms: 1800
+
+  - id: autonomy_offline
+    when: { event: autonomy.offline }
+    action: { effect: { name: PULSE, duration_ms: 850 } }
+    priority: medium
+    cooldown_ms: 2500
+
+  - id: vision_focus
+    when: { event: vision.focus }
+    action: { effect: { name: COMET, duration_ms: 500 } }
+    priority: low
+    cooldown_ms: 900
+
   - id: autonomy_angry
     when: { event: autonomy.angry }
     action: { base: { name: BREATHE, color: "#FF3300", speed: slow } }

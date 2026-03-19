@@ -257,11 +257,6 @@ class NeoRunner:
             if self.fill_segment(segment, *c1):
                 return
 
-        # Try to run animation on the hardware (Pi driver) for any name.
-        r, g, b = c1 if c1 else (255, 255, 255)
-        if self.driver.animate(name_lower, r, g, b, iterations or 0, 50):
-            return
-
         name = name.upper()
         c2 = cols[1] if len(cols) > 1 else None
         # Map names to functions
@@ -310,6 +305,10 @@ class NeoRunner:
             if cols:
                 multi_color_wave(self.driver, cols, iterations or 5)
         else:
-            # fallback simple fill
+            # Unknown animation name: try backend-native animation first.
+            r, g, b = c1 if c1 else (255, 255, 255)
+            if self.driver.animate(name_lower, r, g, b, iterations or 0, 50):
+                return
+            # last-resort fallback simple fill
             if c1:
                 self.fill(*c1)
