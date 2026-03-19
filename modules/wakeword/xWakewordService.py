@@ -13,6 +13,11 @@ try:
 except Exception:
     requests = None  # type: ignore
 
+try:
+    import audioop
+except Exception:
+    audioop = None
+
 from fastapi import FastAPI
 
 from modules.wakeword.config_loader import load_config
@@ -154,7 +159,23 @@ class WakewordService:
                         break
                     self._on_wakeword(label)
             else:
-                for result in self._recognizer.run(stream):
+                # Recognizer (Vosk) expects mono PCM. Capture may be stereo for DOA,
+                # so downmix on-the-fly here without altering the original capture.
+                def mono_generator(src_stream):
+                    for chunk in src_stream:
+                        if not chunk:
+                            yield chunk
+                            continue
+                        try:
+                            if getattr(self.capture.cfg, 'channels', None) is not None and self.capture.cfg.channels >= 2 and audioop is not None:
+                                mono = audioop.tomono(chunk, 2, 1.0, 0.0)
+                                yield mono
+                            else:
+                                yield chunk
+                        except Exception:
+                            yield chunk
+
+                for result in self._recognizer.run(mono_generator(stream)):
                     if self._stop_event.is_set():
                         break
                     self._handle_result(result)

@@ -131,7 +131,46 @@ class OpenWakewordRunner:
         if not chunk:
             return None
         try:
-            audio = np.frombuffer(chunk, dtype=np.int16)
+            # Robustly handle different PCM widths and interleaved stereo.
+            # Prefer int16, but fall back to int32 and downscale if needed.
+            audio = None
+            # try int16 view
+            try:
+                audio16 = np.frombuffer(chunk, dtype=np.int16)
+                if audio16.size > 0:
+                    audio = audio16
+            except Exception:
+                audio = None
+            # fallback to int32 -> convert to int16
+            if audio is None or audio.size == 0:
+                if len(chunk) % 4 == 0:
+                    try:
+                        audio32 = np.frombuffer(chunk, dtype=np.int32)
+                        # convert by shifting to 16-bit range
+                        audio = (audio32 >> 16).astype(np.int16)
+                    except Exception:
+                        audio = None
+            if audio is None or audio.size == 0:
+                # last resort: try int16 again (best-effort)
+                try:
+                    audio = np.frombuffer(chunk, dtype=np.int16)
+                except Exception:
+                    logger.debug("openwakeword: failed to interpret audio chunk bytes")
+                    return None
+            # If interleaved stereo (even-length array), try to detect and downmix to mono
+            if audio.size >= 2:
+                # heuristics: compare energy of even and odd samples
+                ch0 = audio[0::2].astype(np.int32)
+                ch1 = audio[1::2].astype(np.int32)
+                e0 = float(np.mean(np.abs(ch0))) if ch0.size else 0.0
+                e1 = float(np.mean(np.abs(ch1))) if ch1.size else 0.0
+                # if both channels carry significant energy, mix them; otherwise keep ch0
+                if ch1.size and e1 > (0.05 * max(e0, 1.0)):
+                    audio = ((ch0 + ch1) // 2).astype(np.int16)
+                else:
+                    # keep left channel
+                    audio = ch0.astype(np.int16)
+
             scores = self._model.predict(audio)
         except Exception as exc:
             logger.debug("openwakeword inference failed: %s", exc)

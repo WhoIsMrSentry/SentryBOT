@@ -8,6 +8,10 @@ try:
     import sounddevice as sd
 except Exception:  # Optional at import time; validated at runtime
     sd = None  # type: ignore
+try:
+    import alsaaudio
+except Exception:
+    alsaaudio = None
 
 logger = logging.getLogger("speech.audio")
 
@@ -35,6 +39,7 @@ class AudioCapture:
         self._q: "queue.Queue[bytes]" = queue.Queue(maxsize=10)
         self._stream = None
         self._stopped = False
+        self._alsa_thread = None
 
     def _ensure_backend(self):
         if sd is None:
@@ -50,19 +55,69 @@ class AudioCapture:
             pass
 
     def start(self):
-        self._ensure_backend()
+        # Prefer sounddevice (PortAudio) when available, but fall back to pyalsaaudio
         blocksize = int(self.cfg.samplerate * self.cfg.frame_ms / 1000)
-        self._stream = sd.InputStream(
-            device=self.cfg.device,
-            channels=self.cfg.channels,
-            samplerate=self.cfg.samplerate,
-            dtype=self.cfg.dtype,
-            callback=self._callback,
-            blocksize=blocksize,
-        )
-        self._stream.start()
-        self._stopped = False
-        logger.info("Audio capture started: %s @ %d Hz", self.cfg.device or "default", self.cfg.samplerate)
+        if sd is not None:
+            try:
+                self._stream = sd.InputStream(
+                    device=self.cfg.device,
+                    channels=self.cfg.channels,
+                    samplerate=self.cfg.samplerate,
+                    dtype=self.cfg.dtype,
+                    callback=self._callback,
+                    blocksize=blocksize,
+                )
+                self._stream.start()
+                self._stopped = False
+                logger.info("Audio capture started (portaudio): %s @ %d Hz", self.cfg.device or "default", self.cfg.samplerate)
+                return
+            except Exception as exc:
+                logger.warning("sounddevice InputStream failed, falling back to ALSA: %s", exc)
+
+        # Fallback: use pyalsaaudio if available
+        if alsaaudio is None:
+            raise RuntimeError("No suitable audio backend available. Install 'sounddevice' or 'pyalsaaudio'.")
+
+        try:
+            fmt_map = {
+                'int16': alsaaudio.PCM_FORMAT_S16_LE,
+                'int32': alsaaudio.PCM_FORMAT_S32_LE,
+            }
+            fmt = fmt_map.get(self.cfg.dtype, alsaaudio.PCM_FORMAT_S16_LE)
+            pcm = alsaaudio.PCM(alsaaudio.PCM_CAPTURE, device=self.cfg.device)
+            pcm.setchannels(self.cfg.channels)
+            pcm.setrate(self.cfg.samplerate)
+            pcm.setformat(fmt)
+            # period size roughly equals blocksize
+            pcm.setperiodsize(max(64, blocksize))
+
+            def _alsa_reader():
+                self._stopped = False
+                try:
+                    while not self._stopped:
+                        try:
+                            length, data = pcm.read()
+                            if length > 0 and data:
+                                try:
+                                    self._q.put_nowait(bytes(data))
+                                except queue.Full:
+                                    pass
+                        except Exception as e:
+                            logger.debug("ALSA read error: %s", e)
+                            time.sleep(0.01)
+                finally:
+                    try:
+                        pcm.close()
+                    except Exception:
+                        pass
+
+            import time
+            import threading
+            self._alsa_thread = threading.Thread(target=_alsa_reader, daemon=True)
+            self._alsa_thread.start()
+            logger.info("Audio capture started (ALSA fallback): %s @ %d Hz", self.cfg.device or "default", self.cfg.samplerate)
+        except Exception as exc:
+            raise RuntimeError(f"ALSA fallback failed: {exc}")
 
     def stop(self):
         self._stopped = True
@@ -72,6 +127,12 @@ class AudioCapture:
                 self._stream.close()
             finally:
                 self._stream = None
+        if self._alsa_thread is not None:
+            try:
+                self._alsa_thread.join(timeout=0.5)
+            except Exception:
+                pass
+            self._alsa_thread = None
         # drain queue
         while not self._q.empty():
             try:

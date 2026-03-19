@@ -3,9 +3,9 @@ server:
   port: 8084
 
 audio:
-  device: null
+  device: plughw:0,0
   samplerate: 16000
-  channels: 1
+  channels: 2
   dtype: int16
   frame_ms: 30
 
