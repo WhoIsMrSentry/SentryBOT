@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import logging
+import struct
 from threading import Event, Lock
 try:
     import audioop
@@ -30,6 +31,60 @@ except Exception:
 logger = logging.getLogger("speech")
 
 
+def _downmix_stereo_pcm(chunk: bytes, dtype: str = "int16") -> bytes:
+    """Downmix interleaved stereo PCM to mono without requiring audioop.
+
+    Supports int16 and a best-effort int32->int16 conversion.
+    """
+    if not chunk:
+        return chunk
+    dt = (dtype or "int16").lower()
+    if dt == "int32":
+        # int32 interleaved stereo -> mix -> int16
+        if len(chunk) < 8:
+            return b""
+        n = len(chunk) // 4
+        vals = struct.unpack("<" + "i" * n, chunk[: n * 4])
+        mono = []
+        for i in range(0, len(vals) - 1, 2):
+            mixed = (vals[i] + vals[i + 1]) // 2
+            mono.append(int(max(-32768, min(32767, mixed >> 16))))
+        if not mono:
+            return b""
+        return struct.pack("<" + "h" * len(mono), *mono)
+
+    # Default: int16
+    if len(chunk) < 4:
+        return b""
+    n = len(chunk) // 2
+    vals = struct.unpack("<" + "h" * n, chunk[: n * 2])
+    mono = []
+    for i in range(0, len(vals) - 1, 2):
+        mono.append((int(vals[i]) + int(vals[i + 1])) // 2)
+    if not mono:
+        return b""
+    return struct.pack("<" + "h" * len(mono), *mono)
+
+
+def _apply_gain_pcm16(chunk: bytes, gain: float) -> bytes:
+    if not chunk or gain == 1.0:
+        return chunk
+    if len(chunk) < 2:
+        return chunk
+    n = len(chunk) // 2
+    vals = struct.unpack("<" + "h" * n, chunk[: n * 2])
+    out = []
+    g = float(gain)
+    for v in vals:
+        s = int(v * g)
+        if s > 32767:
+            s = 32767
+        elif s < -32768:
+            s = -32768
+        out.append(s)
+    return struct.pack("<" + "h" * len(out), *out)
+
+
 class SpeechService:
     """High-level facade to run audio capture and speech recognition."""
 
@@ -43,6 +98,7 @@ class SpeechService:
         self.recognizer = Recognizer(self.cfg.get("recognition", {}))
         rec_cfg = self.cfg.get("recognition", {}) or {}
         self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
+        self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
         # Direction estimator (optional, needs stereo)
         dir_cfg = self.cfg.get("direction", {})
         self.direction_enabled = bool(dir_cfg.get("enabled", False)) and self.capture.cfg.channels >= 2
@@ -146,12 +202,13 @@ class SpeechService:
                     if audioop is not None:
                         mono = audioop.tomono(chunk, 2, 1.0, 0.0)
                     else:
-                        mono = chunk
+                        mono = _downmix_stereo_pcm(chunk, self.capture.cfg.dtype)
                 except Exception:
-                    mono = chunk
+                    mono = _downmix_stereo_pcm(chunk, self.capture.cfg.dtype)
+                mono = _apply_gain_pcm16(mono, self._stt_input_gain)
                 yield mono
             else:
-                yield chunk
+                yield _apply_gain_pcm16(chunk, self._stt_input_gain)
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         import threading

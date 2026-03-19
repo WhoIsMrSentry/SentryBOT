@@ -26,6 +26,7 @@ recognition:
     fr: models/vosk-fr
   samplerate: 16000
   max_alternatives: 0
+  input_gain: 3.0
 
   vad:
     enabled: false             # enable WebRTC VAD pre-filter

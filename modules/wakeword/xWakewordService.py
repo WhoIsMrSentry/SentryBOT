@@ -127,7 +127,10 @@ class WakewordService:
         self._recognizer = None
         if self.engine == "openwakeword":
             try:
-                self._openwakeword = OpenWakewordRunner(self.cfg.get("openwakeword", {}))
+                ow_cfg = dict(self.cfg.get("openwakeword", {}) or {})
+                audio_channels = int((self.cfg.get("audio", {}) or {}).get("channels", 1))
+                ow_cfg.setdefault("input_channels", audio_channels)
+                self._openwakeword = OpenWakewordRunner(ow_cfg)
             except Exception as exc:
                 self._degraded_reason = str(exc)
                 logger.warning("wakeword openwakeword unavailable, falling back to vosk: %s", exc)
@@ -197,6 +200,14 @@ class WakewordService:
         self._thread = threading.Thread(target=self.start, daemon=True)
         self._thread.start()
 
+    def _ensure_listener_restarted(self, retries: int = 6, delay_sec: float = 0.2) -> None:
+        """Try to restart listener even if previous thread is still winding down."""
+        for _ in range(max(1, retries)):
+            self.start_background()
+            time.sleep(max(0.05, delay_sec))
+            if self.listening:
+                return
+
     def stop(self) -> None:
         self._stop_event.set()
         self.capture.stop()
@@ -220,7 +231,6 @@ class WakewordService:
 
     def _on_wakeword(self, wakeword: str) -> None:
         now = _now()
-        logger.info("wakeword candidate: %s at %f", wakeword, now)
         with self._lock:
             if self._active_window:
                 return
@@ -228,6 +238,9 @@ class WakewordService:
                 return
             self._last_trigger_ts = now
             self._active_window = True
+        # Stop listener loop so wakeword and speech do not consume the same stream concurrently.
+        self._stop_event.set()
+        logger.info("wakeword candidate: %s at %f", wakeword, now)
         threading.Thread(target=self._command_window, args=(wakeword,), daemon=True).start()
 
     def _command_window(self, wakeword: str) -> None:
@@ -254,7 +267,8 @@ class WakewordService:
                 # re-acquire shared capture object and resume background listening
                 logger.debug("re-acquiring shared capture after speech window")
                 self.capture = get_shared_capture(self.cfg.get("audio", {}))
-                self.start_background()
+                self._stop_event.clear()
+                self._ensure_listener_restarted()
             except Exception:
                 logger.debug("failed to restart wakeword capture after speech")
             with self._lock:
