@@ -93,6 +93,8 @@ class SpeechService:
         self._stop_event = Event()
         self._listening = False
         self._listen_lock = Lock()
+        self._result_lock = Lock()
+        self._on_result_cb: Optional[Callable[[RecognitionResult], None]] = None
         self._thread = None
         self.capture = get_shared_capture(self.cfg.get("audio", {}))
         self.recognizer = Recognizer(self.cfg.get("recognition", {}))
@@ -118,12 +120,18 @@ class SpeechService:
             if self._listening:
                 return
             self._listening = True
+        if on_result is not None:
+            with self._result_lock:
+                self._on_result_cb = on_result
         self._stop_event.clear()
         try:
             stream: Iterable[bytes] = self.capture.stream()
             for result in self.recognizer.run(self._direction_wrapper(stream)):
-                if on_result:
-                    on_result(result)
+                cb = None
+                with self._result_lock:
+                    cb = self._on_result_cb
+                if cb:
+                    cb(result)
                 if self._stop_event.is_set():
                     break
         except Exception as exc:
@@ -212,10 +220,13 @@ class SpeechService:
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         import threading
+        if on_result is not None:
+            with self._result_lock:
+                self._on_result_cb = on_result
         with self._listen_lock:
             if self._listening:
                 return
-        t = threading.Thread(target=self.start, kwargs={"on_result": on_result}, daemon=True)
+        t = threading.Thread(target=self.start, kwargs={"on_result": None}, daemon=True)
         self._thread = t
         t.start()
 

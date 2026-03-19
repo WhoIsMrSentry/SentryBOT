@@ -99,10 +99,16 @@ class WakewordActions:
             return
         _post_json(self.interactions_event_url, {"type": event_type, "wakeword": wakeword})
 
-    def has_final_speech(self) -> bool:
+    def has_final_speech(self, since_ts: float | None = None) -> bool:
         if not self.speech_last_url:
             return False
         data = _get_json(self.speech_last_url)
+        if since_ts is not None:
+            try:
+                if float(data.get("ts", 0.0)) < float(since_ts):
+                    return False
+            except Exception:
+                return False
         return bool(data.get("final") and str(data.get("text", "")).strip())
 
 
@@ -252,12 +258,15 @@ class WakewordService:
             except Exception:
                 logger.debug("failed to stop capture before starting speech")
             self.actions.emit_event("wakeword.detected", wakeword)
+            window_started_ts = _now()
             self.actions.start_speech()
             if self.actions.listen_window_sec <= 0:
                 return
             deadline = _now() + self.actions.listen_window_sec
-            while _now() < deadline and not self._stop_event.is_set():
-                if self.actions.stop_on_final and self.actions.has_final_speech():
+            # _stop_event is toggled during wakeword handoff to stop the listener loop.
+            # Do not use it to gate the speech window, otherwise speech is stopped immediately.
+            while _now() < deadline:
+                if self.actions.stop_on_final and self.actions.has_final_speech(window_started_ts):
                     break
                 time.sleep(max(0.05, self.actions.poll_interval_ms / 1000.0))
             self.actions.stop_speech()

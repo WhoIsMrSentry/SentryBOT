@@ -38,7 +38,8 @@ def get_router(service: SpeechService) -> APIRouter:
     async def status():
         return {"listening": service.listening}
 
-    last: dict | None = {"text": None, "language": getattr(service, "source_language", "tr")}
+    last: dict | None = {"text": None, "language": getattr(service, "source_language", "tr"), "ts": 0.0}
+    last_nonempty_text = ""
     last_partial_text = ""
     last_partial_ts = 0.0
     speaking = False
@@ -66,16 +67,19 @@ def get_router(service: SpeechService) -> APIRouter:
         timer.start()
 
     def _cb(r):
-        nonlocal last, last_partial_text, last_partial_ts
+        nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text
+        text = (r.text or "").strip()
+        if text:
+            last_nonempty_text = text
         last = {
-            "text": r.text,
+            "text": text or last_nonempty_text or None,
             "final": r.is_final,
             "confidence": r.confidence,
             "language": getattr(service, "source_language", "tr"),
+            "ts": time.time(),
         }
         # STT logs should be visible even when downstream modules (e.g. ollama)
         # are offline; log both partial and final recognition results.
-        text = (r.text or "").strip()
         if r.is_final:
             if text:
                 logger.info("stt final [%s]: %s (conf=%s)", last.get("language", "tr"), text, r.confidence)
