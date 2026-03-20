@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import logging
+import struct
 from threading import Event, Lock
 try:
     import audioop
@@ -10,7 +11,7 @@ except Exception:
 from typing import Optional, Callable, Iterable
 
 from modules.speech.config_loader import load_config
-from modules.speech.services.audio_capture import AudioCapture
+from modules.speech.services.audio_capture import AudioCapture, get_shared_capture, release_shared_capture
 from modules.speech.services.recognizer import Recognizer, RecognitionResult
 from modules.speech.services.direction import DirectionEstimator
 from modules.speech.services.pan_tilt import PanTiltController
@@ -30,6 +31,60 @@ except Exception:
 logger = logging.getLogger("speech")
 
 
+def _downmix_stereo_pcm(chunk: bytes, dtype: str = "int16") -> bytes:
+    """Downmix interleaved stereo PCM to mono without requiring audioop.
+
+    Supports int16 and a best-effort int32->int16 conversion.
+    """
+    if not chunk:
+        return chunk
+    dt = (dtype or "int16").lower()
+    if dt == "int32":
+        # int32 interleaved stereo -> mix -> int16
+        if len(chunk) < 8:
+            return b""
+        n = len(chunk) // 4
+        vals = struct.unpack("<" + "i" * n, chunk[: n * 4])
+        mono = []
+        for i in range(0, len(vals) - 1, 2):
+            mixed = (vals[i] + vals[i + 1]) // 2
+            mono.append(int(max(-32768, min(32767, mixed >> 16))))
+        if not mono:
+            return b""
+        return struct.pack("<" + "h" * len(mono), *mono)
+
+    # Default: int16
+    if len(chunk) < 4:
+        return b""
+    n = len(chunk) // 2
+    vals = struct.unpack("<" + "h" * n, chunk[: n * 2])
+    mono = []
+    for i in range(0, len(vals) - 1, 2):
+        mono.append((int(vals[i]) + int(vals[i + 1])) // 2)
+    if not mono:
+        return b""
+    return struct.pack("<" + "h" * len(mono), *mono)
+
+
+def _apply_gain_pcm16(chunk: bytes, gain: float) -> bytes:
+    if not chunk or gain == 1.0:
+        return chunk
+    if len(chunk) < 2:
+        return chunk
+    n = len(chunk) // 2
+    vals = struct.unpack("<" + "h" * n, chunk[: n * 2])
+    out = []
+    g = float(gain)
+    for v in vals:
+        s = int(v * g)
+        if s > 32767:
+            s = 32767
+        elif s < -32768:
+            s = -32768
+        out.append(s)
+    return struct.pack("<" + "h" * len(out), *out)
+
+
 class SpeechService:
     """High-level facade to run audio capture and speech recognition."""
 
@@ -38,11 +93,14 @@ class SpeechService:
         self._stop_event = Event()
         self._listening = False
         self._listen_lock = Lock()
+        self._result_lock = Lock()
+        self._on_result_cb: Optional[Callable[[RecognitionResult], None]] = None
         self._thread = None
-        self.capture = AudioCapture(self.cfg.get("audio", {}))
+        self.capture = get_shared_capture(self.cfg.get("audio", {}))
         self.recognizer = Recognizer(self.cfg.get("recognition", {}))
         rec_cfg = self.cfg.get("recognition", {}) or {}
         self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
+        self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
         # Direction estimator (optional, needs stereo)
         dir_cfg = self.cfg.get("direction", {})
         self.direction_enabled = bool(dir_cfg.get("enabled", False)) and self.capture.cfg.channels >= 2
@@ -62,12 +120,18 @@ class SpeechService:
             if self._listening:
                 return
             self._listening = True
+        if on_result is not None:
+            with self._result_lock:
+                self._on_result_cb = on_result
         self._stop_event.clear()
         try:
             stream: Iterable[bytes] = self.capture.stream()
             for result in self.recognizer.run(self._direction_wrapper(stream)):
-                if on_result:
-                    on_result(result)
+                cb = None
+                with self._result_lock:
+                    cb = self._on_result_cb
+                if cb:
+                    cb(result)
                 if self._stop_event.is_set():
                     break
         except Exception as exc:
@@ -146,25 +210,29 @@ class SpeechService:
                     if audioop is not None:
                         mono = audioop.tomono(chunk, 2, 1.0, 0.0)
                     else:
-                        mono = chunk
+                        mono = _downmix_stereo_pcm(chunk, self.capture.cfg.dtype)
                 except Exception:
-                    mono = chunk
+                    mono = _downmix_stereo_pcm(chunk, self.capture.cfg.dtype)
+                mono = _apply_gain_pcm16(mono, self._stt_input_gain)
                 yield mono
             else:
-                yield chunk
+                yield _apply_gain_pcm16(chunk, self._stt_input_gain)
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         import threading
+        if on_result is not None:
+            with self._result_lock:
+                self._on_result_cb = on_result
         with self._listen_lock:
             if self._listening:
                 return
-        t = threading.Thread(target=self.start, kwargs={"on_result": on_result}, daemon=True)
+        t = threading.Thread(target=self.start, kwargs={"on_result": None}, daemon=True)
         self._thread = t
         t.start()
 
     def stop(self) -> None:
         self._stop_event.set()
-        self.capture.stop()
+        release_shared_capture(self.capture)
         with self._listen_lock:
             self._listening = False
 

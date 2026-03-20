@@ -5,7 +5,7 @@ server:
   port: 8082
 
 audio:
-  device: null           # ALSA device name or index (null=default)
+  device: plughw:0,0     # ALSA device (from `arecord -l`) - set to card 0, device 0
   samplerate: 16000
   channels: 2            # two I2S mics for direction estimation
   dtype: int16
@@ -26,6 +26,7 @@ recognition:
     fr: models/vosk-fr
   samplerate: 16000
   max_alternatives: 0
+  input_gain: 3.0
 
   vad:
     enabled: false             # enable WebRTC VAD pre-filter

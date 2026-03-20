@@ -2,11 +2,15 @@ from __future__ import annotations
 from fastapi import APIRouter
 import requests
 import threading
+import logging
+import time
 from threading import Timer, Lock
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from modules.speech.xSpeechService import SpeechService
+
+logger = logging.getLogger("speech.api")
 
 def _notify_autonomy():
     try:
@@ -34,7 +38,10 @@ def get_router(service: SpeechService) -> APIRouter:
     async def status():
         return {"listening": service.listening}
 
-    last: dict | None = {"text": None, "language": getattr(service, "source_language", "tr")}
+    last: dict | None = {"text": None, "language": getattr(service, "source_language", "tr"), "ts": 0.0}
+    last_nonempty_text = ""
+    last_partial_text = ""
+    last_partial_ts = 0.0
     speaking = False
     speaking_lock = Lock()
 
@@ -60,13 +67,33 @@ def get_router(service: SpeechService) -> APIRouter:
         timer.start()
 
     def _cb(r):
-        nonlocal last
+        nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text
+        text = (r.text or "").strip()
+        if text:
+            last_nonempty_text = text
         last = {
-            "text": r.text,
+            "text": text or last_nonempty_text or None,
             "final": r.is_final,
             "confidence": r.confidence,
             "language": getattr(service, "source_language", "tr"),
+            "ts": time.time(),
         }
+        # STT logs should be visible even when downstream modules (e.g. ollama)
+        # are offline; log both partial and final recognition results.
+        if r.is_final:
+            if text:
+                logger.info("stt final [%s]: %s (conf=%s)", last.get("language", "tr"), text, r.confidence)
+            else:
+                logger.debug("stt final empty")
+            last_partial_text = ""
+        else:
+            now = time.time()
+            # Throttle partial logs to avoid log spam but keep visibility.
+            if text and (text != last_partial_text or (now - last_partial_ts) >= 0.35):
+                logger.info("stt partial [%s]: %s", last.get("language", "tr"), text)
+                last_partial_text = text
+                last_partial_ts = now
+
         if r.is_final and r.text:
             threading.Thread(target=_notify_autonomy, daemon=True).start()
             if _mark_speaking(True):
@@ -76,7 +103,9 @@ def get_router(service: SpeechService) -> APIRouter:
     @router.post("/speech/start")
     async def start():
         was_listening = service.listening
+        logger.info("speech start requested (was_listening=%s)", was_listening)
         service.start_background(on_result=_cb)
+        logger.info("speech start handled (listening=%s)", service.listening)
         if not was_listening:
             _emit_speech_event("speech.start")
         return {"ok": True, "listening": service.listening}

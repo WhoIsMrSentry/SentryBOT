@@ -3,15 +3,16 @@ server:
   port: 8084
 
 audio:
-  device: null
+  device: plughw:0,0
   samplerate: 16000
-  channels: 1
+  channels: 2
   dtype: int16
   frame_ms: 30
 
 recognition:
   language: tr
-  model_path: null
+  # point to speech module's model to reuse existing download
+  model_path: ../speech/models/vosk-tr
   language_models:
     tr: models/vosk-tr
     en: models/vosk-en
@@ -39,6 +40,19 @@ openwakeword:
   inference_framework: onnx
   threshold: 0.5
   smooth_window: 3
+  input_gain: 3.0
+  # Print a periodic score probe in INFO logs (0 disables)
+  log_every_n_chunks: 200
+  # Runner input channel count. If omitted, xWakewordService injects audio.channels.
+  input_channels: 2
+  auto_calibration:
+    enabled: true
+    duration_sec: 12.0
+    min_samples: 120
+    percentile: 99.5
+    margin: 0.0007
+    min_threshold: 0.0012
+    max_threshold: 0.20
   verifier_path: null  # optional path to verifier joblib trained with train_verifier.py
 
 actions:

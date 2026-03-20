@@ -28,4 +28,4 @@ include:
   calibration: true
   config_center: true
 speech:
-  listening: true
+  listening: false
