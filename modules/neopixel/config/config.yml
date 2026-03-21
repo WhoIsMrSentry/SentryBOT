@@ -44,6 +44,26 @@ presets:
   curious_scan:
     jewel: { effect: "TWINKLE", color: "#30E3CA" }
     stick: { color: "#103838" }
+  # Emotion presets — used by Autonomy _sync_emotion and scenes
+  emotion_joy:
+    jewel: { effect: "RAINBOW_CYCLE", color: "#FFD700" }
+    stick: { effect: "COMET", color: "#FFAA00" }
+  emotion_curiosity:
+    jewel: { effect: "TWINKLE", color: "#30E3CA" }
+    stick: { color: "#103838" }
+  emotion_fear:
+    jewel: { effect: "PULSE", color: "#FF3300" }
+    stick: { color: "#200000" }
+  emotion_tired:
+    jewel: { effect: "BREATHE", color: "#1F4B66" }
+    stick: { color: "#0A0F14" }
+  emotion_sad:
+    jewel: { effect: "PULSE", color: "#6666FF" }
+    stick: { color: "#102030" }
+  # Temporary owner visual preset
+  temp_owner:
+    jewel: { effect: "TWINKLE", color: "#FFE07A" }
+    stick: { color: "#90EE90" }
 
 presets_meta:
   version: 1

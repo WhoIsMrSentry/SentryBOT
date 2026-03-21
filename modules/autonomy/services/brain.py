@@ -150,6 +150,18 @@ class AutonomyBrain(
         self.state["last_emotion"] = dominant
         self.client.update_emotions([dominant])
         self.client.push_interaction_event(f"emotion.{dominant}")
+        # Try to run a matching scene for the dominant emotion (e.g. emotion_joy)
+        try:
+            scene_name = f"emotion_{dominant}"
+            ran = self._run_scene(scene_name, context={"emotion": dominant})
+            if ran:
+                # emit a scene-level interaction event for other subsystems
+                try:
+                    self.client.push_interaction_event(f"scene.{scene_name}")
+                except Exception:
+                    pass
+        except Exception:
+            logger.debug("Failed to run emotion scene %s", scene_name, exc_info=True)
 
     def _think(self):
         now = time.time()

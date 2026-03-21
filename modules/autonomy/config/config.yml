@@ -254,6 +254,47 @@ scenes:
       - { type: segment_fill, segment: "stick", color: "#0C2020" }
       - { type: event, name: "scene.vision_greeting.end" }
 
+  # Emotion scenes — map dominant emotion to visual + small head/anim cues
+  emotion_joy:
+    steps:
+      - { type: event, name: "scene.emotion_joy.start" }
+      - { type: preset, name: "emotion_joy" }
+      - { type: effect_burst, name: "RAINBOW_CYCLE", duration_ms: 300, count: 2, interval_ms: 60 }
+      - { type: anim, name: "look_around", speed: 1.0, loop: false }
+      - { type: event, name: "scene.emotion_joy.end" }
+
+  emotion_curiosity:
+    steps:
+      - { type: event, name: "scene.emotion_curiosity.start" }
+      - { type: preset, name: "emotion_curiosity" }
+      - { type: anim, name: "vision_focus", speed: 1.0, loop: false }
+      - { type: effect, name: "COMET", duration_ms: 400 }
+      - { type: event, name: "scene.emotion_curiosity.end" }
+
+  emotion_fear:
+    steps:
+      - { type: event, name: "scene.emotion_fear.start" }
+      - { type: preset, name: "emotion_fear" }
+      - { type: head, pan: 90, tilt: 80 }
+      - { type: effect, name: "PULSE", duration_ms: 450 }
+      - { type: event, name: "scene.emotion_fear.end" }
+
+  emotion_tired:
+    steps:
+      - { type: event, name: "scene.emotion_tired.start" }
+      - { type: preset, name: "emotion_tired" }
+      - { type: anim, name: "stretch", speed: 0.8, loop: false }
+      - { type: head, pan: 90, tilt: 110 }
+      - { type: event, name: "scene.emotion_tired.end" }
+
+  emotion_sad:
+    steps:
+      - { type: event, name: "scene.emotion_sad.start" }
+      - { type: preset, name: "emotion_sad" }
+      - { type: effect, name: "PULSE", duration_ms: 600 }
+      - { type: head, pan: 90, tilt: 100 }
+      - { type: event, name: "scene.emotion_sad.end" }
+
 owner:
   enabled: true
   name: "WhoIsMrSentry"

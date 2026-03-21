@@ -2,14 +2,14 @@ server:
   host: 0.0.0.0
   port: 8099
 llm:
-  provider: ollama   # ollama | google_ai_studio
+  provider: google_ai_studio   # ollama | google_ai_studio
 ollama:
   base_url: http://127.0.0.1:11435
   model: llama3.2:3b
   request_timeout: 60
 google_ai_studio:
   api_key: ""        # boşsa GOOGLE_API_KEY env kullanılır
-  model: gemini-1.5-flash
+  model: gemini-3.1-flash-lite-preview
   base_url: https://generativelanguage.googleapis.com
   request_timeout: 60
 persona:
