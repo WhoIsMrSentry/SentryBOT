@@ -1,0 +1,37 @@
+neo.ino purpose and notes
+=========================
+
+Why `neo.ino` exists
+---------------------
+- `neo.ino` is a standalone ESP32 sketch included in `modules/neopixel/tools/` to allow rapid, in-person prototyping and "preview" of Neopixel animations outside the robot.
+- It runs on an ESP32 dev board and exposes a simple serial command interface (`SET` and `ANIMATE`) so you can iterate on colors/effects physically before wiring or changing the robot's main Neopixel backend.
+- The sketch contains a superset of software animations (rainbow, comet, twinkle, breathe, meteor, etc.) that mirror the names used by `NeoRunner` on the Pi side so visual parity is easy to achieve.
+
+How it's used in the project
+----------------------------
+- Development: plug an ESP32 + LED strip, flash `neo.ino`, then drive animations from serial to preview effects.
+- Integration testing: When experimenting with new presets or animation timing, `neo.ino` lets you see the results in real hardware without booting the whole robot stack.
+- Optional runtime: For small deployments you can run the ESP as the Neopixel driver; however the project prefers the Pi-native backend (`pi5neo`). `neo.ino` remains useful for debugging and bench testing.
+
+Notes for maintainers
+---------------------
+- Keep animation names aligned with `modules/neopixel/services/runner.py` (`COMET`, `TWINKLE`, `PULSE`, etc.) to avoid mapping confusion.
+- `neo.ino` implements color-name parsing and `R,G,B` parsing to match the project's CLI behavior; do not change existing names without updating `NeoRunner` mappings.
+- If you later add segment or range support on the robot side, consider adding `SEG=` or `RANGE=` optional arguments to `ANIMATE` for parity.
+
+Where to find related code
+--------------------------
+- Pi/runner implementation: `modules/neopixel/services/runner.py`
+- Driver/low-level mapping: `modules/neopixel/services/driver.py`
+- Interactions rules: `modules/interactions/config/config.yml`
+- Autonomy scenes that call animations: `modules/autonomy/config/config.yml`
+
+Example serial commands
+-----------------------
+- `SET 3 255 0 0` — set LED index 3 to red.
+- `ANIMATE COMET 0,255,255 0,0,0 2` — run `COMET` with cyan as color1 for 2 repeats.
+
+Request from you
+----------------
+If you'd like, I can add segment parsing (`SEG=jewel`) to `neo.ino` and provide matching examples how to call it from `NeoRunner`/robot.
+

@@ -1,0 +1,154 @@
+{
+  "mappings": [
+    {
+      "source_event": "wakeword.detected",
+      "neopixel_action": "TWINKLE;BREATHE",
+      "notes": "TWINKLE on jewel segment; base BREATHE",
+      "reference": "modules/autonomy/config/config.yml: scenes.wakeword_reaction"
+    },
+    {
+      "source_event": "speech.start",
+      "neopixel_action": "RAINBOW_CYCLE",
+      "notes": "Interactions rule speech_start",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "speech.end",
+      "neopixel_action": "COMET",
+      "notes": "Interactions rule speech_end",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "autonomy.excited",
+      "neopixel_action": "RAINBOW_CYCLE",
+      "notes": "",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "autonomy.look_around",
+      "neopixel_action": "COMET or preset:curious_scan",
+      "notes": "Idle LOOK_AROUND maps to COMET or preset",
+      "reference": "modules/autonomy/config/config.yml"
+    },
+    {
+      "source_event": "autonomy.blink",
+      "neopixel_action": "RANDOM_BLINK",
+      "notes": "",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "autonomy.stretch",
+      "neopixel_action": "WAVE",
+      "notes": "",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "autonomy.bored",
+      "neopixel_action": "PULSE",
+      "notes": "",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "autonomy.monologue",
+      "neopixel_action": "TWINKLE",
+      "notes": "",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "vision.focus",
+      "neopixel_action": "COMET",
+      "notes": "also triggers anim vision_focus",
+      "reference": "modules/autonomy/services/brain_parts/vision.py"
+    },
+    {
+      "source_event": "vision.person",
+      "neopixel_action": "owner_welcome preset + COMET",
+      "notes": "owner greeting visual",
+      "reference": "modules/autonomy/config/config.yml"
+    },
+    {
+      "source_event": "owner.scan",
+      "neopixel_action": "owner_welcome preset",
+      "notes": "owner return visuals",
+      "reference": "modules/autonomy/config/config.yml"
+    },
+    {
+      "source_event": "owner.temp_granted",
+      "neopixel_action": "THEATER_CHASE or preset:temp_owner",
+      "notes": "temporary owner visual",
+      "reference": "modules/autonomy/config/config.yml"
+    },
+    {
+      "source_event": "owner.temp_revoked",
+      "neopixel_action": "PULSE",
+      "notes": "",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "owner.locked",
+      "neopixel_action": "METEOR",
+      "notes": "",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "error",
+      "neopixel_action": "METEOR",
+      "notes": "critical alert",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "warning",
+      "neopixel_action": "PULSE",
+      "notes": "warning alert",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "arduino_disconnected",
+      "neopixel_action": "THEATER_CHASE",
+      "notes": "magenta base",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "net_burst",
+      "neopixel_action": "COMET or PULSE",
+      "notes": "network burst visual",
+      "reference": "modules/interactions/config/config.yml"
+    },
+    {
+      "source_event": "emotion_joy",
+      "neopixel_action": "preset:emotion_joy (RAINBOW_CYCLE + COMET)",
+      "notes": "also anim look_around",
+      "reference": "modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
+    },
+    {
+      "source_event": "emotion_curiosity",
+      "neopixel_action": "preset:emotion_curiosity (TWINKLE)",
+      "notes": "anim vision_focus",
+      "reference": "modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
+    },
+    {
+      "source_event": "emotion_fear",
+      "neopixel_action": "preset:emotion_fear (PULSE red)",
+      "notes": "short head move",
+      "reference": "modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
+    },
+    {
+      "source_event": "emotion_tired",
+      "neopixel_action": "preset:emotion_tired (BREATHE dim)",
+      "notes": "stretch anim + tilt",
+      "reference": "modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
+    },
+    {
+      "source_event": "emotion_sad",
+      "neopixel_action": "preset:emotion_sad (PULSE blue)",
+      "notes": "downward tilt",
+      "reference": "modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
+    },
+    {
+      "source_event": "LLM/actions",
+      "neopixel_action": "dynamic (anim/effect)",
+      "notes": "LLM returned actions processed by apply_llm_response",
+      "reference": "modules/autonomy/services/brain.py"
+    }
+  ]
+}
