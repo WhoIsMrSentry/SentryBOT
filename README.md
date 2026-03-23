@@ -1,3 +1,7 @@
+# <p align="center">
+  <img src="https://raw.githubusercontent.com/WhoIsMrSentry/SentryBOT/dev/docs/assets/bot.gif" alt="SentryBOT demo" width="640" />
+</p>
+
 # SentryBOT – Modüler İki Ayaklı Yoldaş Robot Platformu
 
 SentryBOT; Raspberry Pi 5 + Arduino tabanlı, modüler bir yoldaş robot ve servis mimarisidir. Tüm yetenekler bağımsız modüller hâlinde tasarlanır, tek bir Gateway üzerinden tek porttan API olarak sunulur. Donanım kontrolü Arduino ile yapılırken; konuşma tanıma/TTS, LED animasyonları, kamera ve LLM/RAG gibi fonksiyonlar Pi5 üzerinde mikro servisler olarak çalışır.
