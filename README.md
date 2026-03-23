@@ -1,5 +1,5 @@
 # <p align="center">
-	<img src="docs/assets/bot.gif" alt="SentryBOT demo" width="640" />
+	<img src="https://raw.githubusercontent.com/WhoIsMrSentry/SentryBOT/dev/docs/assets/bot.gif" alt="SentryBOT demo" width="640" />
 </p>
 
 # SentryBOT – Modüler İki Ayaklı Yoldaş Robot Platformu
