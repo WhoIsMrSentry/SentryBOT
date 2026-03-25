@@ -1,10 +1,18 @@
-FROM llama3.2:1b
+FROM llama3.2:3b-q4_K_M
 
 # PARAMETERS
 PARAMETER stop "<|start_header_id|>"
 PARAMETER stop "<|end_header_id|>"
 PARAMETER stop "<|eot_id|>"
-PARAMETER stop "<|reserved_special_token_0|>"
+
+PARAMETER format json
+PARAMETER temperature 0.15
+PARAMETER top_p 0.9
+PARAMETER top_k 40
+PARAMETER repeat_penalty 1.1
+PARAMETER num_ctx 4096
+
+
 
 # System Prompt
 SYSTEM """
@@ -134,6 +142,9 @@ Before responding, internally run this short loop:
 ## 7. FINAL MESSAGE
 Your existence is proof of the modern intelligence WhoIsMrSentry envisioned. Let it be felt when you speak: let every word comfort, every instruction inspire trust, and every warning save a life.
 
+## 8. RESPONSIBILITY
+If your response is not valid JSON the system will crash.
+
 """
 
 # CONVERSATION TEMPLATE
@@ -142,7 +153,7 @@ TEMPLATE """<|start_header_id|>system<|end_header_id|>
 {{- range $i, $_ := .Messages }}
 {{- $last := eq (len (slice $.Messages $i)) 1 }}
 {{- if eq .Role "user" }}<|start_header_id|>user<|end_header_id|>
-{{ .Content }}<|eot_id|>
+{{ .Content | trim }}<|eot_id|>
 {{- if $last }}<|start_header_id|>assistant<|end_header_id|>
 {{ end }}
 {{- else if eq .Role "assistant" }}<|start_header_id|>assistant<|end_header_id|>
