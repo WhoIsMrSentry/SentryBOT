@@ -1,0 +1,34 @@
+# Agent Core Konfigurasyon Dosyası
+# Bu dosya sadece Agent Core modülünün ayarlarını içerir.
+# Diğer modüller kendi config.yml dosyalarını kullanır.
+
+server:
+  host: "0.0.0.0"
+  port: 8120
+
+agent:
+  model: "llama3.2:3b-q4_K_M"
+  temperature: 0.15
+  num_ctx: 4096
+  cooldown_s: 1.0       # LLM çağrıları arasındaki minimum süre (saniye)
+  max_tool_loops: 3     # ReAct döngüsünde max araç çağrısı sayısı
+
+safety:
+  max_servo_angle: 180
+  min_servo_angle: 0
+  max_stepper_speed: 100
+  laser_max_duration_s: 2.0
+
+sensor_loop:
+  poll_hz: 5.0           # Sensör okuma hızı (Hz)
+  enabled: true
+
+idle:
+  enabled: true
+  breathe_interval_s: 15.0     # "Yaşam belirtisi" ışık aralığı
+
+memory:
+  db_name: "memory.db"         # data/ klasörü altında oluşturulur
+
+slam:
+  map_file: "map.json"         # data/ klasörü altında oluşturulur
