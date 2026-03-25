@@ -1,0 +1,11 @@
+agent:
+  model: "llama3.2:3b-q4_K_M"
+  temperature: 0.15
+  num_ctx: 4096
+  cooldown_s: 1.0  # LLM Rate Limit
+  
+safety:
+  max_servo_angle: 180
+  min_servo_angle: 0
+  max_stepper_speed: 100
+  laser_max_duration_s: 2.0
