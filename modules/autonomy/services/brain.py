@@ -18,6 +18,13 @@ from .brain_parts.timeline import TimelineMixin
 from .brain_parts.vision import VisionMixin
 from .brain_parts.vocal import VocalMixin
 
+# Agent Core integration
+try:
+    from modules.agent_core.services.agent import AgentOrchestrator  # type: ignore
+    _AGENT_CORE_AVAILABLE = True
+except ImportError:
+    _AGENT_CORE_AVAILABLE = False
+
 logger = logging.getLogger("autonomy")
 
 
@@ -42,6 +49,25 @@ class AutonomyBrain(
         self.memory = ShortTermMemory(max_items=20)
         self._vision_cfg = config.get("vision_hooks", {})
         self.owner_cfg = config.get("owner", {})
+
+        # Agent Core (advanced reasoning, tool-calling, planning)
+        self.agent = None
+        if _AGENT_CORE_AVAILABLE:
+            try:
+                import yaml, os
+                agent_cfg_path = os.path.join(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    "..", "..", "..", "config", "agent.yaml"
+                )
+                if os.path.exists(agent_cfg_path):
+                    with open(agent_cfg_path, "r") as f:
+                        agent_cfg = yaml.safe_load(f) or {}
+                else:
+                    agent_cfg = {}
+                self.agent = AgentOrchestrator(agent_cfg, autonomy_client=self.client)
+                logger.info("Agent Core integrated successfully.")
+            except Exception as exc:
+                logger.warning("Agent Core init failed (non-fatal): %s", exc)
 
         # State
         self.state = {
@@ -84,12 +110,24 @@ class AutonomyBrain(
         except Exception:
             logger.warning("Failed to select persona 'sentry'")
 
+        # Start Agent Core subsystems (sensors, idle behaviors, memory)
+        if self.agent:
+            try:
+                self.agent.start()
+            except Exception as exc:
+                logger.warning("Agent Core start failed (non-fatal): %s", exc)
+
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
         logger.info("Autonomy Brain started.")
 
     def stop(self):
         self.running = False
+        if self.agent:
+            try:
+                self.agent.stop()
+            except Exception:
+                pass
         if self.thread:
             self.thread.join()
         logger.info("Autonomy Brain stopped.")
@@ -211,40 +249,36 @@ class AutonomyBrain(
         return True
 
     def _make_agentic_decision(self):
-        """Ask LLM what to do based on internal state."""
+        """Ask LLM what to do based on internal state.
+
+        Uses the real active persona via ServiceClient.chat().
+        No hardcoded system prompts - the Ollama service already
+        has the correct personality (sentry/glados) loaded.
+        """
         if not self.config.get("llm", {}).get("enabled", False):
             return
 
         events = "\n".join(self.memory.get_recent_events())
-        prompt = f"""
-        You are SentryBOT. You are currently bored.
-
-        Internal State:
-        - Happiness: {int(self.mood['happiness'])}/100
-        - Energy: {int(self.mood['energy'])}/100
-        - Curiosity: {int(self.mood['curiosity'])}/100
-
-        Recent Events:
-        {events}
-
-        Available Actions:
-        - LOOK_AROUND: Move head to look at surroundings.
-        - SIGH: Make a sigh sound and dim lights.
-        - STRETCH: Move head up and down to stretch.
-        - MONOLOGUE: Say something short to yourself about your state.
-        - BLINK: Blink eyes (lights).
-
-        DECISION FORMAT: JSON with keys "action" (one of above) and "reason" (short string).
-        Example: {{"action": "LOOK_AROUND", "reason": "I want to see if anyone is there."}}
-
-        Make a decision now.
-        """
+        prompt = (
+            f"You are currently bored and idle.\n\n"
+            f"Internal State:\n"
+            f"- Happiness: {int(self.mood['happiness'])}/100\n"
+            f"- Energy: {int(self.mood['energy'])}/100\n"
+            f"- Curiosity: {int(self.mood['curiosity'])}/100\n\n"
+            f"Recent Events:\n{events}\n\n"
+            f"Available Actions: LOOK_AROUND, SIGH, STRETCH, MONOLOGUE, BLINK.\n\n"
+            f'DECISION FORMAT: JSON with keys "action" and "reason".\n'
+            f'Example: {{"action": "LOOK_AROUND", "reason": "I want to see if anyone is there."}}\n\n'
+            f"Make a decision now."
+        )
 
         try:
+            # Use the real persona pipeline (NOT hardcoded system prompt)
             resp = self.client.chat(prompt)
             if not resp:
                 return
-            text = resp.get("answer", "")
+            # Parse action from raw or text field
+            text = resp.get("raw", resp.get("answer", resp.get("text", "")))
             if "```json" in text:
                 text = text.split("```json")[1].split("```")[0]
             elif "{" in text:
@@ -256,6 +290,11 @@ class AutonomyBrain(
 
             logger.info("Agentic Decision: %s because %s", action, reason)
             self.memory.add_event(f"Decided to {action}: {reason}")
+
+            # Also log to Agent Core episodic memory if available
+            if self.agent:
+                self.agent.memory.remember("agentic_decision", f"{action}: {reason}")
+
             self._execute_action(action)
         except Exception as exc:
             logger.error("Agentic decision failed: %s", exc)
@@ -394,6 +433,24 @@ class AutonomyBrain(
         response_actions = None
         raw_response = None
         try:
+            # ── PRIMARY PATH: Agent Core (ReAct + Tool Calling + Safety) ──
+            if self.agent:
+                try:
+                    agent_result = self.agent.step(text)
+                    if agent_result and agent_result.get("text"):
+                        response_text = agent_result["text"]
+                        # Actions are already executed by the agent pipeline
+                        # (validated -> safety filtered -> routed -> HAL)
+                        # So we only need to speak the text response here.
+                        logger.info("Agent Core handled speech with full pipeline.")
+                        # Log to short-term memory too
+                        self.memory.add_event(f"Agent replied: {response_text}")
+                        self._speak_with_mood(response_text, language=lang)
+                        return
+                except Exception as exc:
+                    logger.warning("Agent Core step failed, falling back to direct LLM: %s", exc)
+
+            # ── FALLBACK PATH: Direct Ollama / WikiRAG (no tool-calling) ──
             if is_question and self.config.get("wikirag", {}).get("enabled", False):
                 logger.info("Routing to WikiRAG...")
                 rag_query = text
