@@ -1,4 +1,8 @@
-"""Hardware module: Raspberry Pi 5 system and IO helpers (no voltage/battery).
+# Hardware Abstraction Layer (HAL)
+# All services accept a ServiceClient and delegate to existing microservices via HTTP.
+from .services.servo_service import ServoService
+from .services.lights_service import LightsService
+from .services.motor_service import MotorService
+from .services.audio_service import AudioService
 
-Provides FastAPI router to expose system metrics and basic GPIO/I2C info.
-"""
+__all__ = ["ServoService", "LightsService", "MotorService", "AudioService"]
