@@ -20,6 +20,23 @@ class OllamaClient:
         # fallback so the gateway can call a remote Ollama server without extra deps.
         self._client = Client(host=self.base_url) if Client is not None else None
 
+    def create_model(self, name: str, modelfile: str) -> bool:
+        """Create a new model from a Modelfile string."""
+        url = f"{self.base_url}/api/create"
+        payload = {
+            "name": name,
+            "modelfile": modelfile,
+            "stream": False
+        }
+        try:
+            resp = requests.post(url, json=payload, timeout=float(self.timeout * 2))
+            resp.raise_for_status()
+            logger.info(f"Ollama model '{name}' created/updated successfully.")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create Ollama model '{name}': {e}")
+            return False
+
     def chat(
         self,
         messages: List[Dict[str, str]],
@@ -80,6 +97,9 @@ class LLMClientProtocol(Protocol):
     ) -> Dict[str, Any]:
         ...
 
+    def create_model(self, name: str, modelfile: str) -> bool:
+        ...
+
 
 class GoogleAIStudioClient:
     """Google AI Studio (Gemini) REST istemcisi."""
@@ -116,6 +136,11 @@ class GoogleAIStudioClient:
 
         system_instruction = "\n\n".join(system_chunks).strip() or None
         return system_instruction, contents
+
+    def create_model(self, name: str, modelfile: str) -> bool:
+        """Gemini doesn't support local Modelfile creation; skip or mock."""
+        logger.warning("create_model is not supported on Google AI Studio.")
+        return False
 
     def chat(
         self,
