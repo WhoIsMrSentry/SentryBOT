@@ -400,10 +400,14 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
                     parts = [p.strip() for p in str(req.get("color")).split(",")]
                     if len(parts) == 3:
                         color = (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
+                segment = req.get("segment")
                 if name:
-                    neopixel.animate(name=name, iterations=iterations, color=color)
+                    neopixel.animate(name=name, iterations=iterations, color=color, segment=segment)
                 elif color is not None:
-                    neopixel.fill(*color)
+                    if segment:
+                        neopixel.fill(*color, segment=segment)
+                    else:
+                        neopixel.fill(*color)
             except Exception as exc:
                 logger.debug("neopixel request handling failed during flush: %s", exc)
             _np_last_ms = int(__import__("time").time() * 1000)
