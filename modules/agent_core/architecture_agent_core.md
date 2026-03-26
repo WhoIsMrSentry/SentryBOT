@@ -2,35 +2,31 @@
 
 ## Genel Bakış
 
-Agent Core, SentryBOT'un otonom karar verme, planlama ve çevre etkileşim katmanıdır. AutonomyBrain içine subsistem olarak entegre olur ve mevcut Mixin mimarisini bozmaz.
+Agent Core, SentryBOT'un otonom karar verme, çevreyi algılama ve alet (tool) kullanma katmanıdır. Geleneksel ve katı yapısal çıktılar (structured outputs) yerine, saf bir **Native Tool Calling (ReAct)** döngüsü kullanarak LLM'in ardışık olarak aletleri kullanıp mantık yürütmesine olanak tanır. AutonomyBrain içine subsistem olarak entegre olur.
 
 ## Modül Yapısı
 
 ```
 modules/agent_core/
 ├── xAgentCoreService.py      # Servis başlatıcı
-├── config_loader.py           # config.yml okuyucu
+├── config_loader.py          # config.yml okuyucu
 ├── config/
-│   └── config.yml             # Modül ayarları
+│   └── config.yml            # Modül ayarları
 ├── services/
-│   ├── __init__.py            # Re-export proxy
-│   ├── agent.py               # Ana orkestratör (ReAct Loop)
-│   ├── validator.py           # JSON şema doğrulayıcı
-│   ├── safety_filter.py       # Donanım güvenlik sınırlayıcı
-│   ├── planner.py             # Plan → görev kuyruğu dönüştürücü
-│   ├── executor.py            # Durum makinesi (State Machine)
-│   ├── router.py              # 22 aksiyon tipi → HAL yönlendirici
-│   ├── memory.py              # SQLite epizodik bellek
-│   ├── slam.py                # Topolojik harita + BFS yol bulma
-│   ├── tools.py               # LLM araç tanımları (4 araç)
-│   ├── world_state.py         # Chrono-farkındalık + sensör durumu
-│   ├── sensor_loop.py         # Arka plan sensör okuyucu (Thread)
-│   └── idle_behavior.py       # Boşta kalma nefes efekti
-├── architecture_agent_core.md # Mimari dokümantasyon
-└── README.md                  # Genel bilgi
+│   ├── __init__.py           # Re-export proxy
+│   ├── agent.py              # Ana orkestratör (Native ReAct Loop)
+│   ├── safety_filter.py      # Donanım güvenlik sınırlayıcı (servolar vb.)
+│   ├── memory.py             # SQLite epizodik bellek (Kalıcı bellek)
+│   ├── slam.py               # Topolojik harita + BFS yol bulma
+│   ├── tools.py              # LLM araç tanımları (10 adet Native Tool)
+│   ├── world_state.py        # Sensör durumu (Pil, ultrasonik vb.)
+│   ├── sensor_loop.py        # Arka plan sensör okuyucu (Thread)
+│   └── idle_behavior.py      # Boşta kalma nefes efekti
+├── architecture_agent_core.md# Mimari dokümantasyon
+└── README.md                 # Genel bilgi
 ```
 
-## Veri Akışı
+## Veri Akışı (Native ReAct Loop)
 
 ```mermaid
 flowchart TD
@@ -38,47 +34,36 @@ flowchart TD
     AB -->|agent.step| AO[AgentOrchestrator]
     
     subgraph AgentCore["Agent Core Pipeline"]
-        AO --> WS[WorldState]
-        WS --> LLM[LLM Reasoning]
-        LLM <-->|ReAct Loop| TR[ToolRegistry]
-        TR --> MEM[EpisodicMemory]
-        TR --> SLAM[TopologicalMap]
-        LLM --> VAL[Validator]
-        VAL --> SF[SafetyFilter]
-        SF --> PL[Planner]
-        PL --> EX[Executor]
-        SF --> RT[Router]
+        AO --> WS[WorldState (Farkındalık)]
+        WS --> LLM[LLM Reasoning (Ollama)]
+        
+        LLM <-->|10-Adımlı ReAct Tool Döngüsü| TR[ToolRegistry]
+        TR --> SF[SafetyFilter (Korumalar)]
+        
+        TR --> MEM[EpisodicMemory (Kayıt / Arama)]
+        TR --> SLAM[TopologicalMap (Yol Bulma)]
     end
     
-    RT --> HAL[HAL Layer]
+    SF --> HAL[HAL Layer (HTTP via ServiceClient)]
     
     subgraph HALLayer["Hardware Abstraction Layer"]
-        HAL --> SS[ServoService]
-        HAL --> LS[LightsService]
-        HAL --> MS[MotorService]
-        HAL --> AS[AudioService]
+        HAL --> SS[ServoService (move_head)]
+        HAL --> LS[LightsService (set_lights)]
+        HAL --> MS[MotorService / AudioService]
     end
     
-    SS -->|HTTP| SC[ServiceClient]
-    LS -->|HTTP| SC
-    MS -->|HTTP| SC
-    AS -->|HTTP| SC
-    
-    SC -->|/arduino/request| ARD[Serial Gateway]
+    SS -->|/arduino/request| ARD[Serial Gateway]
 ```
 
 ## Modüller Arası Etkileşim
 
 | Modül | Agent Core ile İlişki |
 |---|---|
-| `autonomy` | Agent Core'u başlatır ve `agent.step()` çağırır |
-| `ollama` | `ServiceClient.chat()` üzerinden dolaylı kullanılır |
-| `hardware` | HAL servisleri burada yaşar, Agent Core'un fiziksel arayüzüdür |
+| `autonomy` | Agent Core'u başlatır. Günlük sohbeti yönetir, karmaşık işlerde `agent.step()`'i çağırır. |
+| `ollama` | Agent döngüsü (`ollama.chat(tools=...)`) için doğrudan Python kütüphanesi kullanılır. |
+| `hardware` | `ServiceClient` üzerinden HTTP ile tetiklenir, Agent Core donanıma doğrudan bağlanmaz. |
 
 ## Tasarım Kararları
 
-### Neden ServiceClient üzerinden HTTP?
-Proje microservice mimarisi kullanıyor. Agent Core doğrudan donanım sürücüsü kullanmaz — tüm donanım erişimi `ServiceClient` HTTP çağrıları üzerinden yapılır. Bu sayede modüller arası bağımlılık azalır ve her servis bağımsız test edilebilir.
-
-### Neden AutonomyBrain'i değiştirmedik?
-AutonomyBrain zaten çalışan bir Mixin mimarisi içeriyor. Agent Core bunu bozmak yerine içine subsistem olarak eklendi. Bu sayede sistemin stabilitesi korunurken yeni yetenekler eklenebildi.
+### Neden Native Tool Calling?
+Eski mimari, LLM'i sabit bir JSON objesi üretmeye (`validator` -> `planner` -> `executor` -> `router`) zorluyordu. Bu durum ajanın doğal mantık yürütmesini ve esnekliğini kısıtlıyordu (kilitliyordu). Yeni yapıda ajan `tools.py` içerisindeki Python fonksiyonlarını (örn: `move_head`, `search_memory`) bir döngü içerisinde defalarca kullanabilir ve görevleri daha özgür bir şekilde yerine getirir.

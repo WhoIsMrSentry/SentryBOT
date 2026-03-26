@@ -249,55 +249,30 @@ class AutonomyBrain(
         return True
 
     def _make_agentic_decision(self):
-        """Ask LLM what to do based on internal state.
-
-        Uses the real active persona via ServiceClient.chat().
-        No hardcoded system prompts - the Ollama service already
-        has the correct personality (sentry/glados) loaded.
-        """
+        """Ask LLM what to do based on internal state using the native tool loop."""
         if not self.config.get("llm", {}).get("enabled", False):
             return
 
         events = "\n".join(self.memory.get_recent_events())
         prompt = (
-            f"You are currently bored and idle.\n\n"
+            f"You are currently BORED and IDLE.\n"
             f"Internal State:\n"
-            f"- Happiness: {int(self.mood['happiness'])}/100\n"
-            f"- Energy: {int(self.mood['energy'])}/100\n"
-            f"- Curiosity: {int(self.mood['curiosity'])}/100\n\n"
+            f"- Happiness: {int(self.mood['happiness'])}/100, Energy: {int(self.mood['energy'])}/100, Curiosity: {int(self.mood['curiosity'])}/100\n"
             f"Recent Events:\n{events}\n\n"
-            f"Available Actions: LOOK_AROUND, SIGH, STRETCH, MONOLOGUE, BLINK.\n\n"
-            f'DECISION FORMAT: JSON with keys "action" and "reason".\n'
-            f'Example: {{"action": "LOOK_AROUND", "reason": "I want to see if anyone is there."}}\n\n'
-            f"Make a decision now."
+            f"Use your internal physical tools right now (such as looking around, playing an animation on OLED, "
+            f"or changing body lights) to entertain yourself or find something interesting to do. Do not ask for permission."
         )
 
         try:
-            # Use the real persona pipeline (NOT hardcoded system prompt)
-            resp = self.client.chat(prompt)
-            if not resp:
-                return
-            # Parse action from raw or text field
-            text = resp.get("raw", resp.get("answer", resp.get("text", "")))
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "{" in text:
-                text = text[text.find("{"):text.rfind("}") + 1]
-
-            decision = json.loads(text)
-            action = decision.get("action")
-            reason = decision.get("reason")
-
-            logger.info("Agentic Decision: %s because %s", action, reason)
-            self.memory.add_event(f"Decided to {action}: {reason}")
-
-            # Also log to Agent Core episodic memory if available
             if self.agent:
-                self.agent.memory.remember("agentic_decision", f"{action}: {reason}")
-
-            self._execute_action(action)
+                self.agent.memory.remember("agentic_decision", "I got bored so I decided to act on my own.")
+                res = self.agent.step(prompt)
+                if res and res.get("text"):
+                    self._speak_with_mood(res["text"])
+            else:
+                logger.warning("Agent Core is disabled. Cannot make native decision.")
         except Exception as exc:
-            logger.error("Agentic decision failed: %s", exc)
+            logger.error("Agentic decision failed natively: %s", exc)
 
     def _execute_action(self, action):
         if action == "LOOK_AROUND":

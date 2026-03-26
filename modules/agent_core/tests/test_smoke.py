@@ -1,55 +1,27 @@
-"""Smoke tests for Agent Core module."""
+"""Smoke tests for Agent Core native tool calling module."""
 import json
-
-
-def test_validator_valid_json():
-    from modules.agent_core.services.validator import LLMResponseValidator
-    v = LLMResponseValidator()
-    raw = json.dumps({
-        "text": "Hello",
-        "thoughts": "Testing",
-        "actions": [{"type": "anim", "attrs": {"name": "blink"}}]
-    })
-    result = v.validate(raw)
-    assert result["text"] == "Hello"
-    assert isinstance(result["actions"], list)
-    assert result.get("plan") == []
-
-
-def test_validator_invalid_json():
-    from modules.agent_core.services.validator import LLMResponseValidator
-    v = LLMResponseValidator()
-    result = v.validate("{broken json")
-    assert result["text"] == "System error. Rebooting thought process."
-
+import pytest
 
 def test_safety_filter_clamp_servo():
     from modules.agent_core.services.safety_filter import ActionSafetyFilter
     sf = ActionSafetyFilter({"safety": {"max_servo_angle": 180, "min_servo_angle": 0}})
-    action = {"type": "servo", "attrs": {"pan": 999, "tilt": -50}}
-    safe = sf.filter_action(action)
-    assert safe["attrs"]["pan"] == 180
-    assert safe["attrs"]["tilt"] == 0
+    
+    pan = sf.clamp_servo(999)
+    tilt = sf.clamp_servo(-50)
+    
+    assert pan == 180
+    assert tilt == 0
 
 
 def test_safety_filter_clamp_stepper():
     from modules.agent_core.services.safety_filter import ActionSafetyFilter
     sf = ActionSafetyFilter({"safety": {"max_stepper_speed": 100}})
-    action = {"type": "stepper", "attrs": {"id": 0, "mode": "vel", "value": 200}}
-    safe = sf.filter_action(action)
-    assert safe["attrs"]["value"] == 100
-    assert safe["attrs"]["id"] == 0
-    assert safe["attrs"]["mode"] == "vel"
-
-
-def test_planner_creates_steps():
-    from modules.agent_core.services.planner import TaskPlanner
-    p = TaskPlanner()
-    queue = p.create_plan_queue(["navigate_to_door", "scan_environment"])
-    assert len(queue) == 2
-    assert queue[0]["objective"] == "navigate_to_door"
-    assert queue[0]["status"] == "pending"
-    assert queue[1]["step_id"] == 1
+    
+    speed1 = sf.clamp_stepper(200)
+    speed2 = sf.clamp_stepper(-150)
+    
+    assert speed1 == 100
+    assert speed2 == -100
 
 
 def test_world_state_injection():
@@ -84,20 +56,37 @@ def test_slam_pathfind():
     assert path == ["A", "B", "C"]
 
 
-def test_tool_registry_schema():
+def test_tool_registry_schemas():
     from modules.agent_core.services.tools import ToolRegistry
     from modules.agent_core.services.world_state import WorldState
     from modules.agent_core.services.slam import TopologicalMap
     from modules.agent_core.services.memory import EpisodicMemory
+    from modules.agent_core.services.safety_filter import ActionSafetyFilter
+
     mem = EpisodicMemory(db_path=":memory:")
     slam = TopologicalMap.__new__(TopologicalMap)
     slam.map_file = "test_map_registry.json"
     slam.nodes = {}
     slam.current_location = "base"
     ws = WorldState()
-    tr = ToolRegistry(mem, slam, ws)
+    sf = ActionSafetyFilter()
+    
+    # We pass None for client to test schema generation safely
+    tr = ToolRegistry(None, mem, slam, ws, sf)
     schema = tr.get_tool_schema()
-    assert len(schema) == 4
+    
+    # There should be exactly 12 tools registered
+    assert len(schema) == 12
     names = [t["function"]["name"] for t in schema]
+    
+    # Verify core tools are present
+    assert "move_head" in names
+    assert "play_sound" in names
+    assert "set_lights" in names
+    assert "set_laser" in names
+    assert "oled_face" in names
     assert "search_memory" in names
-    assert "get_battery" in names
+    assert "get_vision" in names
+    assert "get_sensor_data" in names
+    assert "get_location" in names
+    assert "pathfind" in names
