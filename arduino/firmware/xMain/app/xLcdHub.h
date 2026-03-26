@@ -50,6 +50,11 @@ static inline void lcdHubPrint(uint8_t requestedMask, const String &top, const S
   if ((m & LCD_TGT_1) && g_lcd1Ok) g_lcd1.printLines(top, bottom);
 }
 
+static inline void lcdHubPrint4(uint8_t requestedMask, const String &l1, const String &l2, const String &l3, const String &l4){
+  uint8_t m = lcdHubResolveMask(requestedMask);
+  if ((m & LCD_TGT_1) && g_lcd1Ok) g_lcd1.print4Lines(l1, l2, l3, l4);
+}
+
 static inline void lcdHubPrintDefault(const String &top, const String &bottom){
   lcdHubPrint(LCD_TGT_1, top, bottom);
 }
@@ -151,6 +156,20 @@ public:
     _lastBottom = bottom;
     _lastShowMs = millis();
     lcdHubPrint(targetMask, top, bottom);
+  }
+
+  void show4To(uint8_t targetMask, const String &l1, const String &l2, const String &l3, const String &l4, bool force=false){
+    if (!lcdHubAny()) return;
+    if (_pinned && !force) return;
+    // avoid redundant prints when identical
+    String combined = l1 + "\n" + l2 + "\n" + l3 + "\n" + l4;
+    if (combined == (_lastTop + "\n" + _lastBottom)){
+      return;
+    }
+    _lastTop = l1;
+    _lastBottom = l2; // keep for backward compat
+    _lastShowMs = millis();
+    lcdHubPrint4(targetMask, l1, l2, l3, l4);
   }
 
   void tick(){

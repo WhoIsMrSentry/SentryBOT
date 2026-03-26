@@ -7,6 +7,10 @@
 #include "../xIrMenuController.h"
 
 void IrMenuController::refreshLive(Robot &robot){
+  if (_state == STATE_TEMPS){
+    showTemperatures();
+    return;
+  }
   if (_state == STATE_LASER){
     showLaser();
     return;

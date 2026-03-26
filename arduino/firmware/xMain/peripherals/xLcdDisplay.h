@@ -101,6 +101,43 @@ public:
     _lcd->setCursor(0, 0);
   }
 
+  // Print up to 4 lines (for 20x4 displays). If device has fewer rows,
+  // lines will be concatenated or truncated appropriately.
+  void print4Lines(const String &l1, const String &l2, const String &l3, const String &l4){
+    if (!_lcd) return;
+
+    if (_rows <= 1){
+      // fallback: join lines
+      String combined = l1;
+      if (l2.length()) combined += " " + l2;
+      if (l3.length()) combined += " " + l3;
+      if (l4.length()) combined += " " + l4;
+      printLine(combined);
+      return;
+    }
+
+    // If only 2 rows, show first two lines concatenated with the remaining as overflow
+    if (_rows == 2){
+      String top = l1;
+      if (l2.length()) top += " " + l2;
+      String bot = l3;
+      if (l4.length()) bot += " " + l4;
+      printLines(top, bot);
+      return;
+    }
+
+    // rows >= 3: print each available line on successive rows
+    String s[4] = {l1, l2, l3, l4};
+    for (int r = 0; r < min(4, _rows); r++){
+      String m = s[r];
+      if ((int)m.length() > _cols) m = m.substring(0, _cols);
+      _lcd->setCursor(0, r);
+      _lcd->print(m);
+      for (int i = (int)m.length(); i < _cols; i++) _lcd->print(' ');
+    }
+    _lcd->setCursor(0, 0);
+  }
+
 private:
   LiquidCrystal_I2C *_lcd{nullptr};
   uint8_t _addr{LCD_I2C_ADDR};

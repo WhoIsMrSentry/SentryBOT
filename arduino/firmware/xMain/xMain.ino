@@ -92,6 +92,9 @@ bool g_avoidEnable = AVOID_ENABLE_DEFAULT;
 #if LASER_ENABLED
 LaserPair g_lasers;
 #endif
+#if DS18_ENABLED
+Ds18b20Manager g_ds18;
+#endif
 #if BUZZER_ENABLED
 BuzzerPair g_buzzer;
 BuzzerSongPlayer g_song;
@@ -319,6 +322,10 @@ void setup(){
   g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 50);
 #endif
 #endif
+#if DS18_ENABLED
+  // Start DS18B20 OneWire sensors (all devices on single pin)
+  g_ds18.begin(DS18_PIN);
+#endif
 #if IR_ENABLED
   g_ir.begin(IR_PIN);
   #if LCD_ENABLED
@@ -493,6 +500,9 @@ void loop(){
   g_ebyteRadio.poll();
   #endif
   g_nema.update();
+  #if DS18_ENABLED
+  g_ds18.update();
+  #endif
   // Telemetry periodic output
   if (telemetryOn && millis() - lastTelemetryMs >= telemetryInterval){
     lastTelemetryMs = millis(); robot.imu.read();

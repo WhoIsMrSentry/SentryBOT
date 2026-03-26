@@ -445,7 +445,7 @@ public:
 
     // Periodic refresh for live sensor pages (ULTRA/IMU/RFID/SYSTEM)
     unsigned long _now = millis();
-    if (_state == STATE_ULTRA || _state == STATE_IMU || _state == STATE_RFID || _state == STATE_SYSTEM){
+    if (_state == STATE_ULTRA || _state == STATE_IMU || _state == STATE_RFID || _state == STATE_SYSTEM || _state == STATE_TEMPS){
       if (_lastUiMs == 0 || (_now - _lastUiMs) >= 250UL){
         _lastUiMs = _now;
         refreshLive(robot);
@@ -476,6 +476,7 @@ public:
     STATE_IMU,
     STATE_RFID,
     STATE_SYSTEM,
+    STATE_TEMPS,
   };
 
   enum MenuItem : uint8_t {
@@ -488,6 +489,7 @@ public:
     MENU_REMOTE,
     MENU_CALIBRATE,
     MENU_SYSTEM,
+    MENU_TEMPS,
     MENU_COUNT,
   };
 
@@ -565,6 +567,7 @@ public:
       case MENU_RFID: return "RFID";
       case MENU_SOUND: return "SOUND";
       case MENU_REMOTE: return "REMOTE";
+       case MENU_TEMPS: return "TEMPS";
       case MENU_CALIBRATE: return "CALIB";
       case MENU_SYSTEM: return "SYSTEM";
       default: return "MENU";
@@ -581,6 +584,39 @@ public:
     line = menuName(_menuIndex);
     line += " OK=ENTER";
     lcdPrint("MENU", line);
+  }
+
+  void showTemperatures(){
+    // Build four rows: left column = left sensors, right column = right sensors
+    String rows[4];
+    for (int r=0;r<4;r++){
+      // left sensors at indices 4..7 (shown left-justified),
+      // first 4 sensors at indices 0..3 (shown right-justified)
+      uint8_t leftIdx = 4 + r;
+      uint8_t rightIdx = r;
+      String leftName = String(g_ds18.name(leftIdx));
+      String rightName = String(g_ds18.name(rightIdx));
+      float lt = g_ds18.tempC(leftIdx);
+      float rt = g_ds18.tempC(rightIdx);
+      char lb[32]; char rb[32];
+      if (isnan(lt)) snprintf(lb, sizeof(lb), "%s:--.-C", leftName.c_str()); else snprintf(lb, sizeof(lb), "%s:%.1fC", leftName.c_str(), lt);
+      if (isnan(rt)) snprintf(rb, sizeof(rb), "%s:--.-C", rightName.c_str()); else snprintf(rb, sizeof(rb), "%s:%.1fC", rightName.c_str(), rt);
+      String leftStr(lb); String rightStr(rb);
+      // truncate if too long
+      if ((int)leftStr.length() > 10) leftStr = leftStr.substring(0,10);
+      if ((int)rightStr.length() > 10) rightStr = rightStr.substring(0,10);
+      // left column: left-justified to width 10
+      while ((int)leftStr.length() < 10) leftStr += ' ';
+      // right column: right-justified to width 10
+      if ((int)rightStr.length() < 10){
+        String pad = "";
+        for (int p=0; p < 10 - (int)rightStr.length(); p++) pad += ' ';
+        rightStr = pad + rightStr;
+      }
+      rows[r] = leftStr + rightStr;
+    }
+    // Use 4-line printer when available
+    g_lcdStatus.show4To(LCD_TGT_1, rows[0], rows[1], rows[2], rows[3], true);
   }
 
   void showRemote(){
@@ -659,6 +695,12 @@ public:
         _state = STATE_REMOTE;
         _lastUiMs = 0;
         showRemote();
+        return;
+
+      case MENU_TEMPS:
+        _state = STATE_TEMPS;
+        _lastUiMs = 0;
+        showTemperatures();
         return;
 
       case MENU_CALIBRATE:
