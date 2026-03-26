@@ -13,6 +13,7 @@
 #include "peripherals/xHallEncoder.h"
 #include "peripherals/xIrKeyReader.h"
 #include "peripherals/xEbyteRadio.h"
+#include "peripherals/xDs18b20.h"
 
 // Ebyte radio instance (nRF24L01 compatible)
 extern EbyteRadio g_ebyteRadio;

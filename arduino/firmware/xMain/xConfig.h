@@ -468,4 +468,25 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define HALL_ANALOG_THRESHOLD 512
 #endif
 
+// =====================
+// DS18B20 / OneWire temperature sensors
+// Single-wire bus: connect all DS18B20 devices to this pin (parasite power NOT required/recommended)
+#ifndef DS18_ENABLED
+#define DS18_ENABLED 1
+#endif
+#ifndef DS18_PIN
+#define DS18_PIN 22
+#endif
+#ifndef DS18_POLL_MS
+#define DS18_POLL_MS 5000
+#endif
+// Overheat threshold in Celsius (default)
+#ifndef DS18_OVERHEAT_C
+#define DS18_OVERHEAT_C 60.0f
+#endif
+// Expected number of DS18 devices attached (used for reporting). Default 6 as requested.
+#ifndef DS18_SENSOR_COUNT
+#define DS18_SENSOR_COUNT 8
+#endif
+
 #endif // ROBOT_CONFIG_H
