@@ -8,10 +8,16 @@ hardware:
   # - Arduino: Arduino connected over serial will drive the LED strip (preferred)
   backend: pi
   device: "/dev/spidev0.0"
-  num_leds: 30
+  num_leds: 23
   segments:
-    - { name: jewel, start: 0, count: 7 }
-    - { name: stick, start: 7, count: 23 }
+    - { name: body, start: 0, count: 3 }
+    - { name: driver, start: 3, count: 2 }
+    - { name: right1, start: 5, count: 3 }
+    - { name: right2, start: 8, count: 3 }
+    - { name: left1, start: 11, count: 3 }
+    - { name: left2, start: 14, count: 3 }
+    - { name: head, start: 17, count: 2 }
+    - { name: extra, start: 19, count: 4 }
   speed_khz: 800
   ws2812_spi_khz: 2400
   order: "GRB"  # GRB|RGB|BRG
