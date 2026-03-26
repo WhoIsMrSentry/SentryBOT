@@ -10,12 +10,10 @@ try:
     from ..services.clients import create_llm_client
     from ..services.chat import PersonaProvider, OllamaChatService
     from ..services.translator import OllamaTranslator
-    from ..models.sentry_schema import SentryResponse
 except Exception:
     from services.clients import create_llm_client  # type: ignore
     from services.chat import PersonaProvider, OllamaChatService  # type: ignore
     from services.translator import OllamaTranslator  # type: ignore
-    from models.sentry_schema import SentryResponse  # type: ignore
 
 
 def _persona_dir(cfg: dict, name: Optional[str] = None) -> str:
@@ -59,7 +57,7 @@ def get_router(cfg: dict) -> APIRouter:
 
     active_persona = str(cfg.get("persona", {}).get("default", "sentry"))
     persona_text = _load_persona_text(cfg, active_persona)
-    chat = OllamaChatService(client, PersonaProvider(persona_text, persona_name=active_persona), max_history=6)
+    chat = OllamaChatService(client, persona_name=active_persona, max_history=6)
     # Preload persona texts and optional urls placeholders
     _persona_cache: Dict[str, str] = {}
     base_persona_dir = str(cfg.get("persona", {}).get("dir", "modules/ollama/config/personalities"))
@@ -133,8 +131,7 @@ def get_router(cfg: dict) -> APIRouter:
             source = translator.detect_language(query)
         target = translator.normalize_lang(response_lang or source, fallback=translator.cfg.default_source_lang)
         query_en = translator.to_bridge(query, source)
-        model_schema = SentryResponse if structured else None
-        result = chat.chat(query_en, schema_model=model_schema)
+        result = chat.chat(query_en)
         answer_en = str(result.get("text", ""))
         localized_answer = translator.from_bridge(answer_en, target)
         result["text"] = localized_answer
@@ -164,8 +161,7 @@ def get_router(cfg: dict) -> APIRouter:
             source = translator.detect_language(query)
         target = translator.normalize_lang(response_lang or source, fallback=translator.cfg.default_source_lang)
         query_en = translator.to_bridge(query, source)
-        model_schema = SentryResponse if structured else None
-        result = chat.chat(query_en, schema_model=model_schema)
+        result = chat.chat(query_en)
         answer_en = str(result.get("text", ""))
         localized_answer = translator.from_bridge(answer_en, target)
         result["text"] = localized_answer
@@ -212,11 +208,27 @@ def get_router(cfg: dict) -> APIRouter:
         path = os.path.join(pdir, "persona.txt")
         if not os.path.exists(path):
             return {"ok": False, "error": "persona not found"}
+        
         active_persona = str(name)
-        persona_text = _persona_cache.get(name) or _load_persona_text(cfg, name)
+        raw_content = _load_persona_text(cfg, name)
+        
+        # Hybrid Modelfile Detection
+        if "FROM " in raw_content and "SYSTEM " in raw_content:
+            modelfile = raw_content
+        else:
+            # Wrap legacy persona in a default template
+            base_model = str(cfg.get("ollama", {}).get("model", "llama3.2:3b"))
+            modelfile = f'FROM {base_model}\nSYSTEM """\n{raw_content}\n"""'
+
+        # Create/Update the model in Ollama
+        success = client.create_model(name, modelfile)
+        if not success:
+            logger.error(f"Failed to create model for persona {name}")
+            
+        persona_text = raw_content
         _persona_cache[name] = persona_text
-        chat = OllamaChatService(client, PersonaProvider(persona_text, persona_name=active_persona), max_history=6)
-        return {"ok": True, "active": name}
+        chat = OllamaChatService(client, persona_name=active_persona, max_history=6)
+        return {"ok": True, "active": name, "model_created": success}
 
     @r.post("/persona/create_from_url")
     def create_persona_from_url(name: str, url: str):
