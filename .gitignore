@@ -1,10 +1,13 @@
 .venv
 __pycache__
 copilot-instructions.md
+copilot-instructions_en.md
+copilot-instructions_tr.md
+arduino_knowledge.md
+modules_knowledge.md
 sentry.log
 .pytest_cache
 arduino.avr.mega
-
 modules/notifier/.env
 modules/notifier/config/config.local.yml
 *.ini
