@@ -7,7 +7,8 @@ def get_router(agent) -> APIRouter:
 
     @router.get("/healthz")
     def healthz():
-        return {"ok": True, "state": agent.executor.state.name}
+        state_str = "BUSY" if agent.is_busy else "IDLE"
+        return {"ok": True, "state": state_str}
 
     @router.post("/step")
     def step(query: str = Body(embed=True)):
@@ -36,16 +37,6 @@ def get_router(agent) -> APIRouter:
         path = agent.slam.pathfind(destination)
         return {"destination": destination, "path": path}
 
-    @router.post("/executor/interrupt")
-    def interrupt():
-        """Mevcut plan kuyruğunu durdur ve motorları kes."""
-        agent.executor.interrupt()
-        return {"ok": True, "state": "INTERRUPTED"}
-
-    @router.post("/executor/resume")
-    def resume():
-        """Kesilen çalışmayı devam ettir."""
-        agent.executor.resume()
-        return {"ok": True, "state": agent.executor.state.name}
+    # Removed legacy /executor/* endpoints since the queue is replaced by true Agentic loops
 
     return router

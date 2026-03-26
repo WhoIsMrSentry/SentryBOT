@@ -5,10 +5,10 @@ import logging
 import time
 from typing import Any, Dict, List
 
-try:  # pragma: no cover - opsiyonel bağımlılık
-	from modules.ollama.services.tags import extract_llm_tags  # type: ignore
+try:  # pragma: no cover
+    pass
 except Exception:  # pragma: no cover
-	extract_llm_tags = None  # type: ignore
+    pass
 
 logger = logging.getLogger("autonomy.response_tags")
 
@@ -44,12 +44,8 @@ class ResponseTagMixin:
 			blocks = action_bundle.get("blocks", [])
 			if action_bundle.get("commands"):
 				self._dispatch_llm_commands(action_bundle.get("commands", []))
-		elif extract_llm_tags is not None:
-			source = raw_text or cleaned
-			cleaned, parsed = extract_llm_tags(source)
-			blocks = parsed.get("blocks", [])
-			if parsed.get("commands"):
-				self._dispatch_llm_commands(parsed.get("commands", []))
+		# Legacy extract_llm_tags block completely removed
+		pass
 
 		if blocks:
 			self._dispatch_llm_blocks(blocks)

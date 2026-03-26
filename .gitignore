@@ -13,3 +13,4 @@ modules/notifier/config/config.local.yml
 *.ini
 vosk-tr/
 .env
+ai/
