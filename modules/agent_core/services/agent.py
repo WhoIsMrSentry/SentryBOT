@@ -102,7 +102,7 @@ class AgentOrchestrator:
     def _get_active_persona_model(self) -> str:
         """Fetch the current model name from the autonomy/ollama module."""
         # fallback to config if we can't determine it
-        return self.config.get("llm", {}).get("model", "llama3.2:3b")
+        return self.config.get("llm", {}).get("model", "qwen3.5:2b")
 
     def step(self, user_prompt: str = "") -> Optional[Dict[str, Any]]:
         """

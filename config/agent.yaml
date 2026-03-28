@@ -1,5 +1,5 @@
 agent:
-  model: "llama3.2:3b-q4_K_M"
+  model: "qwen3.5:2b"
   temperature: 0.15
   num_ctx: 4096
   cooldown_s: 1.0  # LLM Rate Limit
