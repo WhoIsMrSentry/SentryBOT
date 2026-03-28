@@ -12,9 +12,9 @@
 //   3 = Serial3 (if available)
 #ifndef SERIAL_IO_PORT
 #if defined(ARDUINO_AVR_MEGA2560) || defined(ARDUINO_AVR_MEGA) || defined(__AVR_ATmega2560__)
-#define SERIAL_IO_PORT 3
-#else
 #define SERIAL_IO_PORT 0
+#else
+#define SERIAL_IO_PORT 3
 #endif
 #endif
 
@@ -251,10 +251,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define LCD_I2C_ADDR 0x3F
 #endif
 #ifndef LCD_COLS
-#define LCD_COLS 16
+#define LCD_COLS 20
 #endif
 #ifndef LCD_ROWS
-#define LCD_ROWS 2
+#define LCD_ROWS 4
 #endif
 #ifndef LCD_16X1_SPLIT_ROW
 #define LCD_16X1_SPLIT_ROW 1  // 1: use row split (0,1), 0: use position split (0-7, 8-15)
@@ -460,8 +460,8 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 
 // Analog Hall sensörü kullanımı için ayarlar
 #ifndef HALL_ANALOG_MODE
-// 1: analogRead() + threshold modunda çalış (analog Hall sensörü), 0: dijitalRead()
-#define HALL_ANALOG_MODE 1
+// 0: digitalRead() (Recommended), 1: analogRead() + threshold
+#define HALL_ANALOG_MODE 0
 #endif
 #ifndef HALL_ANALOG_THRESHOLD
 // Analog eşik (0..1023). Sensörün çıkışına göre ayarlayın (varsayılan 512).

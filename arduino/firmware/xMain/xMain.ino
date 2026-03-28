@@ -115,6 +115,9 @@ IrKeyReader g_ir;
 
 #if IR_ENABLED
 IrMenuController g_irMenu;
+void pushAlert(const String &msg) { g_irMenu.addAlert(msg); }
+#else
+void pushAlert(const String &msg) { /* silence */ }
 #endif
 
 #if HALL_ENCODER_ENABLED
@@ -175,13 +178,14 @@ static inline void printTelemetryJson(){
 
 void setup(){
   SERIAL_IO.begin(ROBOT_SERIAL_BAUD);
-  g_rxLine.reserve(256);
-  g_irKey.reserve(16);
-  g_lcdLineTmp.reserve(24);
+  SERIAL_IO.println(F("{\"info\":\"boot_start\"}"));
+  g_rxLine.reserve(128);
+  g_irKey.reserve(12);
+  g_lcdLineTmp.reserve(22);
 #if RFID_ENABLED
-  g_lastRfid.reserve(32);
+  g_lastRfid.reserve(16);
 #endif
-  g_lastSpeech.reserve(128);
+  g_lastSpeech.reserve(32);
   // Status LED pin
   pinMode(PIN_STATUS_LED, OUTPUT);
   g_statusLedMode = STATUS_LED_BLINK_SLOW; // boot activity
@@ -226,7 +230,7 @@ void setup(){
     if (vfQ >= 200 && vfQ <= 4000) g_buzzerFreqQuiet = vfQ;
   }
   #endif
-  Protocol::sendOk("ready");
+  Protocol::sendOk(F("ready"));
   // Indicate ready
   g_statusLedMode = STATUS_LED_SOLID;
 #if LCD_ENABLED
@@ -270,14 +274,16 @@ void setup(){
 
 
   // LCD yoksa firmware çalışmaya devam eder; sadece LCD yazımı atlanır.
-  g_lcdStatus.begin("READY", 3000);
+  g_lcdStatus.begin("", 0);
+  g_irMenu.reset();
+  g_irMenu.showHome();
 
     if (BOOT_STATUS_ENABLED && lcdHubAny()){
-    bootUiStep("SentryBOT", "BOOT", BOOT_SPLASH_MS);
+    bootUiStep(F("SentryBOT"), (const __FlashStringHelper*)F("BOOT"), BOOT_SPLASH_MS);
 
     // LCDs
     bootInfo("lcd1", g_lcd1Ok);
-    bootUiStep("LCD1", g_lcd1Ok ? "OK" : "MISSING", g_lcd1Ok ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
+    bootUiStep(F("LCD1"), g_lcd1Ok ? (const __FlashStringHelper*)F("OK") : (const __FlashStringHelper*)F("MISSING"), g_lcd1Ok ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
 
 
     // I2C modules
@@ -285,22 +291,22 @@ void setup(){
     // on some modules may be pulled high (0x69).
     bool imuOk = i2cDevicePresent(IMU_I2C_ADDR) || i2cDevicePresent(0x69);
     bootInfo("imu", imuOk);
-    bootUiStep("IMU", imuOk ? "OK" : "MISSING", imuOk ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
+    bootUiStep(F("IMU"), imuOk ? (const __FlashStringHelper*)F("OK") : (const __FlashStringHelper*)F("MISSING"), imuOk ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
 
   #if SERVO_USE_PCA9685
     bool pcaOk = i2cDevicePresent(PCA9685_ADDR);
     bootInfo("pca9685", pcaOk);
-    bootUiStep("SERVO", pcaOk ? "PCA9685 OK" : "PCA9685 MISSING", pcaOk ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
+    bootUiStep(F("SERVO"), pcaOk ? (const __FlashStringHelper*)F("PCA9685 OK") : (const __FlashStringHelper*)F("PCA9685 MISSING"), pcaOk ? BOOT_STATUS_OK_MS : BOOT_STATUS_FAIL_MS);
   #else
     bootInfo("servo_driver", true);
-    bootUiStep("SERVO", "DIRECT PINS", BOOT_STATUS_OK_MS);
+    bootUiStep(F("SERVO"), (const __FlashStringHelper*)F("DIRECT PINS"), BOOT_STATUS_OK_MS);
   #endif
 
     // Compile-time features (to give a bit of "liveliness")
     String feat = String("") + (IR_ENABLED?"IR ":"") + (RFID_ENABLED?"RFID ":"") + (ULTRA_ENABLED?"ULTRA ":"") + (LASER_ENABLED?"LASER ":"");
-    if (feat.length() > 0) bootUiStep("FEAT", feat, BOOT_STATUS_STEP_MS);
+    if (feat.length() > 0) bootUiStep(F("FEATURES"), feat, BOOT_STATUS_STEP_MS);
 
-    bootUiStep("READY", "", BOOT_STATUS_OK_MS);
+
     }
 #endif
 #if RFID_ENABLED
@@ -352,11 +358,13 @@ void setup(){
 }
 
 void loop(){
+  g_irMenu.countLoop();
   if (Protocol::readLine(SERIAL_IO, g_rxLine)) handleJson(g_rxLine);
   robot.update();
     // Peripherals polling
   #if RFID_ENABLED
     if (g_rfid.poll()){
+      g_irMenu.recordRfid();
       g_lastRfid = g_rfid.lastUid();
       SERIAL_IO.print(F("{\"ok\":true,\"event\":\"rfid\",\"uid\":\""));
       printJsonEscaped(g_lastRfid);
@@ -411,6 +419,7 @@ void loop(){
       g_lcdLineTmp = cmBuf;
       g_lcdLineTmp += "cm";
       g_lcdStatus.show("AVOID", g_lcdLineTmp);
+      pushAlert(F("OBSTACLE DETECTED"));
   #endif
   // Song queue processing lives in the main BUZZER section below.
       }
@@ -421,7 +430,7 @@ void loop(){
       if (!isnan(g_ultraCm) && g_ultraCm>0 && g_ultraCm < AVOID_DISTANCE_CM){
         unsigned long nowp = millis();
         if (g_ultraCm <= AVOID_CONTINUOUS_CM){
-          // Very close: start a sustained/continuous tone until cleared (ms==0 => indefinite)
+          // Very close: start a sustained/continuous tone
           if (!g_proxContinuousOn){
             if (g_buzzerBothEnabled){
               g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 0);
@@ -433,8 +442,11 @@ void loop(){
             g_proxContinuousOn = true;
           }
         } else {
-          // Parking beeps: interval scales with distance
-          unsigned long interval = (unsigned long)constrain(g_ultraCm * 5.0f + 40.0f, 50.0f, 800.0f);
+          // PROPORTIONAL parking beeps
+          // Scale linearly from 60ms (at 8cm) to 800ms (at 25cm)
+          unsigned long interval = (unsigned long)((g_ultraCm - AVOID_CONTINUOUS_CM) * 43.5f + 60.0f);
+          interval = constrain(interval, 50, 1000);
+
           if (nowp - g_lastProxBeepMs >= interval){
             g_lastProxBeepMs = nowp;
             if (g_buzzerBothEnabled){
@@ -445,7 +457,6 @@ void loop(){
               g_buzzer.beepOn(g_buzzerDefaultOut, f, 40);
             }
           }
-          // Ensure continuous flag cleared and any sustained tone is stopped
           if (g_proxContinuousOn){
             g_buzzer.stop();
             g_proxContinuousOn = false;
@@ -502,6 +513,10 @@ void loop(){
   g_nema.update();
   #if DS18_ENABLED
   g_ds18.update();
+  #endif
+  #if HALL_ENCODER_ENABLED
+  g_hall0.update();
+  g_hall1.update();
   #endif
   // Telemetry periodic output
   if (telemetryOn && millis() - lastTelemetryMs >= telemetryInterval){
