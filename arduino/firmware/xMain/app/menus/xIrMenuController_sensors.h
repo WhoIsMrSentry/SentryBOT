@@ -18,13 +18,24 @@ void IrMenuController::refreshLive(Robot &robot){
 
   if (_state == STATE_ULTRA){
 #if ULTRA_ENABLED
-    if (isnan(g_ultraCm)) lcdPrint("ULTRA", "NO ECHO");
+    if (isnan(g_ultraCm)) lcdPrint((const __FlashStringHelper*)F("   ULTRA SENSOR   "), (const __FlashStringHelper*)F("      NO ECHO     "));
     else {
-      String line;
-      line.reserve(12);
-      line = String(g_ultraCm, 1);
-      line += "cm";
-      lcdPrint("ULTRA", line);
+      char l1[21], l2[21], l3[21], l4[21];
+      snprintf_P(l1, sizeof(l1), PSTR("   ULTRA SENSOR     "));
+      snprintf_P(l2, sizeof(l2), PSTR("--------------------"));
+      int whole = (int)g_ultraCm;
+      int frac = (int)((g_ultraCm - whole) * 10);
+      snprintf_P(l3, sizeof(l3), PSTR(" DIST: %d.%d cm     "), whole, abs(frac));
+        
+      // Modern progress bar
+      int dots = (int)constrain(g_ultraCm / 5.0f, 0, 16);
+      String bar = " [";
+      for (int i=0; i<dots && i<16; i++) bar += "=";
+      for (int i=dots; i<16; i++) bar += " ";
+      bar += "]";
+      strncpy(l4, bar.c_str(), sizeof(l4));
+      l4[sizeof(l4)-1] = '\0';
+      g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
     }
 #else
     lcdPrint("ULTRA", "DISABLED");
@@ -34,14 +45,21 @@ void IrMenuController::refreshLive(Robot &robot){
 
   if (_state == STATE_RFID){
 #if RFID_ENABLED
-    if (g_lastRfid.length() == 0) lcdPrint("RFID", "NONE");
-    else {
+    char l1[21], l2[21], l3[21], l4[21];
+    snprintf_P(l1, sizeof(l1), PSTR("    RFID READER     "));
+    snprintf_P(l2, sizeof(l2), PSTR("--------------------"));
+    if (g_lastRfid.length() == 0){
+      snprintf_P(l3, sizeof(l3), PSTR("  STATUS: IDLE      "));
+      snprintf_P(l4, sizeof(l4), PSTR("  WAITING FOR TAG   "));
+    } else {
       String tail = g_lastRfid;
-      if (tail.length() > 8) tail = tail.substring(tail.length() - 8);
-      lcdPrint("RFID", tail);
+      if (tail.length() > 16) tail = tail.substring(tail.length() - 16);
+      snprintf_P(l3, sizeof(l3), PSTR("  LAST ID:          "));
+      snprintf_P(l4, sizeof(l4), PSTR("  %-16s  "), tail.c_str());
     }
+    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
 #else
-    lcdPrint("RFID", "DISABLED");
+    lcdPrint((const __FlashStringHelper*)F("RFID"), (const __FlashStringHelper*)F("DISABLED"));
 #endif
     return;
   }
@@ -50,71 +68,79 @@ void IrMenuController::refreshLive(Robot &robot){
     robot.imu.read();
     float p = robot.imu.getPitch();
     float r = robot.imu.getRoll();
-    if (_imuSub == 0){
-      String line;
-      line.reserve(24);
-      line = "P:";
-      line += String(p, 1);
-      line += " R:";
-      line += String(r, 1);
-      lcdPrint("IMU", line);
-    } else if (_imuSub == 1){
-      String line;
-      line.reserve(24);
-      line = "AX:";
-      line += String(robot.imu.getAccX(), 1);
-      line += " AY:";
-      line += String(robot.imu.getAccY(), 1);
-      lcdPrint("IMU", line);
+    
+    if (LCD_ROWS >= 4){
+      char l1[21], l2[21], l3[21], l4[21];
+      snprintf_P(l1, sizeof(l1), PSTR(" \x01 IMU PITCH: %-4d"), (int)p);
+      snprintf_P(l2, sizeof(l2), PSTR(" \x01 IMU ROLL:  %-4d"), (int)r);
+      snprintf_P(l3, sizeof(l3), PSTR(" A:%d %d %d        "), (int)(robot.imu.getAccX()), (int)(robot.imu.getAccY()), (int)(robot.imu.getAccZ()));
+      snprintf_P(l4, sizeof(l4), PSTR(" TEMP: %d C        "), (int)robot.imu.getTempC());
+      g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
     } else {
-      String line;
-      line.reserve(24);
-      line = "AZ:";
-      line += String(robot.imu.getAccZ(), 1);
-      line += " T:";
-      line += String(robot.imu.getTempC(), 0);
-      lcdPrint("IMU", line);
+      if (_imuSub == 0){
+        String line;
+        line.reserve(24);
+        line = "P:";
+        line += String(p, 1);
+        line += " R:";
+        line += String(r, 1);
+        lcdPrint("IMU", line);
+      } else if (_imuSub == 1){
+        String line;
+        line.reserve(24);
+        line = "AX:";
+        line += String(robot.imu.getAccX(), 1);
+        line += " AY:";
+        line += String(robot.imu.getAccY(), 1);
+        lcdPrint("IMU", line);
+      } else {
+        String line;
+        line.reserve(24);
+        line = "AZ:";
+        line += String(robot.imu.getAccZ(), 1);
+        line += " T:";
+        line += String(robot.imu.getTempC(), 0);
+        lcdPrint("IMU", line);
+      }
     }
     return;
   }
 
   if (_state == STATE_SYSTEM){
-    if (_sysSub == 0){
-      String top = (robot.getMode()==MODE_HEAD_TRACK) ? "SYS STAND" : "SYS SIT";
-      String b;
-      b.reserve(14);
-      b = "DRV:";
-      b += String((int)robot.getDriveCmd());
-      lcdPrint(top, b);
-      return;
-    }
-
-    if (_sysSub == 1){
-      String a = "MOD";
-    #if LCD_ENABLED
-      a = String("LCD") + (g_lcd1Ok ? "1" : "-");
-    #endif
-      String b;
-      b.reserve(8);
-      b = "IMU:";
-      b += (robot.imu.isReady() ? "OK" : "NO");
-      lcdPrint(a, b);
-      return;
-    }
-
-    // sub 2
-    String b;
-    b.reserve(12);
-    b = "SERVO:";
-    b += (robot.servos.driverOk() ? "OK" : "NO");
+    char l1[21], l2[21], l3[21], l4[21];
+    
+    // Line 1: Mode and Uptime with heart icon
+    unsigned long upS = millis() / 1000;
+    int h = upS / 3600;
+    int m = (upS / 60) % 60;
+    int s = upS % 60;
+    snprintf_P(l1, sizeof(l1), PSTR("\x04 %s UP %02d:%02d:%02d"), (robot.getMode()==MODE_HEAD_TRACK)?"S":"K", h, m, s);
+    
+    // Line 2: Connectivity with link icon (Shortened labels to fit 20 chars)
+    snprintf_P(l2, sizeof(l2), PSTR("\x03 S:%s R:%s RF:%s"), robot.servos.driverOk()?"OK":"NO", "NA", g_lastRfid.length()?"OK":"NO");
+    
+    // Line 3: IMU and Drive with temp icon (multi-purpose)
+    snprintf_P(l3, sizeof(l3), PSTR("\x01 IMU:%s DRV:%d"), robot.imu.isReady()?"OK":"NO", (int)robot.getDriveCmd());
+    
+    // Line 4: Ultra and Misc with battery icon (simulated for now)
 #if ULTRA_ENABLED
-    String top = "UL:";
-    if (isnan(g_ultraCm)) top += "NA";
-    else top += String((int)g_ultraCm);
+    String ul = isnan(g_ultraCm) ? "NA" : String((int)g_ultraCm);
+    snprintf_P(l4, sizeof(l4), PSTR("\x02 ULTRA:%scm BTN:OK"), ul.c_str());
 #else
-    String top = "UL:OFF";
+    snprintf_P(l4, sizeof(l4), PSTR("\x02 ULTRA:OFF BTN:OK"));
 #endif
-    lcdPrint(top, b);
+
+    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+    return;
+  }
+  
+  if (_state == STATE_ALERTS){
+    showAlerts();
+    return;
+  }
+  
+  if (_state == STATE_STATS){
+    showStats();
     return;
   }
 }

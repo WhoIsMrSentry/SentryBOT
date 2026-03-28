@@ -59,22 +59,52 @@ static inline void lcdHubPrintDefault(const String &top, const String &bottom){
   lcdHubPrint(LCD_TGT_1, top, bottom);
 }
 
+static inline void lcdHubHeader(const String &title, uint8_t iconIdx = 255){
+  String line = "";
+  if (iconIdx != 255){
+    // This is tricky because String doesn't support raw bytes easily in all versions, 
+    // but we can use g_lcd1.writeRaw indirectly.
+    // For simplicity, we'll just handle it in the print call if we had a better abstraction, 
+    // but here we'll just use a special prefix.
+    line = "[#] "; // Placeholder for icon
+  }
+  line += title;
+  while (line.length() < 20) line += " ";
+  g_lcd1.printLine(line); // Assuming we update printLine or use printLines
+}
+
+static inline void lcdHubDrawFrame(){
+  // On 20x4, we can draw a simple border or separator
+  // We'll use this in specific screens.
+}
+
 static inline void bootUiStep(const String &top, const String &bottom, unsigned long ms){
   if (!BOOT_UI_ENABLED) return;
   if (!lcdHubAny()) return;
 
-  lcdHubPrintDefault(top, bottom);
+  // Center for 20x4
+  String t = top;
+  while (t.length() < 20) {
+    if (t.length() % 2 == 0) t = " " + t;
+    else t = t + " ";
+  }
+  String b = bottom;
+  while (b.length() < 20) {
+    if (b.length() % 2 == 0) b = " " + b;
+    else b = b + " ";
+  }
+
+  lcdHubPrintDefault(t, b);
 
   unsigned long t0 = millis();
   while (millis() - t0 < ms){
-    // keep system responsive enough during boot UI
-    if (SERIAL_IO.available()){
-      // allow host to break long boot screens by sending any byte
-      SERIAL_IO.read();
-      break;
-    }
+    if (SERIAL_IO.available()){ SERIAL_IO.read(); break; }
     delay(5);
   }
+}
+
+static inline void bootUiStep(const __FlashStringHelper* top, const __FlashStringHelper* bottom, unsigned long ms){
+  bootUiStep(String(top), String(bottom), ms);
 }
 
 static inline int parseJsonIntAfter(const String &line, const char *key, int defaultVal, bool *found=nullptr){
@@ -142,6 +172,10 @@ public:
     _lastBottom = bottom;
     _lastShowMs = millis();
     lcdHubPrintDefault(top, bottom);
+  }
+
+  void show(const __FlashStringHelper* top, const __FlashStringHelper* bottom = NULL, bool force = false){
+    show(String(top), bottom ? String(bottom) : "", force);
   }
 
   void showTo(uint8_t targetMask, const String &top, const String &bottom = "", bool force=false){
