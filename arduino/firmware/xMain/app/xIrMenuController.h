@@ -54,10 +54,11 @@ class IrMenuController {
 public:
   void reset(){
     _state = STATE_HOME;
-    _menuIndex = 0;
+    _menuIndex = 1; // Default to first sub-menu item (Servo) instead of Home to avoid easy loops
     _token = "";
     _capture = false;
     _lastDigitMs = 0;
+    _lastInputMs = millis();
     _servoSel = -1;
     _laserMode = 0;
     _lastUiMs = 0;
@@ -119,6 +120,7 @@ public:
     // HOME: keep simple direct controls; OK opens menu
     if (_state == STATE_HOME){
       if (k == "OK"){
+        _lastInputMs = millis(); 
         enterMenu();
         return;
       }
@@ -167,10 +169,34 @@ public:
       return;
     }
 
+    // Global Home key (*)
+    if (k == "*"){
+      _state = STATE_HOME;
+      showHome();
+      _lastInputMs = millis();
+      return;
+    }
+
+    // Global Back key handler (#)
+    if (k == "BACK" || k == "#"){
+      if (_state == STATE_MENU){
+        _state = STATE_HOME;
+        showHome();
+      } else if (_state != STATE_HOME){
+        _state = STATE_MENU;
+        showMenu();
+      }
+      _lastInputMs = millis();
+      return;
+    }
+    
+    // reset activity on any other key
+    _lastInputMs = millis();
+
     // MENU: UP/DOWN select, OK enter
     if (_state == STATE_MENU){
-      if (k == "UP"){ menuPrev(); showMenu(); return; }
-      if (k == "DOWN"){ menuNext(); showMenu(); return; }
+      if (k == "UP"){ menuPrev(); return; }
+      if (k == "DOWN"){ menuNext(); return; }
       if (k == "OK"){ enterSelected(robot); return; }
       // ignore others
       return;
@@ -178,11 +204,6 @@ public:
 
     // Servo flow
     if (_state == STATE_SERVO_SEL || _state == STATE_SERVO_DEG){
-      if (k == "*"){
-        startToken();
-        showServoToken();
-        return;
-      }
       if (k == "OK"){
         commitTokenIfAny(robot);
         _capture = false;
@@ -416,6 +437,8 @@ public:
   }
 
   void tick(Robot &robot){
+    // Manual Home is now via '*' key. Auto-Home removed upon user request.
+    
     // Token timeout
     if (_capture && _token.length() > 0 && _lastDigitMs != 0){
       unsigned long now = millis();
@@ -477,10 +500,13 @@ public:
     STATE_RFID,
     STATE_SYSTEM,
     STATE_TEMPS,
+    STATE_ALERTS,
+    STATE_STATS,
   };
 
   enum MenuItem : uint8_t {
-    MENU_SERVO = 0,
+    MENU_HOME = 0,
+    MENU_SERVO,
     MENU_LASER,
     MENU_ULTRA,
     MENU_IMU,
@@ -490,6 +516,8 @@ public:
     MENU_CALIBRATE,
     MENU_SYSTEM,
     MENU_TEMPS,
+    MENU_ALERTS,
+    MENU_STATS,
     MENU_COUNT,
   };
 
@@ -553,37 +581,64 @@ public:
   void menuPrev(){
     if (_menuIndex == 0) _menuIndex = MENU_COUNT - 1;
     else _menuIndex--;
+    updateScroll();
+    showMenu();
   }
   void menuNext(){
     _menuIndex = (_menuIndex + 1) % MENU_COUNT;
+    updateScroll();
+    showMenu();
   }
 
-  static String menuName(uint8_t idx){
+  void updateScroll(){
+    if (_menuIndex < _menuScroll){
+      _menuScroll = _menuIndex;
+    } else if (_menuIndex >= _menuScroll + 4){
+      _menuScroll = _menuIndex - 3;
+    }
+  }
+
+  static const __FlashStringHelper* menuName(uint8_t idx){
     switch ((MenuItem)idx){
-      case MENU_SERVO: return "SERVO";
-      case MENU_LASER: return "LASER";
-      case MENU_ULTRA: return "ULTRA";
-      case MENU_IMU: return "IMU";
-      case MENU_RFID: return "RFID";
-      case MENU_SOUND: return "SOUND";
-      case MENU_REMOTE: return "REMOTE";
-       case MENU_TEMPS: return "TEMPS";
-      case MENU_CALIBRATE: return "CALIB";
-      case MENU_SYSTEM: return "SYSTEM";
-      default: return "MENU";
+      case MENU_HOME: return (const __FlashStringHelper*)F("HOME");
+      case MENU_SERVO: return (const __FlashStringHelper*)F("SERVO");
+      case MENU_LASER: return (const __FlashStringHelper*)F("LASER");
+      case MENU_ULTRA: return (const __FlashStringHelper*)F("ULTRA");
+      case MENU_IMU: return (const __FlashStringHelper*)F("IMU");
+      case MENU_RFID: return (const __FlashStringHelper*)F("RFID");
+      case MENU_SOUND: return (const __FlashStringHelper*)F("SOUND");
+      case MENU_REMOTE: return (const __FlashStringHelper*)F("REMOTE");
+      case MENU_TEMPS: return (const __FlashStringHelper*)F("TEMPS");
+      case MENU_CALIBRATE: return (const __FlashStringHelper*)F("CALIBRATION");
+      case MENU_SYSTEM: return (const __FlashStringHelper*)F("SYSTEM INFO");
+      case MENU_ALERTS: return (const __FlashStringHelper*)F("ALERT HISTORY");
+      case MENU_STATS: return (const __FlashStringHelper*)F("ROBOT STATS");
+      default: return (const __FlashStringHelper*)F("MENU");
     }
   }
 
   void showHome(){
-    lcdPrint("IR", "OK=MENU #=BACK");
+    char l1[21], l2[21], l3[21], l4[21];
+    snprintf_P(l1, sizeof(l1), PSTR(" \x04  SentryBOT V5  \x04 "));
+    snprintf_P(l2, sizeof(l2), PSTR("===================="));
+    snprintf_P(l3, sizeof(l3), PSTR("  STATUS: ONLINE    "));
+    snprintf_P(l4, sizeof(l4), PSTR(" [OK] START SENTRY  "));
+    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
   }
 
   void showMenu(){
-    String line;
-    line.reserve(22);
-    line = menuName(_menuIndex);
-    line += " OK=ENTER";
-    lcdPrint("MENU", line);
+    String rows[4];
+    for (int i=0; i<4; i++){
+      int idx = _menuScroll + i;
+      if (idx < MENU_COUNT){
+        // Use custom arrow icon (0) for selection
+        rows[i] = (idx == _menuIndex) ? "\x00 " : "  ";
+        rows[i] += menuName(idx);
+      } else {
+        rows[i] = "";
+      }
+    }
+    g_lcdStatus.show4To(LCD_TGT_1, rows[0], rows[1], rows[2], rows[3], true);
   }
 
   void showTemperatures(){
@@ -599,8 +654,8 @@ public:
       float lt = g_ds18.tempC(leftIdx);
       float rt = g_ds18.tempC(rightIdx);
       char lb[32]; char rb[32];
-      if (isnan(lt)) snprintf(lb, sizeof(lb), "%s:--.-C", leftName.c_str()); else snprintf(lb, sizeof(lb), "%s:%.1fC", leftName.c_str(), lt);
-      if (isnan(rt)) snprintf(rb, sizeof(rb), "%s:--.-C", rightName.c_str()); else snprintf(rb, sizeof(rb), "%s:%.1fC", rightName.c_str(), rt);
+      if (isnan(lt)) snprintf(lb, sizeof(lb), "\x01" "%s:--.-C", leftName.c_str()); else snprintf(lb, sizeof(lb), "\x01" "%s:%.1fC", leftName.c_str(), lt);
+      if (isnan(rt)) snprintf(rb, sizeof(rb), "\x01" "%s:--.-C", rightName.c_str()); else snprintf(rb, sizeof(rb), "\x01" "%s:%.1fC", rightName.c_str(), rt);
       String leftStr(lb); String rightStr(rb);
       // truncate if too long
       if ((int)leftStr.length() > 10) leftStr = leftStr.substring(0,10);
@@ -645,6 +700,11 @@ public:
 
   void enterSelected(Robot &robot){
     switch ((MenuItem)_menuIndex){
+      case MENU_HOME:
+        _state = STATE_HOME;
+        showHome();
+        return;
+
       case MENU_SERVO:
         if (!robot.servos.driverOk()){
           lcdPrint("SERVO", "DRIVER MISSING");
@@ -752,6 +812,18 @@ public:
         refreshLive(robot);
         return;
 
+      case MENU_ALERTS:
+        _state = STATE_ALERTS;
+        _lastUiMs = 0;
+        showAlerts();
+        return;
+
+      case MENU_STATS:
+        _state = STATE_STATS;
+        _lastUiMs = 0;
+        showStats();
+        return;
+
       default:
         return;
     }
@@ -761,8 +833,13 @@ public:
   void showServoToken();
 
   void showLaser(){
-    const char* modes[] = {"OFF", "L1", "L2", "BOTH"};
-    lcdPrint("LASER", String(modes[_laserMode % 4]) + " UP/DN/OK");
+    char l1[21], l2[21], l3[21], l4[21];
+    const char* modes[] = {"  ALL OFF   ", " LASER 1 ON ", " LASER 2 ON ", " BOTH ON    "};
+    snprintf_P(l1, sizeof(l1), PSTR("   LASER CONTROL    "));
+    snprintf_P(l2, sizeof(l2), PSTR("--------------------"));
+    snprintf_P(l3, sizeof(l3), PSTR("  MODE: %-12s"), modes[_laserMode % 4]);
+    snprintf_P(l4, sizeof(l4), PSTR(" [UP/DN]=CHG [OK]=SET"));
+    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
   }
 
   static String soundName(uint8_t idx);
@@ -817,9 +894,48 @@ public:
     
   }
 
+  void addAlert(const String &msg){
+    if (msg == _alerts[0]) return; // Simple deduplication
+    for (int i=2; i>=0; i--) strncpy(_alerts[i+1], _alerts[i], 21);
+    strncpy(_alerts[0], msg.c_str(), 21);
+    _alerts[0][20] = '\0';
+  }
+
+  void showAlerts(){
+    char l1[21];
+    snprintf_P(l1, sizeof(l1), PSTR("   ALERT HISTORY    "));
+    g_lcdStatus.show4To(LCD_TGT_1, l1, _alerts[0], _alerts[1], _alerts[2], true);
+  }
+
+  void showStats(){
+    char l1[21], l2[21], l3[21], l4[21];
+    snprintf_P(l1, sizeof(l1), PSTR("    SENTRY STATS    "));
+    snprintf_P(l2, sizeof(l2), PSTR("--------------------"));
+    snprintf_P(l3, sizeof(l3), PSTR("H0:%lu H1:%lu       "), g_hall0.getCount(), g_hall1.getCount());
+    // Rough loops per second
+    unsigned long now = millis();
+    unsigned long elapsed = now - _lastStatMs;
+    if (elapsed > 1000){
+      _lastLps = (_loopCount * 1000) / elapsed;
+      _loopCount = 0;
+      _lastStatMs = now;
+    }
+    snprintf_P(l4, sizeof(l4), PSTR("PERF: %lu LPS       "), _lastLps);
+    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+  }
+
+  void recordRfid() { _rfidCount++; }
+  void countLoop() { _loopCount++; }
+
+
 #if LCD_ENABLED
   void lcdPrint(const String &top, const String &bottom = ""){
-    if (_lcdPrint) _lcdPrint(top, bottom);
+    if (LCD_ROWS >= 4) g_lcdStatus.show4To(LCD_TGT_1, top, bottom, "", "", true);
+    else if (_lcdPrint) _lcdPrint(top, bottom);
+  }
+  void lcdPrint(const __FlashStringHelper* top, const __FlashStringHelper* bottom = NULL){
+    if (LCD_ROWS >= 4) g_lcdStatus.show4To(LCD_TGT_1, top, bottom, (const __FlashStringHelper*)F(""), (const __FlashStringHelper*)F(""), true);
+    else if (_lcdPrint) _lcdPrint(String(top), bottom ? String(bottom) : "");
   }
   LcdPrintFn _lcdPrint{nullptr};
 #else
@@ -868,6 +984,7 @@ private:
 
   State _state{STATE_HOME};
   uint8_t _menuIndex{0};
+  uint8_t _menuScroll{0};
 
   int _servoSel{-1};
   uint8_t _laserMode{0}; // 0:OFF, 1:L1, 2:L2, 3:BOTH
@@ -894,6 +1011,12 @@ private:
   String _buzzerNumToken{""};
 
   unsigned long _lastProxBeepMs{0};
+  char _alerts[4][21] = {"NONE", "NONE", "NONE", "NONE"};
+  uint16_t _rfidCount{0};
+  uint32_t _loopCount{0};
+  uint32_t _lastLps{0};
+  unsigned long _lastStatMs{0};
+  unsigned long _lastInputMs{0};
   // Motion is position-based in current drive flow.
 };
 

@@ -24,34 +24,22 @@ String IrMenuController::soundName(uint8_t idx){
 }
 
 void IrMenuController::showSound(){
-  String buzzerState;
-  buzzerState.reserve(8);
-  buzzerState = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
-  String line2;
-  line2.reserve(64);
-  line2 = soundName(_soundIndex);
-  if ((SoundItem)_soundIndex == SOUND_BUZZER){
-    line2 += ": ";
-    line2 += buzzerState;
-    line2 += " L:";
-    line2 += String((int)g_buzzerFreqLoud);
-    line2 += " Q:";
-    line2 += String((int)g_buzzerFreqQuiet);
-    if (g_buzzerBothEnabled) line2 += " BOTH";
-  } else {
-    line2 += " " + buzzerState;
-    if ((SoundItem)_soundIndex == SOUND_MORSE) line2 += _morseMode ? " RUN" : " OK";
-  }
-  if (_freqAdjustMode && _soundIndex == SOUND_BUZZER) line2 += " *=FREQ";
+  char l1[21], l2[21], l3[21], l4[21];
+  String buzzerState = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
+  
+  snprintf_P(l1, sizeof(l1), PSTR("   SOUND CONTROL    "));
+  snprintf_P(l2, sizeof(l2), PSTR("--------------------"));
+  
   if ((SoundItem)_soundIndex == SOUND_BUZZER_SETTINGS){
-    // concise two-value display
-    line2 = "L:";
-    line2 += String((int)g_buzzerFreqLoud);
-    line2 += " Q:";
-    line2 += String((int)g_buzzerFreqQuiet);
-    if (g_buzzerBothEnabled) line2 += " BOTH";
+    snprintf_P(l3, sizeof(l3), PSTR("L: %4d   Q: %4d "), (int)g_buzzerFreqLoud, (int)g_buzzerFreqQuiet);
+    snprintf_P(l4, sizeof(l4), PSTR(" [UP/DN]=CHG [*]=SET"));
+  } else {
+    String name = soundName(_soundIndex);
+    snprintf_P(l3, sizeof(l3), PSTR(" SEL: %-12s "), name.c_str());
+    snprintf_P(l4, sizeof(l4), PSTR(" OUT: %-5s  [OK]=PLAY"), buzzerState.c_str());
   }
-  lcdPrint("SOUND", line2);
+  
+  g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
 }
 
 void IrMenuController::playSelectedSound(){

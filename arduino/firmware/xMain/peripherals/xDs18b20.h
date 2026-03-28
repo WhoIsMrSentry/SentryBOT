@@ -15,6 +15,9 @@
 // buzzer instance (defined in xMain.ino)
 extern BuzzerPair g_buzzer;
 
+// global alert helper (defined in xMain.ino)
+extern void pushAlert(const String &msg);
+
 class Ds18b20Manager {
 public:
   void begin(uint8_t pin){
@@ -22,6 +25,7 @@ public:
     _oneWire = new OneWire(_pin);
     _sensors = new DallasTemperature(_oneWire);
     _sensors->begin();
+    delay(200); // Wait for bus to stabilize
     _deviceCount = _sensors->getDeviceCount();
     SERIAL_IO.print(F("{\"info\":\"ds18_init\",\"devices_found\":"));
     SERIAL_IO.print(_deviceCount);
@@ -29,7 +33,7 @@ public:
 
     // Default labels in requested order:
     // body, driver, right1, right2, left1, left2, head, extra
-    const char* defNames[DS18_SENSOR_COUNT] = {"body","driver","right1","right2","left1","left2","head","extra"};
+    static const char* defNames[DS18_SENSOR_COUNT] = {"body","driver","right1","right2","left1","left2","head","extra"};
     for (uint8_t i=0;i<DS18_SENSOR_COUNT;i++) _names[i] = defNames[i];
 
     // Capture up to DS18_SENSOR_COUNT addresses (first found devices)
@@ -87,6 +91,8 @@ private:
       String bottom = String(temp,1) + String(" C");
       g_lcdStatus.showTo(LCD_TGT_1, top, bottom, true);
     }
+    // Add to IR menu alert history via global helper
+    pushAlert(String("HOT: ") + _names[idx]);
     // Buzzer: sustained brief both outputs
     g_buzzer.beepBoth(2000, 500);
     // Send JSON event so gateway can update neopixels / oled face
