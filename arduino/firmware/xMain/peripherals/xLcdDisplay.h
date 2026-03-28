@@ -22,8 +22,25 @@ public:
     _lcd = new LiquidCrystal_I2C(_addr, _cols, hwRows);
     _lcd->init();
     _lcd->backlight();
+    
+    // Define custom icons
+    uint8_t iconArrow[8] = {0x00, 0x04, 0x06, 0x1F, 0x06, 0x04, 0x00, 0x00}; // ->
+    uint8_t iconTemp[8]  = {0x04, 0x0A, 0x0A, 0x0E, 0x0E, 0x1F, 0x1F, 0x0E}; // thermometer
+    uint8_t iconBat[8]   = {0x0E, 0x1B, 0x11, 0x11, 0x1F, 0x1F, 0x1F, 0x1F}; // battery
+    uint8_t iconLink[8]  = {0x00, 0x00, 0x01, 0x05, 0x15, 0x15, 0x05, 0x01}; // signal
+    uint8_t iconHeart[8] = {0x00, 0x0A, 0x1F, 0x1F, 0x1F, 0x0E, 0x04, 0x00}; // heart
+    
+    _lcd->createChar(0, iconArrow);
+    _lcd->createChar(1, iconTemp);
+    _lcd->createChar(2, iconBat);
+    _lcd->createChar(3, iconLink);
+    _lcd->createChar(4, iconHeart);
+    
     clear();
   }
+  
+  void createCustomChar(uint8_t location, uint8_t charmap[]) { if (_lcd) _lcd->createChar(location, charmap); }
+  void writeRaw(uint8_t c) { if (_lcd) _lcd->write(c); }
 
   void clear(){
     if (!_lcd) return;
