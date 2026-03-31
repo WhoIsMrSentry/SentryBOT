@@ -1,4 +1,4 @@
-server:
+﻿server:
   host: 0.0.0.0
   port: 8080
 include:
@@ -10,7 +10,6 @@ include:
   speech: true
   wakeword: true
   ollama: true
-  wiki_rag: true
   camera: true
   logs: true
   animate: true
