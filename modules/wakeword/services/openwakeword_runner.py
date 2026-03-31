@@ -17,6 +17,11 @@ except Exception:
     OpenWakeWordModel = None  # type: ignore
 
 logger = logging.getLogger("wakeword.openwakeword")
+# Reduce noisy debug output by default; change to DEBUG when troubleshooting explicitly.
+try:
+    logger.setLevel(logging.INFO)
+except Exception:
+    pass
 
 
 def _as_float(value) -> Optional[float]:
