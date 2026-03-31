@@ -6,11 +6,84 @@ import requests
 import numpy as np
 from ultralytics import YOLO
 from typing import List, Dict, Any, Optional, Generator
+import os
+import shutil
+import tempfile
+
+# Ensure face_recognition models are accessible from an ASCII-only path on Windows
+def _ensure_face_models_ascii(logger: logging.Logger) -> bool:
+    try:
+        import face_recognition_models as frm
+    except Exception as exc:
+        logger.debug("face_recognition_models not available: %s", exc)
+        return False
+
+    try:
+        import dlib
+    except Exception as exc:
+        logger.debug("dlib not available: %s", exc)
+        return False
+
+    # Quick test: try loading the 68-point predictor from the package location
+    try:
+        orig_path = frm.pose_predictor_model_location()
+        try:
+            dlib.shape_predictor(orig_path)
+            return True
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    tmpdir = os.path.join(tempfile.gettempdir(), "sentry_face_models")
+    os.makedirs(tmpdir, exist_ok=True)
+
+    mapping = {
+        'shape_predictor_68_face_landmarks.dat': frm.pose_predictor_model_location(),
+        'shape_predictor_5_face_landmarks.dat': frm.pose_predictor_five_point_model_location(),
+        'mmod_human_face_detector.dat': frm.cnn_face_detector_model_location(),
+        'dlib_face_recognition_resnet_model_v1.dat': frm.face_recognition_model_location(),
+    }
+
+    for name, src in mapping.items():
+        try:
+            dst = os.path.join(tmpdir, name)
+            if not os.path.exists(dst):
+                shutil.copyfile(src, dst)
+        except Exception as exc:
+            logger.warning("Failed to copy face model %s -> %s: %s", src, dst, exc)
+            return False
+
+    # Monkey-patch face_recognition_models helper functions to return the ascii paths
+    try:
+        frm.pose_predictor_model_location = lambda: os.path.join(tmpdir, 'shape_predictor_68_face_landmarks.dat')
+        frm.pose_predictor_five_point_model_location = lambda: os.path.join(tmpdir, 'shape_predictor_5_face_landmarks.dat')
+        frm.cnn_face_detector_model_location = lambda: os.path.join(tmpdir, 'mmod_human_face_detector.dat')
+        frm.face_recognition_model_location = lambda: os.path.join(tmpdir, 'dlib_face_recognition_resnet_model_v1.dat')
+    except Exception as exc:
+        logger.warning("Failed to monkey-patch face_recognition_models: %s", exc)
+        return False
+
+    # Verify dlib can load at least the pose predictor from the new path
+    try:
+        dlib.shape_predictor(frm.pose_predictor_model_location())
+    except Exception as exc:
+        logger.warning("Copied face models failed to load with dlib: %s", exc)
+        return False
+
+    logger.info("Face models copied to ascii temp dir: %s", tmpdir)
+    return True
 
 logger = logging.getLogger("vision_bridge")
 
 # Try importing face_recognition, handle failure gracefully
+FACE_REC_AVAILABLE = False
 try:
+    # Attempt to ensure models are available via an ASCII-only temp path
+    try:
+        _ensure_face_models_ascii(logger)
+    except Exception:
+        pass
     import face_recognition
     FACE_REC_AVAILABLE = True
 except Exception as exc:

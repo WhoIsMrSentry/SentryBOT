@@ -1,6 +1,7 @@
 from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from typing import Optional, Any
+import logging
 import requests
 from modules.arduino_serial.contract import build_track_cmd
 
@@ -147,12 +148,37 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
         
         if not processor.face_manager:
              raise HTTPException(status_code=501, detail="Face recognition not available")
+        logger = logging.getLogger("vision_bridge.api.router")
 
-        success = processor.register_face_from_current_frame(name)
+        # Primary attempt: use processor's current frame (requires stream running)
+        try:
+            success = processor.register_face_from_current_frame(name)
+        except Exception as e:
+            logger.debug("register_face primary attempt failed: %s", e)
+            success = False
+
         if success:
             return {"status": "success", "message": f"Registered face for {name}"}
-        else:
-            return {"status": "failed", "message": "No face detected or encoding failed"}
+
+        # Fallback: attempt one-shot capture directly from camera (no stream required)
+        try:
+            import cv2
+            cap = cv2.VideoCapture(processor.camera_source)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    try:
+                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        ok = processor.face_manager.register_face(name, rgb)
+                        if ok:
+                            return {"status": "success", "message": f"Registered face for {name} (one-shot)"}
+                    except Exception as e:
+                        logger.debug("register_face one-shot encoding failed: %s", e)
+        except Exception as e:
+            logger.debug("register_face fallback capture failed: %s", e)
+
+        return {"status": "failed", "message": "No face detected or encoding failed"}
 
     @r.get("/faces", tags=["faces"], summary="List known faces")
     def list_faces():
