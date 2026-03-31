@@ -11,6 +11,10 @@ arduino.avr.mega
 modules/notifier/.env
 modules/notifier/config/config.local.yml
 *.ini
+*.log
+*.db
+urls.txt
 vosk-tr/
 .env
 ai/
+faces.json

@@ -15,6 +15,14 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# Ayrıca her modülün kendi dizinini PYTHONPATH'e ekle (eski düz importları desteklemek için)
+modules_dir = os.path.join(ROOT, "modules")
+if os.path.isdir(modules_dir):
+    for _d in sorted(os.listdir(modules_dir)):
+        _p = os.path.join(modules_dir, _d)
+        if os.path.isdir(_p) and _p not in sys.path:
+            sys.path.insert(0, _p)
+
 logger = logging.getLogger("run_robot")
 
 
