@@ -16,11 +16,69 @@ from .adapters.neopixel_client import NeoHttpClient, NoOpNeoClient
 
 
 class InteractionEngine:
-    def __init__(self, cfg: Dict[str, Any]):
+    def __init__(self, cfg: Dict[str, Any], neo_client: Any | None = None):
         self.cfg = cfg
         self.metrics = MetricsCollector(window_s=int(cfg.get("thresholds", {}).get("cpu_load", {}).get("window_s", 60)))
-        base_url = str(cfg.get("adapter", {}).get("http_base_url", "http://localhost:8092/neopixel"))
-        self.neo = NeoHttpClient(base_url) if base_url else NoOpNeoClient()
+        # If a local neo_client (NeoRunner) is provided, wrap it to match NeoHttpClient interface
+        provided = neo_client
+        if provided is not None:
+            class _LocalNeoAdapter:
+                def __init__(self, runner):
+                    self._runner = runner
+
+                def clear(self) -> None:
+                    try:
+                        self._runner.clear()
+                    except Exception:
+                        pass
+
+                def fill(self, r: int, g: int, b: int) -> None:
+                    try:
+                        self._runner.fill(r, g, b)
+                    except Exception:
+                        pass
+
+                def animate(self, name: str, emotions: Optional[list[str]] = None, iterations: Optional[int] = None) -> None:
+                    try:
+                        # delegate to runner.animate (already non-blocking)
+                        if iterations is not None:
+                            self._runner.animate(name, iterations=iterations)
+                        else:
+                            self._runner.animate(name)
+                    except Exception:
+                        pass
+
+                def set_base(self, name: str, color: Optional[str | tuple[int, int, int]] = None, speed: Optional[str] = None) -> None:
+                    try:
+                        if color and isinstance(color, tuple):
+                            r, g, b = color
+                            self._runner.fill(r, g, b)
+                        else:
+                            self._runner.animate(name)
+                    except Exception:
+                        pass
+
+                def play_effect(self, name: str, duration_ms: int = 800, color: Optional[str | tuple[int, int, int]] = None) -> None:
+                    try:
+                        # Runner.animate is non-blocking; start it and let it run
+                        self._runner.animate(name)
+                        # Optionally clear after duration
+                        import threading, time
+
+                        def _clear_after():
+                            try:
+                                time.sleep(max(0.0, duration_ms / 1000.0))
+                            except Exception:
+                                pass
+
+                        threading.Thread(target=_clear_after, daemon=True).start()
+                    except Exception:
+                        pass
+
+            self.neo = _LocalNeoAdapter(provided)
+        else:
+            base_url = str(cfg.get("adapter", {}).get("http_base_url", "http://localhost:8092/neopixel"))
+            self.neo = NeoHttpClient(base_url) if base_url else NoOpNeoClient()
         # rules
         self.rules: List[Rule] = []
         for r in cfg.get("rules", []) or []:

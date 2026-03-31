@@ -210,11 +210,21 @@ class NeoRunner:
 
     # --- Emotions ---
     def show_color(self, r: int, g: int, b: int, duration: float = 0.3, clear_after: bool = False) -> None:
+        # Immediate visual update; do not block the caller waiting for duration.
         self.fill(r, g, b)
         if duration > 0:
-            time.sleep(duration)
-        if clear_after:
-            self.clear()
+            import threading
+
+            def _clear_after():
+                try:
+                    time.sleep(duration)
+                    if clear_after:
+                        self.clear()
+                except Exception:
+                    pass
+
+            t = threading.Thread(target=_clear_after, daemon=True)
+            t.start()
 
     def _get_store(self):
         if self._emotion_store is None:
@@ -238,7 +248,7 @@ class NeoRunner:
         store = self._get_store()
         return [store.random_color(e) for e in emotions]
 
-    def animate(
+    def _animate_sync(
         self,
         name: str,
         emotions: list[str] | None = None,
@@ -246,6 +256,7 @@ class NeoRunner:
         color: tuple[int, int, int] | None = None,
         segment: str | None = None,
     ) -> None:
+        """Synchronous implementation of animation (may block)."""
         name_lower = name.lower().strip()
         cols = self._colors_from_emotions(emotions)
         c1 = color if color is not None else (cols[0] if cols else None)
@@ -312,3 +323,28 @@ class NeoRunner:
             # last-resort fallback simple fill
             if c1:
                 self.fill(*c1)
+
+    def animate(
+        self,
+        name: str,
+        emotions: list[str] | None = None,
+        iterations: int | None = None,
+        color: tuple[int, int, int] | None = None,
+        segment: str | None = None,
+    ) -> None:
+        """Non-blocking animate: schedule synchronous animation in a daemon thread."""
+        import threading
+
+        try:
+            t = threading.Thread(
+                target=self._animate_sync,
+                args=(name, emotions, iterations, color, segment),
+                daemon=True,
+            )
+            t.start()
+        except Exception:
+            # Best-effort: fallback to synchronous if thread can't be started
+            try:
+                self._animate_sync(name, emotions, iterations, color, segment)
+            except Exception:
+                pass
