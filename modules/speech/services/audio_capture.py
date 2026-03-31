@@ -120,7 +120,22 @@ class AudioCapture:
                 logger.info("Audio capture started (portaudio): %s @ %d Hz", self.cfg.device or "default", self.cfg.samplerate)
                 return
             except Exception as exc:
-                logger.warning("sounddevice InputStream failed, falling back to ALSA: %s", exc)
+                logger.warning("sounddevice InputStream failed with device %s: %s", self.cfg.device, exc)
+                # Try again without explicit device (let PortAudio pick default). Useful on Windows
+                try:
+                    self._stream = sd.InputStream(
+                        channels=self.cfg.channels,
+                        samplerate=self.cfg.samplerate,
+                        dtype=self.cfg.dtype,
+                        callback=self._callback,
+                        blocksize=blocksize,
+                    )
+                    self._stream.start()
+                    self._stopped = False
+                    logger.info("Audio capture started (portaudio, default device) @ %d Hz", self.cfg.samplerate)
+                    return
+                except Exception as exc2:
+                    logger.warning("sounddevice InputStream default device failed: %s", exc2)
 
         # Fallback: use pyalsaaudio if available
         if alsaaudio is None:

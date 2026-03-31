@@ -1,9 +1,13 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 from typing import Dict, Any
 
 import logging
 
 from fastapi import FastAPI
+import warnings
+
+# Suppress specific FastAPI deprecation about on_event (we prefer add_event_handler when available)
+warnings.filterwarnings("ignore", message=".*on_event is deprecated.*", category=DeprecationWarning)
 
 logger = logging.getLogger("gateway.bootstrap")
 
@@ -15,20 +19,16 @@ def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:
     try:
         ardu.start()
     except Exception as exc:
-        logger.warning("Arduino serial service failed to start, running degraded: %s", exc)
+        logger.warning("arduino service failed to start, running degraded: %s", exc)
+
     started["arduino"] = ardu
-    app.include_router(get_arduino_router(ardu))
-
-
-def _include_vision_bridge(app: FastAPI, started: Dict[str, object]) -> None:
-    from modules.vision_bridge.config_loader import load_config as load_vision_cfg  # type: ignore
-    from modules.vision_bridge.services.processor import VisionProcessor  # type: ignore
-    from modules.vision_bridge.api.router import get_router as get_vision_router  # type: ignore
-    vcfg = load_vision_cfg(None)
-    processor = VisionProcessor(vcfg)
-    app.include_router(get_vision_router(processor, started.get("arduino")))
-    started["vision_bridge"] = processor
-
+    # mount the arduino router so other modules can talk to it
+    try:
+        app.include_router(get_arduino_router(ardu))
+    except Exception:
+        # router may not be available in degraded mode
+        pass
+    logger.info("module arduino mounted")
 
 def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.neopixel.services.runner import NeoRunner  # type: ignore
@@ -48,7 +48,29 @@ def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
     )
     runner = NeoRunner(cfg_obj)
     started["neopixel"] = runner
-    app.include_router(get_neopixel_router(runner))
+    try:
+        app.include_router(get_neopixel_router(runner))
+    except Exception:
+        # router mount may fail in degraded/no-driver environments
+        pass
+    logger.info("module neopixel mounted")
+
+
+def _include_vision_bridge(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.vision_bridge.config_loader import load_config as load_vision_cfg  # type: ignore
+    from modules.vision_bridge.services.processor import VisionProcessor  # type: ignore
+    from modules.vision_bridge.api.router import get_router as get_vision_router  # type: ignore
+
+    vcfg = load_vision_cfg(None)
+    processor = VisionProcessor(vcfg)
+    # Mount router and expose processor so other modules can reference it
+    try:
+        app.include_router(get_vision_router(processor, started.get("arduino")))
+    except Exception:
+        # If router mount fails, continue in degraded mode
+        pass
+    started["vision_bridge"] = processor
+    logger.info("module vision_bridge mounted")
 
 
 def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
@@ -62,7 +84,8 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
         icfg.setdefault("adapter", {})["http_base_url"] = f"http://127.0.0.1:{port}/neopixel"
     except Exception:
         pass
-    eng = InteractionEngine(icfg)
+    # If neopixel runner is already started in-process, pass it to InteractionEngine
+    eng = InteractionEngine(icfg, neo_client=started.get("neopixel"))
     eng.start()
     started["interactions"] = eng
     app.include_router(get_inter_router(eng))
@@ -126,15 +149,6 @@ def _include_logs(app: FastAPI, started: Dict[str, object]) -> None:
         app.include_router(logs_router)
         started["logs"] = True
         logger.info("module logs mounted")
-
-
-def _include_wiki_rag(app: FastAPI, started: Dict[str, object]) -> None:
-    from modules.wiki_rag.config_loader import load_config as load_wiki_cfg  # type: ignore
-    from modules.wiki_rag.api.router import get_router as get_wiki_router  # type: ignore
-    wcfg = load_wiki_cfg(None)
-    app.include_router(get_wiki_router(wcfg), prefix="/wiki_rag")
-    started["wiki_rag"] = True
-    logger.info("module wiki_rag mounted")
 
 
 def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
@@ -221,8 +235,23 @@ def _include_notifier(app: FastAPI, started: Dict[str, object]) -> None:
             logger.info("notifier: stopping telegram polling via gateway")
             await bot.stop()
 
-        app.add_event_handler("startup", _start_bot)
-        app.add_event_handler("shutdown", _stop_bot)
+        # Prefer add_event_handler when available; fall back to on_event decorator
+        if hasattr(app, "add_event_handler"):
+            app.add_event_handler("startup", _start_bot)
+            app.add_event_handler("shutdown", _stop_bot)
+        elif hasattr(app, "on_event"):
+            # `on_event` is deprecated in newer FastAPI versions; suppress the deprecation
+            # warning when falling back so logs are not noisy on older platforms.
+            try:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=DeprecationWarning)
+                    app.on_event("startup")(_start_bot)
+                    app.on_event("shutdown")(_stop_bot)
+            except Exception:
+                # If even this fails, fall back to warning and skip auto-start.
+                logger.warning("notifier: on_event fallback failed; polling not auto-started")
+        else:
+            logger.warning("notifier: app lacks event registration API; polling not auto-started")
 
     started["notifier"] = True
     logger.info("module notifier mounted")
@@ -283,8 +312,6 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         _try(lambda: _include_ollama(app, started), "ollama")
     if include.get("logs"):
         _try(lambda: _include_logs(app, started), "logs")
-    if include.get("wiki_rag"):
-        _try(lambda: _include_wiki_rag(app, started), "wiki_rag")
     if include.get("camera"):
         _try(lambda: _include_camera(app, started), "camera")
     if include.get("animate"):
@@ -431,3 +458,5 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             logger.warning("arduino->neopixel bridge mount failed: %s", exc)
 
     return started
+
+

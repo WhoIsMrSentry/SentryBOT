@@ -26,19 +26,40 @@ class FaceManager:
         if not os.path.exists(self.faces_file):
             logger.info("No existing faces file found.")
             return
-
         try:
-            with open(self.faces_file, 'r') as f:
-                data = json.load(f)
-            
+            # Handle empty file (size == 0) gracefully
+            try:
+                if os.path.getsize(self.faces_file) == 0:
+                    logger.info("Faces file empty; initializing.")
+                    data = {}
+                else:
+                    with open(self.faces_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+            except OSError:
+                # Could not stat/read file; treat as no faces
+                logger.warning("Could not read faces file; skipping load.")
+                return
+
             self.known_face_names = []
             self.known_face_encodings = []
-            
-            for name, encoding_list in data.items():
-                self.known_face_names.append(name)
-                self.known_face_encodings.append(np.array(encoding_list))
-            
+
+            for name, encoding_list in (data or {}).items():
+                try:
+                    self.known_face_names.append(name)
+                    self.known_face_encodings.append(np.array(encoding_list))
+                except Exception as item_exc:
+                    logger.warning("Invalid face encoding for %s: %s", name, item_exc)
+
             logger.info(f"Loaded {len(self.known_face_names)} known faces.")
+        except json.JSONDecodeError as jde:
+            logger.warning("Faces file contains invalid JSON: %s. Reinitializing.", jde)
+            try:
+                with open(self.faces_file, 'w', encoding='utf-8') as f:
+                    json.dump({}, f)
+                self.known_face_names = []
+                self.known_face_encodings = []
+            except Exception as write_exc:
+                logger.error("Failed to reinitialize faces file: %s", write_exc)
         except Exception as e:
             logger.error(f"Failed to load faces: {e}")
 

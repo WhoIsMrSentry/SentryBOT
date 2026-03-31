@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 import logging
 import os
 
@@ -8,17 +8,18 @@ import requests
 
 try:
     from ..services.clients import create_llm_client
-    from ..services.chat import PersonaProvider, OllamaChatService
+    from ..services.chat import OllamaChatService
     from ..services.translator import OllamaTranslator
 except Exception:
-    from services.clients import create_llm_client  # type: ignore
-    from services.chat import PersonaProvider, OllamaChatService  # type: ignore
-    from services.translator import OllamaTranslator  # type: ignore
+    # Fallback: prefer explicit absolute module path to avoid ambiguous bare imports
+    from modules.ollama.services.clients import create_llm_client  # type: ignore
+    from modules.ollama.services.chat import OllamaChatService  # type: ignore
+    from modules.ollama.services.translator import OllamaTranslator  # type: ignore
 
 
 def _persona_dir(cfg: dict, name: Optional[str] = None) -> str:
     pdir = str(cfg.get("persona", {}).get("dir", "modules/ollama/config/personalities"))
-    pname = name or str(cfg.get("persona", {}).get("default", "glados"))
+    pname = name or str(cfg.get("persona", {}).get("default", "sentry"))
     return os.path.join(pdir, pname)
 
 
@@ -244,3 +245,4 @@ def get_router(cfg: dict) -> APIRouter:
         return {"ok": True, "name": name}
 
     return r
+
