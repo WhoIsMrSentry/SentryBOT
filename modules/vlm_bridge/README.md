@@ -1,27 +1,30 @@
-# Vision Bridge Module
+# VLM Bridge Module
 
 Kamera akışını işleyen yerel (Pi5) veya uzak (dizüstü / sunucu) görüntü işleme pipeline sonucunu robota ve diğer modüllere köprüler.
 
 ## Modlar
-- **local**: Pi5 üzerinde hafif YOLO + yüz tanıma (varsa) çalışır.
+- **local**: Pi5 üzerinde OpenCV yüz algılama + ORB/FLANN yüz tanıma + CSRT takip çalışır.
 - **remote**: Harici cihaz video akışını işler, sonuçları köprüye POST eder. Pi üzerinde ağır model yüklenmez.
 
 `config.yml` içinde `vision.processing_mode: local|remote` ile seçilir.
 
 ## Endpoints
-- `POST /vision/track { head_tilt, head_pan, drive? }` : Arduino "track" komutu.
-- `POST /vision/analyze` : Tek kare analiz (yalnızca local).
-- `GET  /vision/video_feed` : Annotated MJPEG akışı (yalnızca local).
-- `GET  /vision/results/latest` : Son işlenen karedeki nesne/kişi listesi (autonomy vb. modüller bu uçtan beslenebilir).
-- `POST /vision/results` : Uzak işlemciden obje/kisi tespiti sonuçları (remote veya her iki mod). Header: `X-Auth-Token`.
-- `POST /vision/blind/start` / `stop` : Görme engelli modu açıklama.
-- `POST /vision/faces/register` / `GET /vision/faces` : Yüz kayıt & liste (local).
-- `POST /vision/memory/chat` : `{ person, text, role? }` kişi hafızasına sohbet satırı ekler.
-- `GET  /vision/memory/person?person=Alice` : kişinin hafızası (son özet + sohbetler).
-- `GET  /vision/memory/people` : hafızada kayıtlı isimler.
-- (Plan) `POST /vision/mode` : Çalışma modları arasında geçiş (objects/people/ocr/depth...).
+- `POST /vlm/track { head_tilt, head_pan, drive? }` : Arduino "track" komutu.
+- `POST /vlm/follow/start?person=<name?>` : Yüz takip modunu başlatır (CSRT lock).
+- `POST /vlm/follow/stop` : Yüz takip modunu durdurur.
+- `GET /vlm/follow/status` : Takip durumu, hedef kişi ve aktif bbox.
+- `POST /vlm/analyze` : Tek kare analiz (yalnızca local).
+- `GET  /vlm/video_feed` : Annotated MJPEG akışı (yalnızca local).
+- `GET  /vlm/results/latest` : Son işlenen karedeki nesne/kişi listesi (autonomy vb. modüller bu uçtan beslenebilir).
+- `POST /vlm/results` : Uzak işlemciden obje/kisi tespiti sonuçları (remote veya her iki mod). Header: `X-Auth-Token`.
+- `POST /vlm/blind/start` / `stop` : Görme engelli modu açıklama.
+- `POST /vlm/faces/register` / `GET /vlm/faces` : Yüz kayıt & liste (local).
+- `POST /vlm/memory/chat` : `{ person, text, role? }` kişi hafızasına sohbet satırı ekler.
+- `GET  /vlm/memory/person?person=Alice` : kişinin hafızası (son özet + sohbetler).
+- `GET  /vlm/memory/people` : hafızada kayıtlı isimler.
+- (Plan) `POST /vlm/mode` : Çalışma modları arasında geçiş (objects/people/ocr/depth...).
 
-### /vision/results Payload Örneği
+### /vlm/results Payload Örneği
 ```json
 {
   "frame_id": 123,
@@ -48,8 +51,8 @@ Aktifken semantik sahne özeti (Ollama varsa LLM tabanlı) ve kişilere özel se
 `VisionActionDispatcher` sınıfı semantik ifadeleri `modules.ollama.services.tags.extract_llm_tags` ile parse eder; örneğin “`Selam [cmd:head_nod] [[lights palette=sunset_gold intensity=0.7]]`” metni servo nod ve LED paletine dönüştürülür. Autonomy bu webhook’u aldığında `ResponseTagMixin` fiziksel aksiyonları uygular, konuşma gerekirse `speak` sahasıyla tetiklenir.
 
 ## Çalıştırma
-- Bağımsız: `python -m modules.vision_bridge.xVisionBridgeService`
-- Gateway ile: `python -m modules.gateway.xGatewayService` ve `include.vision_bridge: true`
+- Bağımsız: `python -m modules.vlm_bridge.xVlmBridgeService`
+- Gateway ile: `python -m modules.gateway.xGatewayService` ve `include.vlm_bridge: true`
 
 ## Gelecek Genişletmeler
 - Derinlik / mesafe için stereo / mono depth entegrasyonu (remote).
@@ -58,5 +61,5 @@ Aktifken semantik sahne özeti (Ollama varsa LLM tabanlı) ve kişilere özel se
 - Duygusal durum geri bildirimi: `interactions` modülü ile LED / ses.
 
 ### Liveliness Starter (opsiyonel)
-`modules/vision_bridge/tools/liveliness_starter.py` basit heartbeat ve idle lookaround döngüsü sağlar.
-Gateway açıkken çalıştırılabilir ve `interactions` ile `vision/track` uçlarını kullanır.
+`modules/vlm_bridge/tools/liveliness_starter.py` basit heartbeat ve idle lookaround döngüsü sağlar.
+Gateway açıkken çalıştırılabilir ve `interactions` ile `vlm/track` uçlarını kullanır.

@@ -56,21 +56,35 @@ def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
     logger.info("module neopixel mounted")
 
 
-def _include_vision_bridge(app: FastAPI, started: Dict[str, object]) -> None:
-    from modules.vision_bridge.config_loader import load_config as load_vision_cfg  # type: ignore
-    from modules.vision_bridge.services.processor import VisionProcessor  # type: ignore
-    from modules.vision_bridge.api.router import get_router as get_vision_router  # type: ignore
+def _include_vlm_bridge(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.vlm_bridge.config_loader import load_config as load_vlm_cfg  # type: ignore
+    from modules.vlm_bridge.services.processor import VisionProcessor  # type: ignore
+    from modules.vlm_bridge.api.router import get_router as get_vlm_router  # type: ignore
 
-    vcfg = load_vision_cfg(None)
+    vcfg = load_vlm_cfg(None)
     processor = VisionProcessor(vcfg)
+    ardu = started.get("arduino")
+    if ardu is not None and hasattr(processor, "set_track_callback") and hasattr(ardu, "track"):
+        def _track_callback(head_pan: float, head_tilt: float, drive: int = 0):
+            try:
+                return ardu.track(head_pan=float(head_pan), head_tilt=float(head_tilt), drive=int(drive))
+            except Exception:
+                return None
+        processor.set_track_callback(_track_callback)
+
+    if str(vcfg.get("vision", {}).get("processing_mode", "local")).strip().lower() == "local":
+        try:
+            processor.start_stream_processing()
+        except Exception as exc:
+            logger.warning("vlm_bridge stream start skipped: %s", exc)
     # Mount router and expose processor so other modules can reference it
     try:
-        app.include_router(get_vision_router(processor, started.get("arduino")))
+        app.include_router(get_vlm_router(processor, started.get("arduino")))
     except Exception:
         # If router mount fails, continue in degraded mode
         pass
-    started["vision_bridge"] = processor
-    logger.info("module vision_bridge mounted")
+    started["vlm_bridge"] = processor
+    logger.info("module vlm_bridge mounted")
 
 
 def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
@@ -296,8 +310,8 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
 
     if include.get("arduino"):
         _try(lambda: _include_arduino(app, started), "arduino")
-    if include.get("vision_bridge"):
-        _try(lambda: _include_vision_bridge(app, started), "vision_bridge")
+    if include.get("vlm_bridge"):
+        _try(lambda: _include_vlm_bridge(app, started), "vlm_bridge")
     if include.get("neopixel"):
         _try(lambda: _include_neopixel(app, started), "neopixel")
     if include.get("interactions"):

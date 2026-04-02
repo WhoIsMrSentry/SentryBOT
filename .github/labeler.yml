@@ -1,4 +1,4 @@
-# Auto-label PRs based on changed paths (modules/*)
+# Auto-label PRs by changed paths (modules/*)
 # Labels are defined in .github/labels.yml and applied here.
 
 "module: animate":
@@ -127,14 +127,10 @@
   - changed-files:
       - any-glob-to-any-file: modules/telemetry/**
   - head-branch: [".*telemetry.*"]
-"module: vision_bridge":
+"module: vlm_bridge":
   - changed-files:
-      - any-glob-to-any-file: modules/vision_bridge/**
-  - head-branch: [".*vision[_-]?bridge.*"]
-"module: wiki_rag":
-  - changed-files:
-      - any-glob-to-any-file: modules/wiki_rag/**
-  - head-branch: [".*wiki[_-]?rag.*"]
+      - any-glob-to-any-file: modules/vlm_bridge/**
+  - head-branch: [".*(vision|vlm)[_-]?bridge.*"]
 
 # Label PRs targeting dev branch
 "target: dev":
@@ -143,3 +139,4 @@
 # Label feature PRs by branch name prefix (e.g., feat-...)
 "type: feature":
   - head-branch: ["^feat[-/].*", "^feature[-/].*"]
+

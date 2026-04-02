@@ -18,3 +18,5 @@ vosk-tr/
 .env
 ai/
 faces.json
+*.bak
+tmp/

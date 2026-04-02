@@ -1,4 +1,4 @@
-# Repository label definitions (to be synced by workflow)
+# Repository label definitions synced by workflow
 # Name and color must be stable; description is optional.
 
 - name: "module: animate"
@@ -67,12 +67,9 @@
 - name: "module: telemetry"
   color: "7570b3"
   description: "Changes in modules/telemetry"
-- name: "module: vision_bridge"
+- name: "module: vlm_bridge"
   color: "e7298a"
-  description: "Changes in modules/vision_bridge"
-- name: "module: wiki_rag"
-  color: "66a61e"
-  description: "Changes in modules/wiki_rag"
+  description: "Changes in modules/vlm_bridge"
 
 - name: "module: arduino"
   color: "22863a"
@@ -119,3 +116,4 @@
 - name: "target: main"
   color: "f9d423"
   description: "Pull request targets the main branch"
+

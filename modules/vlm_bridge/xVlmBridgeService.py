@@ -8,9 +8,9 @@ try:
 except (ImportError, ModuleNotFoundError):
     # Try absolute package path as fallback (handles different import contexts)
     try:
-        from modules.vision_bridge.config_loader import load_config
-        from modules.vision_bridge.api.router import get_router
-        from modules.vision_bridge.services.processor import VisionProcessor
+        from modules.vlm_bridge.config_loader import load_config
+        from modules.vlm_bridge.api.router import get_router
+        from modules.vlm_bridge.services.processor import VisionProcessor
     except (ImportError, ModuleNotFoundError):
         # Last resort: try bare names (older layout)
         from config_loader import load_config  # type: ignore

@@ -3,7 +3,7 @@
   port: 8080
 include:
   arduino: true
-  vision_bridge: true
+  vlm_bridge: true
   neopixel: true
   interactions: true
   speak: true

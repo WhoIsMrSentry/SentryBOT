@@ -15,7 +15,7 @@ Aşağıdaki bağlantılara tıklayarak, her modülün kendi iç mantık yapıs�
 | **Çekirdek** | Gateway | [architecture_gateway.md](../modules/gateway/architecture_gateway.md) | Mikroservisleri ayaklandıran API Bootstrapper |
 | | Autonomy (Brain) | [architecture_autonomy.md](../modules/autonomy/architecture_autonomy.md) | Sense-Think-Act döngüsü, duygu bozunması, LLM kararları |
 | | Arduino Serial | [architecture_arduino_serial.md](../modules/arduino_serial/architecture_arduino_serial.md) | NDJSON seri haberleşme, port polling ve arka plan thread kuyruğu |
-| **Görsel Algı** | Vision Bridge | [architecture_vision_bridge.md](../modules/vision_bridge/architecture_vision_bridge.md) | YOLO tespiti, yüz eşleme if/else düğümleri, mesafe uyarısı |
+| **Görsel Algı** | VLM Bridge | [architecture_vlm_bridge.md](../modules/vlm_bridge/architecture_vlm_bridge.md) | OpenCV yüz algılama, ORB/FLANN eşleme ve CSRT takip |
 | | Camera | [architecture_camera.md](../modules/camera/architecture_camera.md) | MJPEG publisher stream, düşme anı auto-recovery restart mekanizması |
 | **Ses & Dil** | Speech | [architecture_speech.md](../modules/speech/architecture_speech.md) | Çok kanallı ASR, ses gelişi (DOA) yön hesaplama filtresi |
 | | Wakeword | [architecture_wakeword.md](../modules/wakeword/architecture_wakeword.md) | Sürekli dinleme, trigger sleep/wake timer geçişleri |
@@ -128,68 +128,28 @@ flowchart LR
             SPEECH_SET_LAST_SPEECH --> SPEECH_AUTONOMY_PULL[Autonomy Modülü<br>Tarafından Poll Edilmeyi Bekle]
             SPEECH_AUTONOMY_PULL --> SESSİZLIK
         end
-        subgraph SG_VISION_BRIDGE ["VISION_BRIDGE Modülü"]
+        subgraph SG_VLM_BRIDGE ["VLM_BRIDGE Modülü"]
             direction TB
-            %% Capture & Inferece Loops
-            VISION_BRIDGE_START([Kamera / Remote Ingest]) --> VISION_BRIDGE_CAP_FRAME[Kare Al]
-            VISION_BRIDGE_CAP_FRAME --> VISION_BRIDGE_INF_THREAD{Inference<br>Döngüsü}
-            
-            VISION_BRIDGE_INF_THREAD -- VISION_BRIDGE_FPS Doluysa --> VISION_BRIDGE_SKIP_FRAME((Kare Atla))
-            VISION_BRIDGE_INF_THREAD -- İşle --> VISION_BRIDGE_YOLO_MODEL(YOLOv8 Deteksiyonu)
-            
-            %% Nesne İşleme
-            subgraph Detection Logic [Tespit Analizi ve Sınıflandırma]
-            VISION_BRIDGE_YOLO_MODEL --> VISION_BRIDGE_DETS{Oluşan <br> Bounding Boxlar}
-            
-            VISION_BRIDGE_DETS --> VISION_BRIDGE_LOOP_DETECT[Tümü için döngü]
-            
-            VISION_BRIDGE_LOOP_DETECT --> VISION_BRIDGE_IS_PERSON{Etiket person mu?}
-            
-            %% Kişi Analizi
-            VISION_BRIDGE_IS_PERSON -- Evet --> VISION_BRIDGE_CALC_DIST_P[Derinlik / Mesafe Tahmini]
-            VISION_BRIDGE_CALC_DIST_P --> VISION_BRIDGE_CROP_FACE[Yüz Bölgesini Kes]
-            VISION_BRIDGE_CROP_FACE --> VISION_BRIDGE_CHECK_FACE{Yüz Net mi?}
-            
-            VISION_BRIDGE_CHECK_FACE -- Evet --> VISION_BRIDGE_FACE_REC(VISION_BRIDGE_face_recognition.VISION_BRIDGE_compare_faces)
-            VISION_BRIDGE_FACE_REC --> VISION_BRIDGE_IS_KNOWN{Veritabanında<br>Var mı?}
-            VISION_BRIDGE_IS_KNOWN -- Evet (match) --> VISION_BRIDGE_SET_NAME[name = Ali]
-            VISION_BRIDGE_IS_KNOWN -- Hayır (nomatch) --> VISION_BRIDGE_SET_UNK[name = Unknown]
-            
-            VISION_BRIDGE_CHECK_FACE -- Hayır --> VISION_BRIDGE_SET_UNK
-            
-            %% Diğer Nesne Analizi
-            VISION_BRIDGE_IS_PERSON -- Hayır --> VISION_BRIDGE_CALC_DIST_O[Derinlik Tahmini]
-            VISION_BRIDGE_CALC_DIST_O --> VISION_BRIDGE_DEF_OTHER[name = None, label = cup]
-            
-            VISION_BRIDGE_SET_NAME --> VISION_BRIDGE_APPEND_RES[Sonuç Listesine Ekle]
-            VISION_BRIDGE_SET_UNK --> VISION_BRIDGE_APPEND_RES
-            VISION_BRIDGE_DEF_OTHER --> VISION_BRIDGE_APPEND_RES
-            end
-            
-            %% Post-Processing & Alerts
-            subgraph Post Processing [Sonrasındaki Aksiyonlar]
-            VISION_BRIDGE_APPEND_RES --> VISION_BRIDGE_EVAL_ALERTS(VISION_BRIDGE__evaluate_alerts)
-            VISION_BRIDGE_EVAL_ALERTS --> VISION_BRIDGE_CHK_DANGER{Tehlike veya<br>Çok Yakın mı?}
-            VISION_BRIDGE_CHK_DANGER -- Evet (Örn: distance < 0.5m) --> VISION_BRIDGE_FIRE_TTS[Sistem İçi VISION_BRIDGE_TTS Uyarı Tetikle<br>Dikkat Önünde ... var!]
-            VISION_BRIDGE_CHK_DANGER -- Hayır --> VISION_BRIDGE_CHK_BLIND{Blind Mode<br>Açık mı?}
-            
-            VISION_BRIDGE_CHK_BLIND -- Evet --> VISION_BRIDGE_BLIND_TTS[Tüm ekran listesini<br>VISION_BRIDGE_TTS ile seslendir]
-            VISION_BRIDGE_CHK_BLIND -- Hayır --> VISION_BRIDGE_HANDLE_PERSONS(VISION_BRIDGE__handle_person_interactions)
-            
-            VISION_BRIDGE_HANDLE_PERSONS --> VISION_BRIDGE_CHK_NEWP{Yeni veya<br>Zamanı Geçmiş<br>Kişi Geldi mi?}
-            VISION_BRIDGE_CHK_NEWP -- Evet --> VISION_BRIDGE_FIRE_GREET[VISION_BRIDGE_TTS Selamlama +<br>Ollama Follow up Prompt]
-            VISION_BRIDGE_CHK_NEWP -- Hayır --> VISION_BRIDGE_SEMANTIC_SUM(SemanticDescriber.describe)
-            
-            VISION_BRIDGE_SEMANTIC_SUM --> VISION_BRIDGE_HAS_LLM{Ollama Yanıt <br> Veriyor mu?}
-            VISION_BRIDGE_HAS_LLM -- Evet --> VISION_BRIDGE_LLM_SUM(LLMin Doğal Dil Cümlesi)
-            VISION_BRIDGE_HAS_LLM -- Hayır --> VISION_BRIDGE_FALLB_SUM(Kural Tabanlı Etrafımda 2 kişi 1 fincan... cümlesi)
-            
-            VISION_BRIDGE_LLM_SUM --> VISION_BRIDGE_ACT_DISP(ActionDispatcher)
-            VISION_BRIDGE_FALLB_SUM --> VISION_BRIDGE_ACT_DISP
-            VISION_BRIDGE_ACT_DISP --> VISION_BRIDGE_AUTONOMY_POST[VISION_BRIDGE_POST /autonomy <br> Sahne bilgilerini ilet]
-            end
-            
-            VISION_BRIDGE_LOOP_DETECT --> VISION_BRIDGE_EVAL_ALERTS
+            VLM_BRIDGE_START([Kamera / Remote Ingest]) --> VLM_BRIDGE_MODE{processing_mode}
+
+            VLM_BRIDGE_MODE -- local --> VLM_BRIDGE_FACE_DET[Haar Face Detect]
+            VLM_BRIDGE_FACE_DET --> VLM_BRIDGE_IDENT[ORB + FLANN ile yüz kimliği]
+            VLM_BRIDGE_IDENT --> VLM_BRIDGE_RESULTS[latest_results güncelle]
+
+            VLM_BRIDGE_RESULTS --> VLM_BRIDGE_FOLLOW{follow active}
+            VLM_BRIDGE_FOLLOW -- Hayır --> VLM_BRIDGE_NORMAL[alerts + semantic + memory]
+            VLM_BRIDGE_FOLLOW -- Evet --> VLM_BRIDGE_LOCK{CSRT kilidi var mı?}
+            VLM_BRIDGE_LOCK -- Hayır --> VLM_BRIDGE_LOCK_FACE[Hedef yüz seç ve tracker kilitle]
+            VLM_BRIDGE_LOCK -- Evet --> VLM_BRIDGE_UPDATE[CSRT bbox güncelle]
+            VLM_BRIDGE_LOCK_FACE --> VLM_BRIDGE_TRACK
+            VLM_BRIDGE_UPDATE --> VLM_BRIDGE_TRACK[Pan/Tilt hesapla ve /vlm/track gönder]
+
+            VLM_BRIDGE_MODE -- remote --> VLM_BRIDGE_INGEST[POST /vlm/results]
+            VLM_BRIDGE_INGEST --> VLM_BRIDGE_VALIDATE[Auth + normalize]
+            VLM_BRIDGE_VALIDATE --> VLM_BRIDGE_REMOTE_RES[latest_results güncelle]
+            VLM_BRIDGE_REMOTE_RES --> VLM_BRIDGE_REMOTE_FLOW{follow active}
+            VLM_BRIDGE_REMOTE_FLOW -- Evet --> VLM_BRIDGE_SKIP[Remote action akışını bastır]
+            VLM_BRIDGE_REMOTE_FLOW -- Hayır --> VLM_BRIDGE_NORMAL
         end
         subgraph SG_WAKEWORD ["WAKEWORD Modülü"]
             direction TB
@@ -272,12 +232,8 @@ flowchart LR
             AUTONOMY_A_CHK_TXT -- Evet --> AUTONOMY_CHK_OWNER{"Sahip mi?"}
             AUTONOMY_CHK_OWNER -- Hayır / Kilitli --> AUTONOMY_REJECT[Erişim Reddedildi İşlemi] --> AUTONOMY_FINISH_LOOP
             
-            AUTONOMY_CHK_OWNER -- Evet / Pas Geçildi --> AUTONOMY_CHK_Q{"Soru İşareti<br>Var mı?"}
-            AUTONOMY_CHK_Q -- Evet + AUTONOMY_RAG Aktif --> AUTONOMY_USE_RAG(AUTONOMY_Wiki_RAG AUTONOMY_LLM<br>Modelini Çağır)
-            AUTONOMY_CHK_Q -- Hayır / AUTONOMY_RAG Yok --> AUTONOMY_USE_OLLAMA(Ollama Chat AUTONOMY_API Çağır)
-            
-            AUTONOMY_USE_RAG --> AUTONOMY_RES_LLM(AUTONOMY_LLM Yanıtı: Text + Actions)
-            AUTONOMY_USE_OLLAMA --> AUTONOMY_RES_LLM
+            AUTONOMY_CHK_OWNER -- Evet / Pas Geçildi --> AUTONOMY_USE_OLLAMA(Ollama Chat AUTONOMY_API Çağır)
+            AUTONOMY_USE_OLLAMA --> AUTONOMY_RES_LLM(AUTONOMY_LLM Yanıtı: Text + Actions)
             
             AUTONOMY_RES_LLM --> AUTONOMY_PARSE_TAGS(AUTONOMY__apply_tags)
             
@@ -337,13 +293,13 @@ flowchart LR
             GATEWAY_TRY_ARD --> GATEWAY_CATCH_ARD{"Hata var mı?"}
             GATEWAY_CATCH_ARD -- Evet --> GATEWAY_LOG_ARD[warning: module failed] --> GATEWAY_CHK_VIS
             GATEWAY_CATCH_ARD -- Hayır --> GATEWAY_ADD_ARD[started arduino True] --> GATEWAY_CHK_VIS
-            GATEWAY_CHK_ARDUINO -- Hayır --> GATEWAY_CHK_VIS{"include.vision_bridge == true?"}
+            GATEWAY_CHK_ARDUINO -- Hayır --> GATEWAY_CHK_VIS{"include.vlm_bridge == true?"}
             
-            %% Vision
-            GATEWAY_CHK_VIS -- Evet --> GATEWAY_TRY_VIS[vision.GATEWAY__include_vision_bridge]
+            %% VLM Bridge
+            GATEWAY_CHK_VIS -- Evet --> GATEWAY_TRY_VIS[vlm.GATEWAY__include_vlm_bridge]
             GATEWAY_TRY_VIS --> GATEWAY_CATCH_VIS{"Hata var mı?"}
             GATEWAY_CATCH_VIS -- Evet --> GATEWAY_LOG_VIS[warning: module failed] --> GATEWAY_CHK_AUTO
-            GATEWAY_CATCH_VIS -- Hayır --> GATEWAY_ADD_VIS[started GATEWAY_vision_bridge True] --> GATEWAY_CHK_AUTO
+            GATEWAY_CATCH_VIS -- Hayır --> GATEWAY_ADD_VIS[started GATEWAY_vlm_bridge True] --> GATEWAY_CHK_AUTO
             GATEWAY_CHK_VIS -- Hayır --> GATEWAY_CHK_AUTO{"include.autonomy == true?"}
             
             %% Autonomy (Diğerleri benzer mantıkta olduğu için temsilidir)
@@ -496,29 +452,6 @@ flowchart LR
             
             OLLAMA_SAVE_MEM --> OLLAMA_RET_FINAL([OLLAMA_API Yanıtı Döndür])
             OLLAMA_HTTP_POST_BRAIN --> OLLAMA_SAVE_MEM
-        end
-        subgraph SG_WIKI_RAG ["WIKI_RAG Modülü"]
-            direction TB
-            %% Ön İşleme / Indexing
-            WIKI_RAG_START_IDX(Markdown Dosyaları /docs) --> WIKI_RAG_READ_DOCS(Parçalara Chunks Böl)
-            WIKI_RAG_READ_DOCS --> WIKI_RAG_CHK_CHUNKS{Chunk > 500 Kelime?}
-            
-            WIKI_RAG_CHK_CHUNKS -- Evet --> WIKI_RAG_SPLIT_CHK(Alt Parçalara Böl)
-            WIKI_RAG_CHK_CHUNKS -- Hayır --> WIKI_RAG_EMBED_MODEL(Embedding Modeline Ver<br>Orn all-MiniLM)
-            WIKI_RAG_SPLIT_CHK --> WIKI_RAG_EMBED_MODEL
-            
-            WIKI_RAG_EMBED_MODEL --> WIKI_RAG_SAVE_FAISS(Vektör Veritabanına WIKI_RAG_FAISS<br>Kaydet)
-            
-            %% Soru Sorma (Chat)
-            WIKI_RAG_USER_QUERY(Kullanıcı Sorusu: <br> Lazer nasıl çalışır?) --> WIKI_RAG_CLN_Q(Soruyu Embeddinge Çevir)
-            
-            WIKI_RAG_CLN_Q --> WIKI_RAG_SRCH_FAISS(WIKI_RAG_FAISS İçerisinde<br>En Yakın 3 Bloğu Bul)
-            
-            WIKI_RAG_SRCH_FAISS --> WIKI_RAG_BLD_PROMPT(Bağlam Context Ekle<br>Bu bilgilere göre cevapla)
-            
-            WIKI_RAG_BLD_PROMPT --> WIKI_RAG_REQ_OLLAMA(Ollama WIKI_RAG_LLM e Gönder<br>WIKI_RAG_POST ollama chat)
-            
-            WIKI_RAG_REQ_OLLAMA --> WIKI_RAG_RET_ANS(LLMden Gelen Akıllı Cevap<br>WIKI_RAG_JSON: text, actions)
         end
     end
     subgraph LAYER_ACT ["4. FIZIKSEL EYLEM VE TEPKI"]
@@ -883,8 +816,8 @@ flowchart LR
     SG_GATEWAY --> SG_CAMERA
     WAKEWORD_WAIT_AUDIO -- "Tetik" --> SPEECH_START
     SPEECH_EXTRACT_TEXT -- "Metin" --> AUTONOMY_S_ADD_TXT
-    CAMERA_SIGNAL_EVENT --> VISION_BRIDGE_START
-    VISION_BRIDGE_SET_NAME -- "Kişi Algılandı" --> AUTONOMY_S_MOOD_B
+    CAMERA_SIGNAL_EVENT --> VLM_BRIDGE_START
+    VLM_BRIDGE_IDENT -- "Kişi Algılandı" --> AUTONOMY_S_MOOD_B
     AUTONOMY_A_CHK_TXT -- "Soru" --> OLLAMA_API_IN
     OLLAMA_P_SUCCESS --> AUTONOMY_DO_OP
     AUTONOMY_DO_OP -- "/speak/say" --> SPEAK_API_REQ
@@ -900,7 +833,7 @@ flowchart LR
 Bu diyagramlar detayları kendi dosyalarında saklasa da, sistem geneli kararları burada özetleyebiliriz:
 
 ### 1. Kim Konuşuyor? (Access Control)
-Vision'dan gelen isim ve Arduino'dan okunan `g_lastOwnerUid` devamlı kontrol edilir.
+VLM'den gelen isim ve Arduino'dan okunan `g_lastOwnerUid` devamlı kontrol edilir.
 - **İf:** Sesli bir soru geldi (`"Ne düşünüyorsun?"`) ve Owner kilidi açık (`require_owner: true`);
   - Robot soran yüze (Vision) veya RFID sensörüne bakar.
   - Eğer sahip yakında değilse soruyu Ollama LLM'e göndermeyi reddeder. Kırmızı gözlerle uyarı çalar.
@@ -912,7 +845,7 @@ Ollama 8B / LLaMA tarzı modeller her daim `{"text": "", "actions":[]}` düzgün
 
 ### 3. CPU'yu Koruma Mekanizmaları (Throttling)
 Raspberry Pi 5 cihazında ısı ve yük problemlerini kısmak için if blokları kurulmuştur.
-- **Vision:** YOLO çıkartımları, (örn hedef fps = 5 iken) gelen kamera loop fps = 30 dahi olsa **`if loop_time < limit`** kontrolüyle pas geçilir, gereksiz GPU/CPU meşguliyeti engellenir.
+- **VLM:** OpenCV tabanlı yüz algılama/takip döngüsü, hedef FPS sınırları ve tracker kayıp eşiği ile gereksiz CPU yükünü bastırır.
 - **Wakeword:** Mikrofon sürekli dinler ancak STT/ASR (Whisper vb) kapalıdır. **Sadece** "Hey Sentry" wakeword tespit eden küçük işlem (Porcupine) tetiklendiğinde ASR 5 saniyeliğine çalıştırılır. Enerji tasarrufu en üst seviyeye çıkarılır.
 
 ## Sonuç

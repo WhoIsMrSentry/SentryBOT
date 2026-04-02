@@ -44,8 +44,8 @@ def _get_or_create_ardu() -> xArduinoSerialService:
 
 def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> APIRouter:
     r = APIRouter(
-        prefix="/vision",
-        tags=["vision"],
+        prefix="/vlm",
+        tags=["vlm"],
         responses={404: {"description": "Not found"}},
     )
 
@@ -61,6 +61,33 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
             return {"ok": bool(resp.get("ok", False)), "resp": resp}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    @r.post("/follow/start", tags=["control"], summary="Start face follow mode")
+    def follow_start(person: str | None = None):
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not hasattr(processor, "start_follow"):
+            raise HTTPException(status_code=503, detail="Vision processor missing follow interface")
+        result = processor.start_follow(person=person)
+        return result if isinstance(result, dict) else {"ok": True}
+
+    @r.post("/follow/stop", tags=["control"], summary="Stop face follow mode")
+    def follow_stop():
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not hasattr(processor, "stop_follow"):
+            raise HTTPException(status_code=503, detail="Vision processor missing follow interface")
+        result = processor.stop_follow()
+        return result if isinstance(result, dict) else {"ok": True}
+
+    @r.get("/follow/status", tags=["control"], summary="Face follow state")
+    def follow_status():
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not hasattr(processor, "follow_status"):
+            raise HTTPException(status_code=503, detail="Vision processor missing follow interface")
+        result = processor.follow_status()
+        return result if isinstance(result, dict) else {"active": False}
 
     @r.post("/analyze", tags=["analysis"], summary="Analyze single frame (local)")
     def analyze_snapshot():
@@ -148,7 +175,7 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
         
         if not processor.face_manager:
              raise HTTPException(status_code=501, detail="Face recognition not available")
-        logger = logging.getLogger("vision_bridge.api.router")
+        logger = logging.getLogger("vlm_bridge.api.router")
 
         # Primary attempt: use processor's current frame (requires stream running)
         try:
@@ -169,8 +196,7 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
                 cap.release()
                 if ret and frame is not None:
                     try:
-                        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                        ok = processor.face_manager.register_face(name, rgb)
+                        ok = processor.face_manager.register_face(name, frame)
                         if ok:
                             return {"status": "success", "message": f"Registered face for {name} (one-shot)"}
                     except Exception as e:

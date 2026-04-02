@@ -487,7 +487,7 @@
 
     // Sentetik modül yapısı (DryCode standartları)
     const MODULES = [
-      "animate", "arduino", "arduino_serial", "autonomy", "calibration", "camera", "config_center", "diagnostics", "hardware", "interactions", "logwrapper", "mutagen", "neopixel", "notifier", "oled_faces", "ollama", "ota", "piservo", "scheduler", "speak", "speech", "state_manager", "telemetry", "vision_bridge", "wakeword", "wiki_rag"
+      "animate", "arduino", "arduino_serial", "autonomy", "calibration", "camera", "config_center", "diagnostics", "hardware", "interactions", "logwrapper", "mutagen", "neopixel", "notifier", "oled_faces", "ollama", "ota", "piservo", "scheduler", "speak", "speech", "state_manager", "telemetry", "vlm_bridge", "wakeword"
     ];
 
     function buildDistinctModuleColors(modules) {
@@ -1009,18 +1009,16 @@
           if (!edges) {
             edges = [
               { source: 'interactions', target: 'neopixel', type: 'http' },
-              { source: 'vision_bridge', target: 'arduino_serial', type: 'serial' },
+              { source: 'vlm_bridge', target: 'arduino_serial', type: 'serial' },
               { source: 'animate', target: 'arduino_serial', type: 'serial' },
               { source: 'speech', target: 'interactions', type: 'event' },
               { source: 'speech', target: 'ollama', type: 'http' },
               { source: 'ollama', target: 'speak', type: 'http' },
-              { source: 'wiki_rag', target: 'ollama', type: 'llm' },
               { source: 'diagnostics', target: 'gateway', type: 'health' },
               { source: 'autonomy', target: 'ollama', type: 'llm' },
               { source: 'neopixel', target: 'arduino_serial', type: 'serial' },
-              { source: 'vision_bridge', target: 'ollama', type: 'llm' },
+              { source: 'vlm_bridge', target: 'ollama', type: 'llm' },
               { source: 'ollama', target: 'autonomy', type: 'http' },
-              { source: 'wiki_rag', target: 'autonomy', type: 'http' },
             ];
           }
           for (const e of edges) addEdge(e.source, e.target, e.type || 'http');

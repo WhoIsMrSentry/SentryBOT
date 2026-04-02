@@ -48,7 +48,7 @@ class FakeServiceClient:
 
 
 def test_autonomy_smoke_harness_reacts_to_speech_and_direction():
-    cfg = {"defaults": {"loop_interval_ms": 200}, "wikirag": {"enabled": False}, "llm": {"enabled": False}}
+    cfg = {"defaults": {"loop_interval_ms": 200}, "llm": {"enabled": False}}
     brain = AutonomyBrain(cfg)
     fake = FakeServiceClient()
     # inject fake client

@@ -4,14 +4,13 @@ def test_gateway_bootstrap_mounts():
 
     include_cfg = {
         "arduino": True,
-        "vision_bridge": True,
+        "vlm_bridge": True,
         "neopixel": True,
         "interactions": True,
         "speak": True,
         "speech": True,
         "wakeword": True,
         "ollama": True,
-        "wiki_rag": True,
         "camera": True,
         "logs": True,
         "animate": True,
@@ -35,14 +34,13 @@ def test_gateway_bootstrap_mounts():
 
     expected_mounted = [
         "arduino",
-        "vision_bridge",
+        "vlm_bridge",
         "neopixel",
         "interactions",
         "speak",
         "speech",
         "wakeword",
         "ollama",
-        "wiki_rag",
         "camera",
         "logs",
         "animate",
