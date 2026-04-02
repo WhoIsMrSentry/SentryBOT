@@ -91,8 +91,7 @@ def _relations() -> Dict[str, Any]:
         {"id": "speak", "label": "Speak (TTS)", "kind": "module"},
         {"id": "ollama", "label": "Ollama (LLM)", "kind": "module"},
         {"id": "camera", "label": "Camera", "kind": "module"},
-        {"id": "vision_bridge", "label": "Vision Bridge", "kind": "module"},
-        {"id": "wiki_rag", "label": "Wiki RAG", "kind": "module"},
+        {"id": "vlm_bridge", "label": "VLM Bridge", "kind": "module"},
         {"id": "animate", "label": "Animate", "kind": "module"},
         {"id": "piservo", "label": "Pi Servo", "kind": "module"},
         {"id": "hardware", "label": "Hardware", "kind": "module"},
@@ -113,12 +112,11 @@ def _relations() -> Dict[str, Any]:
         *[{"source": "gateway", "target": n["id"], "type": "mount"} for n in nodes if n["id"] not in ("run_robot", "gateway")],
         # Inter-module calls
         {"source": "interactions", "target": "neopixel", "type": "http"},
-        {"source": "vision_bridge", "target": "arduino", "type": "serial"},
+        {"source": "vlm_bridge", "target": "arduino", "type": "serial"},
         {"source": "animate", "target": "arduino", "type": "serial"},
         {"source": "speech", "target": "interactions", "type": "event"},
         {"source": "speech", "target": "ollama", "type": "http"},
         {"source": "ollama", "target": "speak", "type": "http"},
-        {"source": "wiki_rag", "target": "ollama", "type": "llm"},
         {"source": "diagnostics", "target": "gateway", "type": "health"},
     ]
     return {"nodes": nodes, "edges": edges}

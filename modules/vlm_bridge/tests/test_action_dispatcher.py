@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from modules.vision_bridge.services.action_dispatcher import VisionActionDispatcher  # noqa: E402
+from modules.vlm_bridge.services.action_dispatcher import VisionActionDispatcher  # noqa: E402
 
 
 class DummySemantic:
@@ -25,7 +25,7 @@ def test_emit_scene_dispatches(monkeypatch):
     dispatcher = VisionActionDispatcher("http://localhost:8100/autonomy/apply_actions", timeout=0.1, enabled=True)
 
     monkeypatch.setattr(
-        "modules.vision_bridge.services.action_dispatcher.extract_llm_tags",
+        "modules.vlm_bridge.services.action_dispatcher.extract_llm_tags",
         lambda prompt: (prompt.replace("[cmd:head_nod]", ""), {"commands": ["head_nod"]}),
         raising=False,
     )
@@ -38,7 +38,7 @@ def test_emit_scene_dispatches(monkeypatch):
         captured["timeout"] = timeout
 
     monkeypatch.setattr(
-        "modules.vision_bridge.services.action_dispatcher.requests.post",
+        "modules.vlm_bridge.services.action_dispatcher.requests.post",
         fake_post,
     )
 
@@ -60,7 +60,7 @@ def test_emit_scene_noop_when_disabled(monkeypatch):
         called = True
 
     monkeypatch.setattr(
-        "modules.vision_bridge.services.action_dispatcher.requests.post",
+        "modules.vlm_bridge.services.action_dispatcher.requests.post",
         fake_post,
     )
 

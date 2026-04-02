@@ -12,6 +12,24 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "processing_mode": "local",  # local | remote
         "blind_mode": {"enabled": False, "interval_seconds": 5.0},
         "confidence_threshold": 0.5,
+        "face_match": {
+            "ratio_test": 0.72,
+            "min_good_matches": 10,
+            "min_score": 0.15,
+        },
+        "follow": {
+            "enabled": True,
+            "track_interval_s": 0.12,
+            "pan_gain_deg": 50,
+            "tilt_gain_deg": 32,
+            "center_pan": 90,
+            "center_tilt": 90,
+            "min_pan": 35,
+            "max_pan": 145,
+            "min_tilt": 65,
+            "max_tilt": 125,
+            "max_lost_frames": 18,
+        },
     },
     "remote": {
         "auth_token": "changeme",  # Override in deployment

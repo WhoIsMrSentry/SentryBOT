@@ -10,7 +10,7 @@ import time
 import logging
 from typing import List, Dict, Any, Optional
 
-logger = logging.getLogger("vision_bridge.semantic")
+logger = logging.getLogger("vlm_bridge.semantic")
 
 try:
     import httpx  # type: ignore

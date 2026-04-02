@@ -1,5 +1,5 @@
 from __future__ import annotations
-"""LLM action dispatch helper for Vision Bridge."""
+"""LLM action dispatch helper for VLM Bridge."""
 
 import logging
 from typing import Any, Dict, List
@@ -11,7 +11,7 @@ try:  # pragma: no cover - optional dependency during tests
 except Exception:  # pragma: no cover
     extract_llm_tags = None  # type: ignore
 
-logger = logging.getLogger("vision_bridge.actions")
+logger = logging.getLogger("vlm_bridge.actions")
 
 
 class VisionActionDispatcher:
