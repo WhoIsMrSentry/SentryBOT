@@ -67,9 +67,9 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- Kapsam: PiCamera2/OpenCV backend; çözünürlük, FPS, JPEG kalitesi ayarlanabilir, son kare yayımcısı.
 		- Kullanım: Gateway ile `/camera/*` altında stream ve snapshot uçları (modül README’sine bakın).
 		- Sınırlar: PiCamera2 sürücü/firmware gereksinimleri; düşük ışıkta hız/kalite ayarı gerekebilir.
-	- Vision Bridge (modules/vision_bridge)
-		- Kapsam: Dış işlemci (PC) görsel analiz yapar; sonuç komutlarını Pi5’e HTTP ile yollar.
-		- API: `POST /vision/track { head_tilt, head_pan, drive? }` → Arduino “track” komutuna köprü.
+	- VLM Bridge (modules/vlm_bridge)
+		- Kapsam: OpenCV tabanlı yüz algılama/tanıma ve takip; dış işlemci sonuçlarını Pi5’e HTTP ile yollar.
+		- API: `POST /vlm/track { head_tilt, head_pan, drive? }` → Arduino “track” komutuna köprü.
 		- Sınırlar: Ağ gecikmesi; kontrol döngüsünde stabilite için sınırlamalar (slew/ölü bant) önerilir.
 	- Konuşma Tanıma (modules/speech)
 		- Kapsam: Vosk ile tamamen offline ASR; I2S mikrofon; opsiyonel WebRTC VAD; stereo’da DoA hesaplar.
@@ -113,10 +113,6 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- Kapsam: Kişilik (persona) yönetimi ile LLM sohbet; modül içi persona klasör yapısı.
 		- API: `/ollama/chat`, `/ollama/persona`, `/ollama/personas`, `/ollama/persona/select`
 		- Veri akışı: Speech → Ollama.chat → Speak; Interactions/NeoPixel opsiyonel duygusal tepki verebilir.
-	- RAG (Wiki) (modules/wiki_rag)
-		- Kapsam: Yerel wiki içeriklerinden ön işleme + indeks ve sohbet; LlamaIndex + Ollama backend.
-		- API: `/wiki_rag/preprocess`, `/wiki_rag/index/rebuild`, `/wiki_rag/chat`, `/wiki_rag/persona/select`
-		- Sınırlar: Disk ve bellek maliyeti; Ollama sunucusu ve modeller kurulu olmalı.
 
 
 ## Hızlı Başlangıç
@@ -154,14 +150,13 @@ Notlar:
 Gateway açıkken tüm modül uçları tek porttadır. Genel sağlık uçları: `/<modül>/healthz`.
 
 - Arduino Seri: `/arduino/*` – hello, request/send, telemetry
-- Vision Bridge: `/vision/track` – dış işlemci komut köprüsü
+- VLM Bridge: `/vlm/track` – dış işlemci komut köprüsü
 - Kamera: `/camera/*` – API/stream
 - NeoPixel: `/neopixel/*` – efektler, duygular, animasyon
 - Interactions: `/interactions/*` – kural motoru, event tetikleme
 - Speak (TTS): `/speak/*` – say/play
 - Speech (ASR/DoA): `/speech/*` – tanıma başlat/durdur, yön, takip
 - Ollama: `/ollama/*` – chat, persona yönetimi
-- Wiki RAG: `/wiki_rag/*` – ön işleme, indeks, chat
 - PiServo: `/piservo/*` – kulak jestleri
 - OTA: `/ota/*` – tarama, upload, versiyonlar
 - Mutagen: `/mutagen/*` – senkron yönetimi
@@ -184,7 +179,7 @@ Detaylar ve örnek istekler her modülün README’sinde mevcuttur.
 - WS2812/NeoPixel şerit + Jewel (7) + Stick (16) varsayılan haritalama
 - İki mini servo (kulaklar) → PiServo
 - Kamera: PiCamera2 veya USB Webcam (auto seçimi desteklenir)
-- Görüntü işleme ağır ise bir PC’ye stream + Vision Bridge ile komut köprüleme
+- Görüntü işleme ağır ise bir PC’ye stream + VLM Bridge ile komut köprüleme
 
 
 ## Arduino Firmware Özeti ve Donanım Detayları
@@ -221,7 +216,7 @@ Gateway çalışıyorsa tüm uçlar tek porttadır. Aşağıdaki istekler örnek
 	- POST `/neopixel/emote` body: `{ "text": "joy curiosity", "duration": 0.25 }`
 
 - Görüntü işleme köprüsü (dış istemci → servo)
-	- POST `/vision/track` body: `{ "head_pan": 20, "head_tilt": -5 }`
+	- POST `/vlm/track` body: `{ "head_pan": 20, "head_tilt": -5 }`
 
 - Konuşma
 	- ASR başlat/durdur: `/speech/start`, `/speech/stop`
@@ -317,18 +312,14 @@ Gateway çalışıyorsa tüm uçlar tek porttadır. Aşağıdaki istekler örnek
 		- Amaç: Telemetri; Prometheus `/metrics` ve olay yayımı.
 		- Uçlar: `/telemetry/*`.
 
-	- vision_bridge
-		- Amaç: Dış görüntü işleme sonuçlarını Arduino komutlarına köprüler.
-		- Uçlar: `/vision/*` (ör. `/vision/track` → Arduino "track").
-
-	- wiki_rag
-		- Amaç: Yerel bilgi depoları (wiki) üzerinden RAG; persona ile sohbet bağlamı.
-		- Uçlar: `/wiki_rag/*` (preprocess, index/rebuild, chat, persona/select).
+	- vlm_bridge
+		- Amaç: OpenCV tabanlı yüz tanıma/takip ve dış görüntü sonuçlarını Arduino komutlarına köprüleme.
+		- Uçlar: `/vlm/*` (ör. `/vlm/track`, `/vlm/follow/start`).
 
 
 	## Tipik Senaryolar
 
-	- Hedefe Bak (Görüntü → Servo): Dış istemci görüntüyü işler → `/vision/track` ile açı gönderir → Arduino (PCA9685) pan/tilt yapar.
+	- Hedefe Bak (Görüntü → Servo): Dış istemci görüntüyü işler → `/vlm/track` ile açı gönderir → Arduino (PCA9685) pan/tilt yapar.
 	- Konuş ve Yanıtla: `/speech/start` ile dinle → metni `/ollama/chat`’e gönder → yanıtı `/speak/say` ile seslendir → Interactions NeoPixel efekt tetikler.
 	- Duruma Göre Işıklar: Interactions CPU ısısı/yük, ağ burst ve olay akışını izler → NeoPixel’de base/transient animasyonlar oynatır.
 	- Lazer/LCD/Ultrasonik: `/arduino/laser/*` ile lazerleri tekli/ikili; ultrasonik ölçümleri LCD’de 16×1 uyumlu göster.
@@ -368,7 +359,7 @@ Repo, modül merkezli çalışma akışını destekleyen etiketleme ve yardımc�
 - Arduino Serial: modules/arduino_serial/README.md
 - Hardware: modules/hardware/README.md
 - Camera: modules/camera/README.md
-- Vision Bridge: modules/vision_bridge/README.md
+- VLM Bridge: modules/vlm_bridge/README.md
 - NeoPixel: modules/neopixel/README.md
 - Interactions: modules/interactions/README.md
 - Speak (TTS): modules/speak/README.md
@@ -385,7 +376,6 @@ Repo, modül merkezli çalışma akışını destekleyen etiketleme ve yardımc�
 - Config Center: modules/config_center/README.md
 - Log Wrapper: modules/logwrapper/README.md
 - LLM (Ollama): modules/ollama/README.md
-- Wiki RAG: modules/wiki_rag/README.md
 
 
 ## Katkıda Bulunma

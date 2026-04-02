@@ -35,13 +35,13 @@ flowchart TD
         TRY_ARD --> CATCH_ARD{"Hata var mı?"}
         CATCH_ARD -- Evet --> LOG_ARD[warning: module failed] --> CHK_VIS
         CATCH_ARD -- Hayır --> ADD_ARD[started arduino True] --> CHK_VIS
-        CHK_ARDUINO -- Hayır --> CHK_VIS{"include.vision_bridge == true?"}
+        CHK_ARDUINO -- Hayır --> CHK_VIS{"include.vlm_bridge == true?"}
 
-        %% Vision
-        CHK_VIS -- Evet --> TRY_VIS[vision._include_vision_bridge]
+        %% VLM Bridge
+        CHK_VIS -- Evet --> TRY_VIS[vlm._include_vlm_bridge]
         TRY_VIS --> CATCH_VIS{"Hata var mı?"}
         CATCH_VIS -- Evet --> LOG_VIS[warning: module failed] --> CHK_AUTO
-        CATCH_VIS -- Hayır --> ADD_VIS[started vision_bridge True] --> CHK_AUTO
+        CATCH_VIS -- Hayır --> ADD_VIS[started vlm_bridge True] --> CHK_AUTO
         CHK_VIS -- Hayır --> CHK_AUTO{"include.autonomy == true?"}
 
         %% Autonomy (Diğerleri benzer mantıkta olduğu için temsilidir)
@@ -73,10 +73,10 @@ erDiagram
     
     MODULE_ROUTER ||--|| ARDUINO_SERVICE : instantiates
     MODULE_ROUTER ||--|| AUTONOMY_SERVICE : instantiates
-    MODULE_ROUTER ||--|| VISION_SERVICE : instantiates
+    MODULE_ROUTER ||--|| VLM_SERVICE : instantiates
     
     AUTONOMY_SERVICE }|..|{"ARDUINO_SERVICE : 'Geç_Başlatmada Referans Alır'
-    VISION_SERVICE"}|..|{ ARDUINO_SERVICE : "Opsiyonel Lazer Referansı"
+    VLM_SERVICE"}|..|{ ARDUINO_SERVICE : "Opsiyonel Lazer Referansı"
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
@@ -88,4 +88,4 @@ erDiagram
    - **Yardımcı Fonksiyon `_try(fn, name)`**: 
      - İçine gönderilen lambda fonksiyonu (modül router'ını bağlayan kod) çalıştırılır.
      - **`except Exception`**: Eğer modül içindeki bir import veya bağlanma hatası (ör. donanım eksikliği) başlatmayı engellerse, sistemi durdurmaz (`logger.warning`), uygulamanın kalanı çalışmaya devam eder.
-   - Modül yükleme öncelik sırası: Güvenli olması açısından donanım iletişimi (`arduino`) en önce, üzerine inşa edilen modüller (`autonomy`, `vision`) en sona eklenir.
+    - Modül yükleme öncelik sırası: Güvenli olması açısından donanım iletişimi (`arduino`) en önce, üzerine inşa edilen modüller (`autonomy`, `vlm`) daha sonra eklenir.

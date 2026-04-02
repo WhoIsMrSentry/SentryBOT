@@ -1,6 +1,5 @@
-ultralytics
 opencv-python
+numpy
 requests
 fastapi
 uvicorn
-face_recognition

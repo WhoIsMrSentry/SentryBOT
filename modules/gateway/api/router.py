@@ -27,8 +27,6 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
                     path = "/camera/healthz"
                 elif name in ("speak", "speech", "wakeword"):
                     path = f"/{name}/status"
-                elif name in ("wiki_rag",):
-                    path = "/wiki_rag/healthz"
                 if client and path:
                     try:
                         resp = client.get(path, timeout=0.5)
@@ -74,13 +72,12 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
             "speech": ("GET", "/speech/status"),
             "speak": ("GET", "/speak/status"),
             "wakeword": ("GET", "/wakeword/status"),
-            "vision_bridge": None,
+            "vlm_bridge": None,
             "interactions": None,
             "ollama": ("GET", "/ollama/healthz"),
         }
         mounted_checks = {
             "camera": ("GET", "/camera/healthz"),
-            "wiki_rag": ("GET", "/wiki_rag/healthz"),
         }
         port = int(cfg.get("server", {}).get("port", 8080))
         client = httpx.Client(base_url=f"http://127.0.0.1:{port}")

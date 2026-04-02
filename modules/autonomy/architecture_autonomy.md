@@ -51,12 +51,8 @@ flowchart TD
         A_CHK_TXT -- Evet --> CHK_OWNER{"Sahip mi?"}
         CHK_OWNER -- Hayır / Kilitli --> REJECT[Erişim Reddedildi İşlemi] --> FINISH_LOOP
         
-        CHK_OWNER -- Evet / Pas Geçildi --> CHK_Q{"Soru İşareti<br>Var mı?"}
-        CHK_Q -- Evet + RAG Aktif --> USE_RAG(Wiki_RAG LLM<br>Modelini Çağır)
-        CHK_Q -- Hayır / RAG Yok --> USE_OLLAMA(Ollama Chat API Çağır)
-        
-        USE_RAG --> RES_LLM(LLM Yanıtı: Text + Actions)
-        USE_OLLAMA --> RES_LLM
+        CHK_OWNER -- Evet / Pas Geçildi --> USE_OLLAMA(Ollama Chat API Çağır)
+        USE_OLLAMA --> RES_LLM(LLM Yanıtı: Text + Actions)
         
         RES_LLM --> PARSE_TAGS(_apply_tags)
         

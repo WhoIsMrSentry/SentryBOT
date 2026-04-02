@@ -15,7 +15,7 @@ Ollama artık robotu aşağıdaki aksiyon türleri ile kontrol edebilir:
 - `lights`: NeoPixel animasyonları (mode, emotions, intensity).
 - `laser`: Lazer kontrolü (id, on, both).
 - `buzzer` / `sound_play`: Sesli uyarılar.
-- `system`: Modül kontrolü (`notifier`, `camera`, `autonomy`, `wiki_rag`).
+- `system`: Modül kontrolü (`notifier`, `camera`, `autonomy`).
 - `speak`: Özel tonlama gerektiren sesli yanıtlar.
 - `anim`: Hazır animasyon sekansları.
 - `stand` / `sit` / `home`: Pozisyon komutları.

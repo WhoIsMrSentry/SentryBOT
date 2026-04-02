@@ -38,10 +38,10 @@ endpoints:
   oled_faces: "http://localhost:8080/oled_faces"
   state_manager: "http://localhost:8080/state"
   animate: "http://localhost:8080/animate"
-  vision: "http://localhost:8080/vision"
+  vlm: "http://localhost:8080/vlm"
+  vision: "http://localhost:8080/vlm"
   camera: "http://localhost:8080/camera"
   notifier: "http://localhost:8080/notify"
-  wiki_rag: "http://localhost:8080/wiki_rag"
   autonomy: "http://localhost:8080/autonomy"
 
 behaviors:
@@ -84,9 +84,6 @@ llm:
     GÖREV: Bu duruma uygun, çok kısa (maksimum 10 kelime) bir iç ses cümlesi kur.
     - Robotik değil, canlı bir karakter gibi konuş.
     - Sadece söyleyeceğin cümleyi yaz.
-
-wikirag:
-  enabled: true
 
 speech_quiet_hours:
   enabled: true

@@ -39,7 +39,6 @@ def test_offline_fallback_replies_without_llm_call():
     cfg = {
         "defaults": {"loop_interval_ms": 200},
         "llm": {"enabled": True},
-        "wikirag": {"enabled": True},
         "offline_mode": {
             "enabled": True,
             "availability_ttl_s": 1,
@@ -62,7 +61,6 @@ def test_offline_fallback_prefers_persona_replies():
     cfg = {
         "defaults": {"loop_interval_ms": 200, "mood": {"initial_happiness": 90, "initial_energy": 80, "decay_rate": 0.0}},
         "llm": {"enabled": True},
-        "wikirag": {"enabled": False},
         "offline_mode": {
             "enabled": True,
             "availability_ttl_s": 1,
@@ -84,7 +82,6 @@ def test_offline_contextual_replies_override_persona_pool():
     cfg = {
         "defaults": {"loop_interval_ms": 200, "mood": {"initial_happiness": 90, "initial_energy": 80, "decay_rate": 0.0}},
         "llm": {"enabled": True},
-        "wikirag": {"enabled": True},
         "offline_mode": {
             "enabled": True,
             "contextual_replies": {"question": ["Soru odakli yerel cevap"]},

@@ -16,8 +16,6 @@ modules:
   path: modules/speak/config/config.yml
 - name: speech
   path: modules/speech/config/config.yml
-- name: wiki_rag
-  path: modules/wiki_rag/config/config.yml
 - name: ollama
   path: modules/ollama/config/config.yml
 - name: piservo
@@ -48,5 +46,5 @@ modules:
   path: modules/config_center/config/config.yml
 - name: logwrapper
   path: modules/logwrapper/config/config.yml
-- name: vision_bridge
-  path: modules/vision_bridge/config/config.yml
+- name: vlm_bridge
+  path: modules/vlm_bridge/config/config.yml

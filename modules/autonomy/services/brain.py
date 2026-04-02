@@ -375,6 +375,7 @@ class AutonomyBrain(
         speaker = self._guess_active_person()
         if speaker:
             self.state["last_speaker"] = speaker
+            self._remember_person_chat(speaker, text, role="user")
 
         self.client.push_interaction_event("autonomy.excited")
 
@@ -390,13 +391,16 @@ class AutonomyBrain(
         if self._features_locked_for_request(text):
             return
 
+        if self._handle_follow_commands(text, speaker, lang):
+            return
+
         is_question = "?" in text or any(
             key in text.lower() for key in ["nedir", "kimdir", "nasıl", "what", "who", "how"]
         )
 
         offline_cfg = self.config.get("offline_mode", {})
         if bool(offline_cfg.get("enabled", False)):
-            target_service = "wiki_rag" if is_question and self.config.get("wikirag", {}).get("enabled", False) else "ollama"
+            target_service = "ollama"
             if not self.client.is_service_available(target_service):
                 fallback = self._offline_reply(text, target_service)
                 self.client.push_interaction_event("autonomy.offline", {"service": target_service})
@@ -420,46 +424,27 @@ class AutonomyBrain(
                         logger.info("Agent Core handled speech with full pipeline.")
                         # Log to short-term memory too
                         self.memory.add_event(f"Agent replied: {response_text}")
+                        self._remember_person_chat(speaker, response_text, role="assistant")
                         self._speak_with_mood(response_text, language=lang)
                         return
                 except Exception as exc:
                     logger.warning("Agent Core step failed, falling back to direct LLM: %s", exc)
 
-            # ── FALLBACK PATH: Direct Ollama / WikiRAG (no tool-calling) ──
-            if is_question and self.config.get("wikirag", {}).get("enabled", False):
-                logger.info("Routing to WikiRAG...")
-                rag_query = text
-                tr = self.client.translate(text, source_lang="auto", target_lang="en")
-                detected_lang = lang
-                if isinstance(tr, dict) and tr.get("ok"):
-                    if tr.get("text"):
-                        rag_query = str(tr.get("text"))
-                    if tr.get("source_lang"):
-                        detected_lang = str(tr.get("source_lang"))
-                resp = self.client.chat_rag(rag_query)
-                if resp and "answer" in resp:
-                    response_text = resp["answer"]
-                    response_actions = resp.get("actions")
-                    raw_response = resp.get("raw")
-                    if detected_lang.lower() != "en" and response_text:
-                        tr_back = self.client.translate(response_text, source_lang="en", target_lang=detected_lang)
-                        if isinstance(tr_back, dict) and tr_back.get("ok") and tr_back.get("text"):
-                            response_text = str(tr_back.get("text"))
-                            lang = detected_lang
-            else:
-                logger.info("Routing to Ollama...")
-                resp = self.client.chat(text, source_lang="auto", response_lang=None)
-                if resp and "answer" in resp:
-                    response_text = resp["answer"]
-                    response_actions = resp.get("actions")
-                    raw_response = resp.get("raw")
-                    trans = resp.get("translation") if isinstance(resp, dict) else None
-                    if isinstance(trans, dict) and trans.get("response_lang"):
-                        lang = str(trans.get("response_lang"))
+            # ── FALLBACK PATH: Direct Ollama (no tool-calling) ──
+            logger.info("Routing to Ollama...")
+            resp = self.client.chat(text, source_lang="auto", response_lang=None)
+            if resp and "answer" in resp:
+                response_text = resp["answer"]
+                response_actions = resp.get("actions")
+                raw_response = resp.get("raw")
+                trans = resp.get("translation") if isinstance(resp, dict) else None
+                if isinstance(trans, dict) and trans.get("response_lang"):
+                    lang = str(trans.get("response_lang"))
 
             if response_text:
                 clean_text = self.apply_llm_response(response_text, response_actions, raw_response, speak=False)
                 if clean_text:
+                    self._remember_person_chat(speaker, clean_text, role="assistant")
                     self._speak_with_mood(clean_text, language=lang)
                     logger.info("Reply: %s", clean_text)
                     self.memory.add_event(f"I replied: {clean_text}")
@@ -467,6 +452,63 @@ class AutonomyBrain(
                     logger.info("LLM response only triggered physical actions.")
         except Exception as exc:
             logger.error("Failed to generate reply: %s", exc)
+
+    def _remember_person_chat(self, speaker: str | None, text: str, role: str) -> None:
+        person = str(speaker or "").strip()
+        if not person or person.lower() == "unknown" or not text:
+            return
+        try:
+            self.client.append_person_chat(person=person, text=text, role=role)
+        except Exception:
+            pass
+
+    def _handle_follow_commands(self, text: str, speaker: str | None, language: str) -> bool:
+        low = str(text or "").lower()
+        stop_tokens = [
+            "takibi bırak",
+            "takibi birak",
+            "beni takip etmeyi bırak",
+            "beni takip etmeyi birak",
+            "takipten çık",
+            "takipten cik",
+            "takibi durdur",
+        ]
+        start_tokens = [
+            "beni takip et",
+            "beni izle",
+            "yüzümü takip et",
+            "yuzumu takip et",
+        ]
+
+        if any(token in low for token in stop_tokens):
+            result = self.client.stop_face_follow()
+            ok = bool(isinstance(result, dict) and result.get("ok", False))
+            message = "Yüz takibini durdurdum." if ok else "Yüz takibini şu an durduramıyorum."
+            self._speak_with_mood(message, emotion="neutral", language=language)
+            self.memory.add_event("Face follow stopped by voice command.")
+            return True
+
+        if any(token in low for token in start_tokens):
+            target = None
+            if speaker and str(speaker).strip() and str(speaker).strip().lower() != "unknown":
+                target = str(speaker).strip()
+            elif self.state.get("last_speaker") and str(self.state.get("last_speaker")).lower() != "unknown":
+                target = str(self.state.get("last_speaker")).strip()
+
+            result = self.client.start_face_follow(person=target)
+            ok = bool(isinstance(result, dict) and result.get("ok", False))
+            if ok:
+                if target:
+                    message = f"Tamam {target}, yüzünden takip modunu açtım."
+                else:
+                    message = "Yüz takibini açtım, seni kilitleyince takip edeceğim."
+                self.memory.add_event(f"Face follow started. target={target or 'auto'}")
+                self._speak_with_mood(message, emotion="joy", language=language)
+            else:
+                self._speak_with_mood("Yüz takibini şu an başlatamıyorum.", emotion="neutral", language=language)
+            return True
+
+        return False
 
     def _offline_reply(self, text: str, service: str) -> str:
         cfg = self.config.get("offline_mode", {})

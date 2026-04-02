@@ -6,13 +6,28 @@ vision:
   processing_mode: local  # local | remote
   # camera_source: "http://localhost:8000/video_feed" # Potential future: pull from camera module HTTP
   camera_source: 0  # Local webcam when in local mode
-  model_path: "yolov8n.pt"
   confidence_threshold: 0.5
+  face_match:
+    ratio_test: 0.72
+    min_good_matches: 10
+    min_score: 0.15
+  follow:
+    enabled: true
+    track_interval_s: 0.12
+    pan_gain_deg: 50
+    tilt_gain_deg: 32
+    center_pan: 90
+    center_tilt: 90
+    min_pan: 35
+    max_pan: 145
+    min_tilt: 65
+    max_tilt: 125
+    max_lost_frames: 18
   blind_mode:
     enabled: false
     interval_seconds: 5.0
   modes:
-    objects: true
+    objects: true      # localde YOLO yok; nesne listesi remote /vlm/results ile gelebilir
     people: true
     faces: true
     depth: false        # remote heavy model (e.g. MiDaS) için
@@ -20,7 +35,7 @@ vision:
     hazards: true       # tehlike algılama
     semantic_scene: true
   alerts:
-    classes: ["person", "car", "bicycle"]
+    classes: ["person"]
     distance_threshold_m: 1.2
     announce_interval_s: 8.0
   personalization:
@@ -36,7 +51,7 @@ vision:
 
 remote:
   auth_token: "changeme"  # Set a secure token in production or override
-  accept_results: true     # Allow POST /vision/results ingestion
+  accept_results: true     # Allow POST /vlm/results ingestion
 
 robot:
   host: "localhost"  # Change to Robot IP when running remotely

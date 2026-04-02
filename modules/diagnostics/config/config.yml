@@ -7,4 +7,3 @@ checks:
   neopixel: true
   speech: true
   speak: true
-  wiki_rag: false

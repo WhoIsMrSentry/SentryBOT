@@ -100,7 +100,7 @@ class CommandRouter:
         if pan is None or tilt is None:
             return "Kullanım: /pt <pan> <tilt>"
         params = {"head_pan": pan, "head_tilt": tilt}
-        url = f"{self._base}/vision/track"
+        url = f"{self._base}/vlm/track"
         ok = await self._post_bool(client, url, params=params)
         return "Pan/tilt ok" if ok else "Pan/tilt başarısız"
 

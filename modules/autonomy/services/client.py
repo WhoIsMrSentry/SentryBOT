@@ -52,6 +52,13 @@ class ServiceClient:
             logger.debug(f"Failed to get from {service}: {e}")
             return None
 
+    def _get_vlm(self, endpoint, params=None):
+        # MARK: Prefer new vlm endpoint, keep legacy vision fallback for compatibility.
+        data = self._get("vlm", endpoint, params=params)
+        if data is None:
+            data = self._get("vision", endpoint, params=params)
+        return data
+
     def _arduino_request(self, payload, timeout=1.0):
         data = self._post("arduino", "/request", json=payload, params={"timeout": float(timeout)})
         if not data:
@@ -264,10 +271,6 @@ class ServiceClient:
         endpoint = "/track/start" if enabled else "/track/stop"
         return self._post("speech", endpoint)
 
-    def chat_rag(self, query, apply_actions: bool = False):
-        params = {"query": query, "apply_actions": str(bool(apply_actions)).lower()}
-        return self._post("wiki_rag", "/chat", None, params=params)
-
     def translate(self, text, source_lang: str, target_lang: str):
         params = {
             "text": str(text or ""),
@@ -336,7 +339,7 @@ class ServiceClient:
         return self._post("oled_faces", "/manual", {"mode": "logo", "name": "logo"})
 
     def get_latest_vision_results(self, limit=5):
-        data = self._get("vision", "/results/latest", params={"limit": limit})
+        data = self._get_vlm("/results/latest", params={"limit": limit})
         if not data:
             return []
         return data.get("results", [])
@@ -344,13 +347,33 @@ class ServiceClient:
     def get_person_memory(self, person):
         if not person:
             return None
-        return self._get("vision", "/memory/person", params={"person": person})
+        return self._get_vlm("/memory/person", params={"person": person})
 
     def list_people_memory(self):
-        data = self._get("vision", "/memory/people")
+        data = self._get_vlm("/memory/people")
         if not data:
             return []
         return data.get("people", [])
+
+    def append_person_chat(self, person: str, text: str, role: str = "assistant"):
+        if not person or not text:
+            return None
+        params = {
+            "person": str(person),
+            "text": str(text),
+            "role": str(role or "assistant"),
+        }
+        return self._post("vlm", "/memory/chat", params=params)
+
+    def start_face_follow(self, person: str | None = None):
+        params = {"person": str(person)} if person else None
+        return self._post("vlm", "/follow/start", params=params)
+
+    def stop_face_follow(self):
+        return self._post("vlm", "/follow/stop")
+
+    def get_face_follow_status(self):
+        return self._get_vlm("/follow/status")
 
     def check_rfid(self, endpoint):
         if not endpoint:
