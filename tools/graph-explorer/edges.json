@@ -1,18 +1,23 @@
 [
   {
+    "source": "agent_core",
+    "target": "logwrapper",
+    "type": "http"
+  },
+  {
     "source": "animate",
     "target": "arduino_serial",
     "type": "serial"
   },
   {
     "source": "autonomy",
-    "target": "arduino_serial",
-    "type": "serial"
+    "target": "agent_core",
+    "type": "http"
   },
   {
     "source": "autonomy",
-    "target": "ollama",
-    "type": "llm"
+    "target": "arduino_serial",
+    "type": "serial"
   },
   {
     "source": "camera",
@@ -136,7 +141,7 @@
   },
   {
     "source": "gateway",
-    "target": "vision_bridge",
+    "target": "vlm_bridge",
     "type": "serial"
   },
   {
@@ -145,8 +150,8 @@
     "type": "http"
   },
   {
-    "source": "gateway",
-    "target": "wiki_rag",
+    "source": "hardware",
+    "target": "autonomy",
     "type": "http"
   },
   {
@@ -200,17 +205,17 @@
     "type": "http"
   },
   {
-    "source": "vision_bridge",
+    "source": "vlm_bridge",
     "target": "arduino_serial",
     "type": "serial"
   },
   {
-    "source": "vision_bridge",
+    "source": "vlm_bridge",
     "target": "logwrapper",
     "type": "http"
   },
   {
-    "source": "vision_bridge",
+    "source": "vlm_bridge",
     "target": "ollama",
     "type": "llm"
   },
@@ -223,15 +228,5 @@
     "source": "wakeword",
     "target": "speech",
     "type": "event"
-  },
-  {
-    "source": "wiki_rag",
-    "target": "logwrapper",
-    "type": "http"
-  },
-  {
-    "source": "wiki_rag",
-    "target": "ollama",
-    "type": "llm"
   }
 ]

@@ -21,10 +21,9 @@ TYPE_MAP = {
     'arduino_serial': 'serial',
     'neopixel': 'http',
     'ollama': 'llm',
-    'vision_bridge': 'serial',
+    'vlm_bridge': 'serial',
     'speech': 'event',
     'interactions': 'event',
-    'wiki_rag': 'http',
     'autonomy': 'http',
     'speak': 'http',
 }
