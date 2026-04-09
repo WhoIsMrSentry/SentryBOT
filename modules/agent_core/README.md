@@ -71,6 +71,18 @@ print(result["text"])
 | `agent.model` | Kullanılacak model (Örn: `llama3.2:3b`) |
 | `agent.max_steps` | Bir döngüde LLM'in art arda yapabileceği tool call sayısı (Örn: 10) |
 
+### .env / Ortam Değişkeni Override
+
+Agent Core, `.env` değerlerini sırasıyla şu yollardan okuyabilir:
+- `modules/agent_core/.env`
+- `modules/ollama/.env`
+- Proje kökü `.env`
+
+Desteklenen anahtarlar:
+- `AGENT_MODEL` veya `OLLAMA_MODEL`
+- `AGENT_OLLAMA_BASE_URL` veya `OLLAMA_BASE_URL` veya `OLLAMA_HOST`
+- `AGENT_COOLDOWN_S`
+
 ## Testler
 
 ```bash
