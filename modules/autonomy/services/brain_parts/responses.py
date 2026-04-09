@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any, Dict, List
 
@@ -35,6 +36,7 @@ class ResponseTagMixin:
 	) -> str:
 		cleaned = text or ""
 		blocks: List[Dict[str, Any]] = []
+		legacy_commands: List[str] = []
 
 		if isinstance(action_bundle, list):
 			# New RobotAction list format
@@ -44,12 +46,64 @@ class ResponseTagMixin:
 			blocks = action_bundle.get("blocks", [])
 			if action_bundle.get("commands"):
 				self._dispatch_llm_commands(action_bundle.get("commands", []))
-		# Legacy extract_llm_tags block completely removed
-		pass
+		elif action_bundle is None:
+			# Backward compatibility: parse inline [cmd:*] and [[type key=value]] tags.
+			cleaned, legacy_commands, blocks = self._extract_legacy_tags(raw_text or cleaned)
+
+		if legacy_commands:
+			self._dispatch_llm_commands(legacy_commands)
 
 		if blocks:
 			self._dispatch_llm_blocks(blocks)
 		return cleaned.strip()
+
+	def _extract_legacy_tags(self, text: str) -> tuple[str, List[str], List[Dict[str, Any]]]:
+		commands: List[str] = []
+		blocks: List[Dict[str, Any]] = []
+		cleaned = text or ""
+
+		for match in re.findall(r"\[cmd:([^\]]+)\]", cleaned, flags=re.IGNORECASE):
+			for item in str(match).split(","):
+				cmd = item.strip().lower()
+				if cmd:
+					commands.append(cmd)
+
+		def _parse_inline_block(payload: str) -> Dict[str, Any] | None:
+			parts = [p for p in str(payload or "").strip().split() if p]
+			if not parts:
+				return None
+			kind = parts[0].strip().lower()
+			attrs: Dict[str, Any] = {}
+			for token in parts[1:]:
+				if "=" not in token:
+					continue
+				k, v = token.split("=", 1)
+				key = k.strip().lower()
+				if not key:
+					continue
+				attrs[key] = self._coerce_tag_value(v.strip())
+			return {"type": kind, "attrs": attrs}
+
+		for match in re.findall(r"\[\[([^\]]+)\]\]", cleaned):
+			parsed = _parse_inline_block(match)
+			if parsed is not None:
+				blocks.append(parsed)
+
+		cleaned = re.sub(r"\[\[([^\]]+)\]\]", " ", cleaned)
+		cleaned = re.sub(r"\[cmd:([^\]]+)\]", " ", cleaned, flags=re.IGNORECASE)
+		cleaned = re.sub(r"\s+", " ", cleaned).strip()
+		return cleaned, commands, blocks
+
+	def _coerce_tag_value(self, value: str) -> Any:
+		text = str(value or "").strip().strip('"').strip("'")
+		if text.lower() in {"true", "false"}:
+			return text.lower() == "true"
+		try:
+			if "." in text:
+				return float(text)
+			return int(text)
+		except ValueError:
+			return text
 
 	# ------------------------------------------------------------------
 	def _dispatch_llm_commands(self, commands: List[str]) -> None:
@@ -185,12 +239,11 @@ class ResponseTagMixin:
 		scaled = None
 		if rgb:
 			scaled = tuple(max(0, min(255, int(channel * max(0.1, min(1.0, intensity))))) for channel in rgb)
+			self.client.fill_neopixel_color(*scaled)
 
 		mode = attrs.get("mode") or self._default_light_mode()
 		if isinstance(mode, str) and mode:
 			self.client.set_neopixel(mode.lower(), emotions=emotions, color=scaled)
-		elif scaled:
-			self.client.fill_neopixel_color(*scaled)
 			
 		data = dict(attrs)
 		data["palette"] = palette_key
