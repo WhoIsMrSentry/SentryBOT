@@ -1,5 +1,9 @@
 name: Pytest
 
+permissions:
+  contents: read
+  pull-requests: write
+
 on:
   push:
     branches:
@@ -32,7 +36,10 @@ jobs:
   pytest:
     name: Run pytest
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONFAULTHANDLER: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,7 +54,109 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python install_all_requirements.py --fail-fast
-          python -m pip install pytest
+          python -m pip install pytest pytest-timeout
+
+      - name: Validate test collection
+        shell: bash
+        run: |
+          python -m pytest --collect-only -q .
 
       - name: Run tests
-        run: python -m pytest -q .
+        id: tests
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q . \
+            --maxfail=1 \
+            --durations=20 \
+            --timeout=180 \
+            --timeout-method=thread \
+            -o faulthandler_timeout=120 \
+            2>&1 | tee pytest_output.txt
+          echo "exit_code=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Build run summary
+        id: summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          summary_line="$(grep -E '([0-9]+ passed|[0-9]+ failed|[0-9]+ error|[0-9]+ skipped)' pytest_output.txt | tail -n 1 || true)"
+          if [ -z "$summary_line" ]; then
+            summary_line="No pytest summary line found."
+          fi
+
+          status="FAILED"
+          icon=":x:"
+          if [ "${{ steps.tests.outputs.exit_code }}" = "0" ]; then
+            status="PASSED"
+            icon=":white_check_mark:"
+          fi
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "summary_line=$summary_line" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Pytest Result"
+            echo ""
+            echo "- Status: **$status** $icon"
+            echo "- Summary: $summary_line"
+            echo "- Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update PR latest test status section
+        if: ${{ github.event_name == 'pull_request' && always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- latest-pytest-result -->';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const status = '${{ steps.summary.outputs.status }}';
+            const icon = status === 'PASSED' ? '✅' : '❌';
+
+            let summary = '${{ steps.summary.outputs.summary_line }}';
+            if (!summary || summary.trim() === '') {
+              if (fs.existsSync('pytest_output.txt')) {
+                const lines = fs.readFileSync('pytest_output.txt', 'utf8').split(/\r?\n/).filter(Boolean);
+                summary = lines.reverse().find((line) => /(passed|failed|error|skipped)/i.test(line)) || 'No pytest summary line found.';
+              } else {
+                summary = 'No pytest summary line found.';
+              }
+            }
+
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\n## Latest Pytest Result ${icon}\n- Status: **${status}**\n- Summary: ${summary}\n- Workflow run: ${runUrl}\n- Commit: ${context.sha.slice(0, 7)}`;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find((comment) => (comment.body || '').includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
+      - name: Fail workflow when tests fail
+        if: ${{ always() && steps.tests.outputs.exit_code != '0' }}
+        run: |
+          echo "Pytest failed with exit code ${{ steps.tests.outputs.exit_code }}"
+          exit 1
