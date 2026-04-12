@@ -29,6 +29,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONFAULTHANDLER: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -78,16 +79,82 @@ jobs:
             2>&1 | tee pytest_output.txt
           code=${PIPESTATUS[0]}
           set -e
-          if [ "$code" = "134" ]; then
-            if grep -Eq '[0-9]+ passed' pytest_output.txt && ! grep -Eq '([0-9]+ failed|[0-9]+ error|FAILED|ERROR)' pytest_output.txt; then
-              echo "Detected post-test native abort (134) after successful pytest summary; normalizing to success."
-              code=0
-            fi
-          fi
           if [ "$code" = "124" ]; then
             echo "Pytest test run timed out after 1800s." | tee -a pytest_output.txt
           fi
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Diagnose abort source (exit 134)
+        if: ${{ always() && steps.tests.outputs.exit_code == '134' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p _ci_diag
+          cat > _ci_diag/sitecustomize.py <<'PY'
+          import builtins
+          import sys
+          import traceback
+
+          WATCH = {"_cffi_backend", "cffi", "sounddevice", "soundfile", "vosk", "webrtcvad"}
+          _seen = set()
+          _real_import = builtins.__import__
+
+          def _trace(name: str) -> None:
+              root = (name or "").split(".", 1)[0]
+              if name in WATCH or root in WATCH:
+                  if name in _seen:
+                      return
+                  _seen.add(name)
+                  print(f"[ci-diag] imported {name}", file=sys.stderr, flush=True)
+                  traceback.print_stack(limit=8, file=sys.stderr)
+
+          def _wrapped_import(name, globals=None, locals=None, fromlist=(), level=0):
+              mod = _real_import(name, globals, locals, fromlist, level)
+              try:
+                  _trace(str(name))
+              except Exception:
+                  pass
+              return mod
+
+          builtins.__import__ = _wrapped_import
+          PY
+
+          export PYTHONPATH="$PWD/_ci_diag${PYTHONPATH:+:$PYTHONPATH}"
+          python - <<'PY' 2>&1 | tee pytest_abort_diag_output.txt
+          import glob
+          import os
+          import subprocess
+          import sys
+
+          dirs = sorted(path for path in glob.glob("modules/*/tests") if os.path.isdir(path))
+          print(f"[ci-diag] test_dir_count={len(dirs)}", flush=True)
+
+          abort_hit = ""
+          for path in dirs:
+              print(f"[ci-diag] RUN {path}", flush=True)
+              rc = subprocess.call([sys.executable, "-m", "pytest", "-q", path], env=os.environ.copy())
+              print(f"[ci-diag] RC {rc} {path}", flush=True)
+              if rc in (134, 139):
+                  abort_hit = path
+                  print(f"[ci-diag] ABORT_REPRODUCED_IN {path}", flush=True)
+                  break
+
+          if not abort_hit:
+              print("[ci-diag] ABORT_NOT_REPRODUCED_PER_MODULE", flush=True)
+          PY
+
+          diag_line="$(grep -E '\[ci-diag\] ABORT_REPRODUCED_IN|\[ci-diag\] ABORT_NOT_REPRODUCED_PER_MODULE' pytest_abort_diag_output.txt | tail -n 1 || true)"
+          if [ -z "$diag_line" ]; then
+            diag_line="[ci-diag] no conclusive diagnostic marker"
+          fi
+          echo "$diag_line"
+
+          {
+            echo "## Abort 134 Diagnostics"
+            echo ""
+            echo "- Result: $diag_line"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build run summary
         id: summary

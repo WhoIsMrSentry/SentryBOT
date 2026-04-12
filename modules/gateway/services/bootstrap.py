@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 from typing import Dict, Any
+import os
 
 import logging
 
@@ -12,14 +13,25 @@ warnings.filterwarnings("ignore", message=".*on_event is deprecated.*", category
 logger = logging.getLogger("gateway.bootstrap")
 
 
+def _should_autostart_services() -> bool:
+    """Disable heavy background starts during pytest unless explicitly forced."""
+    force = str(os.getenv("SENTRYBOT_FORCE_AUTOSTART", "")).strip().lower()
+    if force in {"1", "true", "yes", "on"}:
+        return True
+    return not bool(os.getenv("PYTEST_CURRENT_TEST"))
+
+
 def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore
     ardu = xArduinoSerialService()
-    try:
-        ardu.start()
-    except Exception as exc:
-        logger.warning("arduino service failed to start, running degraded: %s", exc)
+    if _should_autostart_services():
+        try:
+            ardu.start()
+        except Exception as exc:
+            logger.warning("arduino service failed to start, running degraded: %s", exc)
+    else:
+        logger.info("arduino auto-start skipped under pytest")
 
     started["arduino"] = ardu
     # mount the arduino router so other modules can talk to it
@@ -72,7 +84,7 @@ def _include_vlm_bridge(app: FastAPI, started: Dict[str, object]) -> None:
                 return None
         processor.set_track_callback(_track_callback)
 
-    if str(vcfg.get("vision", {}).get("processing_mode", "local")).strip().lower() == "local":
+    if _should_autostart_services() and str(vcfg.get("vision", {}).get("processing_mode", "local")).strip().lower() == "local":
         try:
             processor.start_stream_processing()
         except Exception as exc:
@@ -100,7 +112,10 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
         pass
     # If neopixel runner is already started in-process, pass it to InteractionEngine
     eng = InteractionEngine(icfg, neo_client=started.get("neopixel"))
-    eng.start()
+    if _should_autostart_services():
+        eng.start()
+    else:
+        logger.info("interactions auto-start skipped under pytest")
     started["interactions"] = eng
     app.include_router(get_inter_router(eng))
 
@@ -141,7 +156,10 @@ def _include_wakeword(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.wakeword.xWakewordService import WakewordService  # type: ignore
     from modules.wakeword.api import get_router as get_wakeword_router  # type: ignore
     svc = WakewordService()
-    svc.start_background()
+    if _should_autostart_services():
+        svc.start_background()
+    else:
+        logger.info("wakeword auto-start skipped under pytest")
     started["wakeword"] = svc
     app.include_router(get_wakeword_router(svc))
     logger.info("module wakeword mounted")
@@ -186,7 +204,10 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
     )
     publisher = FramePublisher()
     capture = CameraCapture(cap_cfg, publisher)
-    capture.start()
+    if _should_autostart_services():
+        capture.start()
+    else:
+        logger.info("camera auto-start skipped under pytest")
     app.include_router(get_cam_router(capture, cap_cfg.fps_target), prefix="/camera", tags=["camera"])
     started["camera"] = capture
     logger.info("module camera mounted")
@@ -197,11 +218,13 @@ def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.animate.api.router import get_router as get_anim_router  # type: ignore
     ardu = started.get("arduino")
     anim = xAnimateService(serial=ardu) if ardu is not None else xAnimateService()
-    if hasattr(anim, "start"):
+    if _should_autostart_services() and hasattr(anim, "start"):
         try:
             anim.start()
         except Exception as exc:
             logger.warning("animate service failed to start, running degraded: %s", exc)
+    elif hasattr(anim, "start"):
+        logger.info("animate auto-start skipped under pytest")
     started["animate"] = anim
     app.include_router(get_anim_router(anim))
     logger.info("module animate mounted")
@@ -225,7 +248,10 @@ def _include_autonomy(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.autonomy.xAutonomyService import xAutonomyService  # type: ignore
     from modules.autonomy.api.router import get_router as get_autonomy_router  # type: ignore
     svc = xAutonomyService()
-    svc.start()
+    if _should_autostart_services():
+        svc.start()
+    else:
+        logger.info("autonomy auto-start skipped under pytest")
     started["autonomy"] = svc
     app.include_router(get_autonomy_router(svc.brain))
     logger.info("module autonomy mounted")

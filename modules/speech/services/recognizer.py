@@ -6,16 +6,11 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, Iterator, Optional
 from pathlib import Path
 
-try:
-    import webrtcvad  # optional VAD
-except Exception:
-    webrtcvad = None  # type: ignore
-
-try:
-    from vosk import Model, KaldiRecognizer
-except Exception:  # soft dependency
-    Model = None  # type: ignore
-    KaldiRecognizer = None  # type: ignore
+# Lazy-loaded native backends. Keep imports deferred to runtime paths to avoid
+# importing heavy/native libs during plain module import and smoke tests.
+webrtcvad = None  # type: ignore
+Model = None  # type: ignore
+KaldiRecognizer = None  # type: ignore
 
 logger = logging.getLogger("speech.recognizer")
 
@@ -76,8 +71,16 @@ class Recognizer:
         return mapping.get(lang, mapping.get("en", "models/vosk-en"))
 
     def _ensure_model(self):
+        global Model, KaldiRecognizer, webrtcvad
         if Model is None or KaldiRecognizer is None:
-            raise RuntimeError("vosk is not available. Install with 'pip install vosk' and download an offline model.")
+            try:
+                from vosk import Model as _Model, KaldiRecognizer as _KaldiRecognizer  # type: ignore
+            except Exception as exc:
+                raise RuntimeError(
+                    "vosk is not available. Install with 'pip install vosk' and download an offline model."
+                ) from exc
+            Model = _Model
+            KaldiRecognizer = _KaldiRecognizer
         if self._model is None:
             model_path = self._resolve_model_path()
             # resolve relative to module root
@@ -93,7 +96,13 @@ class Recognizer:
                 self._rec.SetMaxAlternatives(self.cfg.max_alternatives)
         if self.cfg.vad_enabled:
             if webrtcvad is None:
-                raise RuntimeError("VAD enabled but 'webrtcvad' is not installed. Install with 'pip install webrtcvad'.")
+                try:
+                    import webrtcvad as _webrtcvad  # type: ignore
+                except Exception as exc:
+                    raise RuntimeError(
+                        "VAD enabled but 'webrtcvad' is not installed. Install with 'pip install webrtcvad'."
+                    ) from exc
+                webrtcvad = _webrtcvad
             if self._vad is None:
                 self._vad = webrtcvad.Vad(self.cfg.vad_aggressiveness)
 
