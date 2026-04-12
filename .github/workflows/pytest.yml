@@ -44,6 +44,8 @@ jobs:
           python -m pip install --upgrade pip
           python install_all_requirements.py --fail-fast
           python -m pip install pytest pytest-timeout
+          # WebRTC VAD is optional (speech.vad.enabled=false by default) and may abort at interpreter shutdown on CI.
+          python -m pip uninstall -y webrtcvad || true
 
       - name: Validate test collection
         id: collect
@@ -113,7 +115,10 @@ jobs:
                 summary_line="Pytest completed successfully."
               fi
             else
-              summary_line="$(grep -E '([0-9]+ passed|[0-9]+ failed|[0-9]+ error|[0-9]+ skipped|timed out|FAILED|ERROR)' pytest_output.txt | tail -n 1 || true)"
+              summary_line="$(grep -E 'Fatal Python error|Aborted|dumped core|terminate called|timed out|FAILED|ERROR' pytest_output.txt | tail -n 1 || true)"
+              if [ -z "$summary_line" ]; then
+                summary_line="$(grep -E '([0-9]+ passed|[0-9]+ failed|[0-9]+ error|[0-9]+ skipped|timed out|FAILED|ERROR)' pytest_output.txt | tail -n 1 || true)"
+              fi
               if [ -z "$summary_line" ]; then
                 summary_line="Pytest test phase failed (exit code ${tests_code:-unknown})."
               fi
@@ -156,7 +161,7 @@ jobs:
               }
               if ((!summary || summary.trim() === '') && fs.existsSync('pytest_output.txt')) {
                 const lines = fs.readFileSync('pytest_output.txt', 'utf8').split(/\r?\n/).filter(Boolean);
-                summary = lines.reverse().find((line) => /(passed|failed|error|skipped|timed out)/i.test(line)) || summary;
+                summary = lines.reverse().find((line) => /(fatal python error|aborted|dumped core|terminate called|passed|failed|error|skipped|timed out)/i.test(line)) || summary;
               }
               if (!summary || summary.trim() === '') {
                 summary = 'No pytest summary line found.';
