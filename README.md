@@ -8,11 +8,11 @@
 [![PR Labeler](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/labeler.yml/badge.svg)](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/labeler.yml)
 [![Sync Labels](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/labels-sync.yml/badge.svg)](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/labels-sync.yml)
 [![Relabel Open PRs](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/relabel-open-prs.yml/badge.svg)](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/relabel-open-prs.yml)
+
 [![License](https://img.shields.io/github/license/WhoIsMrSentry/SentryBOT)](LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/WhoIsMrSentry/SentryBOT)](https://github.com/WhoIsMrSentry/SentryBOT/commits/main)
 [![Open Issues](https://img.shields.io/github/issues/WhoIsMrSentry/SentryBOT)](https://github.com/WhoIsMrSentry/SentryBOT/issues)
 [![Open PRs](https://img.shields.io/github/issues-pr/WhoIsMrSentry/SentryBOT)](https://github.com/WhoIsMrSentry/SentryBOT/pulls)
-[![GitHub Stars](https://img.shields.io/github/stars/WhoIsMrSentry/SentryBOT?style=social)](https://github.com/WhoIsMrSentry/SentryBOT/stargazers)
 
 SentryBOT; Raspberry Pi 5 + Arduino tabanlı, modüler bir yoldaş robot ve servis mimarisidir. Tüm yetenekler bağımsız modüller hâlinde tasarlanır, tek bir Gateway üzerinden tek porttan API olarak sunulur. Donanım kontrolü Arduino ile yapılırken; konuşma tanıma/TTS, LED animasyonları, kamera ve LLM/RAG gibi fonksiyonlar Pi5 üzerinde mikro servisler olarak çalışır.
 
