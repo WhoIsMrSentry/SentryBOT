@@ -46,6 +46,8 @@ jobs:
           python -m pip install pytest
           # WebRTC VAD is optional (speech.vad.enabled=false by default) and may abort at interpreter shutdown on CI.
           python -m pip uninstall -y webrtcvad || true
+          # Optional audio backends are not required for unit tests and can trigger native shutdown crashes on CI.
+          python -m pip uninstall -y sounddevice soundfile || true
 
       - name: Validate test collection
         id: collect
