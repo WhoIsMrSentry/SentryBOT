@@ -1,28 +1,28 @@
-## Ozet
-Ne degisti ve neden degisti?
+## Özet
+Ne değişti ve neden değişti?
 
-## Degisiklik tipi
-- [ ] Hata duzeltmesi
-- [ ] Yeni ozellik
+## Değişiklik tipi
+- [ ] Hata düzeltmesi
+- [ ] Yeni özellik
 - [ ] Refactor
-- [ ] Dokumantasyon guncellemesi
-- [ ] Test guncellemesi
+- [ ] Dokümantasyon güncellemesi
+- [ ] Test güncellemesi
 
-## Etkilenen moduller
-Etkilenen yollari yazin (ornek: `modules/speech`, `modules/arduino_serial`).
+## Etkilenen modüller
+Etkilenen yolları yazın (örnek: `modules/speech`, `modules/arduino_serial`).
 
-## Dogrulama
-- [ ] Lokal calistirma tamamlandi (`python run_robot.py` veya hedef modul calistirma)
-- [ ] Ilgili testler geciyor
-- [ ] Gerekli dokuman/konfig guncellemeleri yapildi
+## Doğrulama
+- [ ] Lokal çalıştırma tamamlandı (`python run_robot.py` veya hedef modül çalıştırma)
+- [ ] İlgili testler geçiyor
+- [ ] Gerekli doküman/konfig güncellemeleri yapıldı
 
-## Arduino Kontrat Kontrolu (uygunsa)
-- [ ] `modules/arduino_serial/contract.py` disinda elle Arduino payload yazilmadi
-- [ ] Kritik komutlar gerektiginde `/arduino/request` kullaniyor
-- [ ] Yeni komut ailesi builder + validator + test iceriyor
+## Arduino Kontrat Kontrolü (uygunsa)
+- [ ] `modules/arduino_serial/contract.py` dışında elle Arduino payload yazılmadı
+- [ ] Kritik komutlar gerektiğinde `/arduino/request` kullanıyor
+- [ ] Yeni komut ailesi builder + validator + test içeriyor
 
 ## Risk ve geri alma
-Olasi riskleri ve geri alma yaklasimini aciklayin.
+Olası riskleri ve geri alma yaklaşımını açıklayın.
 
-## Ilgili issue
+## İlgili issue
 Closes #<issue-number>
