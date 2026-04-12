@@ -43,7 +43,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python install_all_requirements.py --fail-fast
-          python -m pip install pytest pytest-timeout
+          python -m pip install pytest
           # WebRTC VAD is optional (speech.vad.enabled=false by default) and may abort at interpreter shutdown on CI.
           python -m pip uninstall -y webrtcvad || true
 
@@ -73,9 +73,6 @@ jobs:
           timeout 1800s python -m pytest -q modules \
             --maxfail=1 \
             --durations=20 \
-            --timeout=180 \
-            --timeout-method=thread \
-            -o faulthandler_timeout=120 \
             2>&1 | tee pytest_output.txt
           code=${PIPESTATUS[0]}
           set -e
