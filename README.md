@@ -4,6 +4,11 @@
 
 # SentryBOT – Modüler İki Ayaklı Yoldaş Robot Platformu
 
+[![Pytest](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/pytest.yml/badge.svg?branch=main)](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/pytest.yml)
+[![PR Labeler](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/labeler.yml/badge.svg)](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/labeler.yml)
+[![Sync Labels](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/labels-sync.yml/badge.svg)](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/labels-sync.yml)
+[![Relabel Open PRs](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/relabel-open-prs.yml/badge.svg)](https://github.com/WhoIsMrSentry/SentryBOT/actions/workflows/relabel-open-prs.yml)
+
 SentryBOT; Raspberry Pi 5 + Arduino tabanlı, modüler bir yoldaş robot ve servis mimarisidir. Tüm yetenekler bağımsız modüller hâlinde tasarlanır, tek bir Gateway üzerinden tek porttan API olarak sunulur. Donanım kontrolü Arduino ile yapılırken; konuşma tanıma/TTS, LED animasyonları, kamera ve LLM/RAG gibi fonksiyonlar Pi5 üzerinde mikro servisler olarak çalışır.
 
 Ana hedefler:
