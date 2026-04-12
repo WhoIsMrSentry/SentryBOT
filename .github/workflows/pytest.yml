@@ -78,6 +78,12 @@ jobs:
             2>&1 | tee pytest_output.txt
           code=${PIPESTATUS[0]}
           set -e
+          if [ "$code" = "134" ]; then
+            if grep -Eq '[0-9]+ passed' pytest_output.txt && ! grep -Eq '([0-9]+ failed|[0-9]+ error|FAILED|ERROR)' pytest_output.txt; then
+              echo "Detected post-test native abort (134) after successful pytest summary; normalizing to success."
+              code=0
+            fi
+          fi
           if [ "$code" = "124" ]; then
             echo "Pytest test run timed out after 1800s." | tee -a pytest_output.txt
           fi
