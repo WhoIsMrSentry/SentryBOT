@@ -1,4 +1,5 @@
 import logging
+import os
 import time
 from typing import Dict, Any, Optional
 
@@ -42,6 +43,14 @@ class AgentOrchestrator:
         self.num_ctx = agent_cfg.get("num_ctx", 4096)
         self.cooldown = agent_cfg.get("cooldown_s", 1.0)
         self.max_steps = agent_cfg.get("max_steps", 10)
+        self.ollama_base_url = self._resolve_ollama_base_url(agent_cfg)
+
+        self.ollama_client = None
+        if ollama:
+            try:
+                self.ollama_client = ollama.Client(host=self.ollama_base_url)
+            except Exception as exc:
+                logger.warning("Ollama client init failed for host %s: %s", self.ollama_base_url, exc)
 
         # Subsystems
         self.world_state = WorldState()
@@ -100,9 +109,23 @@ class AgentOrchestrator:
             self.chat_history = self.chat_history[-limit:]
 
     def _get_active_persona_model(self) -> str:
-        """Fetch the current model name from the autonomy/ollama module."""
-        # fallback to config if we can't determine it
-        return self.config.get("llm", {}).get("model", "qwen3.5:2b")
+        """Resolve the model for the native tool loop."""
+        llm_model = str(self.config.get("llm", {}).get("model", "")).strip()
+        if llm_model:
+            return llm_model
+        return str(self.model)
+
+    def _resolve_ollama_base_url(self, agent_cfg: Dict[str, Any]) -> str:
+        llm_cfg = self.config.get("llm", {}) or {}
+        value = (
+            llm_cfg.get("base_url")
+            or agent_cfg.get("ollama_base_url")
+            or os.getenv("AGENT_OLLAMA_BASE_URL")
+            or os.getenv("OLLAMA_BASE_URL")
+            or os.getenv("OLLAMA_HOST")
+            or "http://127.0.0.1:11435"
+        )
+        return str(value).strip().rstrip("/")
 
     def step(self, user_prompt: str = "") -> Optional[Dict[str, Any]]:
         """
@@ -147,15 +170,26 @@ class AgentOrchestrator:
             step_idx = 0
             for step_idx in range(self.max_steps):
                 try:
-                    response = ollama.chat(
-                        model=active_model,
-                        messages=messages,
-                        tools=tools,
-                        options={
-                            "temperature": self.temperature,
-                            "num_ctx": self.num_ctx
-                        }
-                    )
+                    if self.ollama_client is not None:
+                        response = self.ollama_client.chat(
+                            model=active_model,
+                            messages=messages,
+                            tools=tools,
+                            options={
+                                "temperature": self.temperature,
+                                "num_ctx": self.num_ctx
+                            }
+                        )
+                    else:
+                        response = ollama.chat(
+                            model=active_model,
+                            messages=messages,
+                            tools=tools,
+                            options={
+                                "temperature": self.temperature,
+                                "num_ctx": self.num_ctx
+                            }
+                        )
                 except Exception as e:
                     logger.error(f"LLM tool loop crashed: {e}")
                     final_text = "System fault during cognitive cycle."

@@ -1,0 +1,276 @@
+name: Pytest
+
+permissions:
+  contents: read
+  pull-requests: write
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - '**/*.py'
+      - 'pytest.ini'
+      - 'install_all_requirements.py'
+      - 'modules/**/requirements.txt'
+      - '.github/workflows/**'
+  pull_request:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    name: Run pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PYTHONUNBUFFERED: "1"
+      PYTHONFAULTHANDLER: "1"
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python install_all_requirements.py --fail-fast
+          python -m pip install pytest
+          # WebRTC VAD is optional (speech.vad.enabled=false by default) and may abort at interpreter shutdown on CI.
+          python -m pip uninstall -y webrtcvad || true
+          # Optional audio backends are not required for unit tests and can trigger native shutdown crashes on CI.
+          python -m pip uninstall -y sounddevice soundfile || true
+
+      - name: Validate test collection
+        id: collect
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          timeout 420s python -m pytest --collect-only -vv modules 2>&1 | tee pytest_collect_output.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          if [ "$code" = "124" ]; then
+            echo "Pytest collection timed out after 420s." | tee -a pytest_collect_output.txt
+          fi
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests
+        id: tests
+        if: ${{ steps.collect.outputs.exit_code == '0' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          set +e
+          timeout 1800s python -m pytest -q modules \
+            --maxfail=1 \
+            --durations=20 \
+            2>&1 | tee pytest_output.txt
+          code=${PIPESTATUS[0]}
+          set -e
+          if [ "$code" = "124" ]; then
+            echo "Pytest test run timed out after 1800s." | tee -a pytest_output.txt
+          fi
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Diagnose abort source (exit 134)
+        if: ${{ always() && steps.tests.outputs.exit_code == '134' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          mkdir -p _ci_diag
+          cat > _ci_diag/sitecustomize.py <<'PY'
+          import builtins
+          import sys
+          import traceback
+
+          WATCH = {"_cffi_backend", "cffi", "sounddevice", "soundfile", "vosk", "webrtcvad"}
+          _seen = set()
+          _real_import = builtins.__import__
+
+          def _trace(name: str) -> None:
+              root = (name or "").split(".", 1)[0]
+              if name in WATCH or root in WATCH:
+                  if name in _seen:
+                      return
+                  _seen.add(name)
+                  print(f"[ci-diag] imported {name}", file=sys.stderr, flush=True)
+                  traceback.print_stack(limit=8, file=sys.stderr)
+
+          def _wrapped_import(name, globals=None, locals=None, fromlist=(), level=0):
+              mod = _real_import(name, globals, locals, fromlist, level)
+              try:
+                  _trace(str(name))
+              except Exception:
+                  pass
+              return mod
+
+          builtins.__import__ = _wrapped_import
+          PY
+
+          export PYTHONPATH="$PWD/_ci_diag${PYTHONPATH:+:$PYTHONPATH}"
+          python - <<'PY' 2>&1 | tee pytest_abort_diag_output.txt
+          import glob
+          import os
+          import subprocess
+          import sys
+
+          dirs = sorted(path for path in glob.glob("modules/*/tests") if os.path.isdir(path))
+          print(f"[ci-diag] test_dir_count={len(dirs)}", flush=True)
+
+          abort_hit = ""
+          for path in dirs:
+              print(f"[ci-diag] RUN {path}", flush=True)
+              rc = subprocess.call([sys.executable, "-m", "pytest", "-q", path], env=os.environ.copy())
+              print(f"[ci-diag] RC {rc} {path}", flush=True)
+              if rc in (134, 139):
+                  abort_hit = path
+                  print(f"[ci-diag] ABORT_REPRODUCED_IN {path}", flush=True)
+                  break
+
+          if not abort_hit:
+              print("[ci-diag] ABORT_NOT_REPRODUCED_PER_MODULE", flush=True)
+          PY
+
+          diag_line="$(grep -E '\[ci-diag\] ABORT_REPRODUCED_IN|\[ci-diag\] ABORT_NOT_REPRODUCED_PER_MODULE' pytest_abort_diag_output.txt | tail -n 1 || true)"
+          if [ -z "$diag_line" ]; then
+            diag_line="[ci-diag] no conclusive diagnostic marker"
+          fi
+          echo "$diag_line"
+
+          {
+            echo "## Abort 134 Diagnostics"
+            echo ""
+            echo "- Result: $diag_line"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build run summary
+        id: summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          collect_code='${{ steps.collect.outputs.exit_code }}'
+          tests_code='${{ steps.tests.outputs.exit_code }}'
+          status="FAILED"
+          icon=":x:"
+          stage="collection"
+          summary_line=""
+
+          if [ -z "$collect_code" ]; then
+            collect_code="1"
+          fi
+
+          if [ "$collect_code" != "0" ]; then
+            summary_line="$(grep -E 'timed out|error|failed|Traceback|SystemExit|interrupted|collect' pytest_collect_output.txt | tail -n 1 || true)"
+            if [ -z "$summary_line" ]; then
+              summary_line="Pytest collection failed (exit code $collect_code)."
+            fi
+          else
+            stage="tests"
+            if [ "$tests_code" = "0" ]; then
+              status="PASSED"
+              icon=":white_check_mark:"
+              summary_line="$(grep -E '([0-9]+ passed|[0-9]+ failed|[0-9]+ error|[0-9]+ skipped)' pytest_output.txt | tail -n 1 || true)"
+              if [ -z "$summary_line" ]; then
+                summary_line="Pytest completed successfully."
+              fi
+            else
+              summary_line="$(grep -E 'Fatal Python error|Aborted|dumped core|terminate called|timed out|FAILED|ERROR' pytest_output.txt | tail -n 1 || true)"
+              if [ -z "$summary_line" ]; then
+                summary_line="$(grep -E '([0-9]+ passed|[0-9]+ failed|[0-9]+ error|[0-9]+ skipped|timed out|FAILED|ERROR)' pytest_output.txt | tail -n 1 || true)"
+              fi
+              if [ -z "$summary_line" ]; then
+                summary_line="Pytest test phase failed (exit code ${tests_code:-unknown})."
+              fi
+            fi
+          fi
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
+          echo "summary_line=$summary_line" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Pytest Result"
+            echo ""
+            echo "- Status: **$status** $icon"
+            echo "- Stage: $stage"
+            echo "- Summary: $summary_line"
+            echo "- Workflow run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update PR latest test status section
+        if: ${{ github.event_name == 'pull_request' && always() }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- latest-pytest-result -->';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const issue_number = context.payload.pull_request.number;
+
+            const status = '${{ steps.summary.outputs.status }}';
+            const stage = '${{ steps.summary.outputs.stage }}';
+            const icon = status === 'PASSED' ? '✅' : '❌';
+
+            let summary = '${{ steps.summary.outputs.summary_line }}';
+            if (!summary || summary.trim() === '') {
+              if (fs.existsSync('pytest_collect_output.txt')) {
+                const lines = fs.readFileSync('pytest_collect_output.txt', 'utf8').split(/\r?\n/).filter(Boolean);
+                summary = lines.reverse().find((line) => /(timed out|failed|error|collect|traceback|systemexit)/i.test(line)) || summary;
+              }
+              if ((!summary || summary.trim() === '') && fs.existsSync('pytest_output.txt')) {
+                const lines = fs.readFileSync('pytest_output.txt', 'utf8').split(/\r?\n/).filter(Boolean);
+                summary = lines.reverse().find((line) => /(fatal python error|aborted|dumped core|terminate called|passed|failed|error|skipped|timed out)/i.test(line)) || summary;
+              }
+              if (!summary || summary.trim() === '') {
+                summary = 'No pytest summary line found.';
+              } else {
+                summary = String(summary).trim();
+              }
+            }
+
+            const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${context.runId}`;
+            const body = `${marker}\n## Latest Pytest Result ${icon}\n- Status: **${status}**\n- Stage: ${stage}\n- Summary: ${summary}\n- Workflow run: ${runUrl}\n- Commit: ${context.sha.slice(0, 7)}`;
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            });
+
+            const existing = comments.find((comment) => (comment.body || '').includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              });
+            }
+
+      - name: Fail workflow when tests fail
+        if: ${{ always() && (steps.collect.outputs.exit_code != '0' || steps.tests.outputs.exit_code != '0') }}
+        run: |
+          echo "Pytest failed. collect_exit=${{ steps.collect.outputs.exit_code }} tests_exit=${{ steps.tests.outputs.exit_code }}"
+          exit 1

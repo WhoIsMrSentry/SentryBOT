@@ -31,17 +31,61 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
             cfg[k].update(v)
         else:
             cfg[k] = v
-    # If the selected provider requires secrets from a .env file, load them
-    provider = str(cfg.get("llm", {}).get("provider", "ollama")).strip().lower() or "ollama"
-    if provider in {"google", "google_ai_studio", "gemini"}:
-        # Look for an .env file inside the modules/ollama package directory
-        env_path = os.path.join(os.path.dirname(__file__), ".env")
-        try:
-            _load_env_file(env_path)
-        except Exception:
-            # Don't fail configuration load if env parsing has issues
-            pass
+
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    try:
+        _load_env_file(env_path)
+    except Exception:
+        # Don't fail configuration load if env parsing has issues
+        pass
+
+    _apply_env_overrides(cfg)
     return cfg
+
+
+def _first_env(*keys: str) -> str:
+    for key in keys:
+        value = os.environ.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _to_float(raw: str, fallback: float) -> float:
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _apply_env_overrides(cfg: Dict[str, Any]) -> None:
+    llm_cfg = cfg.setdefault("llm", {})
+    ollama_cfg = cfg.setdefault("ollama", {})
+    google_cfg = cfg.setdefault("google_ai_studio", {})
+
+    provider = _first_env("LLM_PROVIDER", "OLLAMA_PROVIDER")
+    if provider:
+        llm_cfg["provider"] = provider
+
+    base_url = _first_env("OLLAMA_BASE_URL", "OLLAMA_HOST")
+    if base_url:
+        ollama_cfg["base_url"] = base_url
+
+    model = _first_env("OLLAMA_MODEL")
+    if model:
+        ollama_cfg["model"] = model
+
+    request_timeout = _first_env("OLLAMA_REQUEST_TIMEOUT")
+    if request_timeout:
+        ollama_cfg["request_timeout"] = _to_float(request_timeout, 60.0)
+
+    google_key = _first_env("GOOGLE_API_KEY")
+    if google_key:
+        google_cfg["api_key"] = google_key
+
+    google_model = _first_env("GOOGLE_MODEL")
+    if google_model:
+        google_cfg["model"] = google_model
 
 
 def _load_env_file(env_path: str) -> None:
