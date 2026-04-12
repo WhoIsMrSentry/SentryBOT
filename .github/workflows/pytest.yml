@@ -52,7 +52,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          timeout 420s python -m pytest --collect-only -vv . 2>&1 | tee pytest_collect_output.txt
+          timeout 420s python -m pytest --collect-only -vv modules 2>&1 | tee pytest_collect_output.txt
           code=${PIPESTATUS[0]}
           set -e
           if [ "$code" = "124" ]; then
@@ -68,7 +68,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          timeout 1800s python -m pytest -q . \
+          timeout 1800s python -m pytest -q modules \
             --maxfail=1 \
             --durations=20 \
             --timeout=180 \
