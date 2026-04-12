@@ -288,10 +288,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define ULTRA_ENABLED 1
 #endif
 #ifndef ULTRA_TRIG_PIN
-#define ULTRA_TRIG_PIN 3
+#define ULTRA_TRIG_PIN 4
 #endif
 #ifndef ULTRA_ECHO_PIN
-#define ULTRA_ECHO_PIN 2
+#define ULTRA_ECHO_PIN 5
 #endif
 #ifndef ULTRA_MEASURE_INTERVAL_MS
 #define ULTRA_MEASURE_INTERVAL_MS 50
@@ -317,10 +317,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define LASER_ENABLED 1
 #endif
 #ifndef LASER1_PIN
-#define LASER1_PIN 5
+#define LASER1_PIN 6
 #endif
 #ifndef LASER2_PIN
-#define LASER2_PIN 4
+#define LASER2_PIN 7
 #endif
 #ifndef LASER_ACTIVE_HIGH
 #define LASER_ACTIVE_HIGH 1  // 1: HIGH opens laser, 0: LOW opens laser
@@ -348,10 +348,10 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define CUTE_BUZZER_LIB_ENABLED 0
 #endif
 #ifndef BUZZER_LOUD_PIN
-#define BUZZER_LOUD_PIN 7 // Hardware mapping: loud -> pin 7
+#define BUZZER_LOUD_PIN 2 // Hardware mapping: loud -> pin 2
 #endif
 #ifndef BUZZER_QUIET_PIN
-#define BUZZER_QUIET_PIN 6 // Hardware mapping: quiet -> pin 6
+#define BUZZER_QUIET_PIN 3 // Hardware mapping: quiet -> pin 3
 #endif
 #ifndef BUZZER_USE_TONE
 // 1: use tone() with freq; 0: simple digital on/off

@@ -21,11 +21,19 @@ Ollama artık robotu aşağıdaki aksiyon türleri ile kontrol edebilir:
 - `stand` / `sit` / `home`: Pozisyon komutları.
 - GET /ollama/persona
 - GET /ollama/personas
+- GET /ollama/models
+- POST /ollama/model/add (name, set_default)
 - POST /ollama/persona/select (name)
 - POST /ollama/persona/create_from_url (name, url)
 
 ## Config
 See `modules/ollama/config/config.yml`.
+
+`.env` overrides are supported via `modules/ollama/.env`.
+Useful keys:
+- `LLM_PROVIDER=ollama`
+- `OLLAMA_BASE_URL=http://<external-ip>:11435`
+- `OLLAMA_MODEL=llama3.2:3b`
 
 Personas now live as folders: `modules/ollama/config/personalities/<name>/{persona.txt,urls.txt}`.
 

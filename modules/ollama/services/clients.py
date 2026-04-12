@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import os
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
@@ -8,6 +9,9 @@ try:
     from ollama import Client  # type: ignore
 except Exception:  # pragma: no cover
     Client = None  # type: ignore
+
+
+logger = logging.getLogger("ollama.clients")
 
 
 class OllamaClient:
@@ -36,6 +40,44 @@ class OllamaClient:
         except Exception as e:
             logger.error(f"Failed to create Ollama model '{name}': {e}")
             return False
+
+    def pull_model(self, name: str) -> bool:
+        """Pull model weights from registry into the target Ollama host."""
+        model_name = str(name or "").strip()
+        if not model_name:
+            return False
+
+        url = f"{self.base_url}/api/pull"
+        payload = {"name": model_name, "stream": False}
+        try:
+            resp = requests.post(url, json=payload, timeout=float(self.timeout * 4))
+            resp.raise_for_status()
+            logger.info("Ollama model '%s' pulled successfully.", model_name)
+            return True
+        except Exception as e:
+            logger.error("Failed to pull Ollama model '%s': %s", model_name, e)
+            return False
+
+    def list_models(self) -> List[str]:
+        """List model names available on the target Ollama host."""
+        url = f"{self.base_url}/api/tags"
+        try:
+            resp = requests.get(url, timeout=float(self.timeout))
+            resp.raise_for_status()
+            data = resp.json() if resp.content else {}
+        except Exception as e:
+            logger.error("Failed to list Ollama models: %s", e)
+            return []
+
+        items = data.get("models", []) if isinstance(data, dict) else []
+        names: List[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "")).strip()
+            if name:
+                names.append(name)
+        return names
 
     def chat(
         self,
@@ -100,6 +142,12 @@ class LLMClientProtocol(Protocol):
     def create_model(self, name: str, modelfile: str) -> bool:
         ...
 
+    def pull_model(self, name: str) -> bool:
+        ...
+
+    def list_models(self) -> List[str]:
+        ...
+
 
 class GoogleAIStudioClient:
     """Google AI Studio (Gemini) REST istemcisi."""
@@ -141,6 +189,13 @@ class GoogleAIStudioClient:
         """Gemini doesn't support local Modelfile creation; skip or mock."""
         logger.warning("create_model is not supported on Google AI Studio.")
         return False
+
+    def pull_model(self, name: str) -> bool:
+        logger.warning("pull_model is not supported on Google AI Studio.")
+        return False
+
+    def list_models(self) -> List[str]:
+        return []
 
     def chat(
         self,
