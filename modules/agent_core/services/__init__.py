@@ -10,6 +10,7 @@ from .world_state import WorldState
 from .safety_filter import ActionSafetyFilter
 from .sensor_loop import SensorFeedbackLoop
 from .idle_behavior import IdleBehaviorSystem
+from .tri_layer import SubAgentProfile, TriLayerRouter, build_subagent_profiles
 
 __all__ = [
     "AgentOrchestrator",
@@ -20,4 +21,7 @@ __all__ = [
     "ActionSafetyFilter",
     "SensorFeedbackLoop",
     "IdleBehaviorSystem",
+    "SubAgentProfile",
+    "TriLayerRouter",
+    "build_subagent_profiles",
 ]
