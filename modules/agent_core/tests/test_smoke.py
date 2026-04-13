@@ -90,3 +90,7 @@ def test_tool_registry_schemas():
     assert "get_sensor_data" in names
     assert "get_location" in names
     assert "pathfind" in names
+
+    filtered = tr.get_tool_schema(include=["move_head", "search_memory", "unknown_tool"])
+    filtered_names = [t["function"]["name"] for t in filtered]
+    assert filtered_names == ["move_head", "search_memory"]
