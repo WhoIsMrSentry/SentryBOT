@@ -2,7 +2,14 @@
 
 ## Genel Bakış
 
-Agent Core, SentryBOT'un otonom karar verme, çevreyi algılama ve alet (tool) kullanma katmanıdır. Geleneksel ve katı yapısal çıktılar (structured outputs) yerine, saf bir **Native Tool Calling (ReAct)** döngüsü kullanarak LLM'in ardışık olarak aletleri kullanıp mantık yürütmesine olanak tanır. AutonomyBrain içine subsistem olarak entegre olur.
+Agent Core, SentryBOT'un otonom karar verme, cevreyi algilama ve tool kullanma katmanidir.
+Yeni surumde mimari **3 katmanli agent** modeline tasinmistir:
+
+1. Router/Planner katmani
+2. Modul bazli Sub-Agent katmani
+3. Main Persona (final cevap) katmani
+
+Bu uc katman da tek Ollama modeli uzerinden calisir, sadece sorumluluklari farklidir.
 
 ## Modül Yapısı
 
@@ -21,31 +28,43 @@ modules/agent_core/
 │   ├── tools.py              # LLM araç tanımları (10 adet Native Tool)
 │   ├── world_state.py        # Sensör durumu (Pil, ultrasonik vb.)
 │   ├── sensor_loop.py        # Arka plan sensör okuyucu (Thread)
-│   └── idle_behavior.py      # Boşta kalma nefes efekti
+│   ├── idle_behavior.py      # Boşta kalma nefes efekti
+│   └── tri_layer.py          # Router + sub-agent profil tanimlari
 ├── architecture_agent_core.md# Mimari dokümantasyon
 └── README.md                 # Genel bilgi
 ```
 
-## Veri Akışı (Native ReAct Loop)
+## Veri Akisi (Tri-Layer Agent Flow)
 
 ```mermaid
 flowchart TD
     MIC[Mikrofon / Sensörler] --> AB[AutonomyBrain]
     AB -->|agent.step| AO[AgentOrchestrator]
-    
+
     subgraph AgentCore["Agent Core Pipeline"]
-        AO --> WS[WorldState (Farkındalık)]
-        WS --> LLM[LLM Reasoning (Ollama)]
-        
-        LLM <-->|10-Adımlı ReAct Tool Döngüsü| TR[ToolRegistry]
-        TR --> SF[SafetyFilter (Korumalar)]
-        
-        TR --> MEM[EpisodicMemory (Kayıt / Arama)]
-        TR --> SLAM[TopologicalMap (Yol Bulma)]
+        AO --> WS[WorldState]
+        WS --> L1[Layer 1: Router / Planner]
+
+        L1 --> L2A[Layer 2: Module Sub-Agent A]
+        L1 --> L2B[Layer 2: Module Sub-Agent B]
+        L1 --> L2N[Layer 2: Module Sub-Agent N]
+
+        L2A <-->|Tool Calls| TR[ToolRegistry]
+        L2B <-->|Tool Calls| TR
+        L2N <-->|Tool Calls| TR
+
+        TR --> SF[SafetyFilter]
+        TR --> MEM[EpisodicMemory]
+        TR --> SLAM[TopologicalMap]
+
+        L2A --> L3[Layer 3: Main Persona Finalizer]
+        L2B --> L3
+        L2N --> L3
     end
-    
+
+    L3 --> RESP[Final User Response]
     SF --> HAL[HAL Layer (HTTP via ServiceClient)]
-    
+
     subgraph HALLayer["Hardware Abstraction Layer"]
         HAL --> SS[ServoService (move_head)]
         HAL --> LS[LightsService (set_lights)]
@@ -59,11 +78,19 @@ flowchart TD
 
 | Modül | Agent Core ile İlişki |
 |---|---|
-| `autonomy` | Agent Core'u başlatır. Günlük sohbeti yönetir, karmaşık işlerde `agent.step()`'i çağırır. |
-| `ollama` | Agent döngüsü (`ollama.chat(tools=...)`) için doğrudan Python kütüphanesi kullanılır. |
-| `hardware` | `ServiceClient` üzerinden HTTP ile tetiklenir, Agent Core donanıma doğrudan bağlanmaz. |
+| `autonomy` | Agent Core'u baslatir ve `agent.step()` cagrilarini yonetir. |
+| `ollama` | Uc katmanin da ortak LLM backend'idir (tek model stratejisi). |
+| `hardware` | Tool cagrilari SafetyFilter sonrasinda ServiceClient uzerinden gider. |
+| `camera` / `vlm_bridge` | Gorsel baglami sub-agent katmanina saglar. |
+| `speech` / `speak` / `wakeword` | Ses giris-cikis ve uyandirici akislarina domain uzmanligi verir. |
+| `gateway` | Agent Core API endpoint'lerini dis sisteme acar. |
 
 ## Tasarım Kararları
 
-### Neden Native Tool Calling?
-Eski mimari, LLM'i sabit bir JSON objesi üretmeye (`validator` -> `planner` -> `executor` -> `router`) zorluyordu. Bu durum ajanın doğal mantık yürütmesini ve esnekliğini kısıtlıyordu (kilitliyordu). Yeni yapıda ajan `tools.py` içerisindeki Python fonksiyonlarını (örn: `move_head`, `search_memory`) bir döngü içerisinde defalarca kullanabilir ve görevleri daha özgür bir şekilde yerine getirir.
+### Neden Tri-Layer + Native Tool Calling?
+Eski tek-katmanli tool loop, farkli domain sorumluluklarini ayni promptta biriktiriyordu.
+Yeni yapida router istegi domain sub-agent'lara boler, final persona katmani ise tek bir tutarli cevap uretir.
+Bu sayede:
+- Modul bazli uzmanlasma artar.
+- Prompt karmaşasi azalir.
+- Tek model kullanildigi icin operasyonel maliyet ve deployment sadeligi korunur.

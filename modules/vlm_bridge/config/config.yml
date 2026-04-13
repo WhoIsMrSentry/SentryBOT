@@ -3,7 +3,7 @@ server:
   port: 8099
 
 vision:
-  processing_mode: local  # local | remote
+  processing_mode: remote  # local | remote
   # camera_source: "http://localhost:8000/video_feed" # Potential future: pull from camera module HTTP
   camera_source: 0  # Local webcam when in local mode
   confidence_threshold: 0.5
@@ -57,9 +57,22 @@ robot:
   host: "localhost"  # Change to Robot IP when running remotely
 
 ollama:
-  endpoint: "http://localhost:8080/ollama/chat"
-  model: "llama3.2:3b"
+  endpoint: "http://localhost:11434/api/chat"
+  model: "gemma-4-26B-A4B"
   timeout: 5.0
+
+llm:
+  provider: "ollama"                 # ollama | google_ai_studio
+  single_model_mode: true             # true => ollama.model, VLM ve agent icin ortak model
+  primary_model: "gemma-4-26B-A4B"
+  clm_fallback_enabled: true
+  clm_fallback_model: "qwen3.5:8b"   # primary model uygun degilse veya hata alirsa
+  fallback_on_missing_model: true
+  fallback_on_error: true
+
+# Not:
+# - Tek model politikasinda VLM primary model tum sohbet/agent akislarina kaynaklik eder.
+# - Google provider secilirse VLM bridge llm_client, ollama modulu provider ayarini referans alir.
 
 speak:
   endpoint: "http://localhost:8083/speak/say"
@@ -70,6 +83,6 @@ translation:
   target_lang: tr
   timeout: 1.5
 actions:
-  endpoint: "http://localhost:8100/autonomy/apply_actions"
+  endpoint: "http://localhost:8080/autonomy/apply_actions"
   default_apply: true
   timeout: 1.5

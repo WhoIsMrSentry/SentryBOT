@@ -130,6 +130,41 @@ def test_generate_text_skips_chat_when_google_key_missing(monkeypatch):
     assert called["post"] == 0
 
 
+def test_generate_text_skips_direct_ollama_endpoint_when_google_provider(monkeypatch):
+    called = {"post": 0}
+
+    class _Httpx:
+        @staticmethod
+        def Client(timeout):
+            class _C:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb):
+                    return False
+
+                def post(self, url, json=None, params=None):
+                    called["post"] += 1
+                    return _DummyResponse(200, {"message": {"content": "olmamalı"}})
+
+            return _C()
+
+    monkeypatch.setattr("modules.vlm_bridge.services.llm_client.httpx", _Httpx, raising=False)
+    monkeypatch.setattr(
+        "modules.vlm_bridge.services.llm_client._provider_hint",
+        lambda: {"provider": "google_ai_studio", "google_key_ready": True},
+        raising=False,
+    )
+
+    out = generate_text(
+        "deneme",
+        {"endpoint": "http://remote-ollama-host:11434/api/chat", "model": "gemma-4-26B-A4B"},
+    )
+
+    assert out is None
+    assert called["post"] == 0
+
+
 def test_generate_text_chat_uses_cooldown_after_failure(monkeypatch):
     recorder = {"post_calls": 0}
 
@@ -168,3 +203,62 @@ def test_generate_text_chat_uses_cooldown_after_failure(monkeypatch):
     assert first is None
     assert second is None
     assert recorder["post_calls"] == 1
+
+
+def test_generate_text_direct_api_chat_uses_model_payload(monkeypatch):
+    recorder = {}
+
+    class _Httpx:
+        @staticmethod
+        def Client(timeout):
+            return _DummyClient(
+                recorder,
+                _DummyResponse(200, {"message": {"content": "dogrudan chat"}}),
+                timeout,
+            )
+
+    monkeypatch.setattr("modules.vlm_bridge.services.llm_client.httpx", _Httpx, raising=False)
+    monkeypatch.setattr(
+        "modules.vlm_bridge.services.llm_client._provider_hint",
+        lambda: {"provider": "ollama", "google_key_ready": True},
+        raising=False,
+    )
+
+    out = generate_text(
+        "sahneyi ozetle",
+        {"endpoint": "http://remote-ollama-host:11434/api/chat", "model": "gemma-4-26B-A4B"},
+        timeout=2.0,
+    )
+
+    assert out == "dogrudan chat"
+    assert recorder["url"].endswith("/api/chat")
+    assert recorder["json"]["model"] == "gemma-4-26B-A4B"
+    assert recorder["json"]["messages"][0]["role"] == "user"
+
+
+def test_generate_text_normalizes_api_tags_to_api_chat(monkeypatch):
+    recorder = {}
+
+    class _Httpx:
+        @staticmethod
+        def Client(timeout):
+            return _DummyClient(
+                recorder,
+                _DummyResponse(200, {"message": {"content": "normalized"}}),
+                timeout,
+            )
+
+    monkeypatch.setattr("modules.vlm_bridge.services.llm_client.httpx", _Httpx, raising=False)
+    monkeypatch.setattr(
+        "modules.vlm_bridge.services.llm_client._provider_hint",
+        lambda: {"provider": "ollama", "google_key_ready": True},
+        raising=False,
+    )
+
+    out = generate_text(
+        "deneme",
+        {"endpoint": "http://remote-ollama-host:11434/api/tags", "model": "gemma-4-26B-A4B"},
+    )
+
+    assert out == "normalized"
+    assert recorder["url"].endswith("/api/chat")

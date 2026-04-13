@@ -16,6 +16,11 @@ def get_router(agent) -> APIRouter:
         result = agent.step(query)
         return result or {"text": "", "thoughts": "idle", "actions": []}
 
+    @router.post("/route_preview")
+    def route_preview(query: str = Body(embed=True)):
+        """Tri-layer router'in hangi sub-agentlari sececegini onizle."""
+        return agent.route_preview(query)
+
     @router.get("/world_state")
     def world_state():
         """Anlık dünya durumunu döndür."""

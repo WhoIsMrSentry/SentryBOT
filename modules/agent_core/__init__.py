@@ -9,6 +9,7 @@ from .services.tools import ToolRegistry
 from .services.world_state import WorldState
 from .services.sensor_loop import SensorFeedbackLoop
 from .services.idle_behavior import IdleBehaviorSystem
+from .services.tri_layer import SubAgentProfile, TriLayerRouter, build_subagent_profiles
 
 __all__ = [
     "AgentOrchestrator",
@@ -19,4 +20,7 @@ __all__ = [
     "WorldState",
     "SensorFeedbackLoop",
     "IdleBehaviorSystem",
+    "SubAgentProfile",
+    "TriLayerRouter",
+    "build_subagent_profiles",
 ]

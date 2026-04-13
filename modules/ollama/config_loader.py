@@ -5,8 +5,8 @@ import yaml
 
 DEFAULT_CFG = {
     "server": {"host": "0.0.0.0", "port": 8099},
-    "llm": {"provider": "ollama"},
-    "ollama": {"base_url": "http://localhost:11435", "model": "llama3.2:3b", "request_timeout": 60.0},
+    "llm": {"provider": "ollama", "single_model_mode": False},
+    "ollama": {"base_url": "http://localhost:11434", "model": "gemma-4-26B-A4B", "request_timeout": 60.0},
     "google_ai_studio": {
         "api_key": "",
         "model": "gemini-1.5-flash",
@@ -15,6 +15,35 @@ DEFAULT_CFG = {
     },
     "persona": {"default": "sentry", "dir": "modules/ollama/config/personalities"},
 }
+
+
+def _load_vlm_primary_hint() -> Dict[str, Any]:
+    path = os.environ.get("VLM_CFG", "modules/vlm_bridge/config/config.yml")
+    if not path or not os.path.exists(path):
+        return {}
+
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+    except Exception:
+        return {}
+
+    if not isinstance(raw, dict):
+        return {}
+
+    llm_cfg = raw.get("llm", {}) if isinstance(raw.get("llm", {}), dict) else {}
+    ollama_cfg = raw.get("ollama", {}) if isinstance(raw.get("ollama", {}), dict) else {}
+
+    if not bool(llm_cfg.get("single_model_mode", False)):
+        return {}
+
+    model = str(llm_cfg.get("primary_model") or ollama_cfg.get("model") or "").strip()
+    provider = str(llm_cfg.get("provider", "")).strip()
+    return {
+        "single_model_mode": True,
+        "model": model,
+        "provider": provider,
+    }
 
 
 def load_config(config_path: str | None = None) -> Dict[str, Any]:
@@ -62,6 +91,17 @@ def _apply_env_overrides(cfg: Dict[str, Any]) -> None:
     llm_cfg = cfg.setdefault("llm", {})
     ollama_cfg = cfg.setdefault("ollama", {})
     google_cfg = cfg.setdefault("google_ai_studio", {})
+
+    vlm_hint = _load_vlm_primary_hint()
+    if bool(vlm_hint.get("single_model_mode", False)):
+        llm_cfg["single_model_mode"] = True
+        hinted_provider = str(vlm_hint.get("provider", "")).strip()
+        hinted_model = str(vlm_hint.get("model", "")).strip()
+
+        if hinted_provider and not _first_env("LLM_PROVIDER", "OLLAMA_PROVIDER"):
+            llm_cfg["provider"] = hinted_provider
+        if hinted_model and not _first_env("OLLAMA_MODEL"):
+            ollama_cfg["model"] = hinted_model
 
     provider = _first_env("LLM_PROVIDER", "OLLAMA_PROVIDER")
     if provider:

@@ -35,8 +35,14 @@ def _load_persona_text(cfg: dict, name: Optional[str] = None) -> str:
 logger = logging.getLogger("ollama.api")
 
 
+def _should_use_persona_model(provider_name: str, single_model_mode: bool) -> bool:
+    return str(provider_name or "").strip().lower() == "ollama" and not bool(single_model_mode)
+
+
 def get_router(cfg: dict) -> APIRouter:
     r = APIRouter(prefix="/ollama", tags=["ollama"])
+    llm_cfg = cfg.get("llm", {}) if isinstance(cfg.get("llm", {}), dict) else {}
+    single_model_mode = bool(llm_cfg.get("single_model_mode", False))
 
     provider_name = "ollama"
     try:
@@ -62,7 +68,7 @@ def get_router(cfg: dict) -> APIRouter:
         client,
         persona_name=active_persona,
         max_history=6,
-        use_persona_as_model=(provider_name == "ollama"),
+        use_persona_as_model=_should_use_persona_model(provider_name, single_model_mode),
     )
     # Preload persona texts and optional urls placeholders
     _persona_cache: Dict[str, str] = {}
@@ -84,7 +90,7 @@ def get_router(cfg: dict) -> APIRouter:
     def healthz():
         info: Dict[str, Any] = {"ok": True, "provider": provider_name, "model": model}
         if provider_name == "ollama":
-            info["base_url"] = str(cfg.get("ollama", {}).get("base_url", "http://localhost:11435"))
+            info["base_url"] = str(cfg.get("ollama", {}).get("base_url", "http://localhost:11434"))
         elif provider_name == "google_ai_studio":
             info["base_url"] = str(cfg.get("google_ai_studio", {}).get("base_url", "https://generativelanguage.googleapis.com"))
         return info
@@ -262,11 +268,13 @@ def get_router(cfg: dict) -> APIRouter:
             modelfile = f'FROM {base_model}\nSYSTEM """\n{raw_content}\n"""'
 
         success = False
-        if provider_name == "ollama":
+        if provider_name == "ollama" and not single_model_mode:
             # Create/Update persona model only for Ollama provider.
             success = client.create_model(name, modelfile)
             if not success:
                 logger.error(f"Failed to create model for persona {name}")
+        elif provider_name == "ollama" and single_model_mode:
+            logger.info("Single-model mode is active, skipping persona model creation for '%s'.", name)
             
         persona_text = raw_content
         _persona_cache[name] = persona_text
@@ -274,13 +282,14 @@ def get_router(cfg: dict) -> APIRouter:
             client,
             persona_name=active_persona,
             max_history=6,
-            use_persona_as_model=(provider_name == "ollama"),
+            use_persona_as_model=_should_use_persona_model(provider_name, single_model_mode),
         )
         return {
             "ok": True,
             "active": name,
             "provider": provider_name,
             "model_created": success if provider_name == "ollama" else None,
+            "single_model_mode": single_model_mode,
         }
 
     @r.post("/persona/create_from_url")

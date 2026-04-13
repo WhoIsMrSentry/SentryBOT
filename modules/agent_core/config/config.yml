@@ -7,11 +7,34 @@ server:
   port: 8120
 
 agent:
-  model: "llama3.2:3b-q4_K_M"
+  model: "gemma-4-26B-A4B"
   temperature: 0.15
   num_ctx: 4096
   cooldown_s: 1.0       # LLM çağrıları arasındaki minimum süre (saniye)
-  max_tool_loops: 3     # ReAct döngüsünde max araç çağrısı sayısı
+  request_timeout: 60   # Ollama HTTP timeout (s)
+  ollama_base_url: "http://localhost:11434"
+  max_steps: 6          # Legacy native tool loop maksimum adımı
+  max_tool_loops: 3     # Geriye uyumluluk için tutulur
+
+llm:
+  provider: "ollama"   # ollama | google_ai_studio
+  clm_fallback_enabled: true
+  clm_fallback_model: "qwen3.5:8b"
+  fallback_on_missing_model: true
+  fallback_on_error: true
+
+tri_layer:
+  enabled: true
+  router:
+    max_subagents: 3
+    default_modules:
+      - vlm_bridge
+      - autonomy
+      - agent_core
+  subagent:
+    max_steps: 2
+  persona:
+    num_predict: 220
 
 safety:
   max_servo_angle: 180

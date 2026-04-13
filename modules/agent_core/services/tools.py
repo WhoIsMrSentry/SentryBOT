@@ -39,9 +39,16 @@ class ToolRegistry:
             logger.error(f"Tool {tool_name} failed: {e}")
             return f"Error executing {tool_name}: {e}"
 
-    def get_tool_schema(self) -> List[Dict[str, Any]]:
-        """Returns the JSON schema of all available tools for the LLM."""
-        return self.schemas
+    def get_tool_schema(self, include: List[str] | None = None) -> List[Dict[str, Any]]:
+        """Returns all tool schemas or only a selected subset by tool name."""
+        if not include:
+            return self.schemas
+
+        include_set = {str(name) for name in include if str(name) in self.tools}
+        return [schema for schema in self.schemas if schema.get("function", {}).get("name") in include_set]
+
+    def get_tool_names(self) -> List[str]:
+        return list(self.tools.keys())
 
     # ==========================================
     # TOOL IMPLEMENTATIONS & SCHEMAS

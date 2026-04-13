@@ -32,8 +32,14 @@ See `modules/ollama/config/config.yml`.
 `.env` overrides are supported via `modules/ollama/.env`.
 Useful keys:
 - `LLM_PROVIDER=ollama`
-- `OLLAMA_BASE_URL=http://<external-ip>:11435`
-- `OLLAMA_MODEL=llama3.2:3b`
+- `OLLAMA_BASE_URL=http://<remote-ollama-host>:11434`
+- `OLLAMA_MODEL=gemma-4-26B-A4B`
+
+Single-model mode:
+- If `modules/vlm_bridge/config/config.yml` enables `llm.single_model_mode=true`,
+	Ollama module inherits `llm.primary_model` as default runtime model.
+- In single-model mode, `POST /ollama/persona/select` does not create per-persona models;
+	it only updates active persona text/prompt context.
 
 Personas now live as folders: `modules/ollama/config/personalities/<name>/{persona.txt,urls.txt}`.
 

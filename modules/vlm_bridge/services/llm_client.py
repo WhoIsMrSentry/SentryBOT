@@ -12,17 +12,31 @@ except Exception:
 logger = logging.getLogger("vlm_bridge.llm")
 
 _DEFAULT_CHAT_ENDPOINT = "http://localhost:8080/ollama/chat"
-_DEFAULT_GENERATE_ENDPOINT = "http://localhost:11435/api/generate"
+_DEFAULT_GENERATE_ENDPOINT = "http://localhost:11434/api/generate"
 _CHAT_COOLDOWN_UNTIL: Dict[str, float] = {}
 
 
 def _normalize_endpoint(cfg: Dict[str, Any]) -> str:
     endpoint = str((cfg or {}).get("endpoint", "")).strip()
-    return endpoint or _DEFAULT_CHAT_ENDPOINT
+    if not endpoint:
+        return _DEFAULT_CHAT_ENDPOINT
+
+    lower = endpoint.rstrip("/").lower()
+    if lower.endswith("/api/tags"):
+        return endpoint[: -len("/api/tags")] + "/api/chat"
+    if lower.endswith("/api/chat") or lower.endswith("/api/generate") or lower.endswith("/ollama/chat"):
+        return endpoint
+    if endpoint.startswith("http://") or endpoint.startswith("https://"):
+        return endpoint.rstrip("/") + "/api/chat"
+    return endpoint
 
 
 def _is_legacy_generate_endpoint(endpoint: str) -> bool:
     return endpoint.rstrip("/").endswith("/api/generate")
+
+
+def _is_direct_ollama_chat_endpoint(endpoint: str) -> bool:
+    return endpoint.rstrip("/").endswith("/api/chat")
 
 
 def _has_real_secret(value: Any) -> bool:
@@ -93,6 +107,12 @@ def generate_text(
     hint = _provider_hint()
     provider = str(hint.get("provider", "") or "").strip().lower()
 
+    # When Google provider is selected, direct Ollama REST endpoints are incompatible.
+    # In that mode only gateway chat endpoint (/ollama/chat) should be used.
+    if provider in {"google", "google_ai_studio", "gemini"}:
+        if _is_direct_ollama_chat_endpoint(endpoint) or _is_legacy_generate_endpoint(endpoint):
+            return None
+
     # Google provider selected but key is missing/placeholder: skip remote call and fall back.
     if (
         provider in {"google", "google_ai_studio", "gemini"}
@@ -113,6 +133,26 @@ def generate_text(
                     return None
                 data = resp.json()
                 out = str(data.get("response", "")).strip()
+                return out or None
+
+            if _is_direct_ollama_chat_endpoint(endpoint):
+                model = str((ollama_cfg or {}).get("model", "gemma-4-26B-A4B")).strip() or "gemma-4-26B-A4B"
+                resp = client.post(
+                    endpoint,
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": text}],
+                        "stream": False,
+                        "options": {"temperature": 0.4},
+                    },
+                )
+                if resp.status_code != 200:
+                    _mark_cooldown(endpoint, cooldown_s)
+                    return None
+                data = resp.json()
+                msg = data.get("message", {}) if isinstance(data, dict) else {}
+                out = str(msg.get("content", "") or data.get("response", "")).strip()
+                _CHAT_COOLDOWN_UNTIL.pop(endpoint, None)
                 return out or None
 
             chat_url = endpoint or _DEFAULT_CHAT_ENDPOINT

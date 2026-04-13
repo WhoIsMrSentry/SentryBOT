@@ -38,3 +38,35 @@ def test_load_config_applies_provider_override(monkeypatch, tmp_path: Path):
     cfg = load_config(str(cfg_file))
 
     assert cfg["llm"]["provider"] == "google_ai_studio"
+
+
+def test_load_config_inherits_vlm_primary_model_hint(monkeypatch, tmp_path: Path):
+    vlm_cfg = tmp_path / "vlm_config.yml"
+    vlm_cfg.write_text(
+        """
+llm:
+  provider: ollama
+  single_model_mode: true
+  primary_model: gemma-4-26B-A4B
+""".strip(),
+        encoding="utf-8",
+    )
+
+    ollama_cfg = tmp_path / "ollama_config.yml"
+    ollama_cfg.write_text(
+        """
+llm:
+  provider: ollama
+ollama:
+  model: llama3.2:3b
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("VLM_CFG", str(vlm_cfg))
+    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
+
+    cfg = load_config(str(ollama_cfg))
+
+    assert cfg["llm"]["single_model_mode"] is True
+    assert cfg["ollama"]["model"] == "gemma-4-26B-A4B"

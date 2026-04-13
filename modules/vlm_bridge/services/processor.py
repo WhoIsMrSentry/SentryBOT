@@ -140,7 +140,7 @@ class VisionProcessor:
         self.memory = PeopleMemory()
 
         actions_cfg = config.get("actions", {}) if isinstance(config, dict) else {}
-        endpoint = str(actions_cfg.get("endpoint", "http://localhost:8100/autonomy/apply_actions"))
+        endpoint = str(actions_cfg.get("endpoint", "http://localhost:8080/autonomy/apply_actions"))
         timeout = float(actions_cfg.get("timeout", 1.5))
         enabled = bool(actions_cfg.get("default_apply", False))
         self.action_dispatcher = VisionActionDispatcher(endpoint=endpoint, timeout=timeout, enabled=enabled)
