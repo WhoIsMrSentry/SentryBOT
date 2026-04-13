@@ -2,10 +2,10 @@ server:
   host: 0.0.0.0
   port: 8099
 llm:
-  provider: google_ai_studio   # ollama | google_ai_studio
+  provider: ollama   # ollama | google_ai_studio
 ollama:
-  base_url: http://127.0.0.1:11435
-  model: llama3.2:3b
+  base_url: http://localhost:11434
+  model: gemma-4-26B-A4B
   request_timeout: 60
 google_ai_studio:
   api_key: ""        # boşsa GOOGLE_API_KEY env kullanılır
@@ -16,7 +16,7 @@ persona:
   default: sentry
   dir: modules/ollama/config/personalities
 actions:
-  endpoint: http://localhost:8100/autonomy/apply_actions
+  endpoint: http://localhost:8080/autonomy/apply_actions
   default_apply: true
   timeout: 1.5
 translation:
