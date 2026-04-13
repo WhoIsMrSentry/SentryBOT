@@ -8,6 +8,11 @@ from typing import Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
+try:
+    from .cascade_loader import load_frontal_face_cascade
+except Exception:
+    from services.cascade_loader import load_frontal_face_cascade  # type: ignore
+
 logger = logging.getLogger("vlm_bridge.face_manager")
 
 
@@ -37,9 +42,7 @@ class FaceManager:
         self._known_descriptors: Dict[str, np.ndarray] = {}
 
         self._ensure_data_dir()
-        self._cascade = cv2.CascadeClassifier(
-            os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-        )
+        self._cascade = load_frontal_face_cascade(logger)
         self._orb = cv2.ORB_create(nfeatures=700)
         self._flann = cv2.FlannBasedMatcher(
             dict(algorithm=6, table_number=6, key_size=12, multi_probe_level=1),

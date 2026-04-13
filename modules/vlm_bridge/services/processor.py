@@ -18,6 +18,11 @@ except Exception:
         FaceManager = None  # type: ignore
 
 try:
+    from .cascade_loader import load_frontal_face_cascade
+except Exception:
+    from services.cascade_loader import load_frontal_face_cascade  # type: ignore
+
+try:
     from .semantic_describer import SemanticDescriber
 except Exception:
     from services.semantic_describer import SemanticDescriber  # type: ignore
@@ -31,6 +36,11 @@ try:
     from .action_dispatcher import VisionActionDispatcher
 except Exception:
     from services.action_dispatcher import VisionActionDispatcher  # type: ignore
+
+try:
+    from .llm_client import generate_text
+except Exception:
+    from services.llm_client import generate_text  # type: ignore
 
 
 logger = logging.getLogger("vlm_bridge")
@@ -75,9 +85,7 @@ class VisionProcessor:
         self.camera_source = vision_cfg.get("camera_source", 0)
         self.conf_threshold = float(vision_cfg.get("confidence_threshold", 0.5))
 
-        self._face_cascade = cv2.CascadeClassifier(
-            os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-        )
+        self._face_cascade = load_frontal_face_cascade(logger)
 
         self.face_manager = None
         if self.processing_mode == "local" and FaceManager is not None:
@@ -694,22 +702,9 @@ class VisionProcessor:
         return f"Merhaba {name}, seni gordugume sevindim."
 
     def _ollama_followup(self, name: str) -> Optional[str]:
-        try:
-            import httpx  # type: ignore
-        except Exception:
-            return None
-
         rec = self.memory.get_person(name) or {}
         last_sum = (rec.get("last_summary") or {}).get("text")
         prompt = f"{name} ile karsilastin. {('Ozet: ' + last_sum) if last_sum else ''} Turkce kisa ve sicak bir cumle soyle."
-        url = self.config.get("ollama", {}).get("endpoint", "http://localhost:11435/api/generate")
-        model = self.config.get("ollama", {}).get("model", "llama3")
-        try:
-            with httpx.Client(timeout=4.0) as client:
-                resp = client.post(url, json={"model": model, "prompt": prompt, "stream": False})
-            if resp.status_code == 200:
-                data = resp.json()
-                return data.get("response")
-        except Exception:
-            return None
-        return None
+        llm_cfg = self.config.get("ollama", {}) if isinstance(self.config.get("ollama", {}), dict) else {}
+        timeout = float(llm_cfg.get("timeout", 4.0))
+        return generate_text(prompt, llm_cfg, timeout=timeout, response_lang="tr")

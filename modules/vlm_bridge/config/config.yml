@@ -57,8 +57,9 @@ robot:
   host: "localhost"  # Change to Robot IP when running remotely
 
 ollama:
-  endpoint: "http://localhost:11435/api/generate"
-  model: "llama3"
+  endpoint: "http://localhost:8080/ollama/chat"
+  model: "llama3.2:3b"
+  timeout: 5.0
 
 speak:
   endpoint: "http://localhost:8083/speak/say"

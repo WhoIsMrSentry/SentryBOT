@@ -36,8 +36,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "accept_results": True,
     },
     "ollama": {
-        "endpoint": "http://localhost:11435/api/generate",
+        "endpoint": "http://localhost:8080/ollama/chat",
         "model": "llama3",
+        "timeout": 5.0,
     },
     "speak": {
         "endpoint": "http://localhost:8083/speak/say",
@@ -48,6 +49,32 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "timeout": 1.5,
     },
 }
+
+
+def _sync_model_from_ollama_module(cfg: Dict[str, Any]) -> None:
+    """Keep VLM bridge LLM model aligned with the currently configured Ollama module model."""
+    try:
+        from modules.ollama.config_loader import load_config as load_ollama_config  # type: ignore
+    except Exception:
+        return
+
+    try:
+        ollama_cfg = load_ollama_config(None)
+    except Exception:
+        return
+
+    if not isinstance(ollama_cfg, dict):
+        return
+
+    model = str((ollama_cfg.get("ollama", {}) or {}).get("model", "")).strip()
+    if not model:
+        return
+
+    section = cfg.get("ollama")
+    if not isinstance(section, dict):
+        cfg["ollama"] = {"model": model}
+        return
+    section["model"] = model
 
 def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     cfg: Dict[str, Any] = dict(DEFAULT_CONFIG)
@@ -65,4 +92,6 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
             break
     if overrides:
         cfg.update({k: v for k, v in overrides.items() if v is not None})
+
+    _sync_model_from_ollama_module(cfg)
     return cfg
