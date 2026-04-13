@@ -2,7 +2,17 @@
 
 **SentryBOT'un otonom ajan zekâ modülü.**
 
-Sense → Think → Act döngüsünü yönetir. Sabit JSON kalıpları yerine Ollama destekli saf **Native Tool Calling (ReAct Döngüsü)** kullanarak robotun donanımını, hafızasını ve yeteneklerini sınırsız bir döngüde kontrol etmesini sağlar. 
+Sense -> Think -> Act dongusunu, tek Ollama modeli ile calisan **3 katmanli agent yapisiyla** yonetir:
+1) Router/Planner
+2) Modul bazli Sub-Agent'lar
+3) Main Persona (son cevaplayici)
+
+Her katman ayni modeli kullanir, ancak farkli sorumluluk ve prompt profiline sahiptir.
+
+Varsayilan politika:
+- VLM-primary tek model: `gemma-4-26B-A4B`
+- CLM fallback: `qwen3.5:8b` (model yoksa veya ilk cagri hatasinda)
+- Provider `google_ai_studio` secilirse Google API istemcisi kullanilir ve sinirli tool-calling denemesi yapilir.
 
 ## Modül Yapısı
 
@@ -21,14 +31,17 @@ modules/agent_core/
 │   ├── tools.py              # LLM araç tanımları (Ollama JSON Schema)
 │   ├── world_state.py        # Sensör durumu
 │   ├── sensor_loop.py        # Arka plan sensör okuyucu
-│   └── idle_behavior.py      # Boşta kalma efektleri
+│   ├── idle_behavior.py      # Boşta kalma efektleri
+│   └── tri_layer.py          # Router + sub-agent profil tanimlari
 ├── architecture_agent_core.md# Mimari dokümantasyon
 └── README.md                 # Bu dosya
 ```
 
 ## Özellikler
 
-- **10-Step Cognitive Loop:** LLM bir işlem bitene kadar hafıza tarayabilir, etrafa bakabilir, sonra adım atabilir (art arda tool çağrısı).
+- **3-Layer Agent Pipeline:** Katman-1 istegi modul sub-agent'lara yonlendirir, Katman-2 uzman sub-agent'lar araci calistirir, Katman-3 main persona tek ve tutarli cevap uretir.
+- **Tek Model Politikasi:** Router, sub-agent ve persona katmanlari ayni Ollama modeli uzerinden calisir.
+- **Low-Latency Router:** Varsayilan keyword tabanli yonlendirme ek gecikme olmadan calisir.
 - **Physical Safety First:** `ActionSafetyFilter` doğrudan donanım aletlerinin içine gömülüdür (Kafa çevirmeden önce direkt açı kontrolü yapılır).
 - **Episodic Memory:** Robot konuştuğu her şeyi SQLite'a kaydeder ve `search_memory` tool'u ile geri çağırabilir.
 
@@ -46,7 +59,7 @@ self.agent.start()
 from modules.agent_core import AgentOrchestrator
 agent = AgentOrchestrator(config, autonomy_client=client)
 
-# Ajan hafızasına bakar, neopixelleri ayarlar, 10 adıma kadar tool kullanır ve cevap döner.
+# Ajan tri-layer akista sub-agent'lari calistirir ve final personadan tek cevap dondurur.
 result = agent.step("Ortamı tara ve bana kimlerin olduğunu söyle.")
 print(result["text"])
 ```
@@ -59,6 +72,7 @@ print(result["text"])
 |---|---|---|
 | `/healthz` | GET | Servis durumu (BUSY / IDLE) |
 | `/step` | POST | Tek agent adımı (Native Tool Loop) |
+| `/route_preview` | POST | Tri-layer router secimini onizleme |
 | `/world_state` | GET | Anlık dünya durumu (pil vb.) |
 | `/memory/search` | GET | Epizodik hafıza arama |
 | `/slam/location` | GET | Topolojik konum |
@@ -69,7 +83,16 @@ print(result["text"])
 | Ayar | Açıklama |
 |---|---|
 | `agent.model` | Kullanılacak model (Örn: `llama3.2:3b`) |
-| `agent.max_steps` | Bir döngüde LLM'in art arda yapabileceği tool call sayısı (Örn: 10) |
+| `agent.request_timeout` | Ollama istemci timeout degeri (sn) |
+| `agent.max_steps` | Legacy native loop maksimum adım sayısı |
+| `tri_layer.enabled` | 3 katmanli mimari acik/kapali |
+| `tri_layer.router.max_subagents` | Bir istek icin secilecek sub-agent sayisi |
+| `tri_layer.subagent.max_steps` | Her sub-agent icin maksimum tool loop |
+| `tri_layer.persona.num_predict` | Final persona katmaninda token hedefi |
+| `llm.clm_fallback_enabled` | CLM fallback acik/kapali |
+| `llm.clm_fallback_model` | Fallback model adi |
+| `llm.fallback_on_missing_model` | Primary model yoksa fallback |
+| `llm.fallback_on_error` | Primary model ilk hata alirsa fallback |
 
 ### .env / Ortam Değişkeni Override
 
@@ -80,8 +103,19 @@ Agent Core, `.env` değerlerini sırasıyla şu yollardan okuyabilir:
 
 Desteklenen anahtarlar:
 - `AGENT_MODEL` veya `OLLAMA_MODEL`
+- `LLM_PROVIDER` (tri-layer icin `ollama` onerilir)
 - `AGENT_OLLAMA_BASE_URL` veya `OLLAMA_BASE_URL` veya `OLLAMA_HOST`
+- `AGENT_OLLAMA_REQUEST_TIMEOUT` veya `OLLAMA_REQUEST_TIMEOUT`
 - `AGENT_COOLDOWN_S`
+- `AGENT_MAX_STEPS`
+- `AGENT_TRI_LAYER_ENABLED`
+- `AGENT_ROUTER_MAX_SUBAGENTS`
+- `AGENT_SUBAGENT_MAX_STEPS`
+- `AGENT_PERSONA_NUM_PREDICT`
+- `AGENT_CLM_FALLBACK_ENABLED`
+- `AGENT_CLM_FALLBACK_MODEL`
+- `AGENT_FALLBACK_ON_MISSING_MODEL`
+- `AGENT_FALLBACK_ON_ERROR`
 
 ## Testler
 
@@ -90,3 +124,9 @@ Desteklenen anahtarlar:
 $env:PYTHONPATH="."
 pytest modules/agent_core/tests/ -v
 ```
+
+## Migration
+
+Tri-layer gecisi ve remote Ollama kurulumu icin:
+
+- `modules/agent_core/MIGRATION_TRI_LAYER.md`
