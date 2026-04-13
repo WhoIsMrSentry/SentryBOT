@@ -1,0 +1,3 @@
+[submodule "modules/oled_faces/tools/_irisoled_src"]
+    path = modules/oled_faces/tools/_irisoled_src
+    url = https://github.com/orji123/Irisoled.git
