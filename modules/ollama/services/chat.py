@@ -8,10 +8,17 @@ logger = logging.getLogger("ollama.chat")
 
 
 class OllamaChatService:
-    def __init__(self, client: LLMClientProtocol, persona_name: str = "sentry", max_history: int = 6) -> None:
+    def __init__(
+        self,
+        client: LLMClientProtocol,
+        persona_name: str = "sentry",
+        max_history: int = 6,
+        use_persona_as_model: bool = True,
+    ) -> None:
         self.client = client
         self.persona_name = persona_name
         self.memory = ChatMemory(max_turns=max_history)
+        self.use_persona_as_model = bool(use_persona_as_model)
 
     def chat(
         self,
@@ -29,8 +36,8 @@ class OllamaChatService:
         messages.extend(self.memory.as_list())
         messages.append({"role": "user", "content": query})
         
-        # We use the persona name as the model name
-        res = self.client.chat(messages, format=response_format, model=self.persona_name)
+        model_name = self.persona_name if self.use_persona_as_model else None
+        res = self.client.chat(messages, format=response_format, model=model_name)
         raw_text = str(res.get("message", {}).get("content", ""))
         
         # Native unstructured conversation
