@@ -43,6 +43,11 @@ Kamera akışını işleyen yerel (Pi5) veya uzak (dizüstü / sunucu) görünt�
 ## Blind Mode (Assistive)
 Aktifken semantik sahne özeti (Ollama varsa LLM tabanlı) ve kişilere özel selam gönderir. Uzak modda gelen sonuçlar üzerinden de çalışır.
 
+## VLM LLM Kaynağı
+- Varsayılan uç: `http://localhost:8080/ollama/chat`
+- Böylece VLM Bridge, Ollama modülünde aktif olan provider/model (örn. ollama veya google_ai_studio) üzerinden yanıt alır.
+- Geriye dönük olarak `ollama.endpoint` değeri `.../api/generate` ise eski doğrudan generate akışı da desteklenir.
+
 ## LLM Action Dispatch
 - `config.actions.endpoint`: Genelde `http://<autonomy>/autonomy/apply_actions`. Boşsa özellik kapanır.
 - `config.actions.default_apply`: `true` iken her tespit turu için semantik özet oluşturulur, `[cmd:*]` ve `[[lights …]]` etiketleri otomatik olarak Autonomy’ye iletilir.

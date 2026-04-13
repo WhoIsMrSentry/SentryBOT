@@ -2,7 +2,7 @@
 import logging
 import os
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from typing import Optional, List, Dict, Any
 import requests
 
@@ -58,7 +58,12 @@ def get_router(cfg: dict) -> APIRouter:
 
     active_persona = str(cfg.get("persona", {}).get("default", "sentry"))
     persona_text = _load_persona_text(cfg, active_persona)
-    chat = OllamaChatService(client, persona_name=active_persona, max_history=6)
+    chat = OllamaChatService(
+        client,
+        persona_name=active_persona,
+        max_history=6,
+        use_persona_as_model=(provider_name == "ollama"),
+    )
     # Preload persona texts and optional urls placeholders
     _persona_cache: Dict[str, str] = {}
     base_persona_dir = str(cfg.get("persona", {}).get("dir", "modules/ollama/config/personalities"))
@@ -119,25 +124,34 @@ def get_router(cfg: dict) -> APIRouter:
         except Exception as exc:  # pragma: no cover - ağ hatası
             logger.warning("Failed to dispatch persona actions: %s", exc)
 
-    @r.get("/chat")
-    def chat_get(
-        query: str = Query(...),
-        apply_actions: Optional[bool] = None,
-        structured: bool = False,
-        source_lang: Optional[str] = None,
-        response_lang: Optional[str] = None,
-    ):
+    def _chat_response(
+        query: str,
+        apply_actions: Optional[bool],
+        source_lang: Optional[str],
+        response_lang: Optional[str],
+    ) -> Dict[str, Any]:
         source = translator.normalize_lang(source_lang, fallback=translator.cfg.default_source_lang)
         if source == "auto":
             source = translator.detect_language(query)
         target = translator.normalize_lang(response_lang or source, fallback=translator.cfg.default_source_lang)
         query_en = translator.to_bridge(query, source)
-        result = chat.chat(query_en)
+
+        try:
+            result = chat.chat(query_en)
+        except requests.HTTPError as exc:
+            logger.warning("LLM upstream request failed: %s", exc)
+            raise HTTPException(status_code=502, detail="LLM upstream request failed") from exc
+        except Exception as exc:
+            logger.exception("LLM chat failed: %s", exc)
+            raise HTTPException(status_code=500, detail="LLM chat failed") from exc
+
         answer_en = str(result.get("text", ""))
         localized_answer = translator.from_bridge(answer_en, target)
         result["text"] = localized_answer
+
         flag = default_apply if apply_actions is None else apply_actions
         _maybe_dispatch_actions(result, flag)
+
         translation_meta = {
             "enabled": bool(translator.cfg.enabled),
             "request_lang": source,
@@ -149,6 +163,16 @@ def get_router(cfg: dict) -> APIRouter:
         }
         return _format_chat_payload(result, translation=translation_meta)
 
+    @r.get("/chat")
+    def chat_get(
+        query: str = Query(...),
+        apply_actions: Optional[bool] = None,
+        structured: bool = False,
+        source_lang: Optional[str] = None,
+        response_lang: Optional[str] = None,
+    ):
+        return _chat_response(query, apply_actions, source_lang, response_lang)
+
     @r.post("/chat")
     def chat_post(
         query: str,
@@ -157,27 +181,7 @@ def get_router(cfg: dict) -> APIRouter:
         source_lang: Optional[str] = None,
         response_lang: Optional[str] = None,
     ):
-        source = translator.normalize_lang(source_lang, fallback=translator.cfg.default_source_lang)
-        if source == "auto":
-            source = translator.detect_language(query)
-        target = translator.normalize_lang(response_lang or source, fallback=translator.cfg.default_source_lang)
-        query_en = translator.to_bridge(query, source)
-        result = chat.chat(query_en)
-        answer_en = str(result.get("text", ""))
-        localized_answer = translator.from_bridge(answer_en, target)
-        result["text"] = localized_answer
-        flag = default_apply if apply_actions is None else apply_actions
-        _maybe_dispatch_actions(result, flag)
-        translation_meta = {
-            "enabled": bool(translator.cfg.enabled),
-            "request_lang": source,
-            "bridge_lang": translator.BRIDGE_LANG,
-            "response_lang": target,
-            "query_bridge": query_en,
-            "answer_bridge": answer_en,
-            "auto_detected": bool(source_lang and str(source_lang).strip().lower() == "auto"),
-        }
-        return _format_chat_payload(result, translation=translation_meta)
+        return _chat_response(query, apply_actions, source_lang, response_lang)
 
     @r.post("/translate")
     def translate(text: str, source_lang: str = "auto", target_lang: str = "en"):
@@ -257,15 +261,27 @@ def get_router(cfg: dict) -> APIRouter:
             base_model = str(cfg.get("ollama", {}).get("model", "qwen3.5:2b"))
             modelfile = f'FROM {base_model}\nSYSTEM """\n{raw_content}\n"""'
 
-        # Create/Update the model in Ollama
-        success = client.create_model(name, modelfile)
-        if not success:
-            logger.error(f"Failed to create model for persona {name}")
+        success = False
+        if provider_name == "ollama":
+            # Create/Update persona model only for Ollama provider.
+            success = client.create_model(name, modelfile)
+            if not success:
+                logger.error(f"Failed to create model for persona {name}")
             
         persona_text = raw_content
         _persona_cache[name] = persona_text
-        chat = OllamaChatService(client, persona_name=active_persona, max_history=6)
-        return {"ok": True, "active": name, "model_created": success}
+        chat = OllamaChatService(
+            client,
+            persona_name=active_persona,
+            max_history=6,
+            use_persona_as_model=(provider_name == "ollama"),
+        )
+        return {
+            "ok": True,
+            "active": name,
+            "provider": provider_name,
+            "model_created": success if provider_name == "ollama" else None,
+        }
 
     @r.post("/persona/create_from_url")
     def create_persona_from_url(name: str, url: str):

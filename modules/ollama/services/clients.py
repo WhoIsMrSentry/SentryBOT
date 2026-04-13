@@ -13,6 +13,27 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger("ollama.clients")
 
+_GOOGLE_API_KEY_PLACEHOLDERS = {
+    "your-google-api-key",
+    "your_google_api_key",
+    "your-api-key",
+    "changeme",
+    "replace_me",
+    "replace-with-your-key",
+}
+
+
+def _sanitize_google_api_key(raw_value: Any) -> str:
+    value = str(raw_value or "").strip()
+    if not value:
+        return ""
+    lowered = value.lower()
+    if lowered in _GOOGLE_API_KEY_PLACEHOLDERS:
+        return ""
+    if "your-google-api-key" in lowered:
+        return ""
+    return value
+
 
 class OllamaClient:
     def __init__(self, base_url: str, model: str, request_timeout: float = 60.0) -> None:
@@ -205,7 +226,14 @@ class GoogleAIStudioClient:
         options: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None,
     ) -> Dict[str, Any]:
-        selected_model = model or self.model
+        selected_model = str(model or self.model).strip() or self.model
+        # Guard against accidental persona-name override (e.g. "sentry").
+        if model and not selected_model.lower().startswith("gemini"):
+            logger.warning(
+                "Ignoring non-Gemini model override for Google provider: %s",
+                selected_model,
+            )
+            selected_model = self.model
         system_instruction, contents = self._to_gemini_parts(messages)
 
         if not contents:
@@ -253,7 +281,9 @@ def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
 
     if provider in {"google", "google_ai_studio", "gemini"}:
         gcfg = cfg.get("google_ai_studio", {}) or {}
-        api_key = str(gcfg.get("api_key", "")).strip() or str(os.environ.get("GOOGLE_API_KEY", "")).strip()
+        api_key = _sanitize_google_api_key(gcfg.get("api_key", ""))
+        if not api_key:
+            api_key = _sanitize_google_api_key(os.environ.get("GOOGLE_API_KEY", ""))
         model = str(gcfg.get("model", "gemini-1.5-flash")).strip() or "gemini-1.5-flash"
         base_url = str(gcfg.get("base_url", "https://generativelanguage.googleapis.com")).strip()
         timeout = float(gcfg.get("request_timeout", 60.0))

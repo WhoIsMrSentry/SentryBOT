@@ -68,17 +68,17 @@ def create_app(config_path: str | None = None) -> FastAPI:
                     if hasattr(svc, "stop") and callable(getattr(svc, "stop")):
                         try:
                             svc.stop()
-                        except Exception:
+                        except BaseException:
                             pass
                     elif hasattr(svc, "shutdown") and callable(getattr(svc, "shutdown")):
                         try:
                             svc.shutdown()
-                        except Exception:
+                        except BaseException:
                             pass
                     elif hasattr(svc, "close") and callable(getattr(svc, "close")):
                         try:
                             svc.close()
-                        except Exception:
+                        except BaseException:
                             pass
                 except Exception:
                     pass

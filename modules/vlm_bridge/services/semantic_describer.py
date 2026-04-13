@@ -13,9 +13,9 @@ from typing import List, Dict, Any, Optional
 logger = logging.getLogger("vlm_bridge.semantic")
 
 try:
-    import httpx  # type: ignore
+    from .llm_client import generate_text
 except Exception:
-    httpx = None  # Fallback
+    from services.llm_client import generate_text  # type: ignore
 
 class SemanticDescriber:
     def __init__(self, config: Dict[str, Any]):
@@ -42,24 +42,14 @@ class SemanticDescriber:
         )
 
     def llm_summarize(self, objects: List[Dict[str, Any]]) -> Optional[str]:
-        if httpx is None:
-            return None
         now = time.time()
         if now - self.last_llm_call < self.llm_interval_s:
             return None
         self.last_llm_call = now
         prompt = self.build_prompt(objects)
-        url = self.config.get("ollama", {}).get("endpoint", "http://localhost:11435/api/generate")
-        model = self.config.get("ollama", {}).get("model", "llama3")
-        try:
-            with httpx.Client(timeout=5.0) as client:
-                resp = client.post(url, json={"model": model, "prompt": prompt, "stream": False})
-            if resp.status_code == 200:
-                data = resp.json()
-                return data.get("response")
-        except Exception as e:
-            logger.debug(f"LLM summarize error: {e}")
-        return None
+        llm_cfg = self.config.get("ollama", {}) if isinstance(self.config.get("ollama", {}), dict) else {}
+        timeout = float(llm_cfg.get("timeout", 5.0))
+        return generate_text(prompt, llm_cfg, timeout=timeout, response_lang="tr")
 
     def fallback_summary(self, objects: List[Dict[str, Any]]) -> str:
         counts = {}

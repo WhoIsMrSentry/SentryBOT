@@ -101,18 +101,11 @@ class OpenWakewordRunner:
             raise ValueError("openwakeword.model_paths is required")
         self._labels = list(model_paths.keys())
         inference_framework = str(cfg.get("inference_framework", "onnx")).strip().lower() or "onnx"
-        # Instantiate model in a backward/forward-compatible way depending on
-        # the installed openwakeword API. Try several common constructor
-        # signatures and fall back to positional if necessary.
-        import inspect
-
+        # Instantiate model in a backward/forward-compatible way.
+        # Prefer kwargs so inference_framework maps correctly even when
+        # upstream uses a permissive (*args, **kwargs) constructor.
         paths_list = list(model_paths.values())
         model_ctor = OpenWakeWordModel
-        ctor_sig = None
-        try:
-            ctor_sig = inspect.signature(model_ctor)
-        except Exception:
-            ctor_sig = None
 
         def _try_ctor(kwargs=None, args=None):
             kwargs = kwargs or {}
@@ -126,19 +119,13 @@ class OpenWakewordRunner:
         # Preferred: explicit wakeword_models + inference_framework
         tried = []
         last_exc = None
-        candidates = []
-        if ctor_sig is not None:
-            params = set(ctor_sig.parameters.keys())
-            if 'wakeword_models' in params:
-                candidates.append({'kwargs': {'wakeword_models': paths_list, 'inference_framework': inference_framework}})
-            if 'model_paths' in params:
-                candidates.append({'kwargs': {'model_paths': paths_list, 'inference_framework': inference_framework}})
-            if 'models' in params:
-                candidates.append({'kwargs': {'models': paths_list, 'inference_framework': inference_framework}})
-        # Try common alternatives (no kwargs)
-        candidates.append({'args': [paths_list, inference_framework]})
-        candidates.append({'args': [paths_list]})
-        candidates.append({'kwargs': {'wakeword_models': paths_list}})
+        candidates = [
+            {'kwargs': {'wakeword_models': paths_list, 'inference_framework': inference_framework}},
+            {'kwargs': {'model_paths': paths_list, 'inference_framework': inference_framework}},
+            {'kwargs': {'models': paths_list, 'inference_framework': inference_framework}},
+            {'kwargs': {'wakeword_models': paths_list}},
+            {'args': [paths_list]},
+        ]
 
         for cand in candidates:
             try:
