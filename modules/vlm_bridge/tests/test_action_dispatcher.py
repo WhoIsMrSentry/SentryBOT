@@ -22,7 +22,7 @@ class DummySemantic:
 
 
 def test_emit_scene_dispatches(monkeypatch):
-    dispatcher = VisionActionDispatcher("http://localhost:8100/autonomy/apply_actions", timeout=0.1, enabled=True)
+    dispatcher = VisionActionDispatcher("http://localhost:8080/autonomy/apply_actions", timeout=0.1, enabled=True)
 
     monkeypatch.setattr(
         "modules.vlm_bridge.services.action_dispatcher.extract_llm_tags",
