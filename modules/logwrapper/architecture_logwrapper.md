@@ -24,12 +24,13 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    LogWrapper ||--o{"AllModules : intercepts_stdout
+    LogWrapper ||--o{ AllModules : intercepts_stdout
     LogWrapper ||--o{ WebUsers : websockets
-    
+
     LogWrapper {
-        websocket_stream
-        rich_console_format"}
+        string stream_name
+        int buffer_size
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

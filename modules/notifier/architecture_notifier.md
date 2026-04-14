@@ -34,14 +34,14 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    NotifierService ||--o{"ThirdPartyAPIs : http_post
+    NotifierService ||--o{ ThirdPartyApis : http_post
     Diagnostics ||--o{ NotifierService : triggers_critical
     Interactions ||--o{ NotifierService : triggers_info
-    
+
     NotifierService {
-        telegram_token
-        discord_webhook
-        send_notification"}
+        string telegram_token
+        string discord_webhook
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

@@ -32,13 +32,14 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    DiagnosticsService ||--o{"ArduinoSerial : pings
+    DiagnosticsService ||--o{ ArduinoSerial : pings
     DiagnosticsService ||--o{ OllamaService : pings
     DiagnosticsService ||--o{ CameraService : checks
-    
+
     DiagnosticsService {
-        run_self_test
-        report"}
+        bool self_test_ok
+        string last_report
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

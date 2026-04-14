@@ -66,17 +66,17 @@ Gateway yapısal olarak veri işlemez, modüllerin rotalarını API ağacına e
 
 ```mermaid
 erDiagram
-    GATEWAY ||--o{"MODULE_ROUTER : mounts
-    GATEWAY {
-        dict state_started 'Başlatılan servislerin listesi'
-        dict config 'Tüm yapılandırma ağacı'"}
-    
-    MODULE_ROUTER ||--|| ARDUINO_SERVICE : instantiates
-    MODULE_ROUTER ||--|| AUTONOMY_SERVICE : instantiates
-    MODULE_ROUTER ||--|| VLM_SERVICE : instantiates
-    
-    AUTONOMY_SERVICE }|..|{"ARDUINO_SERVICE : 'Geç_Başlatmada Referans Alır'
-    VLM_SERVICE"}|..|{ ARDUINO_SERVICE : "Opsiyonel Lazer Referansı"
+    Gateway ||--o{ ModuleRouter : mounts
+    ModuleRouter ||--|| ArduinoService : instantiates
+    ModuleRouter ||--|| AutonomyService : instantiates
+    ModuleRouter ||--|| VlmService : instantiates
+    AutonomyService }|..|{ ArduinoService : references
+    VlmService }o..o{ ArduinoService : optional_calls
+
+    Gateway {
+        string started_services
+        string config_snapshot
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
