@@ -45,21 +45,22 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    SpeechService ||--o{"AutonomyBrain : provides_data
+    SpeechService ||--o{ AutonomyBrain : provides_data
     WakewordService ||--|| SpeechService : starts_stops
-    
+
     SpeechService {
-        string last_speech_text 'Örn: 'Nasılsın?''
-                int current_direction_deg 'Örn: 90'
-                bool is_listening
-                start_listening
-                stop_listening"}
-    
-    WakewordService {string trigger_word
-                listen_for_wakeword}
-    
-    AutonomyBrain {poll_speech_direction
-                poll_speech_text}
+        string last_speech_text
+        int current_direction_deg
+        bool is_listening
+    }
+    WakewordService {
+        string trigger_word
+        bool wake_active
+    }
+    AutonomyBrain {
+        string poll_channel
+        int poll_interval_ms
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

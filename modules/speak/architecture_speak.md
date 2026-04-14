@@ -51,13 +51,14 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    AutonomyBrain ||--o{"SpeakService : generates_speech
+    AutonomyBrain ||--o{ SpeakService : generates_speech
     VisionBridge ||--o{ SpeakService : pushes_alerts
-    
+
     SpeakService {
         string default_engine
-                float base_rate
-                say_text__tone"}
+        float base_rate
+        string voice_id
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
