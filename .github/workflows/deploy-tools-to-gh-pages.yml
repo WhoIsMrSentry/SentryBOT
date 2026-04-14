@@ -19,8 +19,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Deploy tools/ to GitHub Pages
+      - name: Deploy tools/graph-explorer to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./tools
+          publish_dir: ./tools/graph-explorer
