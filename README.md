@@ -12,7 +12,9 @@
 [![License](https://img.shields.io/github/license/WhoIsMrSentry/SentryBOT)](LICENSE)
 [![Last Commit](https://img.shields.io/github/last-commit/WhoIsMrSentry/SentryBOT)](https://github.com/WhoIsMrSentry/SentryBOT/commits/main)
 [![Open Issues](https://img.shields.io/github/issues/WhoIsMrSentry/SentryBOT)](https://github.com/WhoIsMrSentry/SentryBOT/issues)
+[![Closed Issues](https://img.shields.io/github/issues-closed/WhoIsMrSentry/SentryBOT)](https://github.com/WhoIsMrSentry/SentryBOT/issues?q=is%3Aissue+is%3Aclosed)
 [![Open PRs](https://img.shields.io/github/issues-pr/WhoIsMrSentry/SentryBOT)](https://github.com/WhoIsMrSentry/SentryBOT/pulls)
+[![Closed PRs](https://img.shields.io/github/issues-pr-closed/WhoIsMrSentry/SentryBOT)](https://github.com/WhoIsMrSentry/SentryBOT/pulls?q=is%3Apr+is%3Aclosed)
 
 SentryBOT; Raspberry Pi 5 + Arduino tabanlı, modüler bir yoldaş robot ve servis mimarisidir. Tüm yetenekler bağımsız modüller hâlinde tasarlanır, tek bir Gateway üzerinden tek porttan API olarak sunulur. Donanım kontrolü Arduino ile yapılırken; konuşma tanıma/TTS, LED animasyonları, kamera ve LLM/RAG gibi fonksiyonlar Pi5 üzerinde mikro servisler olarak çalışır.
 
