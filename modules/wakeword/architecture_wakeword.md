@@ -46,16 +46,17 @@ flowchart TD
 ```mermaid
 erDiagram
     WakewordService ||--|| SpeechService : activates
-    WakewordService ||--o{"InteractionEngine : pushes_events
+    WakewordService ||--o{ InteractionEngine : pushes_events
     WakewordService ||--o{ AutonomyBrain : updates_status
-    
+
     WakewordService {
         string model_path
-                int command_window_s
-                _on_wakeword"}
-    
-    SpeechService {start
-                stop}
+        int command_window_s
+    }
+    SpeechService {
+        bool is_listening
+        string trigger_source
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
