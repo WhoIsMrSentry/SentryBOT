@@ -43,11 +43,12 @@ flowchart TD
 ```mermaid
 erDiagram
     CalibrationService ||--|| ArduinoSerial : controls
-    CalibrationService ||--o{"ConfigManager : updates
-    
+    CalibrationService ||--o{ ConfigManager : updates
+
     CalibrationService {
-        start_matrix
-        save_offsets"}
+        string profile_name
+        bool offsets_saved
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
