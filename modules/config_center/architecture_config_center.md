@@ -32,12 +32,13 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    ConfigCenter ||--o{"FileSystem : reads_writes
+    ConfigCenter ||--o{ FileSystem : reads_writes
     ConfigCenter ||--o{ AllModules : triggers_hot_reload
-    
+
     ConfigCenter {
-        get_config_tree
-        update_config_node"}
+        string config_path
+        string schema_version
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

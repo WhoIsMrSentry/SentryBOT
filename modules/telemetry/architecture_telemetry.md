@@ -27,13 +27,14 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    TelemetryService ||--o{"StateManager : reads
+    TelemetryService ||--o{ StateManager : reads
     TelemetryService ||--o{ ArduinoSerial : listens_events
     PrometheusServer ||--|| TelemetryService : scrapes
-    
+
     TelemetryService {
-        dict current_metrics
-        export_metrics_text"}
+        string metric_name
+        float metric_value
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
