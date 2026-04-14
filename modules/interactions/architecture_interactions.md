@@ -75,18 +75,20 @@ flowchart TD
 erDiagram
     InteractionEngine ||--|| MetricsCollector : uses
     InteractionEngine ||--|| NeoHttpClient : calls
-    EventAPI ||--o{"InteractionEngine : pushes_events
-    
+    EventApi ||--o{ InteractionEngine : pushes_events
+
     MetricsCollector {
-        get_cpu_temperature
-                get_network_bytes
-                get_cpu_load"}
-
-    InteractionEngine {"list rules '(priority, condition, action)'
-                tick"}
-
-    NeoHttpClient {"string url 'localhost:8080/neopixel'
-                play_animation_name__color"}
+        float cpu_temperature
+        float cpu_load
+    }
+    InteractionEngine {
+        string active_rule
+        int tick_interval_ms
+    }
+    NeoHttpClient {
+        string base_url
+        string last_animation
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

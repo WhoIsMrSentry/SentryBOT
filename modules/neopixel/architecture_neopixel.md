@@ -53,23 +53,24 @@ flowchart TD
 erDiagram
     NeoRunner ||--|| NeoDriver : uses
     NeoRunner ||--|| EmotionStore : uses
-    
-    NeoRunner {string current_animation
-                dict state
-                animate}
+    EmotionStore ||--o{ YamlFiles : reads
 
-    NeoDriver {"int num_leds
-                string order 'Örn: GRB'
-                object _strip 'pi5neo VEYA _SimStrip'
-                set
-                fill"}
-
-    EmotionStore {load_yaml
-                random_color_emotion}
-
-    EmotionStore }o--|| YAML_FILES : reads
-    YAML_FILES {"string emotions 'joy, sadness, fear...'
-                list colors 'HEX veya RGB olarak'"}
+    NeoRunner {
+        string current_animation
+        string current_state
+    }
+    NeoDriver {
+        int num_leds
+        string color_order
+    }
+    EmotionStore {
+        string emotion_key
+        string palette_name
+    }
+    YamlFiles {
+        string path
+        string format
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
