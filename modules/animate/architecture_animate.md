@@ -52,17 +52,22 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    AnimateService ||--o{"ArduinoSerial : calls_set_pose
-    AnimateService ||--o{ YAML_Animations : reads
-    
-    AnimateService {
-        run_animation_name__speed__loop
-                stop_animation"}
-    
-    YAML_Animations {"list steps '['duration_ms': 500, 'pose': [90,90,45...]"} ]"
-    }
+    AnimateService ||--o{ ArduinoSerial : sends_pose
+    AnimateService ||--o{ YamlAnimations : reads
 
-    ArduinoSerial {set_pose_pose_array__duration}
+    AnimateService {
+        string animation_name
+        float speed
+        bool loop
+    }
+    YamlAnimations {
+        string file_path
+        string steps_schema
+    }
+    ArduinoSerial {
+        string pose_payload
+        int duration_ms
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
