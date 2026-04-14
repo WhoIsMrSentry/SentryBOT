@@ -40,19 +40,22 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    StateManager ||--o{"AutonomyBrain : written_by
+    StateManager ||--o{ AutonomyBrain : written_by
     StateManager ||--o{ InteractionsEngine : read_by
     StateManager ||--o{ TelemetryService : read_by
-    
-    StateManager {
-        dict store 'Tüm global robot verisi'
-                lock dict_lock
-                set_value_key__val
-                get_value_key"}
-    
-    AutonomyBrain {"sync_emotions 'POST /set/emotions'"}
 
-    InteractionsEngine {"check_global_freeze 'GET /state/freeze'"}
+    StateManager {
+        string store_key
+        string store_value
+    }
+    AutonomyBrain {
+        string emotion_patch
+        string state_namespace
+    }
+    InteractionsEngine {
+        string read_key
+        bool needs_freeze_flag
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

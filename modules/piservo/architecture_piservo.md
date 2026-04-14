@@ -24,11 +24,13 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    PiServoService ||--|| RPi_GPIO : uses_hardware_pwm
-    AutonomyBrain ||--o{"PiServoService : sends_custom_gestures
-    
+    PiServoService ||--|| RpiGpio : uses_hardware_pwm
+    AutonomyBrain ||--o{ PiServoService : sends_custom_gestures
+
     PiServoService {
-        set_angle_pin__angle"}
+        int servo_pin
+        int angle_deg
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

@@ -55,21 +55,21 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    xArduinoSerialService ||--|| SerialTransport : uses
-    xArduinoSerialService ||--o{"HTTP_CALLER : provides
-    
+    ArduinoSerialService ||--|| SerialTransport : uses
+    ArduinoSerialService ||--o{ HttpCaller : provides
+
     SerialTransport {
         string port
-                int baudrate
-                write
-                readline"}
-
-    xArduinoSerialService {"Queue _lines 'Gelen normal yanıtlar'
-                string last_rfid 'Son yetkili RFID'
-                Thread _thread 'Sürekli dinleyen process'"}
-
-    HTTP_CALLER {"string request_source 'Autonomy, Vision vb.'
-                string JSON_command"}
+        int baudrate
+    }
+    ArduinoSerialService {
+        string last_rfid
+        bool reader_active
+    }
+    HttpCaller {
+        string request_source
+        string json_command
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

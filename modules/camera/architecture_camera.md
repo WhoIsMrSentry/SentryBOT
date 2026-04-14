@@ -52,16 +52,17 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    CameraCapture ||--o{"WebClients : streams_to
+    CameraCapture ||--o{ WebClients : streams_to
     VisionBridge ||--|| CameraCapture : polls_latest_frame
-    
+
     CameraCapture {
-        bytes current_frame 'Son başarılı JPEG'
-                threading.Event frame_ready
-                start
-                stop"}
-    
-    VisionBridge {fetch_frame_for_yolo}
+        string current_frame_jpeg
+        bool frame_ready
+    }
+    VisionBridge {
+        string frame_source
+        string detection_target
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

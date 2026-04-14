@@ -28,11 +28,12 @@ flowchart TD
 
 ```mermaid
 erDiagram
-    SchedulerService ||--o{"AllModules : executes_callbacks
-    
+    SchedulerService ||--o{ AllModules : executes_callbacks
+
     SchedulerService {
-        add_task_cron_expr__func
-        remove_task_id"}
+        string cron_expr
+        string task_id
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

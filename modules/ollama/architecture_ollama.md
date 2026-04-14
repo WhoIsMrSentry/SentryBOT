@@ -63,14 +63,19 @@ erDiagram
     OllamaChatService ||--|| PersonaProvider : reads
     OllamaChatService ||--|| ChatMemory : reads_writes
     OllamaChatService ||--|| OllamaClient : calls
-    
-    OllamaChatService {"string current_persona 'Örn: sentry'
-                chat_text__apply_actions"}
 
-    PersonaProvider {"dict personalities 'YAML dosyalarından yüklenenler'"}
-
-    ChatMemory {"int limit 'Maksimum konuşma dönüşü (örn: 10)'
-        list messages '['role': 'user', 'content': '...', ...]'"}
+    OllamaChatService {
+        string current_persona
+        bool apply_actions
+    }
+    PersonaProvider {
+        string profile_source
+        int profile_count
+    }
+    ChatMemory {
+        int limit
+        string last_user_message
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
