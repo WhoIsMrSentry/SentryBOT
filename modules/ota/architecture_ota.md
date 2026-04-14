@@ -35,10 +35,12 @@ flowchart TD
 erDiagram
     OTAService ||--|| ArduinoSerial : sends_estop
     OTAService ||--|| LinuxOS : runs_shell_comands
-    
-    OTAService {verify_package
-        apply_update
-        system_reboot}
+
+    OTAService {
+        string package_path
+        string update_state
+        bool reboot_required
+    }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)

@@ -63,12 +63,12 @@ flowchart TD
     end
 
     L3 --> RESP[Final User Response]
-    SF --> HAL[HAL Layer (HTTP via ServiceClient)]
+    SF --> HAL["HAL Layer: HTTP via ServiceClient"]
 
     subgraph HALLayer["Hardware Abstraction Layer"]
-        HAL --> SS[ServoService (move_head)]
-        HAL --> LS[LightsService (set_lights)]
-        HAL --> MS[MotorService / AudioService]
+        HAL --> SS["ServoService move_head"]
+        HAL --> LS["LightsService set_lights"]
+        HAL --> MS["MotorService or AudioService"]
     end
     
     SS -->|/arduino/request| ARD[Serial Gateway]
