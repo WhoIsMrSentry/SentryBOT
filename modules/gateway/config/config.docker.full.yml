@@ -1,0 +1,35 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+
+# Full Docker profili:
+# Tum moduller include edilir.
+# Donanim olmayan ortamlarda autostart'i compose override uzerinden kapatmak onerilir.
+include:
+  arduino: true
+  vlm_bridge: true
+  neopixel: true
+  interactions: true
+  speak: true
+  speech: true
+  wakeword: true
+  ollama: true
+  camera: true
+  logs: true
+  animate: true
+  piservo: true
+  autonomy: true
+  ota: true
+  mutagen: true
+  hardware: true
+  telemetry: true
+  diagnostics: true
+  state_manager: true
+  oled_faces: true
+  scheduler: true
+  notifier: true
+  calibration: true
+  config_center: true
+
+speech:
+  listening: false

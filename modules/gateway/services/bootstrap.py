@@ -14,10 +14,22 @@ logger = logging.getLogger("gateway.bootstrap")
 
 
 def _should_autostart_services() -> bool:
-    """Disable heavy background starts during pytest unless explicitly forced."""
+    """Disable heavy background starts unless explicitly enabled.
+
+    Priority:
+    1) SENTRYBOT_FORCE_AUTOSTART=true => always start
+    2) SENTRYBOT_DISABLE_AUTOSTART=true => never start
+    3) PYTEST_CURRENT_TEST set => never start
+    4) default => start
+    """
     force = str(os.getenv("SENTRYBOT_FORCE_AUTOSTART", "")).strip().lower()
     if force in {"1", "true", "yes", "on"}:
         return True
+
+    disable = str(os.getenv("SENTRYBOT_DISABLE_AUTOSTART", "")).strip().lower()
+    if disable in {"1", "true", "yes", "on"}:
+        return False
+
     return not bool(os.getenv("PYTEST_CURRENT_TEST"))
 
 
@@ -31,7 +43,7 @@ def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:
         except Exception as exc:
             logger.warning("arduino service failed to start, running degraded: %s", exc)
     else:
-        logger.info("arduino auto-start skipped under pytest")
+        logger.info("arduino auto-start skipped (autostart disabled)")
 
     started["arduino"] = ardu
     # mount the arduino router so other modules can talk to it
@@ -115,7 +127,7 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
     if _should_autostart_services():
         eng.start()
     else:
-        logger.info("interactions auto-start skipped under pytest")
+        logger.info("interactions auto-start skipped (autostart disabled)")
     started["interactions"] = eng
     app.include_router(get_inter_router(eng))
 
@@ -159,7 +171,7 @@ def _include_wakeword(app: FastAPI, started: Dict[str, object]) -> None:
     if _should_autostart_services():
         svc.start_background()
     else:
-        logger.info("wakeword auto-start skipped under pytest")
+        logger.info("wakeword auto-start skipped (autostart disabled)")
     started["wakeword"] = svc
     app.include_router(get_wakeword_router(svc))
     logger.info("module wakeword mounted")
@@ -207,7 +219,7 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
     if _should_autostart_services():
         capture.start()
     else:
-        logger.info("camera auto-start skipped under pytest")
+        logger.info("camera auto-start skipped (autostart disabled)")
     app.include_router(get_cam_router(capture, cap_cfg.fps_target), prefix="/camera", tags=["camera"])
     started["camera"] = capture
     logger.info("module camera mounted")
@@ -224,7 +236,7 @@ def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
         except Exception as exc:
             logger.warning("animate service failed to start, running degraded: %s", exc)
     elif hasattr(anim, "start"):
-        logger.info("animate auto-start skipped under pytest")
+        logger.info("animate auto-start skipped (autostart disabled)")
     started["animate"] = anim
     app.include_router(get_anim_router(anim))
     logger.info("module animate mounted")
@@ -251,7 +263,7 @@ def _include_autonomy(app: FastAPI, started: Dict[str, object]) -> None:
     if _should_autostart_services():
         svc.start()
     else:
-        logger.info("autonomy auto-start skipped under pytest")
+        logger.info("autonomy auto-start skipped (autostart disabled)")
     started["autonomy"] = svc
     app.include_router(get_autonomy_router(svc.brain))
     logger.info("module autonomy mounted")

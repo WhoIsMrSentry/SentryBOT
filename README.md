@@ -147,6 +147,40 @@ Notlar:
 - Arduino bağlantısı için port otomatik bulunur; gerekirse `ARDUINO_PORT` ve `ARDUINO_BAUD` ile override.
 
 
+## Docker ile Çalıştırma
+
+Kök dizinde hazır Docker dosyaları bulunur:
+- `Dockerfile`
+- `docker-compose.yml`
+- `modules/gateway/config/config.docker.yml`
+- `docker-compose.full.yml`
+- `modules/gateway/config/config.docker.full.yml`
+- `docker-compose.rpi.yml`
+- `modules/gateway/config/config.docker.rpi.yml`
+
+1) Build + başlat:
+	- `docker compose up --build -d`
+2) Logları izle:
+	- `docker compose logs -f sentrybot-gateway`
+3) Durdur:
+	- `docker compose down`
+
+Varsayılan Docker konfigürasyonu donanım bağımlı modülleri kapalı getirir ve API çekirdeğini başlatır.
+
+Full profil (tüm modüller include, autostart kapalı):
+- `docker compose -f docker-compose.yml -f docker-compose.full.yml up --build -d`
+
+Raspberry Pi 5 + Arduino profili (donanım modülleri açık):
+- `docker compose -f docker-compose.yml -f docker-compose.rpi.yml up --build -d`
+
+- Sağlık kontrolü: `http://localhost:8080/healthz`
+- Swagger UI: `http://localhost:8080/docs`
+- ReDoc: `http://localhost:8080/redoc`
+- Modül include ayarlarını değiştirmek için `modules/gateway/config/config.docker.yml`, `modules/gateway/config/config.docker.full.yml` veya `modules/gateway/config/config.docker.rpi.yml` dosyalarını düzenleyin.
+- Alternatif bir gateway config kullanmak için `GATEWAY_CONFIG` environment variable’ını override edin.
+- Raspberry Pi/Linux cihaz eşlemeleri `docker-compose.rpi.yml` içinde hazırdır.
+
+
 ## Konfigürasyon
 
 - Gateway yapılandırması: `modules/gateway/config/config.yml`

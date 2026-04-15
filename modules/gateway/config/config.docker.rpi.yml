@@ -1,0 +1,34 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+
+# Raspberry Pi 5 + Arduino odakli Docker konfigrasyonu.
+# Donanim bagimli moduller acik gelir.
+include:
+  arduino: true
+  vlm_bridge: true
+  neopixel: true
+  interactions: true
+  speak: true
+  speech: true
+  wakeword: true
+  ollama: true
+  camera: true
+  logs: true
+  animate: true
+  piservo: true
+  autonomy: true
+  ota: true
+  mutagen: false
+  hardware: true
+  telemetry: true
+  diagnostics: true
+  state_manager: true
+  oled_faces: true
+  scheduler: true
+  notifier: false
+  calibration: true
+  config_center: true
+
+speech:
+  listening: false
