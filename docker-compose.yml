@@ -1,0 +1,25 @@
+services:
+  sentrybot-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sentrybot-gateway
+    restart: unless-stopped
+    environment:
+      GATEWAY_CONFIG: /app/modules/gateway/config/config.docker.yml
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./logs:/app/logs
+      - ./modules/gateway/config/config.docker.yml:/app/modules/gateway/config/config.docker.yml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 25s
+
+    # Linux/Raspberry Pi icin seri porta erisim ornegi:
+    # devices:
+    #   - "/dev/ttyACM0:/dev/ttyACM0"
