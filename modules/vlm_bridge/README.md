@@ -2,6 +2,8 @@
 
 Kamera akışını işleyen yerel (Pi5) veya uzak (dizüstü / sunucu) görüntü işleme pipeline sonucunu robota ve diğer modüllere köprüler.
 
+Bu modül artık yalnızca görüntü köprülemekle kalmaz; farklı görsel iş yüklerini ayrı modlar halinde yönetebilir. Böylece pahalı işlemler ihtiyaca göre kapatılabilir.
+
 ## Modlar
 - **local**: Pi5 üzerinde OpenCV yüz algılama + ORB/FLANN yüz tanıma + CSRT takip çalışır.
 - **remote**: Harici cihaz video akışını işler, sonuçları köprüye POST eder. Pi üzerinde ağır model yüklenmez.
@@ -22,7 +24,12 @@ Kamera akışını işleyen yerel (Pi5) veya uzak (dizüstü / sunucu) görünt�
 - `POST /vlm/memory/chat` : `{ person, text, role? }` kişi hafızasına sohbet satırı ekler.
 - `GET  /vlm/memory/person?person=Alice` : kişinin hafızası (son özet + sohbetler).
 - `GET  /vlm/memory/people` : hafızada kayıtlı isimler.
-- (Plan) `POST /vlm/mode` : Çalışma modları arasında geçiş (objects/people/ocr/depth...).
+- `POST /vlm/mode` : Çalışma modları arasında geçiş (objects/people/ocr/depth...)
+
+## Mod Yönetimi Ne Yapar?
+- `objects`, `people`, `faces`, `depth`, `ocr`, `hazards`, `semantic_scene` gibi alt yetenekleri ayrı ayrı açıp kapatır.
+- Görme engelli modu gibi davranışlar yalnızca ilgili mod aktifse çalışır.
+- Ağır iş yüklerini kapatarak CPU ve gecikme baskısını azaltır.
 
 ### /vlm/results Payload Örneği
 ```json

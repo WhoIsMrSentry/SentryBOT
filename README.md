@@ -33,6 +33,14 @@ Ana hedefler:
 - **Duygu Motoru (Emotional Engine)**: Robotun iç durumu (Mutluluk, Enerji, Merak, Korku) davranışlarını ve NeoPixel ışıklarını otomatik olarak etkiler (örn: `joy` -> altın rengi nefes alma).
 - **Tam Yapılandırılmış Çıktı (Structured JSON)**: Ollama artık tüm yanıtlarını düşünce (thoughts), vokal yanıt (text) ve fiziksel aksiyonlar (actions) içeren katı bir JSON formatında döner.
 - **Sistem-Genel Modül Kontrolü**: Robot artık kendi modüllerini (notifier, camera, speech vb.) LLM kararlarıyla çalışma esnasında kapatıp açabilir.
+- **Durum Kalıcılığı**: State Manager, global state'i sqlite/json backend ile restart sonrasında da saklar.
+- **Gateway Güvenliği**: Gateway'e isteğe bağlı API anahtarı ve rol kontrolü eklendi; yazma uçları korunabilir.
+- **Diagnostics Akıllı Sağlık Taraması**: Gecikme eşikleri, tekrar eden hata sayımı ve self-heal tetikleri ile daha doğru rapor üretir.
+- **Scheduler Dinamik Görev Motoru**: Görevler çalışma anında eklenip silinebilir; sadece config'e bağlı kalmaz.
+- **Semantic Memory ve SLAM**: Ajan, geçmiş kayıtları alaka puanına göre sıralar ve topolojik haritaya yeni konum/bağlantı öğrenebilir.
+- **Tri-Layer Semantic Routing**: Router yalnızca anahtar kelimeye değil, token benzerliğine de bakarak daha doğru modül seçimi yapar.
+- **VLM Mode Yönetimi**: Görüntü işleme yetenekleri ayrı ayrı açılıp kapatılabilir; pahalı işlemler ihtiyaca göre sınırlandırılır.
+- **OTA Güvenlik Sertleştirmesi**: Firmware yükleme sırasında opsiyonel allowlist ve HMAC imza doğrulaması kullanılabilir.
 
 
 ## Mimari Genel Bakış
@@ -71,8 +79,8 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- Kapsam: Geliştirici cihaz ↔ robot dosya senkronu; OTA ile birlikte firmware dağıtımını kolaylaştırır.
 		- API: `/mutagen/status`, `/mutagen/start`, `/mutagen/stop`
 	- Teşhis & Zamanlama (modules/diagnostics, modules/scheduler)
-		- Diagnostics API: `/diagnostics/run`, `/diagnostics/report` — modül sağlıklarını zincir hâlinde kontrol eder.
-		- Scheduler API: `/scheduler/jobs` — basit async periyodik görevler, HTTP ping işleri.
+		- Diagnostics API: `/diagnostics/run`, `/diagnostics/report` — modül sağlıklarını zincir hâlinde kontrol eder; gecikme ve tekrar eden hataları da değerlendirir.
+		- Scheduler API: `/scheduler/jobs` — basit async periyodik görevler, HTTP ping işleri; runtime görev ekleme/silme de desteklenir.
 
 - Duyular
 	- Kamera (modules/camera)
@@ -82,6 +90,7 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 	- VLM Bridge (modules/vlm_bridge)
 		- Kapsam: OpenCV tabanlı yüz algılama/tanıma ve takip; dış işlemci sonuçlarını Pi5’e HTTP ile yollar.
 		- API: `POST /vlm/track { head_tilt, head_pan, drive? }` → Arduino “track” komutuna köprü.
+		- Not: `POST /vlm/mode` ile objects/people/ocr/depth gibi yetenekler tek tek açılıp kapatılabilir.
 		- Sınırlar: Ağ gecikmesi; kontrol döngüsünde stabilite için sınırlamalar (slew/ölü bant) önerilir.
 	- Konuşma Tanıma (modules/speech)
 		- Kapsam: Vosk ile tamamen offline ASR; I2S mikrofon; opsiyonel WebRTC VAD; stereo’da DoA hesaplar.
@@ -90,7 +99,7 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- Sınırlar: DoA için stereo şart; model klasörlerinin doğru konfig edilmesi gerekir.
 	- Telemetri & Durum (modules/telemetry, modules/state_manager)
 		- Telemetry: `/telemetry/metrics` Prometheus; `/telemetry/events` ham olay yayımı.
-		- State Manager: `/state/get`, `/state/set/emotions` — global durum ve duygular.
+		- State Manager: `/state/get`, `/state/set/emotions`, `/state/set/<key>` — global durum ve duygular için kalıcı anahtar/değer desteği.
 
 - İfade/Arayüz
 	- Speak (TTS) (modules/speak)
@@ -211,6 +220,7 @@ Gateway açıkken tüm modül uçları tek porttadır. Genel sağlık uçları: 
 - Diagnostics: `/diagnostics/*` – self-check ve rapor
 - State Manager: `/state/*` – global durum/emotions
 - Scheduler: `/scheduler/*` – iş listesi
+- Scheduler: `/scheduler/*` – iş listesi, dinamik görev ekleme/silme ve sonuç takibi
 - Notifier: `/notify/*` – Telegram/Discord köprüleri
 - Config Center: `/config/*` – YAML okuma/düzenleme, UI
 
