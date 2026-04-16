@@ -97,6 +97,22 @@ def install_requirements(files: Iterable[Path], dry_run: bool = False, pip_args:
     
     pip = [python_exe, "-m", "pip", "install", "-r"]
     extra = shlex.split(pip_args) if pip_args else []
+
+    def _run_pip(cmd: List[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+
+    def _needs_repair(stdout: str, stderr: str) -> bool:
+        text = f"{stdout}\n{stderr}".lower()
+        return any(
+            marker in text
+            for marker in [
+                "no such file or directory",
+                "dist-info",
+                "invalid distribution",
+                "record file not found",
+                "metadata",
+            ]
+        )
     
     for f in files:
         lab = label_for(f, Path.cwd())
@@ -109,8 +125,24 @@ def install_requirements(files: Iterable[Path], dry_run: bool = False, pip_args:
             continue
             
         cmd = pip + [str(f)] + extra
-        proc = subprocess.run(cmd, stdout=sys.stdout, stderr=sys.stderr, cwd=str(Path.cwd()))
+        proc = _run_pip(cmd)
+        if proc.stdout:
+            print(proc.stdout, end="")
+        if proc.stderr:
+            print(proc.stderr, end="", file=sys.stderr)
+
         code = int(proc.returncode or 0)
+
+        if code != 0 and _needs_repair(proc.stdout or "", proc.stderr or ""):
+            repair_cmd = pip + [str(f), "--ignore-installed", "--no-cache-dir"] + extra
+            print("\nKurulum bozuk dağıtımlardan dolayı tekrar deneniyor: --ignore-installed --no-cache-dir")
+            repair_proc = _run_pip(repair_cmd)
+            if repair_proc.stdout:
+                print(repair_proc.stdout, end="")
+            if repair_proc.stderr:
+                print(repair_proc.stderr, end="", file=sys.stderr)
+            code = int(repair_proc.returncode or 0)
+
         results.append((f, code))
         
         if code != 0:
