@@ -1,4 +1,20 @@
 server:
   host: 0.0.0.0
   port: 8094
-jobs: []  # [{ id: ping, every_s: 60, url: http://127.0.0.1:8080/healthz }]
+
+gateway_base_url: http://127.0.0.1:8080
+
+jobs: []
+# Example jobs:
+# - id: gateway_ping
+#   kind: http
+#   method: GET
+#   url: http://127.0.0.1:8080/healthz
+#   every_s: 30
+# - id: hourly_diag
+#   kind: diagnostics
+#   every_s: 3600
+# - id: heartbeat_voice
+#   kind: speak
+#   text: "Sistem kontrolu normal"
+#   every_s: 900
