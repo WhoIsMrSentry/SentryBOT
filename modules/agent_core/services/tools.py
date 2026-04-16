@@ -231,6 +231,46 @@ class ToolRegistry:
             }
         })
 
+        self._register(self.update_location, {
+            "type": "function",
+            "function": {
+                "name": "update_location",
+                "description": "Update current location and learn it if it is a new place.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string", "description": "Current location name"},
+                    },
+                    "required": ["location"],
+                },
+            },
+        })
+
+        self._register(self.connect_locations, {
+            "type": "function",
+            "function": {
+                "name": "connect_locations",
+                "description": "Connect two map locations and learn unknown nodes.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string", "description": "Source location"},
+                        "destination": {"type": "string", "description": "Destination location"},
+                    },
+                    "required": ["source", "destination"],
+                },
+            },
+        })
+
+        self._register(self.list_locations, {
+            "type": "function",
+            "function": {
+                "name": "list_locations",
+                "description": "List all known map locations.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        })
+
     # ==========================================
     # TOOL LOGIC
     # ==========================================
@@ -318,3 +358,21 @@ class ToolRegistry:
         if not path:
             return f"Cannot find path to {destination}."
         return f"Path to {destination}: {' -> '.join(path)}"
+
+    def update_location(self, location: str) -> str:
+        ok = self.slam.update_location(location)
+        if not ok:
+            return f"Failed to update location: {location}"
+        return f"Current location updated to: {self.slam.get_location()}"
+
+    def connect_locations(self, source: str, destination: str) -> str:
+        ok = self.slam.connect_nodes(source, destination, bidirectional=True)
+        if not ok:
+            return f"Failed to connect '{source}' and '{destination}'."
+        return f"Connected locations: {source} <-> {destination}"
+
+    def list_locations(self) -> str:
+        known = self.slam.known_locations()
+        if not known:
+            return "No known locations yet."
+        return f"Known locations: {', '.join(known)}"
