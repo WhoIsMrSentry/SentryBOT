@@ -411,7 +411,10 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             cfg_sm = __import__("modules.state_manager.config_loader", fromlist=["load_config"]).load_config(None)
             StateStore = __import__("modules.state_manager.services.store", fromlist=["StateStore"]).StateStore
             get_router = __import__("modules.state_manager.api.router", fromlist=["get_router"]).get_router
-            store = StateStore(cfg_sm.get("defaults", {}))
+            store = StateStore(
+                defaults=cfg_sm.get("defaults", {}),
+                persistence=cfg_sm.get("persistence", {}),
+            )
             started["state_manager"] = store
             app.include_router(get_router(store))
         _try(_mount_state, "state_manager")
@@ -420,10 +423,22 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         _try(lambda: _include_oled_faces(app, started), "oled_faces")
 
     if include.get("scheduler"):
-        _try(lambda: app.include_router(__import__("modules.scheduler.api.router", fromlist=["get_router"]).get_router(
-            __import__("modules.scheduler.config_loader", fromlist=["load_config"]).load_config(None)
-        )), "scheduler")
-        started["scheduler"] = True
+        def _mount_scheduler():
+            cfg_sc = __import__("modules.scheduler.config_loader", fromlist=["load_config"]).load_config(None)
+            Scheduler = __import__("modules.scheduler.services.runner", fromlist=["Scheduler"]).Scheduler
+            get_router = __import__("modules.scheduler.api.router", fromlist=["get_router"]).get_router
+            sched = Scheduler(
+                jobs=cfg_sc.get("jobs", []),
+                gateway_base_url=str(cfg_sc.get("gateway_base_url", "http://127.0.0.1:8080")),
+            )
+            if _should_autostart_services():
+                sched.start()
+            else:
+                logger.info("scheduler auto-start skipped (autostart disabled)")
+            started["scheduler"] = sched
+            app.include_router(get_router(cfg_sc, sched))
+
+        _try(_mount_scheduler, "scheduler")
 
     if include.get("notifier"):
         _try(lambda: _include_notifier(app, started), "notifier")
