@@ -89,6 +89,44 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
         result = processor.follow_status()
         return result if isinstance(result, dict) else {"active": False}
 
+    @r.get("/mode", tags=["control"], summary="Get active mode/profile flags")
+    def get_mode():
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        modes = processor.get_modes() if hasattr(processor, "get_modes") else {}
+        profiles = processor.list_profiles() if hasattr(processor, "list_profiles") else []
+        return {
+            "ok": True,
+            "processing_mode": getattr(processor, "processing_mode", "unknown"),
+            "modes": modes,
+            "profiles": profiles,
+        }
+
+    @r.post("/mode", tags=["control"], summary="Set processing mode and/or mode flags")
+    def set_mode(body: dict):
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be object")
+
+        out: dict = {"ok": True}
+
+        processing_mode = body.get("processing_mode")
+        if processing_mode is not None and hasattr(processor, "set_processing_mode"):
+            out["processing_mode"] = processor.set_processing_mode(str(processing_mode))
+
+        profile = body.get("profile")
+        if profile is not None and hasattr(processor, "apply_mode_profile"):
+            out["profile"] = processor.apply_mode_profile(str(profile))
+
+        modes = body.get("modes")
+        if isinstance(modes, dict) and hasattr(processor, "set_modes"):
+            out["modes_update"] = processor.set_modes(modes)
+
+        out["modes"] = processor.get_modes() if hasattr(processor, "get_modes") else {}
+        out["processing_mode_current"] = getattr(processor, "processing_mode", "unknown")
+        return out
+
     @r.post("/analyze", tags=["analysis"], summary="Analyze single frame (local)")
     def analyze_snapshot():
         """Trigger a one-off analysis of the current view (local mode)."""

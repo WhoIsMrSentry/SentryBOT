@@ -9,10 +9,13 @@ from .services.runner import Scheduler
 
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
-    app = FastAPI(title="Scheduler Service")
-    app.include_router(get_router(cfg))
+    sched = Scheduler(
+        jobs=cfg.get("jobs", []),
+        gateway_base_url=str(cfg.get("gateway_base_url", "http://127.0.0.1:8080")),
+    )
 
-    sched = Scheduler(cfg.get("jobs", []))
+    app = FastAPI(title="Scheduler Service")
+    app.include_router(get_router(cfg, sched))
 
     @app.on_event("startup")
     async def _startup():

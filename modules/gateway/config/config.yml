@@ -28,3 +28,21 @@ include:
   config_center: true
 speech:
   listening: false
+
+security:
+  enabled: false
+  api_key_header: X-API-Key
+  role_header: X-Role
+  api_keys: []
+  admin_keys: []
+  exempt_prefixes:
+    - /docs
+    - /redoc
+    - /openapi.json
+    - /health
+    - /healthz
+    - /status
+  admin_write_prefixes:
+    - /config
+    - /ota
+    - /scheduler/jobs

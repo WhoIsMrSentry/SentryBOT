@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any
 import os
+import re
 
 logger = logging.getLogger("agent.memory")
 
@@ -89,8 +90,85 @@ class EpisodicMemory:
                 (f"%{query}%", limit)
             )
             results = cursor.fetchall()
+
+            # semantic-lite fallback when LIKE results are sparse
+            if len(results) < limit:
+                cursor.execute(
+                    '''
+                    SELECT timestamp, event_type, content, importance
+                    FROM episodes
+                    ORDER BY timestamp DESC
+                    LIMIT 300
+                    '''
+                )
+                semantic_rows = cursor.fetchall()
+            else:
+                semantic_rows = []
         finally:
             if not self._conn:
                 conn.close()
-            
-        return [{"time": r[0], "type": r[1], "content": r[2]} for r in results]
+
+        out = [{"time": r[0], "type": r[1], "content": r[2]} for r in results]
+        if len(out) >= limit:
+            return out[:limit]
+
+        seen = {(x["time"], x["type"], x["content"]) for x in out}
+        out.extend(self._semantic_rank(query=query, rows=semantic_rows, limit=limit, seen=seen))
+        return out[:limit]
+
+    @staticmethod
+    def _tokenize(text: str) -> set[str]:
+        return {t for t in re.findall(r"[a-zA-Z0-9_]+", str(text).lower()) if len(t) > 1}
+
+    def _semantic_rank(
+        self,
+        query: str,
+        rows: List[Any],
+        limit: int,
+        seen: set[tuple[str, str, str]],
+    ) -> List[Dict[str, Any]]:
+        q_tokens = self._tokenize(query)
+        if not rows or not q_tokens:
+            return []
+
+        scored: List[tuple[float, Dict[str, Any]]] = []
+        total = max(1, len(rows))
+        for idx, row in enumerate(rows):
+            try:
+                ts, ev_type, content, importance = row
+            except Exception:
+                continue
+
+            key = (str(ts), str(ev_type), str(content))
+            if key in seen:
+                continue
+
+            c_tokens = self._tokenize(str(content))
+            if not c_tokens:
+                continue
+            overlap = len(q_tokens & c_tokens)
+            if overlap == 0:
+                continue
+
+            lexical = overlap / max(1, len(q_tokens | c_tokens))
+            recency = (total - idx) / total
+            try:
+                imp = max(0.0, min(1.0, float(importance) / 10.0))
+            except Exception:
+                imp = 0.0
+
+            score = (0.7 * lexical) + (0.2 * recency) + (0.1 * imp)
+            scored.append(
+                (
+                    score,
+                    {
+                        "time": str(ts),
+                        "type": str(ev_type),
+                        "content": str(content),
+                        "score": round(score, 4),
+                    },
+                )
+            )
+
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [entry for _, entry in scored[:limit]]

@@ -16,3 +16,8 @@ ota:
     extra_flags: []
   version_db: modules/ota/config/versions.json
   scan_on_start: true
+  security:
+    enable_allowlist: false
+    enable_signature: false
+    allowed_hashes: []
+    secret_key: ""  # Set if enabling signature verification
