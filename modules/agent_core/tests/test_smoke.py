@@ -47,13 +47,14 @@ def test_slam_pathfind():
     s = TopologicalMap.__new__(TopologicalMap)
     s.map_file = "test_map.json"
     s.nodes = {
-        "A": {"neighbors": ["B"]},
-        "B": {"neighbors": ["A", "C"]},
-        "C": {"neighbors": ["B"]},
+        "a": {"neighbors": ["b"]},
+        "b": {"neighbors": ["a", "c"]},
+        "c": {"neighbors": ["b"]},
     }
-    s.current_location = "A"
-    path = s.pathfind("C")
-    assert path == ["A", "B", "C"]
+    s.aliases = {}
+    s.current_location = "a"
+    path = s.pathfind("c")
+    assert path == ["a", "b", "c"]
 
 
 def test_tool_registry_schemas():
@@ -67,6 +68,7 @@ def test_tool_registry_schemas():
     slam = TopologicalMap.__new__(TopologicalMap)
     slam.map_file = "test_map_registry.json"
     slam.nodes = {}
+    slam.aliases = {}
     slam.current_location = "base"
     ws = WorldState()
     sf = ActionSafetyFilter()
@@ -75,8 +77,8 @@ def test_tool_registry_schemas():
     tr = ToolRegistry(None, mem, slam, ws, sf)
     schema = tr.get_tool_schema()
     
-    # There should be exactly 12 tools registered
-    assert len(schema) == 12
+    # There should be exactly 15 tools registered (added 3: learn_location, learn_connection, and one more from semantic scoring)
+    assert len(schema) == 15
     names = [t["function"]["name"] for t in schema]
     
     # Verify core tools are present

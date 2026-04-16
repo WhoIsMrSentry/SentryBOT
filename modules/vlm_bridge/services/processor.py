@@ -85,6 +85,56 @@ class VisionProcessor:
         self.camera_source = vision_cfg.get("camera_source", 0)
         self.conf_threshold = float(vision_cfg.get("confidence_threshold", 0.5))
 
+        raw_modes = vision_cfg.get("modes", {}) if isinstance(vision_cfg.get("modes", {}), dict) else {}
+        self.mode_flags: Dict[str, bool] = {
+            "objects": bool(raw_modes.get("objects", True)),
+            "people": bool(raw_modes.get("people", True)),
+            "faces": bool(raw_modes.get("faces", True)),
+            "depth": bool(raw_modes.get("depth", False)),
+            "ocr": bool(raw_modes.get("ocr", False)),
+            "hazards": bool(raw_modes.get("hazards", True)),
+            "semantic_scene": bool(raw_modes.get("semantic_scene", True)),
+        }
+        self.mode_profiles: Dict[str, Dict[str, bool]] = {
+            "balanced": dict(self.mode_flags),
+            "people_focus": {
+                "objects": False,
+                "people": True,
+                "faces": True,
+                "depth": False,
+                "ocr": False,
+                "hazards": True,
+                "semantic_scene": True,
+            },
+            "objects_focus": {
+                "objects": True,
+                "people": False,
+                "faces": False,
+                "depth": False,
+                "ocr": False,
+                "hazards": True,
+                "semantic_scene": True,
+            },
+            "assistive": {
+                "objects": True,
+                "people": True,
+                "faces": True,
+                "depth": bool(raw_modes.get("depth", False)),
+                "ocr": bool(raw_modes.get("ocr", False)),
+                "hazards": True,
+                "semantic_scene": True,
+            },
+            "minimal": {
+                "objects": False,
+                "people": False,
+                "faces": False,
+                "depth": False,
+                "ocr": False,
+                "hazards": False,
+                "semantic_scene": False,
+            },
+        }
+
         self._face_cascade = load_frontal_face_cascade(logger)
 
         self.face_manager = None
@@ -149,6 +199,44 @@ class VisionProcessor:
             logger.info("[vlm_bridge] Local mode: OpenCV face recognition + CSRT tracking active")
         else:
             logger.info("[vlm_bridge] Remote mode: waiting for /vlm/results payloads")
+
+    def get_modes(self) -> Dict[str, bool]:
+        return dict(self.mode_flags)
+
+    def list_profiles(self) -> List[str]:
+        return sorted(self.mode_profiles.keys())
+
+    def set_modes(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        changed: Dict[str, bool] = {}
+        for key, value in updates.items():
+            if key in self.mode_flags:
+                self.mode_flags[key] = bool(value)
+                changed[key] = self.mode_flags[key]
+        return {"ok": True, "changed": changed, "modes": self.get_modes()}
+
+    def apply_mode_profile(self, name: str) -> Dict[str, Any]:
+        profile = self.mode_profiles.get(str(name).strip().lower())
+        if not profile:
+            return {"ok": False, "error": "unknown_profile", "profiles": self.list_profiles()}
+        self.mode_flags.update(profile)
+        return {"ok": True, "profile": str(name).strip().lower(), "modes": self.get_modes()}
+
+    def set_processing_mode(self, mode: str) -> Dict[str, Any]:
+        m = str(mode or "").strip().lower()
+        if m not in {"local", "remote"}:
+            return {"ok": False, "error": "invalid_mode", "allowed": ["local", "remote"]}
+        if m == self.processing_mode:
+            return {"ok": True, "processing_mode": self.processing_mode}
+
+        if m == "remote":
+            self.stop_stream_processing()
+            self.processing_mode = "remote"
+            return {"ok": True, "processing_mode": self.processing_mode}
+
+        # switch remote -> local
+        self.processing_mode = "local"
+        self.start_stream_processing()
+        return {"ok": True, "processing_mode": self.processing_mode}
 
     # -----------------------------------------------------------------
     # Public control API
@@ -260,7 +348,7 @@ class VisionProcessor:
             self._handle_person_interactions(parsed_results)
             if not self._follow_active:
                 self._evaluate_alerts(parsed_results)
-                if parsed_results:
+                if parsed_results and self.mode_flags.get("semantic_scene", True):
                     self.action_dispatcher.emit_scene(self.semantic, parsed_results)
                 if self.blind_mode_enabled and parsed_results:
                     self._handle_blind_mode(parsed_results)
@@ -347,6 +435,12 @@ class VisionProcessor:
             if self._follow_tracker is None and parsed:
                 self._lock_tracker_from_candidates(frame, parsed)
             self._drive_follow(parsed, frame.shape)
+
+        if not self.mode_flags.get("people", True):
+            parsed = []
+        elif not self.mode_flags.get("faces", True):
+            for item in parsed:
+                item["name"] = "Unknown"
 
         return parsed, annotated
 
@@ -570,12 +664,20 @@ class VisionProcessor:
                 }
             )
 
+        if not self.mode_flags.get("objects", True):
+            normalized = [r for r in normalized if str(r.get("label", "")).lower() == "person"]
+        if not self.mode_flags.get("people", True):
+            normalized = [r for r in normalized if str(r.get("label", "")).lower() != "person"]
+        if not self.mode_flags.get("faces", True):
+            for item in normalized:
+                item["name"] = "Unknown"
+
         self.latest_results = normalized
         self._evaluate_alerts(normalized)
         self._handle_person_interactions(normalized)
         if self.blind_mode_enabled and normalized:
             self._handle_blind_mode(normalized)
-        if normalized:
+        if normalized and self.mode_flags.get("semantic_scene", True):
             self.action_dispatcher.emit_scene(self.semantic, normalized)
         return {"count": len(normalized)}
 
@@ -632,7 +734,7 @@ class VisionProcessor:
     def _evaluate_alerts(self, results: List[Dict[str, Any]]) -> None:
         vision_cfg = self.config.get("vision", {})
         alerts_cfg = vision_cfg.get("alerts", {})
-        if not alerts_cfg or not vision_cfg.get("modes", {}).get("hazards", True):
+        if not alerts_cfg or not self.mode_flags.get("hazards", True):
             return
 
         classes = {str(c) for c in alerts_cfg.get("classes", [])}
@@ -668,7 +770,7 @@ class VisionProcessor:
 
     def _handle_person_interactions(self, results: List[Dict[str, Any]]) -> None:
         vision_cfg = self.config.get("vision", {})
-        if not vision_cfg.get("modes", {}).get("people", True):
+        if not self.mode_flags.get("people", True):
             return
 
         greet_cooldown = float(vision_cfg.get("personalization", {}).get("greet_cooldown_s", 30))

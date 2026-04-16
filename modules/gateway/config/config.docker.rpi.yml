@@ -32,3 +32,10 @@ include:
 
 speech:
   listening: false
+
+security:
+  enabled: false
+  api_key_header: X-API-Key
+  role_header: X-Role
+  api_keys: []
+  admin_keys: []

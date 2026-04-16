@@ -5,4 +5,5 @@ defaults:
   operational: idle
   emotions: []
 persistence:
-  type: memory
+  type: sqlite
+  path: modules/state_manager/data/state.sqlite3

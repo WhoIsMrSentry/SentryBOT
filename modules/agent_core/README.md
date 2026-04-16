@@ -42,8 +42,17 @@ modules/agent_core/
 - **3-Layer Agent Pipeline:** Katman-1 istegi modul sub-agent'lara yonlendirir, Katman-2 uzman sub-agent'lar araci calistirir, Katman-3 main persona tek ve tutarli cevap uretir.
 - **Tek Model Politikasi:** Router, sub-agent ve persona katmanlari ayni Ollama modeli uzerinden calisir.
 - **Low-Latency Router:** Varsayilan keyword tabanli yonlendirme ek gecikme olmadan calisir.
+- **Semantic Router:** Router artık token benzerliğini de hesaba katar; tam eşleşmeyen ama yakın isteklerde daha doğru modül seçimi sağlar.
 - **Physical Safety First:** `ActionSafetyFilter` doğrudan donanım aletlerinin içine gömülüdür (Kafa çevirmeden önce direkt açı kontrolü yapılır).
 - **Episodic Memory:** Robot konuştuğu her şeyi SQLite'a kaydeder ve `search_memory` tool'u ile geri çağırabilir.
+- **Semantic Memory Ranking:** Arama sonuçları yalnızca eşleşme değil, alaka puanına göre sıralanır.
+- **Runtime SLAM Learning:** Ajan yeni konum, bağlantı ve takma adları çalışma anında haritaya ekleyebilir.
+
+## Bu Modül Ne Yapar?
+- Gelen isteği planlar, uygun sub-agent'lara yönlendirir ve son cevabı üretir.
+- Kısa süreli ve uzun süreli hafızayı yönetir.
+- Topolojik harita üzerinden konum bulur ve yol planlar.
+- Yeni araçları ve güvenlik sınırlarını LLM kullanımına sunar.
 
 ## Kullanım
 
@@ -77,6 +86,8 @@ print(result["text"])
 | `/memory/search` | GET | Epizodik hafıza arama |
 | `/slam/location` | GET | Topolojik konum |
 | `/slam/pathfind` | GET | BFS yol bulma |
+
+`/memory/search` sonuçları artık önem puanına göre sıralanır. SLAM tarafı ise yeni düğüm, bağlantı ve alias öğrenmeyi destekler.
 
 ## Konfigürasyon (`config/config.yml`)
 

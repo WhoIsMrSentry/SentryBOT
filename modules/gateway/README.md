@@ -2,6 +2,14 @@
 
 Tek FastAPI sürecinde tüm modül router’larını orkestre eden ana giriş kapısı. Üretimde tek porttan hizmet verir.
 
+Gateway, dış dünyaya açılan ana yüzdür. Yeni security katmanı ile isteğe bağlı API anahtarı ve rol kontrolü eklenmiştir; böylece kritik yazma uçları korunabilir.
+
+## Ne İşe Yarar?
+- Modül router’larını tek uygulamada birleştirir.
+- Sağlık ve include/disable yapılandırmasını yönetir.
+- API anahtarı etkinse istekleri doğrular.
+- Rol bazlı erişimle kritik uçları sınırlar.
+
 ## Çalıştırma
 ```bash
 python -m modules.gateway.xGatewayService
@@ -11,6 +19,9 @@ python -m modules.gateway.xGatewayService
 `modules/gateway/config/config.yml`
 - server.host / server.port
 - include.<module>: true/false (arduino, vlm_bridge, neopixel, interactions, speak, speech, ollama, camera)
+- security.enabled: true/false
+- security.api_key: isteklerde beklenen anahtar
+- security.admin_roles: kritik uçlar için kabul edilen roller
 
 Varsayılan: tüm modüller açık (include=true).
 
@@ -37,6 +48,8 @@ Varsayılan: tüm modüller açık (include=true).
 - /notify/* – Telegram/Discord
 - /calib/* – Kalibrasyon sihirbazları
 - /config/* – Config Center (UI: /config/ui)
+
+Security etkinse yazma uçları `X-API-Key` başlığı bekler; rol kontrolü açıksa admin olmayan kullanıcılar kritik işlemleri yapamaz.
 
 ## Notlar
 - Modüller bağımsız servis olarak da çalışabilir, ancak gateway üretim modudur.

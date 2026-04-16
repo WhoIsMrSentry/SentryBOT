@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
+import re
 
 
 @dataclass(frozen=True)
@@ -20,7 +21,15 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             module="agent_core",
             role="Core planner",
             goal="Coordinate safe planning and tool usage.",
-            allowed_tools=("search_memory", "get_sensor_data", "get_location", "pathfind"),
+            allowed_tools=(
+                "search_memory",
+                "get_sensor_data",
+                "get_location",
+                "pathfind",
+                "list_locations",
+                "update_location",
+                "connect_locations",
+            ),
             keywords=("plan", "reason", "agent", "cognitive", "strategy", "task"),
         ),
         "animate": SubAgentProfile(
@@ -236,17 +245,48 @@ class TriLayerRouter:
         if not self.default_modules:
             self.default_modules = ["agent_core"] if "agent_core" in profiles else list(profiles.keys())[:1]
 
+        self._profile_tokens: Dict[str, set[str]] = {}
+        for module_name, profile in self.profiles.items():
+            toks: set[str] = set()
+            for keyword in profile.keywords:
+                toks.update(self._tokenize(keyword))
+            toks.update(self._tokenize(module_name.replace("_", " ")))
+            self._profile_tokens[module_name] = toks
+
+    @staticmethod
+    def _tokenize(text: str) -> set[str]:
+        return {t for t in re.findall(r"[a-z0-9_]+", str(text or "").lower()) if len(t) > 1}
+
     def route(self, user_prompt: str) -> List[str]:
         text = str(user_prompt or "").strip().lower()
         if not text:
             return list(self.default_modules[: self.max_subagents])
 
-        scores: Dict[str, int] = {}
+        q_tokens = self._tokenize(text)
+
+        scores: Dict[str, float] = {}
         for module_name, profile in self.profiles.items():
             for keyword in profile.keywords:
                 key = str(keyword or "").strip().lower()
                 if key and key in text:
-                    scores[module_name] = scores.get(module_name, 0) + 1
+                    scores[module_name] = scores.get(module_name, 0.0) + 2.5
+
+            p_tokens = self._profile_tokens.get(module_name, set())
+            if q_tokens and p_tokens:
+                overlap = len(q_tokens & p_tokens)
+                if overlap:
+                    scores[module_name] = scores.get(module_name, 0.0) + (1.0 + overlap / max(1, len(p_tokens)))
+
+        # Small semantic priors for frequent intents.
+        if q_tokens & {"navigate", "navigation", "route", "where", "location", "path"}:
+            if "agent_core" in self.profiles:
+                scores["agent_core"] = scores.get("agent_core", 0.0) + 1.2
+            if "autonomy" in self.profiles:
+                scores["autonomy"] = scores.get("autonomy", 0.0) + 0.8
+        if q_tokens & {"health", "fault", "diagnostic", "error", "status"} and "diagnostics" in self.profiles:
+            scores["diagnostics"] = scores.get("diagnostics", 0.0) + 1.2
+        if q_tokens & {"schedule", "timer", "later", "remind", "periodic"} and "scheduler" in self.profiles:
+            scores["scheduler"] = scores.get("scheduler", 0.0) + 1.1
 
         if not scores:
             return list(self.default_modules[: self.max_subagents])
