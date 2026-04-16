@@ -16,6 +16,13 @@ def get_router(store: StateStore) -> APIRouter:
     def get_state():
         return store.get()
 
+    @r.post("/set")
+    def set_state(body: Dict[str, Any]):
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "body must be an object"}
+        store.update(body)
+        return {"ok": True}
+
     @r.post("/set/operational")
     def set_operational(body: Dict[str, Any]):
         store.set_operational(str(body.get("value", "idle")))
