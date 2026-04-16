@@ -8,7 +8,10 @@ from .api.router import get_router
 
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
-    store = StateStore(cfg.get("defaults", {}))
+    store = StateStore(
+        defaults=cfg.get("defaults", {}),
+        persistence=cfg.get("persistence", {}),
+    )
     app = FastAPI(title="State Manager")
     app.state.store = store  # type: ignore[attr-defined]
     app.include_router(get_router(store))
