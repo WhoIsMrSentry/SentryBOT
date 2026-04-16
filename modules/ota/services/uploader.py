@@ -1,5 +1,6 @@
 from __future__ import annotations
 import hashlib
+import hmac
 import json
 import os
 import glob
@@ -39,6 +40,34 @@ class AvrDudeUploader:
         self.cfg = cfg
         self.db_path = str(cfg.get("version_db", "modules/ota/config/versions.json"))
         self.versions = _load_versions(self.db_path)
+        self.security_cfg = cfg.get("security", {})
+    
+    def _check_allowlist(self, sha: str) -> bool:
+        """Check if firmware hash is in allowlist (if enabled)."""
+        if not self.security_cfg.get("enable_allowlist", False):
+            return True
+        allowed = self.security_cfg.get("allowed_hashes", [])
+        return sha in allowed
+    
+    def _verify_signature(self, hex_path: str, provided_signature: Optional[str]) -> bool:
+        """Verify HMAC-SHA256 signature (if enabled)."""
+        if not self.security_cfg.get("enable_signature", False):
+            return True
+        if not provided_signature:
+            return False
+        
+        secret_key = self.security_cfg.get("secret_key", "")
+        if not secret_key:
+            return False
+        
+        with open(hex_path, "rb") as f:
+            hex_content = f.read()
+        
+        expected_sig = hmac.new(
+            secret_key.encode(), hex_content, hashlib.sha256
+        ).hexdigest()
+        
+        return hmac.compare_digest(expected_sig, provided_signature)
 
     def find_artifact(self) -> Optional[str]:
         watch = str(self.cfg.get("watch_dir", "arduino/firmware/xMain/build"))
@@ -78,7 +107,35 @@ class AvrDudeUploader:
         cmd += ["-D", f"-Uflash:w:{hex_path}:i"]
         return cmd
 
-    def upload(self, hex_path: str) -> Dict[str, Any]:
+    def upload(self, hex_path: str, signature: Optional[str] = None) -> Dict[str, Any]:
+        """Upload firmware with optional security checks.
+        
+        Args:
+            hex_path: Path to .hex file
+            signature: Optional HMAC-SHA256 signature (if security.enable_signature is True)
+        
+        Returns:
+            Dict with 'ok', 'returncode', 'stdout', 'stderr', 'cmd', and optional 'security_error'
+        """
+        # Security checks (non-breaking defaults)
+        if self.security_cfg.get("enable_allowlist", False):
+            _, sha = self.compute_version(hex_path)
+            if not self._check_allowlist(sha):
+                return {
+                    "ok": False,
+                    "security_error": f"Firmware hash {sha} not in allowlist",
+                    "returncode": -1,
+                }
+        
+        if self.security_cfg.get("enable_signature", False):
+            if not self._verify_signature(hex_path, signature):
+                return {
+                    "ok": False,
+                    "security_error": "Signature verification failed",
+                    "returncode": -1,
+                }
+        
+        # Proceed with upload
         cmd = self._avrdude_cmd(hex_path)
         try:
             proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)

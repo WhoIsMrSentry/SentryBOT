@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 import os
 
 try:
@@ -33,8 +33,14 @@ def get_router(cfg: dict | None = None) -> APIRouter:
         return svc.scan_once()
 
     @r.post("/upload")
-    def upload(path: str):
-        return svc.upload_path(path)
+    def upload(path: str, signature: str | None = Query(None)):
+        """Upload firmware with optional HMAC signature verification.
+        
+        Query params:
+            path: Path to .hex file
+            signature: Optional HMAC-SHA256 signature (if security.enable_signature is True)
+        """
+        return svc.upload_path(path, signature=signature)
 
     @r.get("/versions")
     def versions():
