@@ -12,9 +12,9 @@
 //   3 = Serial3 (if available)
 #ifndef SERIAL_IO_PORT
 #if defined(ARDUINO_AVR_MEGA2560) || defined(ARDUINO_AVR_MEGA) || defined(__AVR_ATmega2560__)
-#define SERIAL_IO_PORT 0
+#define SERIAL_IO_PORT 1
 #else
-#define SERIAL_IO_PORT 3
+#define SERIAL_IO_PORT 0
 #endif
 #endif
 
@@ -64,15 +64,6 @@
 #ifndef STEPPER_ENABLE_ACTIVE_LOW
 #define STEPPER_ENABLE_ACTIVE_LOW 1
 #endif
-// Status LED pin
-#ifndef PIN_STATUS_LED
-#define PIN_STATUS_LED 13
-#endif
-// Status LED modes
-#define STATUS_LED_OFF 0
-#define STATUS_LED_SOLID 1
-#define STATUS_LED_BLINK_SLOW 2
-#define STATUS_LED_BLINK_FAST 3
 // Limit switch pins (optional). Use -1 to disable; active LOW by default.
 #ifndef PIN_LIMIT1
 #define PIN_LIMIT1 -1

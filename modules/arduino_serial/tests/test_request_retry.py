@@ -42,3 +42,22 @@ def test_request_retries_trigger_multiple_writes():
         assert len(lines) >= 2, f"expected >=2 writes, got {len(lines)}: {lines}"
     finally:
         svc.stop()
+
+
+def test_request_timeout_reports_echo_only_hint():
+    dt = DummyTransportNoReply()
+    # Simulate a line-echo peer that returns the same command without ACK fields.
+    dt._read_q.append(json.dumps({"cmd": "hello"}).encode("utf-8"))
+
+    svc = xArduinoSerialService(config_overrides={"request_max_retries": 0}, transport_factory=lambda *a, **k: dt)
+    svc.start()
+    try:
+        try:
+            svc.request({"cmd": "hello"}, timeout=0.05)
+            assert False, "request should timeout when only echo-like frames are received"
+        except TimeoutError as exc:
+            msg = str(exc)
+            assert "Echo-like frame" in msg
+            assert "cmd 'hello'" in msg
+    finally:
+        svc.stop()
