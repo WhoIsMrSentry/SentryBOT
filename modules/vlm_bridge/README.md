@@ -8,7 +8,7 @@ Bu modül artık yalnızca görüntü köprülemekle kalmaz; farklı görsel iş
 - **local**: Pi5 üzerinde OpenCV yüz algılama + ORB/FLANN yüz tanıma + CSRT takip çalışır.
 - **remote**: Harici cihaz video akışını işler, sonuçları köprüye POST eder. Pi üzerinde ağır model yüklenmez.
 
-`config.yml` içinde `vision.processing_mode: local|remote` ile seçilir.
+config/agent.yaml içindeki vlm_bridge.vision.processing_mode: local|remote ile seçilir.
 
 ## Endpoints
 - `POST /vlm/track { head_tilt, head_pan, drive? }` : Arduino "track" komutu.
@@ -51,9 +51,10 @@ Bu modül artık yalnızca görüntü köprülemekle kalmaz; farklı görsel iş
 Aktifken semantik sahne özeti (Ollama varsa LLM tabanlı) ve kişilere özel selam gönderir. Uzak modda gelen sonuçlar üzerinden de çalışır.
 
 ## VLM LLM Kaynağı
-- Bu repodaki varsayılan konfigürasyon ucu: `http://<remote-ollama-host>:11434/api/chat`
-- `ollama.endpoint` değeri yanlışlıkla `.../api/tags` verilirse istemci bunu otomatik olarak `.../api/chat` olarak normalize eder.
-- Böylece VLM Bridge, tek model politikasındaki aynı modeli (`gemma-4-26B-A4B`) doğrudan uzak Ollama üzerinden çağırır.
+- VLM Bridge config kaynağı config/agent.yaml içindeki vlm_bridge bölümüdür.
+- endpoint, agent.ollama_base_url değerinden türetilir ve /api/chat olarak normalize edilir.
+- Tek model politikası zorunludur: gemma4:26b.
+- Provider yalnızca ollama olabilir.
 - Geriye dönük olarak `ollama.endpoint` değeri `.../api/generate` ise eski doğrudan generate akışı da desteklenir.
 
 ## LLM Action Dispatch

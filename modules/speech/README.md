@@ -38,7 +38,7 @@ svc.start_background(on_result=lambda r: print(r))
 ```powershell
 python -m modules.speech.xSpeechService --listen-once
 # veya API
-python -m modules.speech.xSpeechService --api --config modules/speech/config/config.yml
+python -m modules.speech.xSpeechService --api --config config/agent.yaml
 ```
 
 ### Servis (FastAPI)
@@ -61,8 +61,10 @@ app.include_router(get_router(svc))
 - POST `/speech/track/stop` – Pan-tilt izlemeyi durdurur
 - GET `/speech/track/status` – `{ active, current, target, min, max, tracking, angle }`
 
-## Yapılandırma (config.yml) – Referans
-Dosya: `modules/speech/config/config.yml`
+## Yapılandırma (config/agent.yaml -> speech) – Referans
+Dosya: config/agent.yaml içindeki speech bölümü
+
+Not: Speech modülü artık modül içi config/config.yml okumaz.
 
 ### server
 - `host`: API servis adresi (vars: `0.0.0.0`)

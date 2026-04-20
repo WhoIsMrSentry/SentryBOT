@@ -4,6 +4,7 @@ Küçük, tek sorumluluklu bileşenler (DryCode). Hem kütüphane hem servis ola
 
 ## Özellikler
 - TTS motorları: pyttsx3 (offline), Piper (harici ikili/model; offline, doğal)
+- Uzak TTS: Piper ve XTTS için tek endpoint + engine parametresi desteği
 - MAX98357A I2S amplifikatör üzerinden ses çıkışı (ALSA cihazı)
 - Harici ses çalma: base64 WAV veri oynatma
 - Konuşma sırasında canlılık senkronu: `/interactions/event` ve `/interactions/effect` ile LED tepkisi
@@ -25,14 +26,14 @@ svc.speak("Merhaba dünya")
 ## API
 - GET `/speak/status` → { ready: true }
 - POST `/speak/say`
-	- Body: `{ "text": "...", "engine": "pyttsx3|piper", "tone": { "rate": 190, "volume": 0.9 } }`
+	- Body: `{ "text": "...", "engine": "pyttsx3|piper|xtts", "tone": { "rate": 190, "volume": 0.9 } }`
 	- `tone` alanı opsiyoneldir; `rate`, `volume` veya `piper` içindeki `length_scale`, `noise_scale` gibi ayarları anlık olarak override edebilirsiniz.
 	- Dönüş: `{ ok, engine, duration_sec, samplerate }`
 - POST `/speak/play`
 	- Body: `{ "data": "<base64-wav>" }`
 	- Dönüş: `{ ok, duration_sec }`
 
-## Yapılandırma (config/config.yml)
+## Yapılandırma (config/agent.yaml -> speak)
 ```yaml
 server:
 	host: 0.0.0.0
@@ -45,12 +46,17 @@ audio_out:
 	dtype: float32
 
 tts:
-	engine: pyttsx3       # pyttsx3 | piper | dummy
+	engine: piper         # pyttsx3 | piper | xtts | dummy
 	language: tr
 	voice: null
 	rate: 170
 	volume: 1.0
 	samplerate: 22050
+	remote:
+		enabled: true
+		endpoint: http://<tts-host>:5000/tts/synthesize
+		timeout: 120
+		auth_token: ""
 	piper:
 		bin_path: piper           # PATH’te yoksa tam yol
 		model_path: null          # gerekli, .onnx/.onnx.gz
@@ -59,6 +65,11 @@ tts:
 		length_scale: null
 		noise_scale: null
 		noise_w: null
+	xtts:
+		endpoint: http://<tts-host>:5000/tts/synthesize
+		timeout: 120
+		language: tr
+		speaker_wav: null
 
 liveliness:
 	enabled: true
@@ -76,6 +87,24 @@ liveliness:
 		force: false
 
 ```
+
+Not: Speak modülü artık modül içi config/config.yml okumaz. Kaynak dosya config/agent.yaml içindeki speak bölümüdür.
+
+## Uzak TTS Sözleşmesi (tek endpoint)
+Uzak çağrıda aşağıdaki JSON gönderilir:
+
+```json
+{
+	"text": "Merhaba",
+	"engine": "piper",
+	"language": "tr",
+	"speaker_wav": "/path/ref.wav",
+	"piper": {},
+	"xtts": {}
+}
+```
+
+Yanıt olarak ya doğrudan audio/wav baytları ya da base64 ses içeren JSON beklenir.
 
 `liveliness.enabled: true` iken `speak` akışı otomatik olarak:
 - konuşma başında `speech.start` event gönderir,

@@ -27,19 +27,22 @@ Ollama artık robotu aşağıdaki aksiyon türleri ile kontrol edebilir:
 - POST /ollama/persona/create_from_url (name, url)
 
 ## Config
-See `modules/ollama/config/config.yml`.
+This module now reads only central config/agent.yaml.
 
-`.env` overrides are supported via `modules/ollama/.env`.
-Useful keys:
-- `LLM_PROVIDER=ollama`
-- `OLLAMA_BASE_URL=http://<remote-ollama-host>:11434`
-- `OLLAMA_MODEL=gemma-4-26B-A4B`
+Required sections:
+- agent
+- llm
+- ollama
+- ollama_service
 
-Single-model mode:
-- If `modules/vlm_bridge/config/config.yml` enables `llm.single_model_mode=true`,
-	Ollama module inherits `llm.primary_model` as default runtime model.
-- In single-model mode, `POST /ollama/persona/select` does not create per-persona models;
-	it only updates active persona text/prompt context.
+Strict policy:
+- provider must be ollama
+- model must be gemma4:26b
+
+Optional path override:
+- Set AGENT_CFG to a custom agent.yaml path.
+
+In single-model mode, `POST /ollama/persona/select` does not create per-persona models; it only updates active persona text/prompt context.
 
 Personas now live as folders: `modules/ollama/config/personalities/<name>/{persona.txt,urls.txt}`.
 
