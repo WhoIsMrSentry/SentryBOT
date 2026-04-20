@@ -6,7 +6,7 @@ import yaml
 DEFAULT_CFG = {
     "server": {"host": "0.0.0.0", "port": 8099},
     "llm": {"provider": "ollama", "single_model_mode": False},
-    "ollama": {"base_url": "http://localhost:11434", "model": "gemma-4-26B-A4B", "request_timeout": 60.0},
+    "ollama": {"base_url": "http://localhost:11434", "model": "gemma4:26b", "request_timeout": 60.0},
     "google_ai_studio": {
         "api_key": "",
         "model": "gemini-1.5-flash",
@@ -15,6 +15,59 @@ DEFAULT_CFG = {
     },
     "persona": {"default": "sentry", "dir": "modules/ollama/config/personalities"},
 }
+
+
+def _normalize_ollama_base_url(raw: Any) -> str:
+    value = str(raw or "").strip().rstrip("/")
+    if not value:
+        return ""
+    lowered = value.lower()
+    for suffix in ("/api/chat", "/api/generate", "/api/tags", "/ollama/chat"):
+        if lowered.endswith(suffix):
+            return value[: -len(suffix)].rstrip("/")
+    return value
+
+
+def _agent_cfg_candidates() -> list[str]:
+    candidates: list[str] = []
+    env_path = str(os.environ.get("AGENT_CFG", "")).strip()
+    if env_path:
+        candidates.append(env_path)
+
+    here = os.path.dirname(__file__)
+    candidates.append(os.path.normpath(os.path.join(here, "..", "..", "config", "agent.yaml")))
+    candidates.append(os.path.join("config", "agent.yaml"))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for path in candidates:
+        norm = os.path.normpath(path)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(norm)
+    return out
+
+
+def _load_agent_ollama_base_url() -> str:
+    for path in _agent_cfg_candidates():
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except Exception:
+            continue
+
+        if not isinstance(raw, dict):
+            continue
+
+        agent_cfg = raw.get("agent", {}) if isinstance(raw.get("agent", {}), dict) else {}
+        base_url = _normalize_ollama_base_url(agent_cfg.get("ollama_base_url"))
+        if base_url:
+            return base_url
+
+    return ""
 
 
 def _load_vlm_primary_hint() -> Dict[str, Any]:
@@ -60,6 +113,11 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
             cfg[k].update(v)
         else:
             cfg[k] = v
+
+    # Keep module-level config simple: centralized runtime URL can be sourced from agent.yaml.
+    agent_base_url = _load_agent_ollama_base_url()
+    if agent_base_url:
+        cfg.setdefault("ollama", {})["base_url"] = agent_base_url
 
     env_path = os.path.join(os.path.dirname(__file__), ".env")
     try:

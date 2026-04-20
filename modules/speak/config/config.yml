@@ -11,7 +11,7 @@ audio_out:
   dtype: float32
 
 tts:
-  engine: pyttsx3       # pyttsx3 | piper | xtts | dummy
+  engine: piper      # pyttsx3 | piper | xtts | dummy
   language: tr
   voice: source         # optional voice id — default olarak kaynak sesi kullanılacak
   rate: 170
@@ -19,8 +19,9 @@ tts:
   samplerate: 22050
   # Piper ayarları
   piper:
-    bin_path: piper           # sistem PATH’te yoksa tam yol verin
-    model_path: null          # örn: /home/pi/models/tr.onnx
+    bin_path: /home/sentrybot/SentryBOT/venv/bin/piper  # Raspberry Pi venv piper binary
+    model_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx  # sentrybot kullanıcısı için model yolu
+    config_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx.json
     samplerate: 22050
     speaker: null             # model çoklu speaker destekliyorsa id
     length_scale: null

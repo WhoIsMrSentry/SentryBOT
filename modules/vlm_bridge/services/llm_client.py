@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Dict, Optional
 
@@ -16,10 +17,52 @@ _DEFAULT_GENERATE_ENDPOINT = "http://localhost:11434/api/generate"
 _CHAT_COOLDOWN_UNTIL: Dict[str, float] = {}
 
 
+def _derive_chat_endpoint_from_base_url(raw: str) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    lower = value.rstrip("/").lower()
+    if lower.endswith("/api/tags"):
+        return value[: -len("/api/tags")] + "/api/chat"
+    if lower.endswith("/api/chat") or lower.endswith("/api/generate") or lower.endswith("/ollama/chat"):
+        return value
+    if value.startswith("http://") or value.startswith("https://"):
+        return value.rstrip("/") + "/api/chat"
+    return value
+
+
+def _resolve_default_chat_endpoint() -> str:
+    env_chat = str(os.getenv("VLM_OLLAMA_CHAT_ENDPOINT", "")).strip()
+    if env_chat:
+        return _derive_chat_endpoint_from_base_url(env_chat) or _DEFAULT_CHAT_ENDPOINT
+
+    env_base = str(
+        os.getenv("AGENT_OLLAMA_BASE_URL")
+        or os.getenv("OLLAMA_BASE_URL")
+        or os.getenv("OLLAMA_HOST")
+        or ""
+    ).strip()
+    if env_base:
+        return _derive_chat_endpoint_from_base_url(env_base) or _DEFAULT_CHAT_ENDPOINT
+
+    try:
+        from modules.vlm_bridge.config_loader import load_config as load_vlm_config  # type: ignore
+
+        cfg = load_vlm_config()
+        ollama_cfg = cfg.get("ollama", {}) if isinstance(cfg, dict) else {}
+        endpoint = str(ollama_cfg.get("endpoint", "")).strip()
+        if endpoint:
+            return _derive_chat_endpoint_from_base_url(endpoint) or _DEFAULT_CHAT_ENDPOINT
+    except Exception:
+        pass
+
+    return _DEFAULT_CHAT_ENDPOINT
+
+
 def _normalize_endpoint(cfg: Dict[str, Any]) -> str:
     endpoint = str((cfg or {}).get("endpoint", "")).strip()
     if not endpoint:
-        return _DEFAULT_CHAT_ENDPOINT
+        return _resolve_default_chat_endpoint()
 
     lower = endpoint.rstrip("/").lower()
     if lower.endswith("/api/tags"):
@@ -136,14 +179,15 @@ def generate_text(
                 return out or None
 
             if _is_direct_ollama_chat_endpoint(endpoint):
-                model = str((ollama_cfg or {}).get("model", "gemma-4-26B-A4B")).strip() or "gemma-4-26B-A4B"
+                model = str((ollama_cfg or {}).get("model", "gemma4:26b")).strip() or "gemma4:26b"
+                num_predict = int((ollama_cfg or {}).get("num_predict", 160) or 160)
                 resp = client.post(
                     endpoint,
                     json={
                         "model": model,
                         "messages": [{"role": "user", "content": text}],
                         "stream": False,
-                        "options": {"temperature": 0.4},
+                        "options": {"temperature": 0.4, "num_predict": num_predict},
                     },
                 )
                 if resp.status_code != 200:
@@ -182,7 +226,7 @@ def generate_text(
 
 
 def default_ollama_endpoint() -> str:
-    return _DEFAULT_CHAT_ENDPOINT
+    return _resolve_default_chat_endpoint()
 
 
 def default_generate_endpoint() -> str:

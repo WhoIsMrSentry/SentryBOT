@@ -4,6 +4,7 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Optional
 import threading
+from pathlib import Path
 from .pcm import PCM
 
 import io
@@ -101,9 +102,14 @@ class PiperBackend(TTSBackend):
     """
     def __init__(self, cfg: TTSConfig, piper_cfg: Dict):
         self.bin_path = str(piper_cfg.get("bin_path", "piper"))
-        self.model_path = piper_cfg.get("model_path")
+        self.model_path = str(piper_cfg.get("model_path") or "").strip()
         if not self.model_path:
             raise ValueError("piper.model_path is required")
+        if not Path(self.model_path).exists():
+            raise FileNotFoundError(f"piper.model_path not found: {self.model_path}")
+        self.config_path = str(piper_cfg.get("config_path") or f"{self.model_path}.json").strip()
+        if self.config_path and not Path(self.config_path).exists():
+            logger.warning("piper model config not found: %s", self.config_path)
         self.samplerate = int(piper_cfg.get("samplerate", cfg.samplerate))
         self.speaker = piper_cfg.get("speaker")
         self.length_scale = piper_cfg.get("length_scale")
@@ -111,26 +117,84 @@ class PiperBackend(TTSBackend):
         self.noise_w = piper_cfg.get("noise_w")
 
     def synthesize(self, text: str):
-        import subprocess, json, tempfile, os
+        import subprocess, tempfile, os
         import soundfile as sf
-        # Piper stdin->wav stdout; bazı kurulumlarda -w ile dosyaya yazmak daha stabil.
-        with tempfile.TemporaryDirectory() as d:
-            wav_path = os.path.join(d, "out.wav")
-            cmd = [self.bin_path, "-m", self.model_path, "-w", wav_path]
+
+        def _append_long_options(cmd: list[str]) -> list[str]:
+            out = list(cmd)
+            if self.config_path and os.path.exists(self.config_path):
+                out += ["--config", self.config_path]
             if self.speaker is not None:
-                cmd += ["-s", str(self.speaker)]
+                out += ["--speaker", str(self.speaker)]
             if self.length_scale is not None:
-                cmd += ["-l", str(self.length_scale)]
+                out += ["--length_scale", str(self.length_scale)]
             if self.noise_scale is not None:
-                cmd += ["-n", str(self.noise_scale)]
+                out += ["--noise_scale", str(self.noise_scale)]
             if self.noise_w is not None:
-                cmd += ["-e", str(self.noise_w)]
-            proc = subprocess.run(cmd, input=text.encode("utf-8"), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if proc.returncode != 0:
-                raise RuntimeError(f"piper failed: {proc.stderr.decode('utf-8', 'ignore')}")
-            data, sr = sf.read(wav_path, dtype='float32')
+                out += ["--noise_w", str(self.noise_w)]
+            return out
+
+        def _append_short_options(cmd: list[str]) -> list[str]:
+            out = list(cmd)
+            if self.speaker is not None:
+                out += ["-s", str(self.speaker)]
+            if self.length_scale is not None:
+                out += ["-l", str(self.length_scale)]
+            if self.noise_scale is not None:
+                out += ["-n", str(self.noise_scale)]
+            if self.noise_w is not None:
+                out += ["-e", str(self.noise_w)]
+            return out
+
+        def _load_wav_from_path(path: str) -> Optional[PCM]:
+            if not os.path.exists(path):
+                return None
+            if os.path.getsize(path) <= 0:
+                return None
+            data, sr = sf.read(path, dtype='float32')
             ch = 1 if data.ndim == 1 else data.shape[1]
             return PCM(data=data, samplerate=sr, channels=ch)
+
+        stdin_text = (text or "").strip()
+        if not stdin_text:
+            raise ValueError("text is empty")
+
+        with tempfile.TemporaryDirectory() as d:
+            wav_path = os.path.join(d, "out.wav")
+            cmd_variants = [
+                _append_long_options([self.bin_path, "--model", self.model_path, "--output_file", wav_path]),
+                _append_short_options([self.bin_path, "-m", self.model_path, "-w", wav_path]),
+            ]
+
+            last_error = ""
+            for cmd in cmd_variants:
+                proc = subprocess.run(
+                    cmd,
+                    input=(stdin_text + "\n").encode("utf-8"),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                stderr_txt = proc.stderr.decode("utf-8", "ignore").strip()
+
+                if proc.returncode == 0:
+                    try:
+                        pcm = _load_wav_from_path(wav_path)
+                        if pcm is not None:
+                            return pcm
+                    except Exception as exc:
+                        last_error = f"wav read failed: {exc}"
+
+                    if proc.stdout:
+                        try:
+                            return _wav_bytes_to_pcm(proc.stdout)
+                        except Exception as exc:
+                            last_error = f"stdout wav parse failed: {exc}"
+                    else:
+                        last_error = "piper finished without producing readable WAV output"
+                else:
+                    last_error = f"exit={proc.returncode}; stderr={stderr_txt or '<empty>'}"
+
+            raise RuntimeError(f"piper failed: {last_error}")
 
 
 class XTTSHttpBackend(TTSBackend):

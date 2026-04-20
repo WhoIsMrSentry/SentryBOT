@@ -70,3 +70,34 @@ ollama:
 
     assert cfg["llm"]["single_model_mode"] is True
     assert cfg["ollama"]["model"] == "gemma-4-26B-A4B"
+
+
+def test_load_config_inherits_agent_yaml_ollama_base_url(monkeypatch, tmp_path: Path):
+    agent_cfg = tmp_path / "agent.yaml"
+    agent_cfg.write_text(
+        """
+agent:
+  ollama_base_url: "http://10.33.250.169:11434"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    ollama_cfg = tmp_path / "ollama_config.yml"
+    ollama_cfg.write_text(
+        """
+llm:
+  provider: ollama
+ollama:
+  base_url: http://localhost:11434
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AGENT_CFG", str(agent_cfg))
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    monkeypatch.delenv("AGENT_OLLAMA_BASE_URL", raising=False)
+
+    cfg = load_config(str(ollama_cfg))
+
+    assert cfg["ollama"]["base_url"] == "http://10.33.250.169:11434"

@@ -1,5 +1,5 @@
 agent:
-  model: "gemma-4-26B-A4B"
+  model: "gemma4:26b"
   temperature: 0.15
   num_ctx: 4096
   cooldown_s: 1.0  # LLM Rate Limit

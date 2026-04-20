@@ -12,9 +12,9 @@
 //   3 = Serial3 (if available)
 #ifndef SERIAL_IO_PORT
 #if defined(ARDUINO_AVR_MEGA2560) || defined(ARDUINO_AVR_MEGA) || defined(__AVR_ATmega2560__)
-#define SERIAL_IO_PORT 1
-#else
 #define SERIAL_IO_PORT 0
+#else
+#define SERIAL_IO_PORT 1
 #endif
 #endif
 

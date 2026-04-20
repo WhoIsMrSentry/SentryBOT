@@ -9,7 +9,8 @@ except Exception:
 DEFAULT_CONFIG: Dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8099},
     "vision": {
-        "processing_mode": "remote",  # local | remote
+        "processing_mode": "local",  # local | remote
+        "camera_source": "http://127.0.0.1:8080/camera/video",
         "blind_mode": {"enabled": False, "interval_seconds": 5.0},
         "confidence_threshold": 0.5,
         "face_match": {
@@ -38,7 +39,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "llm": {
         "provider": "ollama",  # ollama | google_ai_studio
         "single_model_mode": True,
-        "primary_model": "gemma-4-26B-A4B",
+        "primary_model": "gemma4:26b",
         "clm_fallback_enabled": True,
         "clm_fallback_model": "qwen3.5:8b",
         "fallback_on_missing_model": True,
@@ -46,8 +47,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "ollama": {
         "endpoint": "http://localhost:8080/ollama/chat",
-        "model": "gemma-4-26B-A4B",
-        "timeout": 5.0,
+        "model": "gemma4:26b",
+        "timeout": 12.0,
+        "num_predict": 160,
     },
     "speak": {
         "endpoint": "http://localhost:8083/speak/say",
@@ -91,6 +93,83 @@ def _to_bool(raw: Any, fallback: bool) -> bool:
     if text in {"0", "false", "no", "off"}:
         return False
     return fallback
+
+
+def _normalize_ollama_base_url(raw: Any) -> str:
+    value = str(raw or "").strip().rstrip("/")
+    if not value:
+        return ""
+    lowered = value.lower()
+    for suffix in ("/api/chat", "/api/generate", "/api/tags", "/ollama/chat"):
+        if lowered.endswith(suffix):
+            return value[: -len(suffix)].rstrip("/")
+    return value
+
+
+def _to_vlm_chat_endpoint(raw: Any) -> str:
+    endpoint = str(raw or "").strip()
+    if not endpoint:
+        return ""
+    lower = endpoint.rstrip("/").lower()
+    if lower.endswith("/api/tags"):
+        return endpoint[: -len("/api/tags")] + "/api/chat"
+    if lower.endswith("/api/chat") or lower.endswith("/api/generate") or lower.endswith("/ollama/chat"):
+        return endpoint
+    if endpoint.startswith("http://") or endpoint.startswith("https://"):
+        return endpoint.rstrip("/") + "/api/chat"
+    return endpoint
+
+
+def _agent_cfg_candidates(base_dir: Optional[str]) -> list[str]:
+    candidates: list[str] = []
+    env_path = str(os.getenv("AGENT_CFG", "")).strip()
+    if env_path:
+        candidates.append(env_path)
+
+    if base_dir:
+        candidates.append(os.path.join(base_dir, "config", "agent.yaml"))
+
+    here = os.path.dirname(__file__)
+    candidates.append(os.path.normpath(os.path.join(here, "..", "..", "config", "agent.yaml")))
+    candidates.append(os.path.join("config", "agent.yaml"))
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for path in candidates:
+        norm = os.path.normpath(path)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        out.append(norm)
+    return out
+
+
+def _load_agent_ollama_endpoint(base_dir: Optional[str]) -> str:
+    if yaml is None:
+        return ""
+
+    for path in _agent_cfg_candidates(base_dir):
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = yaml.safe_load(f) or {}
+        except Exception:
+            continue
+
+        if not isinstance(raw, dict):
+            continue
+
+        agent_cfg = raw.get("agent", {}) if isinstance(raw.get("agent", {}), dict) else {}
+        base_url = _normalize_ollama_base_url(agent_cfg.get("ollama_base_url"))
+        if not base_url:
+            continue
+
+        endpoint = _to_vlm_chat_endpoint(base_url)
+        if endpoint:
+            return endpoint
+
+    return ""
 
 
 def _apply_env_overrides(cfg: Dict[str, Any]) -> None:
@@ -160,6 +239,12 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
             if isinstance(data, dict):
                 cfg = _deep_update(cfg, data)
             break
+
+    # Centralize remote URL ownership in agent.yaml when provided.
+    agent_endpoint = _load_agent_ollama_endpoint(base_dir)
+    if agent_endpoint:
+        cfg.setdefault("ollama", {})["endpoint"] = agent_endpoint
+
     if overrides:
         cfg = _deep_update(cfg, {k: v for k, v in overrides.items() if v is not None})
 

@@ -48,3 +48,33 @@ ollama:
     cfg = load_config(base_dir=str(tmp_path))
 
     assert cfg["ollama"]["model"] == "qwen3.5:8b"
+
+
+def test_vlm_config_loader_inherits_agent_yaml_ollama_url(monkeypatch, tmp_path: Path):
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+
+    cfg_file = cfg_dir / "config.yml"
+    cfg_file.write_text(
+        """
+ollama:
+  endpoint: "http://localhost:8080/ollama/chat"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    agent_cfg = tmp_path / "agent.yaml"
+    agent_cfg.write_text(
+        """
+agent:
+  ollama_base_url: "http://10.33.250.169:11434"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("AGENT_CFG", str(agent_cfg))
+    monkeypatch.delenv("VLM_OLLAMA_CHAT_ENDPOINT", raising=False)
+
+    cfg = load_config(base_dir=str(tmp_path))
+
+    assert cfg["ollama"]["endpoint"] == "http://10.33.250.169:11434/api/chat"

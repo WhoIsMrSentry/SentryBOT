@@ -3,9 +3,9 @@ server:
   port: 8099
 
 vision:
-  processing_mode: remote  # local | remote
-  # camera_source: "http://localhost:8000/video_feed" # Potential future: pull from camera module HTTP
-  camera_source: 0  # Local webcam when in local mode
+  processing_mode: local  # local | remote
+  # camera_source can be device index (0) or gateway camera stream URL
+  camera_source: "http://127.0.0.1:8080/camera/video"  # Gateway camera MJPEG feed (Pi camera safe path)
   confidence_threshold: 0.5
   face_match:
     ratio_test: 0.72
@@ -57,14 +57,15 @@ robot:
   host: "localhost"  # Change to Robot IP when running remotely
 
 ollama:
-  endpoint: "http://localhost:11434/api/chat"
-  model: "gemma-4-26B-A4B"
-  timeout: 5.0
+  endpoint: "http://localhost:8080/ollama/chat"
+  model: "gemma4:26b"
+  timeout: 12.0
+  num_predict: 160
 
 llm:
   provider: "ollama"                 # ollama | google_ai_studio
   single_model_mode: true             # true => ollama.model, VLM ve agent icin ortak model
-  primary_model: "gemma-4-26B-A4B"
+  primary_model: "gemma4:26b"
   clm_fallback_enabled: true
   clm_fallback_model: "qwen3.5:8b"   # primary model uygun degilse veya hata alirsa
   fallback_on_missing_model: true
