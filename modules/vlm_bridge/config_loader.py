@@ -1,10 +1,10 @@
 from __future__ import annotations
+
 import os
+from pathlib import Path
 from typing import Any, Dict, Optional
-try:
-    import yaml  # type: ignore
-except Exception:
-    yaml = None
+
+from modules.config_center.agent_yaml_loader import deep_merge, load_agent_config, require_dict_section
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8099},
@@ -61,22 +61,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
 }
 
-
-def _deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            base[key] = _deep_update(dict(base[key]), value)
-        else:
-            base[key] = value
-    return base
-
-
-def _first_env(*keys: str) -> str:
-    for key in keys:
-        value = os.getenv(key)
-        if value is not None and str(value).strip():
-            return str(value).strip()
-    return ""
+_REQUIRED_MODEL = "gemma4:26b"
 
 
 def _to_float(raw: Any, fallback: float) -> float:
@@ -84,15 +69,6 @@ def _to_float(raw: Any, fallback: float) -> float:
         return float(raw)
     except (TypeError, ValueError):
         return fallback
-
-
-def _to_bool(raw: Any, fallback: bool) -> bool:
-    text = str(raw or "").strip().lower()
-    if text in {"1", "true", "yes", "on"}:
-        return True
-    if text in {"0", "false", "no", "off"}:
-        return False
-    return fallback
 
 
 def _normalize_ollama_base_url(raw: Any) -> str:
@@ -120,134 +96,78 @@ def _to_vlm_chat_endpoint(raw: Any) -> str:
     return endpoint
 
 
-def _agent_cfg_candidates(base_dir: Optional[str]) -> list[str]:
-    candidates: list[str] = []
-    env_path = str(os.getenv("AGENT_CFG", "")).strip()
-    if env_path:
-        candidates.append(env_path)
+def _resolve_agent_cfg_path(base_dir: Optional[str]) -> Optional[str]:
+    if not base_dir:
+        return None
 
-    if base_dir:
-        candidates.append(os.path.join(base_dir, "config", "agent.yaml"))
+    base = Path(base_dir)
+    if base.is_file():
+        return str(base)
 
-    here = os.path.dirname(__file__)
-    candidates.append(os.path.normpath(os.path.join(here, "..", "..", "config", "agent.yaml")))
-    candidates.append(os.path.join("config", "agent.yaml"))
-
-    out: list[str] = []
-    seen: set[str] = set()
-    for path in candidates:
-        norm = os.path.normpath(path)
-        if norm in seen:
-            continue
-        seen.add(norm)
-        out.append(norm)
-    return out
+    return str(base / "config" / "agent.yaml")
 
 
-def _load_agent_ollama_endpoint(base_dir: Optional[str]) -> str:
-    if yaml is None:
-        return ""
+def _enforce_single_model_policy(cfg: Dict[str, Any], root_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    root_agent = require_dict_section(root_cfg, "agent")
+    root_llm = require_dict_section(root_cfg, "llm")
+    root_ollama = require_dict_section(root_cfg, "ollama")
 
-    for path in _agent_cfg_candidates(base_dir):
-        if not path or not os.path.exists(path):
-            continue
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                raw = yaml.safe_load(f) or {}
-        except Exception:
-            continue
+    provider = str(root_llm.get("provider", "")).strip().lower()
+    if provider != "ollama":
+        raise ValueError("vlm_bridge supports only ollama provider in strict mode")
 
-        if not isinstance(raw, dict):
-            continue
+    model_candidates = (
+        root_agent.get("model"),
+        root_llm.get("model"),
+        root_llm.get("primary_model"),
+        root_ollama.get("model"),
+    )
+    model = ""
+    for candidate in model_candidates:
+        text = str(candidate or "").strip()
+        if text:
+            model = text
+            break
+    if model != _REQUIRED_MODEL:
+        raise ValueError(f"Single-model policy requires model '{_REQUIRED_MODEL}', got '{model or '<empty>'}'")
 
-        agent_cfg = raw.get("agent", {}) if isinstance(raw.get("agent", {}), dict) else {}
-        base_url = _normalize_ollama_base_url(agent_cfg.get("ollama_base_url"))
-        if not base_url:
-            continue
+    base_url = _normalize_ollama_base_url(
+        root_agent.get("ollama_base_url")
+        or root_llm.get("base_url")
+        or root_ollama.get("base_url")
+        or os.getenv("AGENT_OLLAMA_BASE_URL")
+        or "http://localhost:11434"
+    )
+    if not base_url:
+        raise ValueError("agent.ollama_base_url is required")
 
-        endpoint = _to_vlm_chat_endpoint(base_url)
-        if endpoint:
-            return endpoint
-
-    return ""
-
-
-def _apply_env_overrides(cfg: Dict[str, Any]) -> None:
     llm_cfg = cfg.setdefault("llm", {})
     ollama_cfg = cfg.setdefault("ollama", {})
 
-    provider = _first_env("VLM_PROVIDER", "LLM_PROVIDER")
-    if provider:
-        llm_cfg["provider"] = provider
+    llm_cfg["provider"] = "ollama"
+    llm_cfg["single_model_mode"] = True
+    llm_cfg["primary_model"] = _REQUIRED_MODEL
+    llm_cfg["model"] = _REQUIRED_MODEL
+    llm_cfg["clm_fallback_enabled"] = False
+    llm_cfg["clm_fallback_model"] = ""
+    llm_cfg["fallback_on_missing_model"] = False
+    llm_cfg["fallback_on_error"] = False
 
-    primary_model = _first_env("VLM_PRIMARY_MODEL", "VLM_MODEL", "OLLAMA_MODEL")
-    if primary_model:
-        llm_cfg["primary_model"] = primary_model
+    ollama_cfg["endpoint"] = _to_vlm_chat_endpoint(base_url)
+    ollama_cfg["model"] = _REQUIRED_MODEL
+    ollama_cfg["timeout"] = _to_float(ollama_cfg.get("timeout", root_ollama.get("request_timeout", 12.0)), 12.0)
+    cfg["ollama"] = ollama_cfg
+    cfg["llm"] = llm_cfg
+    return cfg
 
-    single_model_mode = _first_env("VLM_SINGLE_MODEL_MODE")
-    if single_model_mode:
-        llm_cfg["single_model_mode"] = _to_bool(single_model_mode, True)
-
-    fallback_enabled = _first_env("VLM_CLM_FALLBACK_ENABLED", "AGENT_CLM_FALLBACK_ENABLED")
-    if fallback_enabled:
-        llm_cfg["clm_fallback_enabled"] = _to_bool(fallback_enabled, True)
-
-    fallback_model = _first_env("VLM_CLM_FALLBACK_MODEL", "AGENT_CLM_FALLBACK_MODEL")
-    if fallback_model:
-        llm_cfg["clm_fallback_model"] = fallback_model
-
-    fallback_on_missing = _first_env("VLM_FALLBACK_ON_MISSING_MODEL")
-    if fallback_on_missing:
-        llm_cfg["fallback_on_missing_model"] = _to_bool(fallback_on_missing, True)
-
-    fallback_on_error = _first_env("VLM_FALLBACK_ON_ERROR")
-    if fallback_on_error:
-        llm_cfg["fallback_on_error"] = _to_bool(fallback_on_error, True)
-
-    endpoint = _first_env("VLM_OLLAMA_CHAT_ENDPOINT")
-    if endpoint:
-        ollama_cfg["endpoint"] = endpoint
-
-    timeout = _first_env("VLM_OLLAMA_TIMEOUT")
-    if timeout:
-        ollama_cfg["timeout"] = _to_float(timeout, 5.0)
-
-
-def _apply_single_model_policy(cfg: Dict[str, Any]) -> None:
-    llm_cfg = cfg.get("llm", {}) if isinstance(cfg.get("llm", {}), dict) else {}
-    ollama_cfg = cfg.get("ollama", {}) if isinstance(cfg.get("ollama", {}), dict) else {}
-
-    if not bool(llm_cfg.get("single_model_mode", True)):
-        return
-
-    primary_model = str(llm_cfg.get("primary_model", "")).strip()
-    if primary_model:
-        ollama_cfg["model"] = primary_model
-        cfg["ollama"] = ollama_cfg
 
 def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    cfg: Dict[str, Any] = dict(DEFAULT_CONFIG)
-    candidates = []
-    if base_dir:
-        candidates.append(os.path.join(base_dir, "config", "config.yml"))
-    here = os.path.dirname(__file__)
-    candidates.append(os.path.join(here, "config", "config.yml"))
-    for path in candidates:
-        if os.path.exists(path) and yaml is not None:
-            with open(path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            if isinstance(data, dict):
-                cfg = _deep_update(cfg, data)
-            break
+    agent_cfg_path = _resolve_agent_cfg_path(base_dir)
+    root_cfg = load_agent_config(agent_cfg_path)
+    vlm_cfg = require_dict_section(root_cfg, "vlm_bridge")
 
-    # Centralize remote URL ownership in agent.yaml when provided.
-    agent_endpoint = _load_agent_ollama_endpoint(base_dir)
-    if agent_endpoint:
-        cfg.setdefault("ollama", {})["endpoint"] = agent_endpoint
-
+    cfg: Dict[str, Any] = deep_merge(DEFAULT_CONFIG, vlm_cfg)
     if overrides:
-        cfg = _deep_update(cfg, {k: v for k, v in overrides.items() if v is not None})
+        cfg = deep_merge(cfg, {k: v for k, v in overrides.items() if v is not None})
 
-    _apply_env_overrides(cfg)
-    _apply_single_model_policy(cfg)
-    return cfg
+    return _enforce_single_model_policy(cfg, root_cfg)

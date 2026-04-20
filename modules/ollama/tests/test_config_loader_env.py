@@ -1,103 +1,92 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
 
 from modules.ollama.config_loader import load_config
 
 
-def test_load_config_applies_ollama_env_overrides(monkeypatch, tmp_path: Path):
-    cfg_file = tmp_path / "config.yml"
-    cfg_file.write_text(
-        """
-llm:
-  provider: ollama
-ollama:
-  base_url: http://localhost:11435
-  model: llama3.2:3b
-  request_timeout: 30
-""".strip(),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setenv("OLLAMA_BASE_URL", "http://10.0.0.25:11435")
-    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:4b")
-    monkeypatch.setenv("OLLAMA_REQUEST_TIMEOUT", "90")
-
-    cfg = load_config(str(cfg_file))
-
-    assert cfg["ollama"]["base_url"] == "http://10.0.0.25:11435"
-    assert cfg["ollama"]["model"] == "qwen3.5:4b"
-    assert float(cfg["ollama"]["request_timeout"]) == 90.0
-
-
-def test_load_config_applies_provider_override(monkeypatch, tmp_path: Path):
-    cfg_file = tmp_path / "config.yml"
-    cfg_file.write_text("llm: {provider: ollama}", encoding="utf-8")
-
-    monkeypatch.setenv("LLM_PROVIDER", "google_ai_studio")
-    cfg = load_config(str(cfg_file))
-
-    assert cfg["llm"]["provider"] == "google_ai_studio"
-
-
-def test_load_config_inherits_vlm_primary_model_hint(monkeypatch, tmp_path: Path):
-    vlm_cfg = tmp_path / "vlm_config.yml"
-    vlm_cfg.write_text(
-        """
-llm:
-  provider: ollama
-  single_model_mode: true
-  primary_model: gemma-4-26B-A4B
-""".strip(),
-        encoding="utf-8",
-    )
-
-    ollama_cfg = tmp_path / "ollama_config.yml"
-    ollama_cfg.write_text(
-        """
-llm:
-  provider: ollama
-ollama:
-  model: llama3.2:3b
-""".strip(),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setenv("VLM_CFG", str(vlm_cfg))
-    monkeypatch.delenv("OLLAMA_MODEL", raising=False)
-
-    cfg = load_config(str(ollama_cfg))
-
-    assert cfg["llm"]["single_model_mode"] is True
-    assert cfg["ollama"]["model"] == "gemma-4-26B-A4B"
-
-
-def test_load_config_inherits_agent_yaml_ollama_base_url(monkeypatch, tmp_path: Path):
+def test_load_config_reads_strict_agent_yaml_sections(tmp_path: Path):
     agent_cfg = tmp_path / "agent.yaml"
     agent_cfg.write_text(
         """
 agent:
+  model: gemma4:26b
   ollama_base_url: "http://10.33.250.169:11434"
+llm:
+  provider: ollama
+  model: gemma4:26b
+ollama:
+  base_url: "http://10.33.250.169:11434"
+  model: gemma4:26b
+  request_timeout: 72
+ollama_service:
+  server:
+    host: 0.0.0.0
+    port: 9001
+  persona:
+    default: sentry
+    dir: modules/ollama/config/personalities
+  actions:
+    endpoint: http://localhost:8080/autonomy/apply_actions
+    default_apply: true
+    timeout: 1.5
+  translation:
+    enabled: true
+    default_source_lang: tr
 """.strip(),
         encoding="utf-8",
     )
 
-    ollama_cfg = tmp_path / "ollama_config.yml"
-    ollama_cfg.write_text(
+    cfg = load_config(str(agent_cfg))
+
+    assert cfg["ollama"]["base_url"] == "http://10.33.250.169:11434"
+    assert cfg["ollama"]["model"] == "gemma4:26b"
+    assert float(cfg["ollama"]["request_timeout"]) == 72.0
+    assert cfg["llm"]["provider"] == "ollama"
+    assert cfg["llm"]["single_model_mode"] is True
+    assert int(cfg["server"]["port"]) == 9001
+
+
+def test_load_config_rejects_non_ollama_provider(tmp_path: Path):
+    agent_cfg = tmp_path / "agent.yaml"
+    agent_cfg.write_text(
         """
+agent:
+  model: gemma4:26b
+llm:
+  provider: google_ai_studio
+ollama:
+  base_url: "http://localhost:11434"
+  model: gemma4:26b
+ollama_service:
+  persona:
+    default: sentry
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_config(str(agent_cfg))
+
+
+def test_load_config_rejects_non_gemma4_model(tmp_path: Path):
+    agent_cfg = tmp_path / "agent.yaml"
+    agent_cfg.write_text(
+        """
+agent:
+  model: qwen3.5:8b
 llm:
   provider: ollama
 ollama:
-  base_url: http://localhost:11434
+  base_url: "http://localhost:11434"
+  model: qwen3.5:8b
+ollama_service:
+  persona:
+    default: sentry
 """.strip(),
         encoding="utf-8",
     )
 
-    monkeypatch.setenv("AGENT_CFG", str(agent_cfg))
-    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
-    monkeypatch.delenv("OLLAMA_HOST", raising=False)
-    monkeypatch.delenv("AGENT_OLLAMA_BASE_URL", raising=False)
-
-    cfg = load_config(str(ollama_cfg))
-
-    assert cfg["ollama"]["base_url"] == "http://10.33.250.169:11434"
+    with pytest.raises(ValueError):
+        load_config(str(agent_cfg))
