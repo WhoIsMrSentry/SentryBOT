@@ -1,8 +1,9 @@
 from __future__ import annotations
 import copy
+import base64
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 import threading
 from pathlib import Path
 from .pcm import PCM
@@ -233,6 +234,90 @@ class XTTSHttpBackend(TTSBackend):
         return _wav_bytes_to_pcm(resp.content)
 
 
+class RemoteTTSHttpBackend(TTSBackend):
+    """Unified remote TTS backend for piper/xtts with a single endpoint.
+
+    Request payload:
+      {
+        "text": "...",
+        "engine": "piper" | "xtts",
+        "language": "tr",
+        "speaker_wav": "..."?,
+        "piper": {...},
+        "xtts": {...}
+      }
+    Response can be raw WAV bytes or JSON with base64 audio.
+    """
+
+    def __init__(self, cfg: TTSConfig, full_tts_cfg: Dict[str, Any]):
+        remote_cfg = full_tts_cfg.get("remote", {}) if isinstance(full_tts_cfg.get("remote", {}), dict) else {}
+        if not bool(remote_cfg.get("enabled", False)):
+            raise ValueError("tts.remote.enabled must be true for RemoteTTSHttpBackend")
+
+        endpoint = str(remote_cfg.get("endpoint", "")).strip()
+        if not endpoint:
+            raise ValueError("tts.remote.endpoint is required")
+
+        self.endpoint = endpoint
+        self.timeout = float(remote_cfg.get("timeout", 120.0))
+        self.auth_token = str(remote_cfg.get("auth_token", "")).strip()
+        self.engine = str(cfg.engine).strip().lower()
+        self.default_language = str(cfg.language)
+        self.default_speaker_wav = (
+            full_tts_cfg.get("xtts", {}).get("speaker_wav")
+            if isinstance(full_tts_cfg.get("xtts", {}), dict)
+            else None
+        )
+
+        self.piper_cfg = copy.deepcopy(full_tts_cfg.get("piper", {})) if isinstance(full_tts_cfg.get("piper", {}), dict) else {}
+        self.xtts_cfg = copy.deepcopy(full_tts_cfg.get("xtts", {})) if isinstance(full_tts_cfg.get("xtts", {}), dict) else {}
+
+    def _decode_response_audio(self, resp: requests.Response) -> bytes:
+        content_type = str(resp.headers.get("content-type", "")).lower()
+        if "application/json" in content_type:
+            data = resp.json() if resp.content else {}
+            if not isinstance(data, dict):
+                raise RuntimeError("remote TTS returned invalid JSON payload")
+
+            b64_value = (
+                data.get("wav_base64")
+                or data.get("audio_base64")
+                or data.get("data")
+                or ""
+            )
+            b64_text = str(b64_value or "").strip()
+            if not b64_text:
+                raise RuntimeError("remote TTS JSON response has no base64 audio field")
+            return base64.b64decode(b64_text)
+
+        return resp.content
+
+    def synthesize(self, text: str, speaker_wav: Optional[str] = None, language: Optional[str] = None) -> PCM:
+        payload: Dict[str, Any] = {
+            "text": text,
+            "engine": self.engine,
+            "language": language or self.default_language,
+            "piper": self.piper_cfg,
+            "xtts": self.xtts_cfg,
+        }
+
+        resolved_speaker_wav = speaker_wav or self.default_speaker_wav
+        if resolved_speaker_wav:
+            payload["speaker_wav"] = resolved_speaker_wav
+
+        headers: Dict[str, str] = {}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+
+        resp = requests.post(self.endpoint, json=payload, headers=headers, timeout=self.timeout)
+        resp.raise_for_status()
+
+        wav_bytes = self._decode_response_audio(resp)
+        if not wav_bytes:
+            raise RuntimeError("remote TTS response contains empty audio")
+        return _wav_bytes_to_pcm(wav_bytes)
+
+
 class TextToSpeech:
     def __init__(self, cfg: Dict):
         self._base_cfg = copy.deepcopy(cfg)
@@ -247,6 +332,9 @@ class TextToSpeech:
             volume=float(cfg.get("volume", 1.0)),
             samplerate=int(cfg.get("samplerate", 22050)),
         )
+        remote_cfg = cfg.get("remote", {}) if isinstance(cfg.get("remote", {}), dict) else {}
+        if tcfg.engine in {"piper", "xtts"} and bool(remote_cfg.get("enabled", False)):
+            return RemoteTTSHttpBackend(tcfg, cfg)
         if tcfg.engine == "piper":
             return PiperBackend(tcfg, cfg.get("piper", {}))
         if tcfg.engine == "xtts":
@@ -279,7 +367,7 @@ class TextToSpeech:
         if overrides:
             cfg = self._merge_overrides(overrides)
             backend = self._build_backend(cfg or self._base_cfg)
-            if isinstance(backend, XTTSHttpBackend):
+            if isinstance(backend, (XTTSHttpBackend, RemoteTTSHttpBackend)):
                 speaker_wav = overrides.get("speaker_wav") if isinstance(overrides, dict) else None
                 language = overrides.get("language") if isinstance(overrides, dict) else None
                 return backend.synthesize(text, speaker_wav=speaker_wav, language=language)
