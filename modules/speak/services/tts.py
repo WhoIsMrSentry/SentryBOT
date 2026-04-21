@@ -1,9 +1,11 @@
 from __future__ import annotations
 import copy
+import base64
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 import threading
+from pathlib import Path
 from .pcm import PCM
 
 import io
@@ -101,9 +103,14 @@ class PiperBackend(TTSBackend):
     """
     def __init__(self, cfg: TTSConfig, piper_cfg: Dict):
         self.bin_path = str(piper_cfg.get("bin_path", "piper"))
-        self.model_path = piper_cfg.get("model_path")
+        self.model_path = str(piper_cfg.get("model_path") or "").strip()
         if not self.model_path:
             raise ValueError("piper.model_path is required")
+        if not Path(self.model_path).exists():
+            raise FileNotFoundError(f"piper.model_path not found: {self.model_path}")
+        self.config_path = str(piper_cfg.get("config_path") or f"{self.model_path}.json").strip()
+        if self.config_path and not Path(self.config_path).exists():
+            logger.warning("piper model config not found: %s", self.config_path)
         self.samplerate = int(piper_cfg.get("samplerate", cfg.samplerate))
         self.speaker = piper_cfg.get("speaker")
         self.length_scale = piper_cfg.get("length_scale")
@@ -111,26 +118,84 @@ class PiperBackend(TTSBackend):
         self.noise_w = piper_cfg.get("noise_w")
 
     def synthesize(self, text: str):
-        import subprocess, json, tempfile, os
+        import subprocess, tempfile, os
         import soundfile as sf
-        # Piper stdin->wav stdout; bazı kurulumlarda -w ile dosyaya yazmak daha stabil.
-        with tempfile.TemporaryDirectory() as d:
-            wav_path = os.path.join(d, "out.wav")
-            cmd = [self.bin_path, "-m", self.model_path, "-w", wav_path]
+
+        def _append_long_options(cmd: list[str]) -> list[str]:
+            out = list(cmd)
+            if self.config_path and os.path.exists(self.config_path):
+                out += ["--config", self.config_path]
             if self.speaker is not None:
-                cmd += ["-s", str(self.speaker)]
+                out += ["--speaker", str(self.speaker)]
             if self.length_scale is not None:
-                cmd += ["-l", str(self.length_scale)]
+                out += ["--length_scale", str(self.length_scale)]
             if self.noise_scale is not None:
-                cmd += ["-n", str(self.noise_scale)]
+                out += ["--noise_scale", str(self.noise_scale)]
             if self.noise_w is not None:
-                cmd += ["-e", str(self.noise_w)]
-            proc = subprocess.run(cmd, input=text.encode("utf-8"), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if proc.returncode != 0:
-                raise RuntimeError(f"piper failed: {proc.stderr.decode('utf-8', 'ignore')}")
-            data, sr = sf.read(wav_path, dtype='float32')
+                out += ["--noise_w", str(self.noise_w)]
+            return out
+
+        def _append_short_options(cmd: list[str]) -> list[str]:
+            out = list(cmd)
+            if self.speaker is not None:
+                out += ["-s", str(self.speaker)]
+            if self.length_scale is not None:
+                out += ["-l", str(self.length_scale)]
+            if self.noise_scale is not None:
+                out += ["-n", str(self.noise_scale)]
+            if self.noise_w is not None:
+                out += ["-e", str(self.noise_w)]
+            return out
+
+        def _load_wav_from_path(path: str) -> Optional[PCM]:
+            if not os.path.exists(path):
+                return None
+            if os.path.getsize(path) <= 0:
+                return None
+            data, sr = sf.read(path, dtype='float32')
             ch = 1 if data.ndim == 1 else data.shape[1]
             return PCM(data=data, samplerate=sr, channels=ch)
+
+        stdin_text = (text or "").strip()
+        if not stdin_text:
+            raise ValueError("text is empty")
+
+        with tempfile.TemporaryDirectory() as d:
+            wav_path = os.path.join(d, "out.wav")
+            cmd_variants = [
+                _append_long_options([self.bin_path, "--model", self.model_path, "--output_file", wav_path]),
+                _append_short_options([self.bin_path, "-m", self.model_path, "-w", wav_path]),
+            ]
+
+            last_error = ""
+            for cmd in cmd_variants:
+                proc = subprocess.run(
+                    cmd,
+                    input=(stdin_text + "\n").encode("utf-8"),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                stderr_txt = proc.stderr.decode("utf-8", "ignore").strip()
+
+                if proc.returncode == 0:
+                    try:
+                        pcm = _load_wav_from_path(wav_path)
+                        if pcm is not None:
+                            return pcm
+                    except Exception as exc:
+                        last_error = f"wav read failed: {exc}"
+
+                    if proc.stdout:
+                        try:
+                            return _wav_bytes_to_pcm(proc.stdout)
+                        except Exception as exc:
+                            last_error = f"stdout wav parse failed: {exc}"
+                    else:
+                        last_error = "piper finished without producing readable WAV output"
+                else:
+                    last_error = f"exit={proc.returncode}; stderr={stderr_txt or '<empty>'}"
+
+            raise RuntimeError(f"piper failed: {last_error}")
 
 
 class XTTSHttpBackend(TTSBackend):
@@ -169,6 +234,90 @@ class XTTSHttpBackend(TTSBackend):
         return _wav_bytes_to_pcm(resp.content)
 
 
+class RemoteTTSHttpBackend(TTSBackend):
+    """Unified remote TTS backend for piper/xtts with a single endpoint.
+
+    Request payload:
+      {
+        "text": "...",
+        "engine": "piper" | "xtts",
+        "language": "tr",
+        "speaker_wav": "..."?,
+        "piper": {...},
+        "xtts": {...}
+      }
+    Response can be raw WAV bytes or JSON with base64 audio.
+    """
+
+    def __init__(self, cfg: TTSConfig, full_tts_cfg: Dict[str, Any]):
+        remote_cfg = full_tts_cfg.get("remote", {}) if isinstance(full_tts_cfg.get("remote", {}), dict) else {}
+        if not bool(remote_cfg.get("enabled", False)):
+            raise ValueError("tts.remote.enabled must be true for RemoteTTSHttpBackend")
+
+        endpoint = str(remote_cfg.get("endpoint", "")).strip()
+        if not endpoint:
+            raise ValueError("tts.remote.endpoint is required")
+
+        self.endpoint = endpoint
+        self.timeout = float(remote_cfg.get("timeout", 120.0))
+        self.auth_token = str(remote_cfg.get("auth_token", "")).strip()
+        self.engine = str(cfg.engine).strip().lower()
+        self.default_language = str(cfg.language)
+        self.default_speaker_wav = (
+            full_tts_cfg.get("xtts", {}).get("speaker_wav")
+            if isinstance(full_tts_cfg.get("xtts", {}), dict)
+            else None
+        )
+
+        self.piper_cfg = copy.deepcopy(full_tts_cfg.get("piper", {})) if isinstance(full_tts_cfg.get("piper", {}), dict) else {}
+        self.xtts_cfg = copy.deepcopy(full_tts_cfg.get("xtts", {})) if isinstance(full_tts_cfg.get("xtts", {}), dict) else {}
+
+    def _decode_response_audio(self, resp: requests.Response) -> bytes:
+        content_type = str(resp.headers.get("content-type", "")).lower()
+        if "application/json" in content_type:
+            data = resp.json() if resp.content else {}
+            if not isinstance(data, dict):
+                raise RuntimeError("remote TTS returned invalid JSON payload")
+
+            b64_value = (
+                data.get("wav_base64")
+                or data.get("audio_base64")
+                or data.get("data")
+                or ""
+            )
+            b64_text = str(b64_value or "").strip()
+            if not b64_text:
+                raise RuntimeError("remote TTS JSON response has no base64 audio field")
+            return base64.b64decode(b64_text)
+
+        return resp.content
+
+    def synthesize(self, text: str, speaker_wav: Optional[str] = None, language: Optional[str] = None) -> PCM:
+        payload: Dict[str, Any] = {
+            "text": text,
+            "engine": self.engine,
+            "language": language or self.default_language,
+            "piper": self.piper_cfg,
+            "xtts": self.xtts_cfg,
+        }
+
+        resolved_speaker_wav = speaker_wav or self.default_speaker_wav
+        if resolved_speaker_wav:
+            payload["speaker_wav"] = resolved_speaker_wav
+
+        headers: Dict[str, str] = {}
+        if self.auth_token:
+            headers["Authorization"] = f"Bearer {self.auth_token}"
+
+        resp = requests.post(self.endpoint, json=payload, headers=headers, timeout=self.timeout)
+        resp.raise_for_status()
+
+        wav_bytes = self._decode_response_audio(resp)
+        if not wav_bytes:
+            raise RuntimeError("remote TTS response contains empty audio")
+        return _wav_bytes_to_pcm(wav_bytes)
+
+
 class TextToSpeech:
     def __init__(self, cfg: Dict):
         self._base_cfg = copy.deepcopy(cfg)
@@ -183,6 +332,9 @@ class TextToSpeech:
             volume=float(cfg.get("volume", 1.0)),
             samplerate=int(cfg.get("samplerate", 22050)),
         )
+        remote_cfg = cfg.get("remote", {}) if isinstance(cfg.get("remote", {}), dict) else {}
+        if tcfg.engine in {"piper", "xtts"} and bool(remote_cfg.get("enabled", False)):
+            return RemoteTTSHttpBackend(tcfg, cfg)
         if tcfg.engine == "piper":
             return PiperBackend(tcfg, cfg.get("piper", {}))
         if tcfg.engine == "xtts":
@@ -215,7 +367,7 @@ class TextToSpeech:
         if overrides:
             cfg = self._merge_overrides(overrides)
             backend = self._build_backend(cfg or self._base_cfg)
-            if isinstance(backend, XTTSHttpBackend):
+            if isinstance(backend, (XTTSHttpBackend, RemoteTTSHttpBackend)):
                 speaker_wav = overrides.get("speaker_wav") if isinstance(overrides, dict) else None
                 language = overrides.get("language") if isinstance(overrides, dict) else None
                 return backend.synthesize(text, speaker_wav=speaker_wav, language=language)

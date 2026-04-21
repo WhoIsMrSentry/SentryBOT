@@ -65,11 +65,6 @@ static inline void processSongQueue(){
   }
 }
 
-// Status LED mode (managed in loop)
-volatile uint8_t g_statusLedMode = STATUS_LED_OFF;
-unsigned long g_statusLedLastMs = 0;
-bool g_statusLedState = false;
-
 // Proximity beep state for HC-SR04 parking-like feedback
 unsigned long g_lastProxBeepMs = 0;
 bool g_proxContinuousOn = false;
@@ -186,9 +181,6 @@ void setup(){
   g_lastRfid.reserve(16);
 #endif
   g_lastSpeech.reserve(32);
-  // Status LED pin
-  pinMode(PIN_STATUS_LED, OUTPUT);
-  g_statusLedMode = STATUS_LED_BLINK_SLOW; // boot activity
   robot.begin();
   // Initialize and attach hall encoders (if enabled) after steppers are started
 #if HALL_ENCODER_ENABLED
@@ -231,8 +223,6 @@ void setup(){
   }
   #endif
   Protocol::sendOk(F("ready"));
-  // Indicate ready
-  g_statusLedMode = STATUS_LED_SOLID;
 #if LCD_ENABLED
   Wire.begin();
 #if defined(ARDUINO_ARCH_AVR)
@@ -524,24 +514,5 @@ void loop(){
     printTelemetryJson();
   }
   // periodic maintenance for neopixel request retries/acks
-  // Status LED handling
-  {
-    unsigned long nowLed = millis();
-    switch (g_statusLedMode){
-      case STATUS_LED_SOLID:
-        if (!g_statusLedState){ digitalWrite(PIN_STATUS_LED, HIGH); g_statusLedState = true; }
-        break;
-      case STATUS_LED_OFF:
-        if (g_statusLedState){ digitalWrite(PIN_STATUS_LED, LOW); g_statusLedState = false; }
-        break;
-      case STATUS_LED_BLINK_SLOW:
-        if ((long)(nowLed - g_statusLedLastMs) >= 800){ g_statusLedLastMs = nowLed; g_statusLedState = !g_statusLedState; digitalWrite(PIN_STATUS_LED, g_statusLedState?HIGH:LOW); }
-        break;
-      case STATUS_LED_BLINK_FAST:
-        if ((long)(nowLed - g_statusLedLastMs) >= 200){ g_statusLedLastMs = nowLed; g_statusLedState = !g_statusLedState; digitalWrite(PIN_STATUS_LED, g_statusLedState?HIGH:LOW); }
-        break;
-      default: break;
-    }
-  }
   neopixelTick();
 }

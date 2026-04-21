@@ -11,7 +11,7 @@ import numpy as np
 try:
     from .cascade_loader import load_frontal_face_cascade
 except Exception:
-    from services.cascade_loader import load_frontal_face_cascade  # type: ignore
+    from modules.vlm_bridge.services.cascade_loader import load_frontal_face_cascade  # type: ignore
 
 logger = logging.getLogger("vlm_bridge.face_manager")
 

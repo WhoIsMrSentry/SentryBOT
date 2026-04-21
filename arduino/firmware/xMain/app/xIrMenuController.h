@@ -619,7 +619,7 @@ public:
 
   void showHome(){
     char l1[21], l2[21], l3[21], l4[21];
-    snprintf_P(l1, sizeof(l1), PSTR(" \x04  SentryBOT V5  \x04 "));
+    snprintf_P(l1, sizeof(l1), PSTR(" \x04  SentryBOT V7  \x04 "));
     snprintf_P(l2, sizeof(l2), PSTR("===================="));
     snprintf_P(l3, sizeof(l3), PSTR("  STATUS: ONLINE    "));
     snprintf_P(l4, sizeof(l4), PSTR(" [OK] START SENTRY  "));

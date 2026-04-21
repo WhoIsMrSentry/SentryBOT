@@ -13,34 +13,34 @@ try:
     from .face_manager import FaceManager
 except Exception:
     try:
-        from services.face_manager import FaceManager
+        from modules.vlm_bridge.services.face_manager import FaceManager
     except Exception:
         FaceManager = None  # type: ignore
 
 try:
     from .cascade_loader import load_frontal_face_cascade
 except Exception:
-    from services.cascade_loader import load_frontal_face_cascade  # type: ignore
+    from modules.vlm_bridge.services.cascade_loader import load_frontal_face_cascade  # type: ignore
 
 try:
     from .semantic_describer import SemanticDescriber
 except Exception:
-    from services.semantic_describer import SemanticDescriber  # type: ignore
+    from modules.vlm_bridge.services.semantic_describer import SemanticDescriber  # type: ignore
 
 try:
     from .people_memory import PeopleMemory
 except Exception:
-    from services.people_memory import PeopleMemory  # type: ignore
+    from modules.vlm_bridge.services.people_memory import PeopleMemory  # type: ignore
 
 try:
     from .action_dispatcher import VisionActionDispatcher
 except Exception:
-    from services.action_dispatcher import VisionActionDispatcher  # type: ignore
+    from modules.vlm_bridge.services.action_dispatcher import VisionActionDispatcher  # type: ignore
 
 try:
     from .llm_client import generate_text
 except Exception:
-    from services.llm_client import generate_text  # type: ignore
+    from modules.vlm_bridge.services.llm_client import generate_text  # type: ignore
 
 
 logger = logging.getLogger("vlm_bridge")
@@ -307,19 +307,84 @@ class VisionProcessor:
             self._inference_thread.join(timeout=2.0)
         logger.info("Vision processing stopped")
 
+    def _is_http_camera_source(self) -> bool:
+        src = self.camera_source
+        return isinstance(src, str) and src.lower().startswith(("http://", "https://"))
+
+    def _camera_probe_url(self) -> Optional[str]:
+        if not self._is_http_camera_source():
+            return None
+        src = str(self.camera_source)
+        if "/camera/video" in src:
+            return src.replace("/camera/video", "/camera/healthz")
+        return src
+
+    def _http_camera_ready(self) -> bool:
+        probe = self._camera_probe_url()
+        if not probe:
+            return True
+        try:
+            resp = requests.get(probe, timeout=0.35)
+        except Exception:
+            return False
+        if resp.status_code != 200:
+            return False
+        if probe.endswith("/camera/healthz"):
+            try:
+                payload = resp.json()
+                if isinstance(payload, dict) and "ok" in payload:
+                    return bool(payload.get("ok"))
+            except Exception:
+                return False
+        return True
+
     def _capture_loop(self) -> None:
-        cap = cv2.VideoCapture(self.camera_source)
-        if not cap.isOpened():
-            logger.error("Could not open camera source: %s", self.camera_source)
-            return
+        cap: Optional[Any] = None
+        open_fail_count = 0
 
         while not self._stop_event.is_set():
+            if cap is None or not cap.isOpened():
+                if cap is not None:
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+
+                if self._is_http_camera_source() and not self._http_camera_ready():
+                    open_fail_count += 1
+                    if open_fail_count == 1 or (open_fail_count % 10) == 0:
+                        logger.info(
+                            "Camera source not ready yet: %s (attempt=%d), waiting...",
+                            self.camera_source,
+                            open_fail_count,
+                        )
+                    time.sleep(1.0)
+                    continue
+
+                cap = cv2.VideoCapture(self.camera_source)
+                if not cap.isOpened():
+                    open_fail_count += 1
+                    if open_fail_count == 1 or (open_fail_count % 10) == 0:
+                        logger.warning(
+                            "Could not open camera source: %s (attempt=%d), retrying...",
+                            self.camera_source,
+                            open_fail_count,
+                        )
+                    time.sleep(1.0)
+                    continue
+
+                open_fail_count = 0
+                logger.info("Camera source connected: %s", self.camera_source)
+
             ok, frame = cap.read()
             if not ok or frame is None:
-                logger.warning("Failed to read frame, retrying...")
+                logger.warning("Failed to read frame, reconnecting camera source...")
                 time.sleep(0.6)
-                cap.release()
-                cap = cv2.VideoCapture(self.camera_source)
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                cap = None
                 continue
 
             with self._frame_lock:
@@ -327,7 +392,11 @@ class VisionProcessor:
 
             time.sleep(0.003)
 
-        cap.release()
+        if cap is not None:
+            try:
+                cap.release()
+            except Exception:
+                pass
 
     def _inference_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -616,6 +685,16 @@ class VisionProcessor:
         if self.processing_mode != "local":
             return [{"error": "Local analysis disabled in remote mode"}]
 
+        if self._is_http_camera_source():
+            frame = None
+            with self._frame_lock:
+                if self._latest_raw_frame is not None:
+                    frame = self._latest_raw_frame.copy()
+            if frame is None:
+                return [{"error": "No frame available yet"}]
+            results, _annotated = self._analyze_frame(frame, enable_follow=False)
+            return results
+
         cap = cv2.VideoCapture(self.camera_source)
         if not cap.isOpened():
             return [{"error": "Could not open camera"}]
@@ -806,7 +885,11 @@ class VisionProcessor:
     def _ollama_followup(self, name: str) -> Optional[str]:
         rec = self.memory.get_person(name) or {}
         last_sum = (rec.get("last_summary") or {}).get("text")
-        prompt = f"{name} ile karsilastin. {('Ozet: ' + last_sum) if last_sum else ''} Turkce kisa ve sicak bir cumle soyle."
+        prompt = (
+            f"{name} ile karsilastin. {('Ozet: ' + last_sum) if last_sum else ''} "
+            "Turkce sicak ve dogal bir karsilama yap. 2 cumle kur; "
+            "ilk cumle samimi selamlama, ikinci cumle baglama uygun kisa bir takip sorusu olsun."
+        )
         llm_cfg = self.config.get("ollama", {}) if isinstance(self.config.get("ollama", {}), dict) else {}
         timeout = float(llm_cfg.get("timeout", 4.0))
         return generate_text(prompt, llm_cfg, timeout=timeout, response_lang="tr")

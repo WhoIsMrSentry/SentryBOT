@@ -1,63 +1,67 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
 
 from modules.agent_core.config_loader import load_config
 
 
-def test_agent_core_load_config_uses_external_ollama_env(monkeypatch, tmp_path: Path):
-    cfg_file = tmp_path / "agent_config.yml"
+def test_agent_core_load_config_enforces_strict_single_model_policy(tmp_path: Path):
+    cfg_file = tmp_path / "agent.yaml"
     cfg_file.write_text(
         """
 agent:
-  model: llama3.2:3b
+  model: gemma4:26b
   cooldown_s: 1.0
+  request_timeout: 75
+  ollama_base_url: http://127.0.0.1:11434
+llm:
+  provider: ollama
+  model: gemma4:26b
 """.strip(),
         encoding="utf-8",
     )
 
-    monkeypatch.setenv("OLLAMA_BASE_URL", "http://192.168.1.99:11435")
-    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:8b")
-    monkeypatch.setenv("OLLAMA_REQUEST_TIMEOUT", "75")
-    monkeypatch.setenv("LLM_PROVIDER", "ollama")
-    monkeypatch.setenv("AGENT_COOLDOWN_S", "2.5")
-    monkeypatch.setenv("AGENT_MAX_STEPS", "7")
-    monkeypatch.setenv("AGENT_TRI_LAYER_ENABLED", "true")
-    monkeypatch.setenv("AGENT_ROUTER_MAX_SUBAGENTS", "3")
-    monkeypatch.setenv("AGENT_SUBAGENT_MAX_STEPS", "4")
-    monkeypatch.setenv("AGENT_PERSONA_NUM_PREDICT", "280")
-
     cfg = load_config(str(cfg_file))
 
-    assert cfg["agent"]["model"] == "qwen3.5:8b"
-    assert float(cfg["agent"]["cooldown_s"]) == 2.5
+    assert cfg["agent"]["model"] == "gemma4:26b"
+    assert float(cfg["agent"]["cooldown_s"]) == 1.0
     assert float(cfg["agent"]["request_timeout"]) == 75.0
     assert cfg["llm"]["provider"] == "ollama"
-    assert cfg["llm"]["base_url"] == "http://192.168.1.99:11435"
-    assert cfg["llm"]["model"] == "qwen3.5:8b"
-    assert int(cfg["agent"]["max_steps"]) == 7
-    assert cfg["tri_layer"]["enabled"] is True
-    assert int(cfg["tri_layer"]["router"]["max_subagents"]) == 3
-    assert int(cfg["tri_layer"]["subagent"]["max_steps"]) == 4
-    assert int(cfg["tri_layer"]["persona"]["num_predict"]) == 280
+    assert cfg["llm"]["model"] == "gemma4:26b"
+    assert cfg["llm"]["single_model_mode"] is True
+    assert cfg["llm"]["clm_fallback_enabled"] is False
+    assert cfg["ollama"]["base_url"] == "http://127.0.0.1:11434"
+    assert cfg["ollama"]["model"] == "gemma4:26b"
 
 
-def test_agent_core_keeps_explicit_provider_when_ollama_base_url_is_set(monkeypatch, tmp_path: Path):
-    cfg_file = tmp_path / "agent_config.yml"
+def test_agent_core_load_config_rejects_non_ollama_provider(tmp_path: Path):
+    cfg_file = tmp_path / "agent.yaml"
     cfg_file.write_text(
         """
 agent:
-  model: gemma-4-26B-A4B
+  model: gemma4:26b
 llm:
   provider: google_ai_studio
 """.strip(),
         encoding="utf-8",
     )
 
-    monkeypatch.setenv("LLM_PROVIDER", "google_ai_studio")
-    monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    with pytest.raises(ValueError):
+        load_config(str(cfg_file))
 
-    cfg = load_config(str(cfg_file))
 
-    assert cfg["llm"]["provider"] == "google_ai_studio"
-    assert cfg["llm"]["base_url"] == "http://localhost:11434"
+def test_agent_core_load_config_rejects_non_gemma4_model(tmp_path: Path):
+    cfg_file = tmp_path / "agent.yaml"
+    cfg_file.write_text(
+        """
+agent:
+  model: qwen3.5:8b
+llm:
+  provider: ollama
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError):
+        load_config(str(cfg_file))

@@ -1,21 +1,16 @@
 from __future__ import annotations
 import os
-from pathlib import Path
+from copy import deepcopy
 from typing import Any, Dict
-import yaml
-
-_DEF_CFG_PATH = Path(__file__).parent / "config" / "config.yml"
+from modules.config_center.agent_yaml_loader import load_agent_config, require_dict_section
 
 
 def load_config(override_path: str | os.PathLike | None = None) -> Dict[str, Any]:
-    """Load YAML config for the speech module.
+    """Load speech config from central config/agent.yaml.
 
-    Priority: override_path > SPEECH_CONFIG env > default config.yml
+    Strict mode: module-local config.yml is not used.
     """
-    cfg_env = os.getenv("SPEECH_CONFIG")
-    cfg_path = Path(override_path or cfg_env) if (override_path or cfg_env) else _DEF_CFG_PATH
-    if not cfg_path.exists():
-        raise FileNotFoundError(f"Config file not found: {cfg_path}")
-    with open(cfg_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
-    return data
+    explicit = override_path or os.getenv("SPEECH_CONFIG")
+    root_cfg = load_agent_config(explicit)
+    section = require_dict_section(root_cfg, "speech")
+    return deepcopy(section)

@@ -1,5 +1,5 @@
 agent:
-  model: "gemma-4-26B-A4B"
+  model: "gemma4:26b"
   temperature: 0.15
   num_ctx: 4096
   cooldown_s: 1.0  # LLM Rate Limit
@@ -9,10 +9,220 @@ agent:
 
 llm:
   provider: "ollama"
-  clm_fallback_enabled: true
-  clm_fallback_model: "qwen3.5:8b"
-  fallback_on_missing_model: true
-  fallback_on_error: true
+  single_model_mode: true
+  model: "gemma4:26b"
+  primary_model: "gemma4:26b"
+  clm_fallback_enabled: false
+  clm_fallback_model: ""
+  fallback_on_missing_model: false
+  fallback_on_error: false
+
+ollama:
+  base_url: "http://localhost:11434"
+  model: "gemma4:26b"
+  request_timeout: 60
+
+ollama_service:
+  server:
+    host: 0.0.0.0
+    port: 8099
+  persona:
+    default: sentry
+    dir: modules/ollama/config/personalities
+  actions:
+    endpoint: http://localhost:8080/autonomy/apply_actions
+    default_apply: true
+    timeout: 1.5
+  translation:
+    enabled: true
+    default_source_lang: tr
+    model: ""
+    cache_size: 128
+
+vlm_bridge:
+  server:
+    host: 0.0.0.0
+    port: 8099
+  vision:
+    processing_mode: local
+    camera_source: "http://127.0.0.1:8080/camera/video"
+    confidence_threshold: 0.5
+    face_match:
+      ratio_test: 0.72
+      min_good_matches: 10
+      min_score: 0.15
+    follow:
+      enabled: true
+      track_interval_s: 0.12
+      pan_gain_deg: 50
+      tilt_gain_deg: 32
+      center_pan: 90
+      center_tilt: 90
+      min_pan: 35
+      max_pan: 145
+      min_tilt: 65
+      max_tilt: 125
+      max_lost_frames: 18
+    blind_mode:
+      enabled: false
+      interval_seconds: 5.0
+    modes:
+      objects: true
+      people: true
+      faces: true
+      depth: false
+      ocr: false
+      hazards: true
+      semantic_scene: true
+    alerts:
+      classes: ["person"]
+      distance_threshold_m: 1.2
+      announce_interval_s: 8.0
+    personalization:
+      known_people:
+        Alice:
+          greeting: "Hos geldin Alice, seni gordugume sevindim."
+        Bob:
+          greeting: "Selam Bob, bugun nasil hissediyorsun?"
+      greet_cooldown_s: 30
+    liveliness:
+      heartbeat_interval_s: 30
+      idle_lookaround_s: 60
+  remote:
+    auth_token: "changeme"
+    accept_results: true
+  robot:
+    host: "localhost"
+  ollama:
+    endpoint: "http://localhost:8080/ollama/chat"
+    model: "gemma4:26b"
+    timeout: 12.0
+    num_predict: 160
+  llm:
+    provider: "ollama"
+    single_model_mode: true
+    primary_model: "gemma4:26b"
+    clm_fallback_enabled: false
+    clm_fallback_model: ""
+    fallback_on_missing_model: false
+    fallback_on_error: false
+  speak:
+    endpoint: "http://localhost:8083/speak/say"
+  translation:
+    enabled: false
+    endpoint: "http://localhost:8080/ollama/translate"
+    source_lang: auto
+    target_lang: tr
+    timeout: 1.5
+  actions:
+    endpoint: "http://localhost:8080/autonomy/apply_actions"
+    default_apply: true
+    timeout: 1.5
+
+speak:
+  server:
+    host: 0.0.0.0
+    port: 8083
+  audio_out:
+    device: null
+    samplerate: 22050
+    channels: 1
+    dtype: float32
+  tts:
+    engine: piper
+    language: tr
+    voice: source
+    rate: 170
+    volume: 1.0
+    samplerate: 22050
+    remote:
+      enabled: true
+      endpoint: http://192.168.1.100:5000/tts/synthesize
+      timeout: 120
+      auth_token: ""
+    piper:
+      bin_path: /home/sentrybot/SentryBOT/venv/bin/piper
+      model_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx
+      config_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx.json
+      samplerate: 22050
+      speaker: null
+      length_scale: null
+      noise_scale: null
+      noise_w: null
+    xtts:
+      endpoint: http://192.168.1.100:5000/tts/synthesize
+      timeout: 120
+      language: tr
+      speaker_wav: null
+  liveliness:
+    enabled: true
+    interactions_base_url: http://localhost:8080/interactions
+    speech_effect:
+      name: PULSE
+      tone_effect_map:
+        fast: COMET
+        neutral: PULSE
+        calm: BREATHE
+        tired: THEATER_CHASE
+      emphasis_effect_map:
+        exclamation: COMET
+        question: TWINKLE
+      rhythm:
+        enabled: true
+        mode: clauses
+        effect: PULSE
+        words_per_beat: 3
+        clauses_per_beat: 1
+        max_beats: 4
+        duration_ms: 150
+        max_pause_marks: 4
+        pause_effect_map:
+          ",": TWINKLE
+          ";": TWINKLE
+          ":": BREATHE
+          ".": BREATHE
+      min_duration_ms: 400
+      max_duration_ms: 7000
+      chars_per_second: 16
+      force: false
+
+speech:
+  server:
+    host: 0.0.0.0
+    port: 8082
+  audio:
+    device: plughw:0,0
+    samplerate: 16000
+    channels: 2
+    dtype: int16
+    frame_ms: 30
+  recognition:
+    source_language: tr
+    language: tr
+    model_path: null
+    language_models:
+      tr: models/vosk-tr
+      en: models/vosk-en
+      en-us: models/vosk-en-us
+      de: models/vosk-de
+      es: models/vosk-es
+      fr: models/vosk-fr
+    samplerate: 16000
+    max_alternatives: 0
+    input_gain: 3.0
+    vad:
+      enabled: false
+      aggressiveness: 2
+      hangover_ms: 300
+  direction:
+    enabled: true
+    mic_distance_m: 0.06
+    control:
+      invert_direction: false
+      deadband_deg: 3.0
+      smoothing_alpha: 0.3
+      slew_deg_per_s: 120.0
+      energy_threshold: 1000
 
 tri_layer:
   enabled: true

@@ -1,19 +1,40 @@
 from __future__ import annotations
 import asyncio
+import logging
+import os
+import sys
 import threading
+import time
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 try:
     import cv2
 except Exception as e:
     cv2 = None  # OpenCV not available (or missing libGL etc.)
 
+PICAM_AVAILABLE = False
+PICAM_IMPORT_ERROR: Optional[str] = None
+
 try:
     from picamera2 import Picamera2  # type: ignore
     PICAM_AVAILABLE = True
-except Exception:
-    PICAM_AVAILABLE = False
+except Exception as exc:
+    PICAM_IMPORT_ERROR = repr(exc)
+    # Some virtualenv setups on Raspberry Pi miss system dist-packages in sys.path.
+    for p in ("/usr/lib/python3/dist-packages", "/usr/local/lib/python3/dist-packages"):
+        if os.path.isdir(p) and p not in sys.path:
+            sys.path.append(p)
+    try:
+        from picamera2 import Picamera2  # type: ignore
+        PICAM_AVAILABLE = True
+        PICAM_IMPORT_ERROR = None
+    except Exception as exc2:
+        PICAM_AVAILABLE = False
+        PICAM_IMPORT_ERROR = repr(exc2)
+
+
+logger = logging.getLogger("camera.capture")
 
 
 @dataclass
@@ -52,19 +73,94 @@ class CameraCapture:
         self.pub = publisher
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._cap: Optional[cv2.VideoCapture] = None
+        self._cap: Optional[Any] = None
         self._picam: Optional["Picamera2"] = None
 
-    def _start_opencv(self) -> None:
+    def _opencv_api_candidates(self, src: object) -> list[Optional[int]]:
+        if cv2 is None or not isinstance(src, int):
+            return [None]
+
+        # CAP_DSHOW is Windows-only; on Linux/RPi prefer V4L2/CAP_ANY.
+        if os.name == "nt":
+            return [getattr(cv2, "CAP_DSHOW", None), getattr(cv2, "CAP_ANY", None), None]
+        return [getattr(cv2, "CAP_V4L2", None), getattr(cv2, "CAP_ANY", None), None]
+
+    def _opencv_source_candidates(self, src: object) -> list[Tuple[object, Optional[int]]]:
+        candidates: list[Tuple[object, Optional[int]]] = [(src, None)]
         if cv2 is None:
-            raise RuntimeError("OpenCV (cv2) not available: check libGL (libGL.so.1) and opencv-python installation")
-        src = self.cfg.source if isinstance(self.cfg.source, (int, str)) else 0
-        cap = cv2.VideoCapture(src, cv2.CAP_DSHOW if isinstance(src, int) else 0)
+            return candidates
+
+        if isinstance(src, int) and os.name != "nt":
+            # Prefer explicit V4L2 device path as secondary candidate on Linux.
+            candidates.append((f"/dev/video{src}", None))
+
+            # Last resort: libcamera GStreamer pipeline (when OpenCV has GStreamer support).
+            gst_api = getattr(cv2, "CAP_GSTREAMER", None)
+            if gst_api is not None:
+                w, h = self.cfg.resolution
+                fps = max(5, min(60, int(self.cfg.fps_target or 30)))
+                gst_pipeline = (
+                    f"libcamerasrc ! video/x-raw,width={w},height={h},framerate={fps}/1 ! "
+                    "videoconvert ! appsink drop=true sync=false"
+                )
+                candidates.append((gst_pipeline, gst_api))
+
+        return candidates
+
+    def _configure_opencv_capture(self, cap: Any) -> None:
         w, h = self.cfg.resolution
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*self.cfg.opencv_fourcc))
         cap.set(cv2.CAP_PROP_BUFFERSIZE, self.cfg.opencv_buffer_size)
+
+    def _open_opencv_capture(self, src: object) -> Tuple[Optional[Any], str]:
+        if cv2 is None:
+            return None, "cv2-unavailable"
+
+        for candidate_src, forced_api in self._opencv_source_candidates(src):
+            api_candidates = [forced_api] if forced_api is not None else self._opencv_api_candidates(candidate_src)
+            for api in api_candidates:
+                try:
+                    cap = cv2.VideoCapture(candidate_src) if api is None else cv2.VideoCapture(candidate_src, api)
+                except Exception:
+                    continue
+
+                if cap is None or not cap.isOpened():
+                    if cap is not None:
+                        try:
+                            cap.release()
+                        except Exception:
+                            pass
+                    continue
+
+                self._configure_opencv_capture(cap)
+
+                # Some backends report opened but never deliver frames; validate quickly.
+                ok = False
+                frame = None
+                for _ in range(3):
+                    ok, frame = cap.read()
+                    if ok and frame is not None:
+                        break
+                    time.sleep(0.05)
+
+                if ok and frame is not None:
+                    api_name = "default" if api is None else str(api)
+                    return cap, f"{api_name}|src={candidate_src!r}"
+
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+
+        return None, "none"
+
+    def _start_opencv(self) -> None:
+        if cv2 is None:
+            raise RuntimeError("OpenCV (cv2) not available: check libGL (libGL.so.1) and opencv-python installation")
+        src = self.cfg.source if isinstance(self.cfg.source, (int, str)) else 0
+        cap, api_name = self._open_opencv_capture(src)
         self._cap = cap
 
         def _apply_flip(img):
@@ -96,9 +192,36 @@ class CameraCapture:
 
         def loop() -> None:
             q = self.cfg.jpeg_quality
+            open_fail_count = 0
+            nonlocal cap, api_name
             while not self._stop.is_set():
+                if cap is None or not cap.isOpened():
+                    cap, api_name = self._open_opencv_capture(src)
+                    self._cap = cap
+                    if cap is None:
+                        open_fail_count += 1
+                        if open_fail_count == 1 or (open_fail_count % 10) == 0:
+                            logger.warning(
+                                "OpenCV camera source not ready: source=%r attempt=%d",
+                                src,
+                                open_fail_count,
+                            )
+                        time.sleep(1.0)
+                        continue
+
+                    open_fail_count = 0
+                    logger.info("OpenCV camera connected: source=%r api=%s", src, api_name)
+
                 ok, frame = cap.read()
                 if not ok:
+                    logger.warning("OpenCV camera read failed, reconnecting source=%r", src)
+                    try:
+                        cap.release()
+                    except Exception:
+                        pass
+                    cap = None
+                    self._cap = None
+                    time.sleep(0.4)
                     continue
                 frame = _apply_flip(frame)
                 ok2, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, q])
@@ -110,6 +233,8 @@ class CameraCapture:
     def _start_picam(self) -> None:
         if not PICAM_AVAILABLE:
             raise RuntimeError("Picamera2 not available")
+        if cv2 is None:
+            raise RuntimeError("OpenCV (cv2) is required for JPEG encoding with picamera2 backend")
         cam = Picamera2()
         w, h = self.cfg.picam_size
         cam.configure(cam.create_video_configuration(
@@ -148,19 +273,35 @@ class CameraCapture:
 
         def loop() -> None:
             q = self.cfg.jpeg_quality
+            err_count = 0
             while not self._stop.is_set():
-                rgb = cam.capture_array("main")
-                rgb = _apply_flip(rgb)
-                ok, buf = cv2.imencode('.jpg', rgb, [cv2.IMWRITE_JPEG_QUALITY, q])
-                if ok:
-                    self.pub.set_jpeg(buf.tobytes())
+                try:
+                    rgb = cam.capture_array("main")
+                    rgb = _apply_flip(rgb)
+                    ok, buf = cv2.imencode('.jpg', rgb, [cv2.IMWRITE_JPEG_QUALITY, q])
+                    if ok:
+                        self.pub.set_jpeg(buf.tobytes())
+                    err_count = 0
+                except Exception as exc:
+                    err_count += 1
+                    if err_count == 1 or (err_count % 20) == 0:
+                        logger.warning("Picamera2 frame capture failed (count=%d): %s", err_count, exc)
+                    time.sleep(0.2)
         self._thread = threading.Thread(target=loop, daemon=True)
         self._thread.start()
 
     def start(self) -> None:
+        self._stop.clear()
         backend = self.cfg.backend
         if backend == "auto":
             backend = "picamera2" if PICAM_AVAILABLE else "opencv"
+        if backend == "opencv" and os.name != "nt" and isinstance(self.cfg.source, int) and not PICAM_AVAILABLE:
+            logger.warning(
+                "picamera2 unavailable (error=%s). CSI camera with OpenCV source=%r may fail to deliver frames.",
+                PICAM_IMPORT_ERROR,
+                self.cfg.source,
+            )
+        logger.info("CameraCapture starting backend=%s source=%r picam_available=%s", backend, self.cfg.source, PICAM_AVAILABLE)
         if backend == "picamera2":
             self._start_picam()
         else:

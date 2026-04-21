@@ -8,9 +8,6 @@
 #include "actuators/xServoBus.h"
 #include "actuators/xStepperPair.h"
 
-// Status LED mode (defined in xConfig.h)
-extern volatile uint8_t g_statusLedMode;
-
 enum RobotMode { MODE_HEAD_TRACK, MODE_SKATE };
 
 class Robot {
@@ -57,8 +54,6 @@ public:
     // Detach servos and stop steppers immediately
     servos.detachAll();
     steppers.stop();
-    // indicate error/estop via status LED
-    g_statusLedMode = STATUS_LED_BLINK_FAST;
   }
   // Runtime tuning
   void setSkateGains(float kp, float ki, float kd){ skateKp=kp; skateKi=ki; skateKd=kd; }

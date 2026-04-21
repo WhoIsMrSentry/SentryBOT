@@ -178,6 +178,7 @@ class xArduinoSerialService:
 
         want_cmd = obj.get("cmd")
         last_exc: Optional[Exception] = None
+        echo_samples: List[str] = []
         for attempt in range(0, max_retries + 1):
             # send each attempt
             self.send(obj)
@@ -198,6 +199,15 @@ class xArduinoSerialService:
                         # Ignore heartbeat acks unless we explicitly requested hb
                         if want_cmd != "hb" and isinstance(msg, dict) and msg.get("ok") is True and msg.get("msg") == "hb":
                             continue
+                        # Echo-only frames (e.g. {"cmd":"hello"}) indicate a line echo or wrong peer.
+                        # Keep waiting for an explicit ACK/ERR, but remember samples for diagnostics.
+                        if isinstance(msg, dict) and ("ok" not in msg and "err" not in msg):
+                            if msg.get("cmd") == want_cmd and len(echo_samples) < 3:
+                                try:
+                                    echo_samples.append(json.dumps(msg, separators=(",", ":")))
+                                except Exception:
+                                    echo_samples.append(str(msg))
+                            continue
                         if isinstance(msg, dict) and ("ok" in msg or "err" in msg):
                             return msg
                         continue
@@ -205,7 +215,15 @@ class xArduinoSerialService:
                         # no message in remaining interval, will check overall timeout
                         pass
                 # timed out for this attempt
-                last_exc = TimeoutError("No response from Arduino (attempt %d)" % (attempt + 1))
+                if echo_samples:
+                    sample = "; ".join(echo_samples)
+                    last_exc = TimeoutError(
+                        "No ACK/ERR from Arduino for cmd '%s' (attempt %d). Echo-like frame(s) seen: %s. "
+                        "Check serial port selection and disable UART login shell if /dev/serial0 is in use."
+                        % (want_cmd, attempt + 1, sample)
+                    )
+                else:
+                    last_exc = TimeoutError("No response from Arduino (attempt %d)" % (attempt + 1))
             except Exception as exc:
                 last_exc = exc
 
@@ -569,29 +587,58 @@ class xArduinoSerialService:
             if fallback:
                 return fallback
             raise RuntimeError("pyserial not installed")
-        # If the Raspberry Pi hardware UART path exists, prefer it
+        ports = list(serial.tools.list_ports.comports())
+
+        def _text(v: Any) -> str:
+            return str(v or "").lower()
+
+        def _is_arduino_like(p: Any) -> bool:
+            txt = " ".join([
+                _text(getattr(p, "description", "")),
+                _text(getattr(p, "manufacturer", "")),
+                _text(getattr(p, "product", "")),
+                _text(getattr(p, "hwid", "")),
+            ])
+            keys = ("arduino", "mega", "2560", "ch340", "cp210", "usb serial")
+            return any(k in txt for k in keys)
+
+        # 1) Prefer Arduino-like USB serial adapters first.
+        for p in ports:
+            dev = str(getattr(p, "device", "") or "")
+            if dev and any(x in dev for x in ("ttyACM", "ttyUSB", "COM")) and _is_arduino_like(p):
+                return dev
+
+        # 2) Then any USB serial-style device.
+        for p in ports:
+            dev = str(getattr(p, "device", "") or "")
+            if dev and any(x in dev for x in ("ttyACM", "ttyUSB", "COM")):
+                return dev
+
+        # 3) Prefer known UART names if no USB serial device is found.
+        for p in ports:
+            dev = str(getattr(p, "device", "") or "")
+            if any(x in dev for x in ("/dev/ttyAMA0", "/dev/serial0", "/dev/ttyS0")):
+                return dev
+
+        # 4) Any port that identifies as Arduino-like.
+        for p in ports:
+            if _is_arduino_like(p):
+                dev = str(getattr(p, "device", "") or "")
+                if dev:
+                    return dev
+
+        # 5) If Raspberry Pi UART path exists, use it as last Linux fallback.
         try:
             if os.path.exists("/dev/serial0"):
                 return "/dev/serial0"
         except Exception:
             pass
 
-        ports = list(serial.tools.list_ports.comports())
-        # Prefer common Linux UART device names if present
-        for p in ports:
-            dev = (p.device or "")
-            if any(x in dev for x in ("/dev/ttyAMA0", "/dev/serial0", "/dev/ttyS0", "ttyACM", "ttyUSB")):
-                return dev
-
-        # try to find 'Arduino Mega' or '2560' by description
-        for p in ports:
-            desc = (p.description or "").lower()
-            if "mega" in desc or "2560" in desc or "arduino" in desc:
-                return p.device
-
         # Fallback: return provided fallback, first discovered port, or a sensible default
         if ports:
-            return ports[0].device
+            first = str(getattr(ports[0], "device", "") or "")
+            if first:
+                return first
         if fallback:
             return fallback
         return "COM3" if os.name == "nt" else "/dev/serial0"

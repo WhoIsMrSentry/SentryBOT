@@ -12,7 +12,7 @@ All three layers run on one Ollama model.
 
 ## New Config Keys
 
-Use either `config/agent.yaml` or `modules/agent_core/config/config.yml`.
+Use only `config/agent.yaml`.
 
 ```yaml
 tri_layer:
@@ -28,30 +28,21 @@ tri_layer:
 
 ## Environment Overrides
 
-- `AGENT_TRI_LAYER_ENABLED=true|false`
-- `AGENT_ROUTER_MAX_SUBAGENTS=2`
-- `AGENT_SUBAGENT_MAX_STEPS=2`
-- `AGENT_PERSONA_NUM_PREDICT=220`
-- `AGENT_MAX_STEPS=6`
-- `LLM_PROVIDER=ollama`
-- `AGENT_OLLAMA_REQUEST_TIMEOUT=60`
-- `AGENT_OLLAMA_BASE_URL=http://<remote-ip>:11434`
+Strict mode keeps runtime behavior in YAML.
+
+Only path override is supported:
+- `AGENT_CFG=/absolute/path/to/agent.yaml`
 
 ## Remote Ollama Server (Single Model)
 
 Set one model and one remote base URL:
 
-- `AGENT_MODEL=gemma-4-26B-A4B`
-- `AGENT_OLLAMA_BASE_URL=http://<remote-ollama-host>:11434`
+- `agent.model: gemma4:26b`
+- `agent.ollama_base_url: http://<remote-ollama-host>:11434`
 
 The same model is used by router, sub-agents, and main persona.
 
-Fallback policy (CLM):
-
-- `AGENT_CLM_FALLBACK_ENABLED=true`
-- `AGENT_CLM_FALLBACK_MODEL=qwen3.5:8b`
-- `AGENT_FALLBACK_ON_MISSING_MODEL=true`
-- `AGENT_FALLBACK_ON_ERROR=true`
+Fallback policy (CLM): disabled in strict single-model mode.
 
 ## API Additions
 

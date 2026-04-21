@@ -15,7 +15,7 @@ logger = logging.getLogger("vlm_bridge.semantic")
 try:
     from .llm_client import generate_text
 except Exception:
-    from services.llm_client import generate_text  # type: ignore
+    from modules.vlm_bridge.services.llm_client import generate_text  # type: ignore
 
 class SemanticDescriber:
     def __init__(self, config: Dict[str, Any]):
@@ -37,8 +37,10 @@ class SemanticDescriber:
                 parts.append(lbl)
         scene_line = ". ".join(parts)
         return (
-            "Sen bir arkadaş canlısı robot sensörüsün. Çevredeki varlıkları kısa, sıcak ve empatik Türkçe ile özetle. "
-            f"Algılanan: {scene_line}. Duygusal ama abartısız konuş."
+            "Sen bir arkadaş canlısı robot sensörüsün. Türkçe cevap ver. "
+            "Sahneyi 2-3 cümlede anlat: önce genel durum, sonra önemli kişi/nesneler ve mümkünse mesafe bilgisi. "
+            "Sıcak ve empatik ol ama tek cümleye düşme. "
+            f"Algılanan: {scene_line}."
         )
 
     def llm_summarize(self, objects: List[Dict[str, Any]]) -> Optional[str]:

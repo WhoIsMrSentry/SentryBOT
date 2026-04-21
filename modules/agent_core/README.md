@@ -10,18 +10,16 @@ Sense -> Think -> Act dongusunu, tek Ollama modeli ile calisan **3 katmanli agen
 Her katman ayni modeli kullanir, ancak farkli sorumluluk ve prompt profiline sahiptir.
 
 Varsayilan politika:
-- VLM-primary tek model: `gemma-4-26B-A4B`
-- CLM fallback: `qwen3.5:8b` (model yoksa veya ilk cagri hatasinda)
-- Provider `google_ai_studio` secilirse Google API istemcisi kullanilir ve sinirli tool-calling denemesi yapilir.
+- Tek model: gemma4:26b
+- Fallback kapali
+- Provider yalnizca ollama
 
 ## Modül Yapısı
 
 ```
 modules/agent_core/
 ├── xAgentCoreService.py      # Servis başlatıcı (FastAPI + class)
-├── config_loader.py          # config.yml okuyucu
-├── config/
-│   └── config.yml            # Modül ayarları
+├── config_loader.py          # config/agent.yaml okuyucu
 ├── services/
 │   ├── __init__.py           # Re-export proxy
 │   ├── agent.py              # Ana orkestratör (Native ReAct Loop)
@@ -89,44 +87,24 @@ print(result["text"])
 
 `/memory/search` sonuçları artık önem puanına göre sıralanır. SLAM tarafı ise yeni düğüm, bağlantı ve alias öğrenmeyi destekler.
 
-## Konfigürasyon (`config/config.yml`)
+## Konfigürasyon (config/agent.yaml)
 
 | Ayar | Açıklama |
 |---|---|
-| `agent.model` | Kullanılacak model (Örn: `llama3.2:3b`) |
+| `agent.model` | Kullanılacak model (zorunlu: gemma4:26b) |
 | `agent.request_timeout` | Ollama istemci timeout degeri (sn) |
 | `agent.max_steps` | Legacy native loop maksimum adım sayısı |
 | `tri_layer.enabled` | 3 katmanli mimari acik/kapali |
 | `tri_layer.router.max_subagents` | Bir istek icin secilecek sub-agent sayisi |
 | `tri_layer.subagent.max_steps` | Her sub-agent icin maksimum tool loop |
 | `tri_layer.persona.num_predict` | Final persona katmaninda token hedefi |
-| `llm.clm_fallback_enabled` | CLM fallback acik/kapali |
-| `llm.clm_fallback_model` | Fallback model adi |
-| `llm.fallback_on_missing_model` | Primary model yoksa fallback |
-| `llm.fallback_on_error` | Primary model ilk hata alirsa fallback |
+| `llm.provider` | Zorunlu: ollama |
+| `llm.single_model_mode` | Zorunlu: true |
 
-### .env / Ortam Değişkeni Override
+### Konfigürasyon Yolu Override
 
-Agent Core, `.env` değerlerini sırasıyla şu yollardan okuyabilir:
-- `modules/agent_core/.env`
-- `modules/ollama/.env`
-- Proje kökü `.env`
-
-Desteklenen anahtarlar:
-- `AGENT_MODEL` veya `OLLAMA_MODEL`
-- `LLM_PROVIDER` (tri-layer icin `ollama` onerilir)
-- `AGENT_OLLAMA_BASE_URL` veya `OLLAMA_BASE_URL` veya `OLLAMA_HOST`
-- `AGENT_OLLAMA_REQUEST_TIMEOUT` veya `OLLAMA_REQUEST_TIMEOUT`
-- `AGENT_COOLDOWN_S`
-- `AGENT_MAX_STEPS`
-- `AGENT_TRI_LAYER_ENABLED`
-- `AGENT_ROUTER_MAX_SUBAGENTS`
-- `AGENT_SUBAGENT_MAX_STEPS`
-- `AGENT_PERSONA_NUM_PREDICT`
-- `AGENT_CLM_FALLBACK_ENABLED`
-- `AGENT_CLM_FALLBACK_MODEL`
-- `AGENT_FALLBACK_ON_MISSING_MODEL`
-- `AGENT_FALLBACK_ON_ERROR`
+- Varsayilan dosya: config/agent.yaml
+- Ozel yol icin: AGENT_CFG ortam degiskeni
 
 ## Testler
 
