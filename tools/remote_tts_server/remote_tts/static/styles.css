@@ -1,0 +1,306 @@
+ :root {
+     --bg-color: #0b0f19;
+     --glass-bg: rgba(20, 25, 40, 0.45);
+     --glass-border: rgba(255, 255, 255, 0.08);
+     --primary: #4ade80;
+     --primary-hover: #22c55e;
+     --accent: #818cf8;
+     --accent-hover: #6366f1;
+     --text-main: #f8fafc;
+     --text-muted: #94a3b8;
+ }
+
+ body {
+     margin: 0;
+     padding: 0;
+     font-family: 'Outfit', sans-serif;
+     background: radial-gradient(circle at top right, #1e1b4b, var(--bg-color) 40%);
+     background-size: cover;
+     background-attachment: fixed;
+     color: var(--text-main);
+     min-height: 100vh;
+     display: flex;
+     flex-direction: column;
+     align-items: center;
+ }
+
+ /* Ambient glowing orbs */
+ .orb {
+     position: fixed;
+     border-radius: 50%;
+     filter: blur(80px);
+     z-index: -1;
+     opacity: 0.5;
+     animation: float 10s ease-in-out infinite alternate;
+ }
+
+ .orb-1 {
+     width: 300px;
+     height: 300px;
+     background: rgba(74, 222, 128, 0.15);
+     top: 10%;
+     left: 10%;
+ }
+
+ .orb-2 {
+     width: 400px;
+     height: 400px;
+     background: rgba(129, 140, 248, 0.15);
+     bottom: 10%;
+     right: 5%;
+     animation-delay: -5s;
+ }
+
+ @keyframes float {
+     0% {
+         transform: translate(0, 0);
+     }
+
+     100% {
+         transform: translate(20px, 30px);
+     }
+ }
+
+ header {
+     text-align: center;
+     padding: 3rem 1rem 1rem;
+ }
+
+ header h1 {
+     font-size: 2.5rem;
+     font-weight: 700;
+     margin: 0;
+     background: linear-gradient(to right, var(--text-main), var(--accent));
+     -webkit-background-clip: text;
+     -webkit-text-fill-color: transparent;
+ }
+
+ header p {
+     color: var(--text-muted);
+     margin-top: 0.5rem;
+     font-weight: 300;
+ }
+
+ main {
+     width: 100%;
+     max-width: 900px;
+     padding: 2rem;
+     display: grid;
+     grid-template-columns: 1fr;
+     gap: 2rem;
+     box-sizing: border-box;
+ }
+
+ @media (min-width: 768px) {
+     main {
+         grid-template-columns: 1fr 1fr;
+     }
+
+     .full-width {
+         grid-column: 1 / -1;
+     }
+ }
+
+ .glass-panel {
+     background: var(--glass-bg);
+     backdrop-filter: blur(16px);
+     -webkit-backdrop-filter: blur(16px);
+     border: 1px solid var(--glass-border);
+     border-radius: 16px;
+     padding: 1.5rem;
+     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+     transition: transform 0.3s ease, box-shadow 0.3s ease;
+ }
+
+ .glass-panel:hover {
+     transform: translateY(-2px);
+     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+ }
+
+ .panel-title {
+     font-size: 1.25rem;
+     font-weight: 600;
+     margin-top: 0;
+     margin-bottom: 1.5rem;
+     display: flex;
+     align-items: center;
+     gap: 0.5rem;
+ }
+
+ .form-group {
+     margin-bottom: 1.25rem;
+ }
+
+ .form-group label {
+     display: block;
+     margin-bottom: 0.5rem;
+     font-size: 0.9rem;
+     color: var(--text-muted);
+ }
+
+ select,
+ input[type="text"],
+ textarea,
+ input[type="file"] {
+     width: 100%;
+     background: rgba(0, 0, 0, 0.2);
+     border: 1px solid var(--glass-border);
+     color: var(--text-main);
+     padding: 0.75rem;
+     border-radius: 8px;
+     font-family: inherit;
+     font-size: 0.95rem;
+     box-sizing: border-box;
+     transition: border-color 0.2s, box-shadow 0.2s;
+ }
+
+ select:focus,
+ input[type="text"]:focus,
+ textarea:focus {
+     outline: none;
+     border-color: var(--accent);
+     box-shadow: 0 0 0 2px rgba(129, 140, 248, 0.2);
+ }
+
+ select option {
+     background: #1e1b4b;
+     color: var(--text-main);
+ }
+
+ textarea {
+     resize: vertical;
+     min-height: 100px;
+ }
+
+ button {
+     display: inline-flex;
+     align-items: center;
+     justify-content: center;
+     width: 100%;
+     padding: 0.85rem;
+     border: none;
+     border-radius: 8px;
+     font-weight: 600;
+     font-family: inherit;
+     font-size: 1rem;
+     cursor: pointer;
+     transition: background 0.3s, transform 0.1s, box-shadow 0.3s;
+ }
+
+ button:active {
+     transform: scale(0.98);
+ }
+
+ button.btn-primary {
+     background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+     color: white;
+     box-shadow: 0 4px 15px rgba(129, 140, 248, 0.4);
+ }
+
+ button.btn-primary:hover {
+     box-shadow: 0 6px 20px rgba(129, 140, 248, 0.6);
+ }
+
+ button.btn-success {
+     background: linear-gradient(135deg, var(--primary), var(--primary-hover));
+     color: #064e3b;
+     box-shadow: 0 4px 15px rgba(74, 222, 128, 0.3);
+ }
+
+ button.btn-success:hover {
+     box-shadow: 0 6px 20px rgba(74, 222, 128, 0.5);
+ }
+
+ .upload-area {
+     border: 2px dashed var(--glass-border);
+     border-radius: 12px;
+     padding: 2rem;
+     text-align: center;
+     cursor: pointer;
+     transition: border-color 0.3s, background 0.3s;
+     margin-bottom: 1rem;
+ }
+
+ .upload-area:hover {
+     border-color: var(--primary);
+     background: rgba(74, 222, 128, 0.05);
+ }
+
+ .upload-area input[type="file"] {
+     display: none;
+ }
+
+ .upload-text {
+     color: var(--text-muted);
+     font-size: 0.95rem;
+ }
+
+ .upload-text span {
+     color: var(--primary);
+     font-weight: 600;
+ }
+
+ #audio-container {
+     margin-top: 1.5rem;
+     display: none;
+ }
+
+ audio {
+     width: 100%;
+     height: 40px;
+     border-radius: 8px;
+ }
+
+ /* Custom Audio Player */
+ audio::-webkit-media-controls-panel {
+     background-color: rgba(255, 255, 255, 0.8);
+ }
+
+ .toast {
+     position: fixed;
+     bottom: 2rem;
+     right: 2rem;
+     padding: 1rem 1.5rem;
+     background: var(--glass-bg);
+     backdrop-filter: blur(10px);
+     border: 1px solid var(--glass-border);
+     border-left: 4px solid var(--primary);
+     border-radius: 8px;
+     color: white;
+     box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+     transform: translateY(150%);
+     transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+     z-index: 1000;
+ }
+
+ .toast.show {
+     transform: translateY(0);
+ }
+
+ .toast.error {
+     border-left-color: #ef4444;
+ }
+
+ /* Loading Spinner */
+ .spinner {
+     display: none;
+     width: 20px;
+     height: 20px;
+     border: 3px solid rgba(255, 255, 255, 0.3);
+     border-radius: 50%;
+     border-top-color: white;
+     animation: spin 1s ease-in-out infinite;
+     margin-left: 10px;
+ }
+
+ @keyframes spin {
+     to {
+         transform: rotate(360deg);
+     }
+ }
+
+ .btn-content {
+     display: flex;
+     align-items: center;
+     justify-content: center;
+ }
