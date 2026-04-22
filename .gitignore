@@ -20,3 +20,6 @@ vosk-tr/
 faces.json
 *.bak
 tmp/
+
+frontend_knowledge.md
+backend_knowledge.md

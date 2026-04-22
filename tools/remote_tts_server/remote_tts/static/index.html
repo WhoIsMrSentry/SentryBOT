@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SentryBOT TTS Studio</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js" defer></script>
+
+</head>
+<body>
+
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+
+    <header>
+        <h1>SentryBOT TTS Studio</h1>
+        <p>Advanced Text-to-Speech Control Center</p>
+    </header>
+
+    <main>
+        <!-- Configuration Panel -->
+        <div class="glass-panel">
+            <h2 class="panel-title">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                Engine Configuration
+            </h2>
+            
+            <div class="form-group">
+                <label for="engine-select">Engine</label>
+                <select id="engine-select" onchange="handleEngineChange()">
+                    <option value="xtts">XTTS (Zero-Shot Cloning)</option>
+                    <option value="piper">Piper (Fast Local TTS)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="language-select">Language</label>
+                <select id="language-select" onchange="handleLanguageChange()">
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label id="model-label" for="model-select">Voice Model / Source</label>
+                <select id="model-select">
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+            
+            <button class="btn-success" onclick="refreshCatalogs()" style="margin-top: 1rem;">
+                <div class="btn-content">
+                    Refresh Catalog
+                </div>
+            </button>
+        </div>
+
+        <!-- XTTS Voice Vault -->
+        <div class="glass-panel">
+            <h2 class="panel-title">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                Voice Vault (XTTS Cloud)
+            </h2>
+            <p style="color: var(--text-muted); font-size: 0.9rem; margin-top: 0; margin-bottom: 1.5rem;">Upload custom .wav files to clone new voices dynamically.</p>
+            
+            <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
+                <input type="file" id="file-input" accept=".wav" onchange="handleFileSelect(event)">
+                <div class="upload-text" id="upload-text">
+                    Drag & drop or <span>browse</span> for a .wav file
+                </div>
+            </div>
+            
+            <button class="btn-primary" id="upload-btn" onclick="uploadVoice()" disabled style="opacity: 0.5;">
+                <div class="btn-content">
+                    Upload to Cloud
+                    <div class="spinner" id="upload-spinner"></div>
+                </div>
+            </button>
+        </div>
+
+        <!-- Synthesis Panel -->
+        <div class="glass-panel full-width">
+            <h2 class="panel-title">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                Synthesize
+            </h2>
+            
+            <div class="form-group">
+                <label for="tts-text">Input Text</label>
+                <textarea id="tts-text" placeholder="Enter text to synthesize..."></textarea>
+            </div>
+
+            <button class="btn-primary" onclick="synthesize()">
+                <div class="btn-content">
+                    Generate Speech
+                    <div class="spinner" id="synth-spinner"></div>
+                </div>
+            </button>
+
+            <div id="audio-container">
+                <audio id="audio-player" controls></audio>
+            </div>
+        </div>
+    </main>
+
+    <div class="toast" id="toast">Message goes here</div>
+</body>
+</html>
