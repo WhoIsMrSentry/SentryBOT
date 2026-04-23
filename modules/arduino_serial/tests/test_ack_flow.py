@@ -28,7 +28,7 @@ class DummyTransport:
 
 def test_ack_sent_for_neopixel_request():
     dt = DummyTransport()
-    svc = xArduinoSerialService(transport_factory=lambda *a, **k: dt)
+    svc = xArduinoSerialService(config_overrides={"transport": "serial"}, transport_factory=lambda *a, **k: dt)
     svc.start()
     # inject a neopixel_request as if from Arduino
     dt._read_q.append(json.dumps({"event": "neopixel_request", "name": "PULSE", "seq": 42}).encode("utf-8"))

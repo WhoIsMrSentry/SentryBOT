@@ -1,6 +1,6 @@
 # Arduino Serial Modülü Mimarisi
 
-Arduino Serial modülü (`modules/arduino_serial`), Raspberry Pi/Jetson ile Arduino Mega arasındaki düşük seviyeli iletişimi NDJSON (Newline Delimited JSON) protokolü üzerinden yönetir.
+Arduino Serial modülü (`modules/arduino_serial`), komut kontratını yöneten katmandır. Üretimde Raspberry Pi komutları ESP bridge'e HTTP ile gönderir; ESP bu komutları Arduino Mega'ya NDJSON/UART olarak aktarır.
 
 ## 🏗️ İş Akışı ve Karar Mekanizmaları (Flowchart)
 

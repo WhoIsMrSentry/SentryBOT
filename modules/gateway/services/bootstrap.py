@@ -54,6 +54,16 @@ def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:
         pass
     logger.info("module arduino mounted")
 
+
+def _include_esp_link(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.esp_link.xEspLinkService import xEspLinkService  # type: ignore
+    from modules.esp_link.api.router import get_router as get_esp_router  # type: ignore
+
+    svc = xEspLinkService()
+    started["esp_link"] = svc
+    app.include_router(get_esp_router(svc))
+    logger.info("module esp_link mounted")
+
 def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.neopixel.services.runner import NeoRunner  # type: ignore
     from modules.neopixel.services.driver import NeoDriverConfig  # type: ignore
@@ -348,6 +358,8 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
 
     if include.get("arduino"):
         _try(lambda: _include_arduino(app, started), "arduino")
+    if include.get("esp_link"):
+        _try(lambda: _include_esp_link(app, started), "esp_link")
     if include.get("vlm_bridge"):
         _try(lambda: _include_vlm_bridge(app, started), "vlm_bridge")
     if include.get("neopixel"):

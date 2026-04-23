@@ -113,6 +113,14 @@ class xArduinoSerialService:
     def __init__(self, config_overrides: Optional[Dict[str, Any]] = None, transport_factory: Optional[Callable[..., Any]] = None):
         self._logger = logging.getLogger("arduino_serial.service")
         self.cfg = load_config(base_dir=None, overrides=config_overrides)
+        self._transport_mode = str(self.cfg.get("transport", "serial")).strip().lower()
+        self._esp_mode = self._transport_mode == "esp_http"
+        self._esp_base_url = str(self.cfg.get("esp_base_url", "http://127.0.0.1:8091")).rstrip("/")
+        self._esp_request_path = str(self.cfg.get("esp_request_path", "/request"))
+        self._esp_send_path = str(self.cfg.get("esp_send_path", "/send"))
+        self._esp_health_path = str(self.cfg.get("esp_health_path", "/healthz"))
+        self._esp_timeout = float(self.cfg.get("esp_timeout_sec", 1.2) or 1.2)
+        self._esp_connect_timeout = float(self.cfg.get("esp_connect_timeout_sec", 0.4) or 0.4)
         self.transport_factory = transport_factory or (lambda port, baudrate, timeout, write_timeout: SerialTransport(port, baudrate, timeout, write_timeout))
         self._ser: Optional[SerialTransport] = None
         self._rx_thread: Optional[threading.Thread] = None
@@ -140,14 +148,44 @@ class xArduinoSerialService:
         self._writer_thread = threading.Thread(target=self._writer_loop, name="arduino-writer", daemon=True)
         self._writer_thread.start()
 
+    def _esp_url(self, path: str) -> str:
+        p = str(path or "").strip()
+        if not p.startswith("/"):
+            p = "/" + p
+        return f"{self._esp_base_url}{p}"
+
+    def _esp_post(self, path: str, payload: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if requests is None:
+            raise RuntimeError("requests is required for ESP HTTP transport")
+        req_timeout = float(timeout if timeout is not None else self._esp_timeout)
+        req_timeout = max(0.05, req_timeout)
+        conn_timeout = max(0.05, float(self._esp_connect_timeout))
+        resp = requests.post(
+            self._esp_url(path),
+            json=payload,
+            params=params,
+            timeout=(conn_timeout, req_timeout),
+        )
+        if resp.status_code != 200:
+            raise RuntimeError(f"ESP bridge HTTP {resp.status_code}: {resp.text[:200]}")
+        try:
+            data = resp.json()
+        except Exception as exc:
+            raise RuntimeError(f"ESP bridge returned non-JSON payload: {exc}") from exc
+        if not isinstance(data, dict):
+            raise RuntimeError("ESP bridge response must be a JSON object")
+        return data
+
     # -------- lifecycle --------
     def start(self) -> None:
         if self._rx_thread and self._rx_thread.is_alive():
             return
-        self._connect()
+        if not self._esp_mode:
+            self._connect()
         self._stop.clear()
-        self._rx_thread = threading.Thread(target=self._reader_loop, name="arduino-rx", daemon=True)
-        self._rx_thread.start()
+        if not self._esp_mode:
+            self._rx_thread = threading.Thread(target=self._reader_loop, name="arduino-rx", daemon=True)
+            self._rx_thread.start()
         if self.cfg.get("auto_heartbeat", True):
             self._hb_thread = threading.Thread(target=self._heartbeat_loop, name="arduino-hb", daemon=True)
             self._hb_thread.start()
@@ -158,10 +196,18 @@ class xArduinoSerialService:
             self._rx_thread.join(timeout=1.0)
         if self._hb_thread:
             self._hb_thread.join(timeout=1.0)
-        self._disconnect()
+        if not self._esp_mode:
+            self._disconnect()
 
     # -------- public api --------
     def send(self, obj: Dict[str, Any]) -> None:
+        if self._esp_mode:
+            data = self._esp_post(self._esp_send_path, payload=obj, timeout=self._esp_timeout)
+            ok = bool(data.get("ok", False))
+            if not ok:
+                raise RuntimeError(str(data.get("error") or data.get("err") or "esp_send_failed"))
+            self._metrics["tx_count"] += 1
+            return
         line = (json.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8")
         # enqueue for writer thread to avoid blocking caller
         self._ensure_connected()
@@ -169,6 +215,35 @@ class xArduinoSerialService:
         self._metrics["tx_count"] += 1
 
     def request(self, obj: Dict[str, Any], timeout: float = 1.0) -> Dict[str, Any]:
+        if self._esp_mode:
+            max_retries = int(self.cfg.get("request_max_retries", 0) or 0)
+            if timeout is None or timeout == 1.0:
+                cfg_ms = int(self.cfg.get("request_timeout_ms", 1000) or 1000)
+                timeout = float(cfg_ms) / 1000.0
+            last_exc: Optional[Exception] = None
+            for attempt in range(0, max_retries + 1):
+                try:
+                    data = self._esp_post(
+                        self._esp_request_path,
+                        payload=obj,
+                        timeout=float(timeout),
+                        params={"timeout": float(timeout)},
+                    )
+                    self._metrics["tx_count"] += 1
+                    resp = data.get("resp") if isinstance(data, dict) and "resp" in data else data
+                    if isinstance(resp, dict):
+                        self._ingest_message(resp)
+                        return resp
+                    raise RuntimeError("ESP bridge response missing 'resp' object")
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < max_retries:
+                        time.sleep(0.05)
+                        continue
+            if last_exc:
+                raise last_exc
+            raise TimeoutError("No response from ESP bridge")
+
         # Support config-driven retries and default timeout
         max_retries = int(self.cfg.get("request_max_retries", 0) or 0)
         # allow per-call timeout (seconds); if caller passed default, prefer configured ms
@@ -440,6 +515,8 @@ class xArduinoSerialService:
             self._ser = None
 
     def _ensure_connected(self) -> None:
+        if self._esp_mode:
+            return
         if not self._ser:
             self._connect()
 

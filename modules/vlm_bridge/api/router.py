@@ -5,44 +5,28 @@ import logging
 import requests
 from modules.arduino_serial.contract import build_track_cmd
 
-try:
-    from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
-except (ImportError, ModuleNotFoundError):
-    try:
-        from ..services.stub import xArduinoSerialService  # type: ignore
-    except (ImportError, ValueError):
-        # Fallback for script execution where relative import fails
-        from services.stub import xArduinoSerialService  # type: ignore
-
-# Shared singleton to avoid re-creating serial per request (fallback only)
-_ardu_singleton: Optional[xArduinoSerialService] = None
-
 def _notify_autonomy():
     try:
         requests.post("http://localhost:8080/autonomy/interaction", timeout=0.1)
     except Exception:
         pass
 
-def _get_or_create_ardu() -> xArduinoSerialService:
-    global _ardu_singleton
-    if _ardu_singleton is None:
-        # Same import logic here
-        try:
-            from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
-            _ardu_singleton = xArduinoSerialService()
-        except (ImportError, ModuleNotFoundError):
-            try:
-                from ..services.stub import xArduinoSerialService  # type: ignore
-                _ardu_singleton = xArduinoSerialService()
-            except (ImportError, ValueError):
-                from services.stub import xArduinoSerialService  # type: ignore
-                _ardu_singleton = xArduinoSerialService()
-                
-        _ardu_singleton.start()
-    return _ardu_singleton
+def _request_arduino(payload: dict, timeout: float = 1.0) -> dict:
+    resp = requests.post(
+        "http://127.0.0.1:8080/arduino/request",
+        json=payload,
+        params={"timeout": float(timeout)},
+        timeout=max(0.2, float(timeout) + 0.2),
+    )
+    if resp.status_code != 200:
+        raise RuntimeError(f"gateway arduino request failed: HTTP {resp.status_code}")
+    data = resp.json()
+    if not isinstance(data, dict):
+        raise RuntimeError("gateway arduino response is not JSON object")
+    return data
 
 
-def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> APIRouter:
+def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
     r = APIRouter(
         prefix="/vlm",
         tags=["vlm"],
@@ -54,10 +38,10 @@ def get_router(processor: Any, ardu: Optional[xArduinoSerialService] = None) -> 
         if background_tasks:
             background_tasks.add_task(_notify_autonomy)
             
-        svc = ardu or _get_or_create_ardu()
         payload = build_track_cmd(head_tilt=head_tilt, head_pan=head_pan, drive=(int(drive) if drive is not None else None))
         try:
-            resp = svc.request(payload, timeout=1.0)
+            data = _request_arduino(payload, timeout=1.0)
+            resp = data.get("resp") if isinstance(data, dict) and "resp" in data else data
             return {"ok": bool(resp.get("ok", False)), "resp": resp}
         except Exception as e:
             return {"ok": False, "error": str(e)}
