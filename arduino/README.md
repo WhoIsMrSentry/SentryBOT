@@ -1,6 +1,13 @@
 # SentryBOT Arduino Firmware
 
-Bu dizin, SentryBOT Arduino firmware'ini içerir. Ana sketch `arduino/firmware/xMain/xMain.ino` altındadır. Firmware NDJSON satır-tabanlı (NDJSON) seri protokolüyle haberleşir.
+Bu dizin, SentryBOT Arduino firmware'ini içerir. Ana sketch `arduino/firmware/xMain/xMain.ino` altındadır. Firmware NDJSON satır-tabanlı protokolü korur, ancak üretim topolojisinde Pi ile doğrudan değil ESP bridge üzerinden haberleşir.
+
+Üretim veri yolu:
+- Pi -> ESP32: HTTP (`/send`, `/request`)
+- ESP32 -> Mega: UART1 NDJSON
+- Mega: mevcut tüm komutları (ekran, lazer, buzzer, stepper, servo) işlemeye devam eder
+
+ESP bridge kodu: `arduino/firmware/esp_bridge/esp_bridge.ino`
 
 Not: Mevcut firmware davranışı ve pin/kanal eşlemeleri kaynak kodundaki `xConfig.h` ile belirlenir. Eski README içeriklerinde bazı değerler farklı versiyonlardan kalma olabilir; bu dosya güncel `xConfig.h` tanımlarına göre düzenlenmiştir.
 
@@ -23,7 +30,7 @@ Bu değişiklikler, AVR tarafta heap parçalanmasını azaltmak ve uzun çalış
 ## Bağlantı ve Kurulum
 1) Seri port: `xConfig.h` içinde `SERIAL_IO_PORT` ile seçilir.
   - `0=Serial`, `1=Serial1`, `2=Serial2`, `3=Serial3`
-  - Varsayılan: Mega kartlarda `3` (TX3/RX3), diğer kartlarda `0`
+  - Varsayılan: Mega kartlarda `1` (TX1/RX1, ESP bridge hattı), diğer kartlarda `1`
 2) Gerekli kart/kütüphaneler: Arduino Mega 2560 (veya uyumlu), (opsiyonel) MFRC522, LiquidCrystal_I2C, Adafruit_MPU6050, AccelStepper
 3) Yükleme: `arduino/firmware/xMain/xMain.ino`’yu açın, 115200 8N1.
 
@@ -39,15 +46,15 @@ Bu değişiklikler, AVR tarafta heap parçalanmasını azaltmak ve uzun çalış
 Not: Bu firmware sürümü `SERVO_COUNT_TOTAL = 4` ile derlenmiştir. Eğer 8-servo bacak kontrolü veya farklı bir kanal haritası istiyorsan `xConfig.h` ve ilgili kodlarda değişiklik gerekecektir.
 
 ## Güncel Pinler (xConfig.h ile uyumlu)
-- Lazerler: `LASER1_PIN = 5`, `LASER2_PIN = 4` (polarite: `LASER_ACTIVE_HIGH`)
+- Lazerler: `LASER1_PIN = 6`, `LASER2_PIN = 7` (polarite: `LASER_ACTIVE_HIGH`)
 - Stepper STEP/DIR (şu anki `xConfig.h`):
   - `PIN_STEPPER1_STEP = 11`
   - `PIN_STEPPER1_DIR  = 12`
   - `PIN_STEPPER2_STEP = 9`
   - `PIN_STEPPER2_DIR  = 10`
 - IR: `IR_PIN = 23`
-- Buzzer: `BUZZER_LOUD_PIN = 7`, `BUZZER_QUIET_PIN = 6`
-- Ultrasonik: `ULTRA_TRIG_PIN = 3`, `ULTRA_ECHO_PIN = 2`
+- Buzzer: `BUZZER_LOUD_PIN = 2`, `BUZZER_QUIET_PIN = 3`
+- Ultrasonik: `ULTRA_TRIG_PIN = 4`, `ULTRA_ECHO_PIN = 5`
 - RFID (MFRC522): `RFID_SS_PIN = 53`, `RFID_RST_PIN = 49` (opsiyonel)
 
 Bu değerler kodun kaynağındaki `xConfig.h` dosyasında tanımlıdır; fiziksel bağlantılarını bu değerlere göre doğrula.

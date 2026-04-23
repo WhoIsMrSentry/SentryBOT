@@ -1,10 +1,11 @@
-# Arduino Serial Module (NDJSON)
+# Arduino Serial Module (NDJSON Contract + ESP Transport)
 
-Arduino Mega ile NDJSON tabanlı seri haberleşme. Her satır bir JSON mesajı; firmware `xMain.ino` ile uyumlu.
+Arduino komut kontratını (`contract.py`) tek kaynak olarak tutar ve üretimde komutları ESP bridge üzerinden Mega'ya iletir.
 
 ## Özellikler
-- PySerial tabanlı bağlantı, AUTO port keşfi (Windows/Mega 2560 öncelikli)
-- Arkaplanda non-blocking okuma thread'i ve otomatik heartbeat
+- ESP HTTP transport (üretim): Pi -> ESP -> Mega
+- Opsiyonel legacy serial fallback (`transport: serial`)
+- Otomatik heartbeat ve request retry
 - Basit FastAPI router (opsiyonel) ve sürücü sınıfı
 - DryCode: modüler yapı, ayrı config.yml
 - Firmware komut kapsamı: hello/hb, set_servo, set_pose(duration), stepper(pos/vel), stepper_cfg,
@@ -13,7 +14,7 @@ Arduino Mega ile NDJSON tabanlı seri haberleşme. Her satır bir JSON mesajı; 
     - Sit modunda stepper dengeleme + "drive" (kullanıcı hızı) karışımı desteklenir.
 
 ## Kurulum
-- Python bağımlılıkları: `pyserial`, FastAPI kullanacaksanız `fastapi` ve `uvicorn`.
+- Python bağımlılıkları: `requests`, `pyserial` (legacy fallback), FastAPI kullanacaksanız `fastapi` ve `uvicorn`.
 
 ## Kullanım (kütüphane)
 ```python
@@ -72,8 +73,10 @@ Not:
 
 ## Konfig
 `modules/arduino_serial/config/config.yml` içinde varsayılanlar:
-- port: AUTO (Arduino Mega otomatik bulunur)
-- baudrate: 115200
+- transport: `esp_http`
+- esp_base_url: `http://sentrybot.local`
+- esp_request_path: `/request`
+- esp_send_path: `/send`
 - heartbeat_ms: 100
 - rfid.allowed_uids: Yetki verilecek kart UID'leri (HEX, büyük/küçük fark etmez)
 - rfid.authorize_window_s: Son kart okumasının geçerli sayılacağı zaman penceresi (s)
