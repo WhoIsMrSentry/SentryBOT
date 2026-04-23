@@ -1,0 +1,17 @@
+server:
+  host: 0.0.0.0
+  port: 8091
+
+network:
+  ssid: "SentryBOT"
+  password: "SentryBOT"
+
+base_url: "http://sentrybot.local"
+paths:
+  health: "/healthz"
+  send: "/send"
+  request: "/request"
+
+timeouts:
+  connect_s: 0.4
+  io_s: 1.2
