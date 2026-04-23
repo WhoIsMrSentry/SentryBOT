@@ -2,6 +2,7 @@
   host: 0.0.0.0
   port: 8080
 include:
+  esp_link: true
   arduino: true
   vlm_bridge: true
   neopixel: true

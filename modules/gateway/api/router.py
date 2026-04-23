@@ -21,7 +21,7 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
         try:
             for name in started.keys():
                 path = None
-                if name in ("arduino", "neopixel", "piservo", "telemetry", "diagnostics", "state_manager", "scheduler", "notifier", "calibration", "config_center", "hardware"):
+                if name in ("arduino", "esp_link", "neopixel", "piservo", "telemetry", "diagnostics", "state_manager", "scheduler", "notifier", "calibration", "config_center", "hardware"):
                     path = f"/{name}/healthz" if name not in ("telemetry", "diagnostics") else f"/{name}/healthz"
                 elif name == "camera":
                     path = "/camera/healthz"
@@ -67,6 +67,7 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
         summary: Dict[str, Any] = {"ok": True}
         checks = {
             "arduino": ("GET", "/arduino/healthz"),
+            "esp_link": ("GET", "/esp/healthz"),
             "neopixel": ("GET", "/neopixel/healthz"),
             "piservo": ("GET", "/piservo/healthz"),
             "speech": ("GET", "/speech/status"),
