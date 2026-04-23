@@ -27,7 +27,7 @@ class DummyTransportNoReply:
 def test_request_retries_trigger_multiple_writes():
     dt = DummyTransportNoReply()
     # configure one retry (so total sends = 2)
-    svc = xArduinoSerialService(config_overrides={"request_max_retries": 1}, transport_factory=lambda *a, **k: dt)
+    svc = xArduinoSerialService(config_overrides={"transport": "serial", "request_max_retries": 1}, transport_factory=lambda *a, **k: dt)
     svc.start()
     try:
         try:
@@ -49,7 +49,7 @@ def test_request_timeout_reports_echo_only_hint():
     # Simulate a line-echo peer that returns the same command without ACK fields.
     dt._read_q.append(json.dumps({"cmd": "hello"}).encode("utf-8"))
 
-    svc = xArduinoSerialService(config_overrides={"request_max_retries": 0}, transport_factory=lambda *a, **k: dt)
+    svc = xArduinoSerialService(config_overrides={"transport": "serial", "request_max_retries": 0}, transport_factory=lambda *a, **k: dt)
     svc.start()
     try:
         try:

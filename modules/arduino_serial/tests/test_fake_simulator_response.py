@@ -4,7 +4,7 @@ from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService
 
 def test_fake_transport_auto_reply_hello():
     dt = FakeTransportSim()
-    svc = xArduinoSerialService(transport_factory=lambda *a, **k: dt)
+    svc = xArduinoSerialService(config_overrides={"transport": "serial"}, transport_factory=lambda *a, **k: dt)
     svc.start()
     try:
         resp = svc.request({"cmd": "hello"}, timeout=1.0)
