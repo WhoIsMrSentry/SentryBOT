@@ -53,13 +53,13 @@ def test_generate_text_legacy_generate_endpoint(monkeypatch):
 
     out = generate_text(
         "sahneyi ozetle",
-        {"endpoint": "http://localhost:11435/api/generate", "model": "llama3.2:3b"},
+        {"endpoint": "http://localhost:11435/api/generate", "model": "qwen3.5:9b"},
         timeout=3.0,
     )
 
     assert out == "kisa ozet"
     assert recorder["url"].endswith("/api/generate")
-    assert recorder["json"]["model"] == "llama3.2:3b"
+    assert recorder["json"]["model"] == "qwen3.5:9b"
     assert recorder["params"] is None
 
 
@@ -158,7 +158,7 @@ def test_generate_text_skips_direct_ollama_endpoint_when_google_provider(monkeyp
 
     out = generate_text(
         "deneme",
-        {"endpoint": "http://remote-ollama-host:11434/api/chat", "model": "gemma-4-26B-A4B"},
+        {"endpoint": "http://remote-ollama-host:11434/api/chat", "model": "qwen3.5:9b"},
     )
 
     assert out is None
@@ -226,13 +226,13 @@ def test_generate_text_direct_api_chat_uses_model_payload(monkeypatch):
 
     out = generate_text(
         "sahneyi ozetle",
-        {"endpoint": "http://remote-ollama-host:11434/api/chat", "model": "gemma-4-26B-A4B"},
+        {"endpoint": "http://remote-ollama-host:11434/api/chat", "model": "qwen3.5:9b"},
         timeout=2.0,
     )
 
     assert out == "dogrudan chat"
     assert recorder["url"].endswith("/api/chat")
-    assert recorder["json"]["model"] == "gemma-4-26B-A4B"
+    assert recorder["json"]["model"] == "qwen3.5:9b"
     assert recorder["json"]["messages"][0]["role"] == "user"
 
 
@@ -257,7 +257,7 @@ def test_generate_text_normalizes_api_tags_to_api_chat(monkeypatch):
 
     out = generate_text(
         "deneme",
-        {"endpoint": "http://remote-ollama-host:11434/api/tags", "model": "gemma-4-26B-A4B"},
+        {"endpoint": "http://remote-ollama-host:11434/api/tags", "model": "qwen3.5:9b"},
     )
 
     assert out == "normalized"

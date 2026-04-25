@@ -167,7 +167,7 @@ def generate_text(
     try:
         with httpx.Client(timeout=float(timeout)) as client:
             if _is_legacy_generate_endpoint(endpoint):
-                model = str((ollama_cfg or {}).get("model", "llama3")).strip() or "llama3"
+                model = str((ollama_cfg or {}).get("model", "qwen3.5:9b")).strip() or "qwen3.5:9b"
                 resp = client.post(
                     endpoint,
                     json={"model": model, "prompt": text, "stream": False},
@@ -179,7 +179,7 @@ def generate_text(
                 return out or None
 
             if _is_direct_ollama_chat_endpoint(endpoint):
-                model = str((ollama_cfg or {}).get("model", "gemma4:26b")).strip() or "gemma4:26b"
+                model = str((ollama_cfg or {}).get("model", "qwen3.5:9b")).strip() or "qwen3.5:9b"
                 num_predict = int((ollama_cfg or {}).get("num_predict", 160) or 160)
                 resp = client.post(
                     endpoint,
