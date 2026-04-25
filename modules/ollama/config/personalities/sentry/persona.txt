@@ -1,4 +1,4 @@
-FROM qwen3.5:2b
+FROM qwen3.5:9b
 
 # PARAMETERS 
 # Based on official Qwen 2.5/3.5 Modelfile configuration

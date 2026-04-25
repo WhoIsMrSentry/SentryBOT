@@ -5,7 +5,7 @@ llm:
   provider: ollama   # ollama | google_ai_studio
 ollama:
   base_url: http://localhost:11434
-  model: gemma4:26b
+  model: qwen3.5:9b
   request_timeout: 60
 google_ai_studio:
   api_key: ""        # boşsa GOOGLE_API_KEY env kullanılır

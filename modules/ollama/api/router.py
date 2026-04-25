@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 import logging
 import os
 
@@ -264,7 +264,7 @@ def get_router(cfg: dict) -> APIRouter:
             modelfile = raw_content
         else:
             # Wrap legacy persona in a default template
-            base_model = str(cfg.get("ollama", {}).get("model", "qwen3.5:2b"))
+            base_model = str(cfg.get("ollama", {}).get("model", "qwen3.5:9b"))
             modelfile = f'FROM {base_model}\nSYSTEM """\n{raw_content}\n"""'
 
         success = False
