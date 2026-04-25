@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 from modules.config_center.agent_yaml_loader import load_agent_config, require_dict_section
 
-_REQUIRED_MODEL = "gemma4:26b"
+_REQUIRED_MODEL = "qwen3.5:9b"
 
 
 def _to_float(raw: Any, fallback: float) -> float:

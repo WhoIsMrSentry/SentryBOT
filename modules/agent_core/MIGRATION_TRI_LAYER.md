@@ -37,7 +37,7 @@ Only path override is supported:
 
 Set one model and one remote base URL:
 
-- `agent.model: gemma4:26b`
+- `agent.model: qwen3.5:9b`
 - `agent.ollama_base_url: http://<remote-ollama-host>:11434`
 
 The same model is used by router, sub-agents, and main persona.
