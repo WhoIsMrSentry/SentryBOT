@@ -10,7 +10,7 @@ Sense -> Think -> Act dongusunu, tek Ollama modeli ile calisan **3 katmanli agen
 Her katman ayni modeli kullanir, ancak farkli sorumluluk ve prompt profiline sahiptir.
 
 Varsayilan politika:
-- Tek model: gemma4:26b
+- Tek model: qwen3.5:9b
 - Fallback kapali
 - Provider yalnizca ollama
 
@@ -91,7 +91,7 @@ print(result["text"])
 
 | Ayar | Açıklama |
 |---|---|
-| `agent.model` | Kullanılacak model (zorunlu: gemma4:26b) |
+| `agent.model` | Kullanılacak model (zorunlu: qwen3.5:9b) |
 | `agent.request_timeout` | Ollama istemci timeout degeri (sn) |
 | `agent.max_steps` | Legacy native loop maksimum adım sayısı |
 | `tri_layer.enabled` | 3 katmanli mimari acik/kapali |

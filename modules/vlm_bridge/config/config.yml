@@ -58,16 +58,16 @@ robot:
 
 ollama:
   endpoint: "http://localhost:8080/ollama/chat"
-  model: "gemma4:26b"
+  model: "qwen3.5:9b"
   timeout: 12.0
   num_predict: 160
 
 llm:
   provider: "ollama"                 # ollama | google_ai_studio
   single_model_mode: true             # true => ollama.model, VLM ve agent icin ortak model
-  primary_model: "gemma4:26b"
+  primary_model: "qwen3.5:9b"
   clm_fallback_enabled: true
-  clm_fallback_model: "qwen3.5:8b"   # primary model uygun degilse veya hata alirsa
+  clm_fallback_model: "qwen3.5:9b"   # primary model uygun degilse veya hata alirsa
   fallback_on_missing_model: true
   fallback_on_error: true
 

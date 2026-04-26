@@ -1,5 +1,5 @@
 agent:
-  model: "gemma4:26b"
+  model: "qwen3.5:9b"
   temperature: 0.15
   num_ctx: 4096
   cooldown_s: 1.0  # LLM Rate Limit
@@ -10,8 +10,8 @@ agent:
 llm:
   provider: "ollama"
   single_model_mode: true
-  model: "gemma4:26b"
-  primary_model: "gemma4:26b"
+  model: "qwen3.5:9b"
+  primary_model: "qwen3.5:9b"
   clm_fallback_enabled: false
   clm_fallback_model: ""
   fallback_on_missing_model: false
@@ -19,7 +19,7 @@ llm:
 
 ollama:
   base_url: "http://localhost:11434"
-  model: "gemma4:26b"
+  model: "qwen3.5:9b"
   request_timeout: 60
 
 ollama_service:
@@ -95,13 +95,13 @@ vlm_bridge:
     host: "localhost"
   ollama:
     endpoint: "http://localhost:8080/ollama/chat"
-    model: "gemma4:26b"
+    model: "qwen3.5:9b"
     timeout: 12.0
     num_predict: 160
   llm:
     provider: "ollama"
     single_model_mode: true
-    primary_model: "gemma4:26b"
+    primary_model: "qwen3.5:9b"
     clm_fallback_enabled: false
     clm_fallback_model: ""
     fallback_on_missing_model: false

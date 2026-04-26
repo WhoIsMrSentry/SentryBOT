@@ -37,7 +37,7 @@ Required sections:
 
 Strict policy:
 - provider must be ollama
-- model must be gemma4:26b
+- model must be qwen3.5:9b
 
 Optional path override:
 - Set AGENT_CFG to a custom agent.yaml path.

@@ -2,8 +2,8 @@
 
 Bu dokuman, VLM-oncelikli 3 katmanli agent akisinin nasil calistigini ornek bir senaryo ile ozetler.
 
-- Primary model: `gemma-4-26B-A4B`
-- Fallback model: `qwen3.5:8b`
+- Primary model: `qwen3.5:9b`
+- Fallback model: `qwen3.5:9b`
 - Remote Ollama endpoint semasi: `http://<remote-ollama-host>:11434/api/chat`
 
 ## Sequence Diagram (Ornek Senaryo)
@@ -26,7 +26,7 @@ sequenceDiagram
     O-->>V: Scene summary text
 
     alt Primary model missing or first-call error
-        V->>O: Retry /api/chat\nmodel=qwen3.5:8b
+        V->>O: Retry /api/chat\nmodel=qwen3.5:9b
         O-->>V: Fallback summary
     end
 

@@ -53,7 +53,7 @@ Aktifken semantik sahne özeti (Ollama varsa LLM tabanlı) ve kişilere özel se
 ## VLM LLM Kaynağı
 - VLM Bridge config kaynağı config/agent.yaml içindeki vlm_bridge bölümüdür.
 - endpoint, agent.ollama_base_url değerinden türetilir ve /api/chat olarak normalize edilir.
-- Tek model politikası zorunludur: gemma4:26b.
+- Tek model politikası zorunludur: qwen3.5:9b.
 - Provider yalnızca ollama olabilir.
 - Geriye dönük olarak `ollama.endpoint` değeri `.../api/generate` ise eski doğrudan generate akışı da desteklenir.
 

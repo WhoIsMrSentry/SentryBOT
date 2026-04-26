@@ -7,7 +7,7 @@ server:
   port: 8120
 
 agent:
-  model: "gemma4:26b"
+  model: "qwen3.5:9b"
   temperature: 0.15
   num_ctx: 4096
   cooldown_s: 1.0       # LLM çağrıları arasındaki minimum süre (saniye)
@@ -19,7 +19,7 @@ agent:
 llm:
   provider: "ollama"   # ollama | google_ai_studio
   clm_fallback_enabled: true
-  clm_fallback_model: "qwen3.5:8b"
+  clm_fallback_model: "qwen3.5:9b"
   fallback_on_missing_model: true
   fallback_on_error: true
 

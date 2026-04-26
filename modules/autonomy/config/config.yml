@@ -70,7 +70,7 @@ behaviors:
 
 llm:
   enabled: true
-  model: "llama3"
+  model: "qwen3.5:9b"
   prompt_template: |
     Sen SentryBOT adında, duyguları olan bir robotsun.
     

@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 from modules.config_center.agent_yaml_loader import deep_merge, load_agent_config, require_dict_section
 
-_REQUIRED_MODEL = "gemma4:26b"
+_REQUIRED_MODEL = "qwen3.5:9b"
 
 _DEFAULT_CFG: Dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8099},

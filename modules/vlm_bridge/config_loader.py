@@ -39,15 +39,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "llm": {
         "provider": "ollama",  # ollama | google_ai_studio
         "single_model_mode": True,
-        "primary_model": "gemma4:26b",
+        "primary_model": "qwen3.5:9b",
         "clm_fallback_enabled": True,
-        "clm_fallback_model": "qwen3.5:8b",
+        "clm_fallback_model": "qwen3.5:9b",
         "fallback_on_missing_model": True,
         "fallback_on_error": True,
     },
     "ollama": {
         "endpoint": "http://localhost:8080/ollama/chat",
-        "model": "gemma4:26b",
+        "model": "qwen3.5:9b",
         "timeout": 12.0,
         "num_predict": 160,
     },
@@ -61,7 +61,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
 }
 
-_REQUIRED_MODEL = "gemma4:26b"
+_REQUIRED_MODEL = "qwen3.5:9b"
 
 
 def _to_float(raw: Any, fallback: float) -> float:
