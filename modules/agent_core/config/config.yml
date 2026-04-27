@@ -12,7 +12,7 @@ agent:
   num_ctx: 4096
   cooldown_s: 1.0       # LLM çağrıları arasındaki minimum süre (saniye)
   request_timeout: 60   # Ollama HTTP timeout (s)
-  ollama_base_url: "http://localhost:11434"
+  ollama_base_url: "http://127.0.0.1:11434"
   max_steps: 6          # Legacy native tool loop maksimum adımı
   max_tool_loops: 3     # Geriye uyumluluk için tutulur
 

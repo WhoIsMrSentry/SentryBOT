@@ -26,6 +26,8 @@ def get_router(service: SpeakService) -> APIRouter:
         language = payload.get("language")
         if not text:
             return {"ok": False, "error": "text is empty"}
+        
+        logger.info("TTS >>> %s (engine=%s)", text, engine or "default")
         try:
             # Offload blocking TTS to thread to avoid event loop freeze
             return await asyncio.to_thread(

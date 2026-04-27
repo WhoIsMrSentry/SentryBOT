@@ -13,7 +13,7 @@ except Exception:
 logger = logging.getLogger("vlm_bridge.llm")
 
 _DEFAULT_CHAT_ENDPOINT = "http://localhost:8080/ollama/chat"
-_DEFAULT_GENERATE_ENDPOINT = "http://localhost:11434/api/generate"
+_DEFAULT_GENERATE_ENDPOINT = "http://127.0.0.1:11434/api/generate"
 _CHAT_COOLDOWN_UNTIL: Dict[str, float] = {}
 
 

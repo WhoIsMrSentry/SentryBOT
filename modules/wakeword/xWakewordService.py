@@ -244,42 +244,25 @@ class WakewordService:
                 return
             self._last_trigger_ts = now
             self._active_window = True
-        # Stop listener loop so wakeword and speech do not consume the same stream concurrently.
-        self._stop_event.set()
         logger.info("wakeword candidate: %s at %f", wakeword, now)
+        # Briefly sleep the detection thread to let the audio buffer advance
+        time.sleep(0.5)
         threading.Thread(target=self._command_window, args=(wakeword,), daemon=True).start()
 
     def _command_window(self, wakeword: str) -> None:
         try:
-            # Stop wakeword's capture before starting speech to avoid ALSA device contention.
-            try:
-                logger.debug("releasing shared capture before speech window")
-                release_shared_capture(self.capture)
-            except Exception:
-                logger.debug("failed to stop capture before starting speech")
             self.actions.emit_event("wakeword.detected", wakeword)
             window_started_ts = _now()
             self.actions.start_speech()
             if self.actions.listen_window_sec <= 0:
                 return
             deadline = _now() + self.actions.listen_window_sec
-            # _stop_event is toggled during wakeword handoff to stop the listener loop.
-            # Do not use it to gate the speech window, otherwise speech is stopped immediately.
             while _now() < deadline:
                 if self.actions.stop_on_final and self.actions.has_final_speech(window_started_ts):
                     break
                 time.sleep(max(0.05, self.actions.poll_interval_ms / 1000.0))
             self.actions.stop_speech()
         finally:
-            # Restart wakeword capture after speech window
-            try:
-                # re-acquire shared capture object and resume background listening
-                logger.debug("re-acquiring shared capture after speech window")
-                self.capture = get_shared_capture(self.cfg.get("audio", {}))
-                self._stop_event.clear()
-                self._ensure_listener_restarted()
-            except Exception:
-                logger.debug("failed to restart wakeword capture after speech")
             with self._lock:
                 self._active_window = False
 
@@ -322,7 +305,7 @@ def main():
         cfg = load_config(args.config)
         host = str(cfg.get("server", {}).get("host", "0.0.0.0"))
         port = int(cfg.get("server", {}).get("port", 8084))
-        uvicorn.run(create_app(args.config), host=host, port=port)
+        uvicorn.run(create_app(args.config), host=host, port=port, log_config=None)
         return
 
     service = WakewordService(args.config)

@@ -43,11 +43,11 @@ def test_vlm_config_loader_rejects_non_ollama_provider(tmp_path: Path):
         """
 agent:
   model: qwen3.5:9b
-  ollama_base_url: "http://localhost:11434"
+  ollama_base_url: "http://127.0.0.1:11434"
 llm:
   provider: google_ai_studio
 ollama:
-  base_url: "http://localhost:11434"
+  base_url: "http://127.0.0.1:11434"
   model: qwen3.5:9b
 vlm_bridge:
   llm:
@@ -66,12 +66,12 @@ def test_vlm_config_loader_rejects_non_qwen3_5_9b_model(tmp_path: Path):
         """
 agent:
   model: llama3.1:8b
-  ollama_base_url: "http://localhost:11434"
+  ollama_base_url: "http://127.0.0.1:11434"
 llm:
   provider: ollama
   model: llama3.1:8b
 ollama:
-  base_url: "http://localhost:11434"
+  base_url: "http://127.0.0.1:11434"
   model: llama3.1:8b
 vlm_bridge:
   llm:
