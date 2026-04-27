@@ -82,7 +82,7 @@ def get_router(service: SpeechService) -> APIRouter:
         # are offline; log both partial and final recognition results.
         if r.is_final:
             if text:
-                logger.info("stt final [%s]: %s (conf=%s)", last.get("language", "tr"), text, r.confidence)
+                logger.info("STT >>> %s", text)
             else:
                 logger.debug("stt final empty")
             last_partial_text = ""
@@ -90,7 +90,7 @@ def get_router(service: SpeechService) -> APIRouter:
             now = time.time()
             # Throttle partial logs to avoid log spam but keep visibility.
             if text and (text != last_partial_text or (now - last_partial_ts) >= 0.35):
-                logger.info("stt partial [%s]: %s", last.get("language", "tr"), text)
+                logger.info("STT (partial) >>> %s", text)
                 last_partial_text = text
                 last_partial_ts = now
 

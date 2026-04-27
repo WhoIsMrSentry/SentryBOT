@@ -311,7 +311,7 @@ def main():
         cfg = load_config(args.config)
         host = str(cfg.get("server", {}).get("host", "0.0.0.0"))
         port = int(cfg.get("server", {}).get("port", 8082))
-        uvicorn.run(create_app(args.config), host=host, port=port)
+        uvicorn.run(create_app(args.config), host=host, port=port, log_config=None)
         return
 
     service = SpeechService(args.config)
