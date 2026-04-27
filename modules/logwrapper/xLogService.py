@@ -13,6 +13,21 @@ _MEMORY_HANDLER: Optional[InMemoryLogHandler] = None
 _ROUTER = None  # lazy import for FastAPI
 
 
+class EndpointFilter(logging.Filter):
+    """Specific paths like healthz or polling should not flood the console."""
+    def __init__(self, suppressed_paths: list[str]):
+        super().__init__()
+        self.suppressed_paths = suppressed_paths
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn.access logs have the path in the message
+        msg = record.getMessage()
+        for path in self.suppressed_paths:
+            if path in msg:
+                return False
+        return True
+
+
 def _ensure_log_dir(path: str) -> None:
     directory = os.path.dirname(path)
     if directory and not os.path.exists(directory):
@@ -91,6 +106,18 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
                 }
                 for name, opts in handlers.items()
             },
+            "loggers": {
+                "uvicorn.access": {
+                    "level": "WARNING",
+                    "handlers": root_handlers,
+                    "propagate": False,
+                },
+                "uvicorn.error": {
+                    "level": "INFO",
+                    "handlers": root_handlers,
+                    "propagate": False,
+                },
+            },
             "root": {
                 "level": "DEBUG",
                 "handlers": root_handlers,
@@ -152,6 +179,28 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
             logging.getLogger(name).setLevel(getattr(logging, str(level).upper()))
         except Exception:
             logging.getLogger(name).setLevel(level)
+
+    # Apply endpoint filtering to noisy web logs
+    suppressed = [
+        "/arduino/request",
+        "/vlm/results/latest",
+        "/speech/direction",
+        "/speech/last",
+        "/arduino/healthz",
+        "/state/set/emotions",
+        "/interactions/event",
+        "/interactions/effect",
+        "/neopixel/animate",
+        "/oled_faces/manual"
+    ]
+    ef = EndpointFilter(suppressed)
+    
+    # Apply to uvicorn.access logger
+    logging.getLogger("uvicorn.access").addFilter(ef)
+    
+    # Also apply to all root handlers to catch everything going to console/file
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(ef)
 
 
 def get_memory_handler() -> Optional[InMemoryLogHandler]:

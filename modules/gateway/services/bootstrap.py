@@ -1,5 +1,5 @@
 ﻿from __future__ import annotations
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import os
 
 import logging
@@ -11,6 +11,42 @@ import warnings
 warnings.filterwarnings("ignore", message=".*on_event is deprecated.*", category=DeprecationWarning)
 
 logger = logging.getLogger("gateway.bootstrap")
+
+_AGENT_CFG_CACHE: Optional[Dict[str, Any]] = None
+
+
+def _root_agent_cfg() -> Dict[str, Any]:
+    global _AGENT_CFG_CACHE
+    if _AGENT_CFG_CACHE is not None:
+        return _AGENT_CFG_CACHE
+    try:
+        from modules.config_center.agent_yaml_loader import load_agent_config  # type: ignore
+
+        cfg = load_agent_config(None)
+        _AGENT_CFG_CACHE = cfg if isinstance(cfg, dict) else {}
+    except Exception:
+        _AGENT_CFG_CACHE = {}
+    return _AGENT_CFG_CACHE
+
+
+def _agent_section(name: str) -> Dict[str, Any]:
+    cfg = _root_agent_cfg()
+    value = cfg.get(name, {}) if isinstance(cfg, dict) else {}
+    return value if isinstance(value, dict) else {}
+
+
+def _merge_with_agent_section(base_cfg: Dict[str, Any], section_name: str) -> Dict[str, Any]:
+    section = _agent_section(section_name)
+    if not section:
+        return base_cfg
+    try:
+        from modules.config_center.agent_yaml_loader import deep_merge  # type: ignore
+
+        return deep_merge(base_cfg, section)
+    except Exception:
+        merged = dict(base_cfg)
+        merged.update(section)
+        return merged
 
 
 def _should_autostart_services() -> bool:
@@ -36,7 +72,7 @@ def _should_autostart_services() -> bool:
 def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore
-    ardu = xArduinoSerialService()
+    ardu = xArduinoSerialService(config_overrides=_agent_section("arduino_serial") or None)
     if _should_autostart_services():
         try:
             ardu.start()
@@ -70,7 +106,7 @@ def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.neopixel.config_loader import load_config as load_neo_cfg  # type: ignore
     from modules.neopixel.api.router import get_router as get_neopixel_router  # type: ignore
 
-    ncfg = load_neo_cfg(None)
+    ncfg = _merge_with_agent_section(load_neo_cfg(None), "neopixel")
     hw = ncfg.get("hardware", {})
     cfg_obj = NeoDriverConfig(
         device=str(hw.get("device", "/dev/spidev0.0")),
@@ -125,7 +161,7 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
     from modules.interactions.api.router import get_router as get_inter_router  # type: ignore
     from modules.interactions.config_loader import load_config as load_inter_cfg  # type: ignore
     from modules.interactions.services.engine import InteractionEngine  # type: ignore
-    icfg = load_inter_cfg(None)
+    icfg = load_inter_cfg(None, overrides=_agent_section("interactions") or None)
     # Force interactions to talk to gateway's neopixel endpoint instead of standalone 8092
     try:
         port = int(cfg.get("server", {}).get("port", 8080))
@@ -209,7 +245,7 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.camera.config_loader import load_config as load_cam_cfg  # type: ignore
     from modules.camera.services.capture import CameraCapture, FramePublisher, CaptureConfig  # type: ignore
     from modules.camera.api import get_router as get_cam_router  # type: ignore
-    ccfg = load_cam_cfg(None)
+    ccfg = _merge_with_agent_section(load_cam_cfg(None), "camera")
     cap_cfg = CaptureConfig(
         backend=ccfg.get("backend", "auto"),
         source=ccfg.get("source", 0),
@@ -239,7 +275,12 @@ def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.animate.xAnimateService import xAnimateService  # type: ignore
     from modules.animate.api.router import get_router as get_anim_router  # type: ignore
     ardu = started.get("arduino")
-    anim = xAnimateService(serial=ardu) if ardu is not None else xAnimateService()
+    anim_overrides = _agent_section("animate") or None
+    anim = (
+        xAnimateService(serial=ardu, config_overrides=anim_overrides)
+        if ardu is not None
+        else xAnimateService(config_overrides=anim_overrides)
+    )
     if _should_autostart_services() and hasattr(anim, "start"):
         try:
             anim.start()
@@ -257,7 +298,7 @@ def _include_piservo(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.piservo.api.router import get_router as get_piservo_router  # type: ignore
     from modules.piservo.services.driver import ServoConfig  # type: ignore
     from modules.piservo.services.runner import EarRunner  # type: ignore
-    pcfg = load_piservo_cfg(None)
+    pcfg = _merge_with_agent_section(load_piservo_cfg(None), "piservo")
     left = ServoConfig(**pcfg.get("left", {"gpio": 12}))
     right = ServoConfig(**pcfg.get("right", {"gpio": 13}))
     ears = EarRunner(left_cfg=left, right_cfg=right)
@@ -269,7 +310,7 @@ def _include_piservo(app: FastAPI, started: Dict[str, object]) -> None:
 def _include_autonomy(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.autonomy.xAutonomyService import xAutonomyService  # type: ignore
     from modules.autonomy.api.router import get_router as get_autonomy_router  # type: ignore
-    svc = xAutonomyService()
+    svc = xAutonomyService(config_overrides=_agent_section("autonomy") or None)
     if _should_autostart_services():
         svc.start()
     else:
@@ -284,7 +325,7 @@ def _include_notifier(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.notifier.api.router import get_router as get_notifier_router  # type: ignore
     from modules.notifier.services.telegram_bot import build_telegram_bot  # type: ignore
 
-    ncfg = load_not_cfg(None)
+    ncfg = _merge_with_agent_section(load_not_cfg(None), "notifier")
     bot = build_telegram_bot(ncfg)
     app.include_router(get_notifier_router(ncfg, bot))
     polling_enabled = ncfg.get("telegram", {}).get("polling", {}).get("enabled", False)
@@ -388,39 +429,57 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
     # optional: mutagen
     if include.get("mutagen"):
         _try(lambda: app.include_router(__import__("modules.mutagen.api.router", fromlist=["get_router"]).get_router(
-            __import__("modules.mutagen.config_loader", fromlist=["load_config"]).load_config(None)
+            _merge_with_agent_section(
+                __import__("modules.mutagen.config_loader", fromlist=["load_config"]).load_config(None),
+                "mutagen",
+            )
         )), "mutagen")
         started["mutagen"] = True
 
     # optional: ota
     if include.get("ota"):
         _try(lambda: app.include_router(__import__("modules.ota.api.router", fromlist=["get_router"]).get_router(
-            __import__("modules.ota.config_loader", fromlist=["load_config"]).load_config(None)
+            _merge_with_agent_section(
+                __import__("modules.ota.config_loader", fromlist=["load_config"]).load_config(None),
+                "ota",
+            )
         )), "ota")
         started["ota"] = True
 
     # new optional modules
     if include.get("hardware"):
         _try(lambda: app.include_router(__import__("modules.hardware.api.router", fromlist=["get_router"]).get_router(
-            __import__("modules.hardware.config_loader", fromlist=["load_config"]).load_config(None)
+            _merge_with_agent_section(
+                __import__("modules.hardware.config_loader", fromlist=["load_config"]).load_config(None),
+                "hardware",
+            )
         )), "hardware")
         started["hardware"] = True
 
     if include.get("telemetry"):
         _try(lambda: app.include_router(__import__("modules.telemetry.api.router", fromlist=["get_router"]).get_router(
-            __import__("modules.telemetry.config_loader", fromlist=["load_config"]).load_config(None)
+            _merge_with_agent_section(
+                __import__("modules.telemetry.config_loader", fromlist=["load_config"]).load_config(None),
+                "telemetry",
+            )
         )), "telemetry")
         started["telemetry"] = True
 
     if include.get("diagnostics"):
         _try(lambda: app.include_router(__import__("modules.diagnostics.api.router", fromlist=["get_router"]).get_router(
-            __import__("modules.diagnostics.config_loader", fromlist=["load_config"]).load_config(None)
+            _merge_with_agent_section(
+                __import__("modules.diagnostics.config_loader", fromlist=["load_config"]).load_config(None),
+                "diagnostics",
+            )
         )), "diagnostics")
         started["diagnostics"] = True
 
     if include.get("state_manager"):
         def _mount_state():
-            cfg_sm = __import__("modules.state_manager.config_loader", fromlist=["load_config"]).load_config(None)
+            cfg_sm = _merge_with_agent_section(
+                __import__("modules.state_manager.config_loader", fromlist=["load_config"]).load_config(None),
+                "state_manager",
+            )
             StateStore = __import__("modules.state_manager.services.store", fromlist=["StateStore"]).StateStore
             get_router = __import__("modules.state_manager.api.router", fromlist=["get_router"]).get_router
             store = StateStore(
@@ -436,7 +495,10 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
 
     if include.get("scheduler"):
         def _mount_scheduler():
-            cfg_sc = __import__("modules.scheduler.config_loader", fromlist=["load_config"]).load_config(None)
+            cfg_sc = _merge_with_agent_section(
+                __import__("modules.scheduler.config_loader", fromlist=["load_config"]).load_config(None),
+                "scheduler",
+            )
             Scheduler = __import__("modules.scheduler.services.runner", fromlist=["Scheduler"]).Scheduler
             get_router = __import__("modules.scheduler.api.router", fromlist=["get_router"]).get_router
             sched = Scheduler(
@@ -457,13 +519,19 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
 
     if include.get("calibration"):
         _try(lambda: app.include_router(__import__("modules.calibration.api.router", fromlist=["get_router"]).get_router(
-            __import__("modules.calibration.config_loader", fromlist=["load_config"]).load_config(None)
+            _merge_with_agent_section(
+                __import__("modules.calibration.config_loader", fromlist=["load_config"]).load_config(None),
+                "calibration",
+            )
         )), "calibration")
         started["calibration"] = True
 
     if include.get("config_center"):
         _try(lambda: app.include_router(__import__("modules.config_center.api.router", fromlist=["get_router"]).get_router(
-            __import__("modules.config_center.config_loader", fromlist=["load_config"]).load_config(None)
+            _merge_with_agent_section(
+                __import__("modules.config_center.config_loader", fromlist=["load_config"]).load_config(None),
+                "config_center",
+            )
         )), "config_center")
         started["config_center"] = True
 
