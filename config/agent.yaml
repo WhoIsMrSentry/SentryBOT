@@ -129,7 +129,7 @@ speak:
     channels: 1
     dtype: float32
   tts:
-    engine: piper
+    engine: pyttsx3
     language: tr
     voice: source
     rate: 170
