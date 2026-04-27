@@ -11,7 +11,7 @@ audio_out:
   dtype: float32
 
 tts:
-  engine: piper      # pyttsx3 | piper | xtts | dummy
+  engine: pyttsx3      # pyttsx3 | piper | xtts | dummy
   language: tr
   voice: source         # optional voice id — default olarak kaynak sesi kullanılacak
   rate: 170
