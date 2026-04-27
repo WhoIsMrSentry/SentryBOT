@@ -136,7 +136,7 @@ speak:
     volume: 1.0
     samplerate: 22050
     remote:
-      enabled: true
+      enabled: false
       endpoint: http://192.168.1.100:5000/tts/synthesize
       timeout: 120
       auth_token: ""
