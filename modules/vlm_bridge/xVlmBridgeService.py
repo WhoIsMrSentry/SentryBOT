@@ -50,4 +50,4 @@ def create_app(config_path: str | None = None) -> FastAPI:
 if __name__ == "__main__":
     import uvicorn
     cfg = load_config()
-    uvicorn.run(create_app(), host=str(cfg["server"]["host"]), port=int(cfg["server"]["port"]))
+    uvicorn.run(create_app(), host=str(cfg["server"]["host"]), port=int(cfg["server"]["port"]), log_config=None)
