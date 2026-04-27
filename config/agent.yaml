@@ -4,7 +4,7 @@ agent:
   num_ctx: 4096
   cooldown_s: 1.0  # LLM Rate Limit
   request_timeout: 60
-  ollama_base_url: "http://localhost:11434"
+  ollama_base_url: "http://127.0.0.1:11434"
   max_steps: 6
 
 llm:
@@ -18,7 +18,7 @@ llm:
   fallback_on_error: false
 
 ollama:
-  base_url: "http://localhost:11434"
+  base_url: "http://127.0.0.1:11434"
   model: "qwen3.5:9b"
   request_timeout: 60
 
