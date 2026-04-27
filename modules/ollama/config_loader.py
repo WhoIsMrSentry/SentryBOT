@@ -10,7 +10,7 @@ _REQUIRED_MODEL = "qwen3.5:9b"
 _DEFAULT_CFG: Dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8099},
     "llm": {"provider": "ollama", "single_model_mode": True},
-    "ollama": {"base_url": "http://localhost:11434", "model": _REQUIRED_MODEL, "request_timeout": 60.0},
+    "ollama": {"base_url": "http://127.0.0.1:11434", "model": _REQUIRED_MODEL, "request_timeout": 60.0},
     "google_ai_studio": {
         "api_key": "",
         "model": "gemini-1.5-flash",
@@ -77,7 +77,7 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
         or llm_cfg.get("base_url")
         or ollama_global.get("base_url")
         or os.getenv("AGENT_OLLAMA_BASE_URL")
-        or "http://localhost:11434"
+        or "http://127.0.0.1:11434"
     )
     if not base_url:
         raise ValueError("agent.ollama_base_url is required")

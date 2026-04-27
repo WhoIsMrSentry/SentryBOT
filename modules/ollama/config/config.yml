@@ -4,7 +4,7 @@ server:
 llm:
   provider: ollama   # ollama | google_ai_studio
 ollama:
-  base_url: http://localhost:11434
+  base_url: http://127.0.0.1:11434
   model: qwen3.5:9b
   request_timeout: 60
 google_ai_studio:

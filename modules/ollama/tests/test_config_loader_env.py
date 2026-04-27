@@ -57,7 +57,7 @@ agent:
 llm:
   provider: google_ai_studio
 ollama:
-  base_url: "http://localhost:11434"
+  base_url: "http://127.0.0.1:11434"
   model: qwen3.5:9b
 ollama_service:
   persona:
@@ -79,7 +79,7 @@ agent:
 llm:
   provider: ollama
 ollama:
-  base_url: "http://localhost:11434"
+  base_url: "http://127.0.0.1:11434"
   model: qwen3.5:8b
 ollama_service:
   persona:

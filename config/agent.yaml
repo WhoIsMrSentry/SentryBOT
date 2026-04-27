@@ -4,7 +4,7 @@ agent:
   num_ctx: 4096
   cooldown_s: 1.0  # LLM Rate Limit
   request_timeout: 60
-  ollama_base_url: "http://localhost:11434"
+  ollama_base_url: "http://127.0.0.1:11434"
   max_steps: 6
 
 llm:
@@ -18,7 +18,7 @@ llm:
   fallback_on_error: false
 
 ollama:
-  base_url: "http://localhost:11434"
+  base_url: "http://127.0.0.1:11434"
   model: "qwen3.5:9b"
   request_timeout: 60
 
@@ -129,14 +129,14 @@ speak:
     channels: 1
     dtype: float32
   tts:
-    engine: piper
+    engine: pyttsx3
     language: tr
     voice: source
     rate: 170
     volume: 1.0
     samplerate: 22050
     remote:
-      enabled: true
+      enabled: false
       endpoint: http://192.168.1.100:5000/tts/synthesize
       timeout: 120
       auth_token: ""

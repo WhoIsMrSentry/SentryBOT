@@ -292,7 +292,7 @@ def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
         return GoogleAIStudioClient(api_key=api_key, model=model, base_url=base_url, request_timeout=timeout), "google_ai_studio"
 
     ocfg = cfg.get("ollama", {}) or {}
-    base_url = str(ocfg.get("base_url", "http://localhost:11434"))
+    base_url = str(ocfg.get("base_url", "http://127.0.0.1:11434"))
     model = str(ocfg.get("model", "llama3.2:3b"))
     timeout = float(ocfg.get("request_timeout", 60.0))
     return OllamaClient(base_url=base_url, model=model, request_timeout=timeout), "ollama"

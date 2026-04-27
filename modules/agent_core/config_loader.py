@@ -51,7 +51,7 @@ def _enforce_policy(cfg: Dict[str, Any]) -> Dict[str, Any]:
         or llm_cfg.get("base_url")
         or ollama_cfg.get("base_url")
         or os.getenv("AGENT_OLLAMA_BASE_URL")
-        or "http://localhost:11434"
+        or "http://127.0.0.1:11434"
     )
     if not base_url:
         raise ValueError("agent.ollama_base_url is required")

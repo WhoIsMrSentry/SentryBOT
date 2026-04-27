@@ -23,3 +23,4 @@ tmp/
 
 frontend_knowledge.md
 backend_knowledge.md
+*.sqlite3

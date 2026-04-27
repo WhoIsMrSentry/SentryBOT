@@ -90,7 +90,7 @@ def get_router(cfg: dict) -> APIRouter:
     def healthz():
         info: Dict[str, Any] = {"ok": True, "provider": provider_name, "model": model}
         if provider_name == "ollama":
-            info["base_url"] = str(cfg.get("ollama", {}).get("base_url", "http://localhost:11434"))
+            info["base_url"] = str(cfg.get("ollama", {}).get("base_url", "http://127.0.0.1:11434"))
         elif provider_name == "google_ai_studio":
             info["base_url"] = str(cfg.get("google_ai_studio", {}).get("base_url", "https://generativelanguage.googleapis.com"))
         return info

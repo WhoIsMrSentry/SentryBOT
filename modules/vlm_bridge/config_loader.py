@@ -136,7 +136,7 @@ def _enforce_single_model_policy(cfg: Dict[str, Any], root_cfg: Dict[str, Any]) 
         or root_llm.get("base_url")
         or root_ollama.get("base_url")
         or os.getenv("AGENT_OLLAMA_BASE_URL")
-        or "http://localhost:11434"
+        or "http://127.0.0.1:11434"
     )
     if not base_url:
         raise ValueError("agent.ollama_base_url is required")

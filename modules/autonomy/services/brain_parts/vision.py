@@ -37,6 +37,10 @@ class VisionMixin:
         name = result.get("name") or result.get("label")
         if not name:
             return
+        
+        import logging
+        logging.getLogger("autonomy.vision").info("Vision >>> %s tespit edildi.", name)
+
         now = time.time()
         self._current_people[name] = now
         cooldown = self._compute_person_cooldown(result)
