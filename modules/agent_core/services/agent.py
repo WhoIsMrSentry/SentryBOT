@@ -2,7 +2,8 @@ import logging
 import os
 import time
 import json
-from typing import Any, Dict, List, Optional, Tuple
+import concurrent.futures
+from typing import Any, Dict, List, Optional, Tuple, Callable
 
 from .world_state import WorldState
 from .memory import EpisodicMemory
@@ -63,6 +64,11 @@ class AgentOrchestrator:
             agent_cfg.get("request_timeout", agent_cfg.get("ollama_request_timeout", 60.0)),
             fallback=60.0,
             minimum=1.0,
+        )
+        self.status_interval_s = self._safe_float(
+            agent_cfg.get("status_interval_s", 2.0),
+            fallback=2.0,
+            minimum=0.2,
         )
         self.max_steps = self._safe_int(
             agent_cfg.get("max_steps", agent_cfg.get("max_tool_loops", 10)),
@@ -146,6 +152,10 @@ class AgentOrchestrator:
 
         self.tri_layer_enabled = bool(tri_cfg.get("enabled", True))
         self.subagent_max_steps = self._safe_int(subagent_cfg.get("max_steps", 2), fallback=2, minimum=1)
+        # Number of worker threads for running sub-agents in parallel to reduce latency
+        self.subagent_workers = self._safe_int(subagent_cfg.get("workers", 2), fallback=2, minimum=1)
+        # Persona system prompt can be overridden via config.tri_layer.persona.system_prompt
+        self.persona_system_prompt = str(persona_cfg.get("system_prompt", "")).strip()
         self.persona_num_predict = self._safe_int(persona_cfg.get("num_predict", 220), fallback=220, minimum=64)
         self.last_routed_subagents: List[str] = []
 
@@ -195,6 +205,15 @@ class AgentOrchestrator:
         if len(self.chat_history) > limit:
             self.chat_history = self.chat_history[-limit:]
 
+    @staticmethod
+    def _emit_progress(progress_cb: Optional[Callable[[Dict[str, Any]], None]], payload: Dict[str, Any]) -> None:
+        if not progress_cb:
+            return
+        try:
+            progress_cb(payload)
+        except Exception:
+            pass
+
     def route_preview(self, user_prompt: str) -> Dict[str, Any]:
         modules = self.router.route(user_prompt)
         return {
@@ -209,6 +228,24 @@ class AgentOrchestrator:
         if llm_model:
             return llm_model
         return str(self.model)
+
+    def _build_plan_summary(self, user_prompt: str, modules: List[str]) -> List[Dict[str, str]]:
+        """Build a small planner summary describing which modules will run and why.
+
+        This is a lightweight, non-LLM plan exposed to callers so planner output
+        is available immediately before longer reasoning runs.
+        """
+        plan: List[Dict[str, str]] = []
+        for m in modules:
+            profile = self.subagent_profiles.get(m)
+            if profile:
+                plan.append({
+                    "module": m,
+                    "goal": profile.goal,
+                })
+            else:
+                plan.append({"module": m, "goal": "Execute domain-specific reasoning."})
+        return plan
 
     def _resolve_ollama_base_url(self, agent_cfg: Dict[str, Any]) -> str:
         llm_cfg = self.config.get("llm", {}) or {}
@@ -487,7 +524,12 @@ class AgentOrchestrator:
         world_context: str,
         survival_override: Optional[str],
         active_model: str,
+        progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
+        self._emit_progress(
+            progress_cb,
+            {"type": "subagent_start", "module": profile.module, "role": profile.role},
+        )
         allowed_tools = [name for name in profile.allowed_tools if name in self.tool_registry.get_tool_names()]
         tools = self.tool_registry.get_tool_schema(include=allowed_tools)
 
@@ -562,6 +604,11 @@ class AgentOrchestrator:
         if not final_text:
             final_text = f"Sub-agent '{profile.module}' completed."
 
+        self._emit_progress(
+            progress_cb,
+            {"type": "subagent_done", "module": profile.module, "steps": steps_taken},
+        )
+
         return {
             "module": profile.module,
             "text": final_text,
@@ -577,12 +624,15 @@ class AgentOrchestrator:
         active_model: str,
     ) -> str:
         # MARK: Layer-3 is the only layer that speaks as the main persona.
-        system_prompt = (
-            "You are SentryBOT main persona and final response layer. "
-            "Combine sub-agent findings into one direct answer for the user. "
-            "Do not expose internal chain details unless the user explicitly asks. "
-            "Prioritize safety constraints when present."
-        )
+        # Use configurable persona system prompt when provided; otherwise use a neutral default
+        if self.persona_system_prompt:
+            system_prompt = self.persona_system_prompt
+        else:
+            system_prompt = (
+                "You are the final response layer. Combine sub-agent findings into one direct answer for the user. "
+                "Do not expose internal chain details unless the user explicitly asks. "
+                "Prioritize safety constraints when present."
+            )
 
         user_payload = {
             "request": user_prompt,
@@ -615,7 +665,11 @@ class AgentOrchestrator:
             return str(reports[0].get("text", ""))
         return "Task completed using internal tools."
 
-    def step(self, user_prompt: str = "") -> Optional[Dict[str, Any]]:
+    def step(
+        self,
+        user_prompt: str = "",
+        progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
         One complete Agent thought cycle.
         Executes a multi-stage tool-calling loop (max N steps).
@@ -629,8 +683,11 @@ class AgentOrchestrator:
             return None
 
         self.is_busy = True
+        previous_hook = self.tool_registry.status_hook
+        self.tool_registry.status_hook = progress_cb
 
         try:
+            self._emit_progress(progress_cb, {"type": "status", "text": "Istek alindi, islem basliyor."})
             # 1. Collect world & survival context
             survival_override = self.check_survival_drives()
             world_context = self.world_state.inject_world_state("")
@@ -657,22 +714,40 @@ class AgentOrchestrator:
             if self.tri_layer_enabled:
                 self.last_routed_subagents = self.router.route(user_prompt)
                 logger.info("Tri-layer route selected: %s", self.last_routed_subagents)
+                # Expose lightweight planner output immediately
+                plan_summary = self._build_plan_summary(user_prompt, self.last_routed_subagents)
+                self._emit_progress(progress_cb, {"type": "plan", "plan": plan_summary})
 
-                for module_name in self.last_routed_subagents:
-                    profile = self.subagent_profiles.get(module_name)
-                    if not profile:
-                        continue
-                    report = self._run_subagent(
-                        profile=profile,
-                        user_prompt=user_prompt,
-                        world_context=world_context,
-                        survival_override=survival_override,
-                        active_model=active_model,
-                    )
-                    subagent_reports.append(report)
-                    total_steps += int(report.get("steps", 0))
+                # Run sub-agents in parallel to reduce end-to-end latency (I/O bound LLM/tool calls)
+                if self.last_routed_subagents:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(self.last_routed_subagents), self.subagent_workers)) as ex:
+                        futures = {}
+                        for module_name in self.last_routed_subagents:
+                            profile = self.subagent_profiles.get(module_name)
+                            if not profile:
+                                continue
+                            fut = ex.submit(
+                                self._run_subagent,
+                                profile,
+                                user_prompt,
+                                world_context,
+                                survival_override,
+                                active_model,
+                                progress_cb,
+                            )
+                            futures[fut] = module_name
+
+                        for fut in concurrent.futures.as_completed(futures):
+                            try:
+                                report = fut.result()
+                            except Exception as exc:
+                                logger.warning("Sub-agent %s failed in executor: %s", futures.get(fut), exc)
+                                continue
+                            subagent_reports.append(report)
+                            total_steps += int(report.get("steps", 0))
 
                 if subagent_reports:
+                    self._emit_progress(progress_cb, {"type": "persona_start"})
                     final_text = self._synthesize_main_persona(
                         user_prompt=user_prompt,
                         reports=subagent_reports,
@@ -695,10 +770,11 @@ class AgentOrchestrator:
                 "text": final_text,
                 "thoughts": f"Tri-layer executed with {total_steps} internal steps.",
                 "actions": [],
-                "plan": [],
+                "plan": plan_summary if 'plan_summary' in locals() else [],
                 "route": self.last_routed_subagents,
                 "subagents": subagent_reports,
             }
 
         finally:
+            self.tool_registry.status_hook = previous_hook
             self.is_busy = False
