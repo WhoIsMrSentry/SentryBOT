@@ -415,7 +415,43 @@ class AutonomyBrain(
             # ── PRIMARY PATH: Agent Core (ReAct + Tool Calling + Safety) ──
             if self.agent:
                 try:
-                    agent_result = self.agent.step(text)
+                    # Speak a short ack immediately, then periodic waiting messages while agent runs.
+                    waiting_messages = [
+                        "Beklemedeyim...",
+                        "Islem suruyor...",
+                        "Hala isliyorum...",
+                    ]
+                    try:
+                        agent_cfg = self.agent.config.get("agent", {}) if isinstance(self.agent.config, dict) else {}
+                        cfg_waiting = agent_cfg.get("waiting_messages")
+                        if isinstance(cfg_waiting, list) and cfg_waiting:
+                            waiting_messages = [str(m) for m in cfg_waiting if str(m).strip()]
+                    except Exception:
+                        pass
+
+                    interval = float(getattr(self.agent, "status_interval_s", 3.0))
+                    wait_done = threading.Event()
+
+                    def _waiter():
+                        idx = 0
+                        while not wait_done.wait(timeout=interval):
+                            if not waiting_messages:
+                                continue
+                            msg = waiting_messages[idx % len(waiting_messages)]
+                            idx += 1
+                            self._speak_with_mood(msg, emotion="neutral", language=lang)
+
+                    self._speak_with_mood("Tamam, bakiyorum.", emotion="neutral", language=lang)
+                    wait_thread = threading.Thread(target=_waiter, daemon=True)
+                    wait_thread.start()
+                    try:
+                        agent_result = self.agent.step(text)
+                    finally:
+                        wait_done.set()
+                        try:
+                            wait_thread.join(timeout=0.1)
+                        except Exception:
+                            pass
                     if agent_result and agent_result.get("text"):
                         response_text = agent_result["text"]
                         # Actions are already executed by the agent pipeline
