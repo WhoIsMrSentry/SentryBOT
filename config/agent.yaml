@@ -4,6 +4,11 @@ agent:
   num_ctx: 4096
   cooldown_s: 1.0  # LLM Rate Limit
   request_timeout: 60
+  status_interval_s: 3.0
+  waiting_messages:
+    - "Beklemedeyim..."
+    - "Islem suruyor..."
+    - "Hala isliyorum..."
   ollama_base_url: "http://127.0.0.1:11434"
   max_steps: 6
 
@@ -42,7 +47,7 @@ ollama_service:
 vlm_bridge:
   server:
     host: 0.0.0.0
-    port: 8099
+    port: 8101
   vision:
     processing_mode: local
     camera_source: "http://127.0.0.1:8080/camera/video"
@@ -227,11 +232,9 @@ speech:
 tri_layer:
   enabled: true
   router:
-    max_subagents: 3
+    max_subagents: 1
     default_modules:
       - vlm_bridge
-      - autonomy
-      - agent_core
   subagent:
     max_steps: 2
   persona:
