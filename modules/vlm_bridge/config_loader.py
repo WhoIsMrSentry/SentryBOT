@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional
 from modules.config_center.agent_yaml_loader import deep_merge, load_agent_config, require_dict_section
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "server": {"host": "0.0.0.0", "port": 8099},
+    "server": {"host": "0.0.0.0", "port": 8101},
     "vision": {
         "processing_mode": "local",  # local | remote
         "camera_source": "http://127.0.0.1:8080/camera/video",
@@ -40,10 +40,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "provider": "ollama",  # ollama | google_ai_studio
         "single_model_mode": True,
         "primary_model": "qwen3.5:9b",
-        "clm_fallback_enabled": True,
-        "clm_fallback_model": "qwen3.5:9b",
-        "fallback_on_missing_model": True,
-        "fallback_on_error": True,
+        "clm_fallback_enabled": False,
+        "clm_fallback_model": "",
+        "fallback_on_missing_model": False,
+        "fallback_on_error": False,
     },
     "ollama": {
         "endpoint": "http://localhost:8080/ollama/chat",
