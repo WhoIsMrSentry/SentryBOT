@@ -56,7 +56,29 @@ extern BuzzerSongPlayer g_song;
 extern BuzzerOut g_buzzerDefaultOut;
 #endif
 
+static inline bool isIrKeyStr(const String &k){
+  if (k.length() == 1){
+    char c = k[0];
+    return (c >= '0' && c <= '9') || c == '*' || c == '#';
+  }
+  return k == "UP" || k == "DOWN" || k == "LEFT" || k == "RIGHT" || k == "OK";
+}
+
 static inline void handleJson(const String &line){
+  // Trim and check for bare IR key (no JSON structure)
+  String trimmed = line;
+  trimmed.trim();
+  
+  // If line doesn't start with { and looks like a bare key
+  if (trimmed.length() > 0 && trimmed[0] != '{'){
+    trimmed.toUpperCase();
+    if (isIrKeyStr(trimmed)){
+      g_irMenu.onKey(trimmed, robot);
+      Protocol::sendOk("ir_key");
+      return;
+    }
+  }
+
   // Handle ACKs for neopixel requests (from Pi): {"ok":true,"ack_seq":<num>}
   int _ackp = line.indexOf("\"ack_seq\":");
   if (_ackp >= 0){
@@ -73,6 +95,44 @@ static inline void handleJson(const String &line){
     return;
   }
   if (line.indexOf("\"cmd\":\"hb\"")>=0){ lastHeartbeatMs = millis(); Protocol::sendOk("hb"); return; }
+
+  if (line.indexOf("\"cmd\":\"ir_key\"")>=0){
+    String key = parseJsonStringAfter(line, "\"key\":\"");
+    key.trim();
+    key.toUpperCase();
+    if (isIrKeyStr(key)){
+      g_irMenu.onKey(key, robot);
+      Protocol::sendOk("ir_key");
+    } else {
+      Protocol::sendErr("bad_key");
+    }
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"menu_goto\"")>=0){
+    String menu = parseJsonStringAfter(line, "\"menu\":\"");
+    if (menu.length() == 0) menu = parseJsonStringAfter(line, "\"target\":\"");
+    menu.trim();
+    menu.toLowerCase();
+
+    if (menu == "home") { g_irMenu.gotoHome(); Protocol::sendOk("menu_home"); return; }
+    // Menu values: 1=SERVO, 2=LASER, 3=ULTRA, 4=IMU, 5=RFID, 6=SOUND, 7=REMOTE, 8=CALIBRATE, 9=SYSTEM, 10=TEMPS, 11=ALERTS, 12=STATS
+    if (menu == "servo") { g_irMenu.gotoMenu((IrMenuController::MenuItem)1, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_servo"); return; }
+    if (menu == "laser") { g_irMenu.gotoMenu((IrMenuController::MenuItem)2, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_laser"); return; }
+    if (menu == "ultra") { g_irMenu.gotoMenu((IrMenuController::MenuItem)3, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_ultra"); return; }
+    if (menu == "imu") { g_irMenu.gotoMenu((IrMenuController::MenuItem)4, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_imu"); return; }
+    if (menu == "rfid") { g_irMenu.gotoMenu((IrMenuController::MenuItem)5, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_rfid"); return; }
+    if (menu == "sound") { g_irMenu.gotoMenu((IrMenuController::MenuItem)6, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_sound"); return; }
+    if (menu == "remote") { g_irMenu.gotoMenu((IrMenuController::MenuItem)7, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_remote"); return; }
+    if (menu == "calibrate") { g_irMenu.gotoMenu((IrMenuController::MenuItem)8, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_calibrate"); return; }
+    if (menu == "system") { g_irMenu.gotoMenu((IrMenuController::MenuItem)9, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_system"); return; }
+    if (menu == "temps") { g_irMenu.gotoMenu((IrMenuController::MenuItem)10, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_temps"); return; }
+    if (menu == "alerts") { g_irMenu.gotoMenu((IrMenuController::MenuItem)11, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_alerts"); return; }
+    if (menu == "stats") { g_irMenu.gotoMenu((IrMenuController::MenuItem)12, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_stats"); return; }
+
+    Protocol::sendErr("bad_menu");
+    return;
+  }
 
   if (line.indexOf("\"cmd\":\"lcd\"")>=0){
 #if LCD_ENABLED
