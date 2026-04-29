@@ -1,4 +1,4 @@
-#ifndef UART_HANDLER_H
+﻿#ifndef UART_HANDLER_H
 #define UART_HANDLER_H
 
 #include <Arduino.h>
@@ -6,5 +6,6 @@
 #include "RobotState.h"
 
 void initUartTask();
+void initLinkTask();
 
 #endif

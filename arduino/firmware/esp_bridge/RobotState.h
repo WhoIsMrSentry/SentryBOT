@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "config.h"
 
 struct RobotData {
     float pitch = 0;
@@ -26,7 +27,14 @@ public:
     void updateFromJson(const String& json) {
         DynamicJsonDocument doc(2048);
         DeserializationError err = deserializeJson(doc, json);
-        if (err) return;
+        if (err) {
+            // Parse error but still update timestamp (keep link alive for heartbeats)
+            if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(10))) {
+                _data.last_update_ms = millis();
+                xSemaphoreGive(_mutex);
+            }
+            return;
+        }
 
         if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(10))) {
             if (doc.containsKey("pitch")) _data.pitch = doc["pitch"];
@@ -41,7 +49,6 @@ public:
                 for(int i=0; i<8 && i<arr.size(); i++) _data.temps[i] = arr[i];
             }
             _data.last_update_ms = millis();
-            _data.link_alive = true;
             xSemaphoreGive(_mutex);
         }
     }
@@ -50,6 +57,8 @@ public:
         RobotData copy;
         if (xSemaphoreTake(_mutex, pdMS_TO_TICKS(50))) {
             copy = _data;
+            // Dynamic link_alive: true if last update within timeout
+            copy.link_alive = (millis() - _data.last_update_ms) <= LINK_TIMEOUT_MS;
             xSemaphoreGive(_mutex);
         }
         return copy;

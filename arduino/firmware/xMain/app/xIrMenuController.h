@@ -944,6 +944,18 @@ public:
 
   void refreshLive(Robot &robot);
 
+  // Public helper for direct menu navigation from web UI / commands
+  void gotoHome(){
+    _state = STATE_HOME;
+    _menuIndex = 1;
+    showHome();
+  }
+
+  void gotoMenu(MenuItem menu, Robot &robot){
+    _menuIndex = (uint8_t)menu;
+    enterSelected(robot);
+  }
+
 private:
 
   static int normalizeServoIndex(long v){

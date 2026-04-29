@@ -1,4 +1,4 @@
-from typing import Dict, Any, Callable, List
+from typing import Dict, Any, Callable, List, Optional
 import logging
 import json
 
@@ -15,6 +15,7 @@ class ToolRegistry:
         self.slam = slam
         self.world_state = world_state
         self.safety = safety_filter
+        self.status_hook: Optional[Callable[[Dict[str, Any]], None]] = None
         
         self.tools: Dict[str, Callable] = {}
         self.schemas: List[Dict[str, Any]] = []
@@ -33,11 +34,23 @@ class ToolRegistry:
             
         try:
             logger.info(f"LLM called tool: {tool_name}({kwargs})")
+            self._emit_status({"type": "tool_start", "tool": tool_name, "args": kwargs})
             result = self.tools[tool_name](**kwargs)
+            self._emit_status({"type": "tool_done", "tool": tool_name})
             return json.dumps(result) if isinstance(result, (dict, list)) else str(result)
         except Exception as e:
             logger.error(f"Tool {tool_name} failed: {e}")
+            self._emit_status({"type": "tool_error", "tool": tool_name, "error": str(e)})
             return f"Error executing {tool_name}: {e}"
+
+    def _emit_status(self, payload: Dict[str, Any]) -> None:
+        hook = self.status_hook
+        if not hook:
+            return
+        try:
+            hook(payload)
+        except Exception:
+            pass
 
     def get_tool_schema(self, include: List[str] | None = None) -> List[Dict[str, Any]]:
         """Returns all tool schemas or only a selected subset by tool name."""
@@ -337,7 +350,7 @@ class ToolRegistry:
         if not self.client: return "Error: Vision client disconnected."
         results = self.client.get_latest_vision_results(limit=5)
         if not results:
-            return "I don't see anything right now."
+            return "Vision results unavailable. Continue with text-only reasoning if needed."
         return f"Camera sees: {results}"
 
     def get_sensor_data(self) -> str:

@@ -79,6 +79,7 @@ print(result["text"])
 |---|---|---|
 | `/healthz` | GET | Servis durumu (BUSY / IDLE) |
 | `/step` | POST | Tek agent adımı (Native Tool Loop) |
+| `/step_stream` | POST | SSE ile canlı durum + final cevap |
 | `/route_preview` | POST | Tri-layer router secimini onizleme |
 | `/world_state` | GET | Anlık dünya durumu (pil vb.) |
 | `/memory/search` | GET | Epizodik hafıza arama |

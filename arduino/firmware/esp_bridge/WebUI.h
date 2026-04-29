@@ -410,6 +410,11 @@ const char INDEX_HTML[] PROGMEM = R"=====(
                 btn.classList.remove('active');
                 activeSensor = null;
             } else {
+                // Send menu_goto to Mega to display sensor on LCD
+                const menuMap = { ultra: "ultra", imu: "imu", rfid: "rfid", temps: "temps" };
+                const menuName = menuMap[type] || type;
+                sendAndRefresh({ cmd: "menu_goto", menu: menuName });
+                
                 dataArea.classList.add('show');
                 btn.classList.add('active');
                 activeSensor = type;
@@ -424,19 +429,24 @@ const char INDEX_HTML[] PROGMEM = R"=====(
             fetch('/send', { method: 'POST', body: json });
         }
 
+        function sendAndRefresh(cmd) {
+            fetch('/send', { method: 'POST', body: JSON.stringify(cmd) });
+            setTimeout(() => updateStats(), 50);
+        }
+
         function sendLaser(id, on) {
             const body = { cmd: "laser", on: on };
             if (id === 0) body.both = true;
             else body.id = id;
-            sendRaw(JSON.stringify(body));
+            sendAndRefresh(body);
         }
 
         function sendCute(name) {
-            sendRaw(JSON.stringify({ cmd: "cute", name: name }));
+            sendAndRefresh({ cmd: "cute", name: name });
         }
 
         function sendSoundPlay(name) {
-            sendRaw(JSON.stringify({ cmd: "sound_play", name: name }));
+            sendAndRefresh({ cmd: "sound_play", name: name });
         }
 
         function updateStats() {
@@ -476,7 +486,7 @@ const char INDEX_HTML[] PROGMEM = R"=====(
                 .catch(e => console.error("Poll error", e));
         }
 
-        setInterval(updateStats, 500);
+        setInterval(updateStats, 200);
         updateStats();
     </script>
 </body>
