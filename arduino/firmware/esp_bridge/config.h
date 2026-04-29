@@ -13,6 +13,11 @@
 #define UART_TX_PIN 17
 #define UART_BAUD   115200
 
+// Link/telemetry keepalive (aggressive for stability)
+#define HB_INTERVAL_MS         200
+#define TELEMETRY_INTERVAL_MS  200
+#define LINK_TIMEOUT_MS        1000
+
 // Task Priorities
 #define PRIORITY_UART   5
 #define PRIORITY_SERVER 4
