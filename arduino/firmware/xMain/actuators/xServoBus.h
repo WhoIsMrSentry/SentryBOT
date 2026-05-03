@@ -10,13 +10,21 @@
 #include <math.h>
 #include "../xConfig.h"
 
+#if defined(ARDUINO_ARCH_AVR)
+#include <avr/pgmspace.h>
+#endif
+
 class ServoBus {
 public:
   void attachAll(const uint8_t pins[SERVO_COUNT_TOTAL], const uint8_t initDeg[SERVO_COUNT_TOTAL]){
-    for (int i=0;i<SERVO_COUNT_TOTAL;i++){ pinMap[i]=pins[i]; targets[i]=initDeg[i]; currents[i]=initDeg[i]; }
+    for (int i=0;i<SERVO_COUNT_TOTAL;i++){
+      pinMap[i] = pins[i];
+      targets[i] = readPoseByte(initDeg, i);
+      currents[i] = targets[i];
+    }
     beginDriver();
     // write initial pose immediately
-    for (int i=0;i<SERVO_COUNT_TOTAL;i++) rawWrite(i, (int)initDeg[i]);
+    for (int i=0;i<SERVO_COUNT_TOTAL;i++) rawWrite(i, (int)targets[i]);
     lastUpdate=millis();
   }
 
@@ -24,7 +32,7 @@ public:
 
   void write(int index, float deg){ if (index<0||index>=SERVO_COUNT_TOTAL) return; targets[index]=constrain(deg,0,180); }
 
-  void writePose(const uint8_t pose[SERVO_COUNT_TOTAL]){ for(int i=0;i<SERVO_COUNT_TOTAL;i++) targets[i]=pose[i]; }
+  void writePose(const uint8_t pose[SERVO_COUNT_TOTAL]){ for(int i=0;i<SERVO_COUNT_TOTAL;i++) targets[i]=readPoseByte(pose, i); }
 
   void update(){
     unsigned long now=millis();
@@ -108,6 +116,14 @@ public:
   }
 
 private:
+  static uint8_t readPoseByte(const uint8_t *pose, int index){
+#if defined(ARDUINO_ARCH_AVR)
+    return pgm_read_byte(&pose[index]);
+#else
+    return pose[index];
+#endif
+  }
+
 #if SERVO_USE_PCA9685
   // Minimal PCA9685 driver (no external lib) for 50Hz servo pulses
   // Registers
