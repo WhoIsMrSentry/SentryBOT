@@ -1,7 +1,11 @@
 #include "UartHandler.h"
 #include <ctype.h>
+#include <ArduinoJson.h>
 
 extern HardwareSerial MegaUart;
+extern volatile bool g_linkAlive;
+extern StaticJsonDocument<2048> g_responseBuffer;  // Response buffer
+extern volatile bool g_responseReady;               // Response ready flag
 
 // Robust line buffer with validation
 static char lineBuffer[SERIAL_BUF_SIZE];
@@ -50,6 +54,13 @@ void uartTask(void* pvParameters) {
                 // Validate and parse
                 if (lineBuffer[0] == '{' && lineIdx > 2) {
                     g_robotState.updateFromJson(String(lineBuffer));
+                    
+                    // TWO-WAY ROUTING: Parse JSON and store in response buffer
+                    DeserializationError error = deserializeJson(g_responseBuffer, lineBuffer);
+                    if (!error) {
+                        g_responseReady = true;  // Signal response ready for HTTP handler
+                    }
+                    
                     Serial.print("Mega: ");
                     Serial.println(lineBuffer);
                     lastValidMs = millis();
@@ -79,6 +90,7 @@ void linkTask(void* pvParameters) {
     
     // Send initial telemetry start command
     MegaUart.println(F("{\"cmd\":\"telemetry_start\"}"));
+    g_linkAlive = true;  // Mark link as established
     
     unsigned long lastHbMs = millis();
     
