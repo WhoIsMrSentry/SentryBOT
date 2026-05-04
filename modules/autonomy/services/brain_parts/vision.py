@@ -87,7 +87,7 @@ class VisionMixin:
         prefer_llm = self._vision_cfg.get("prefer_llm_greetings", False)
         if prefer_llm and self.config.get("llm", {}).get("enabled", False):
             prompt = (
-                "SentryBOT olarak kısa ve sıcak bir selamlama üret.\n"
+                "Kisa ve sicak bir selamlama uret.\n"
                 f"İsim: {name}\n"
                 f"Mesafe: {distance if distance else 'bilinmiyor'}\n"
                 f"Özet: {summary or 'özel bilgi yok'}\n"

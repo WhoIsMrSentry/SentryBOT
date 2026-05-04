@@ -12,9 +12,9 @@
 //   3 = Serial3 (if available)
 #ifndef SERIAL_IO_PORT
 #if defined(ARDUINO_AVR_MEGA2560) || defined(ARDUINO_AVR_MEGA) || defined(__AVR_ATmega2560__)
-#define SERIAL_IO_PORT 1
+#define SERIAL_IO_PORT 3
 #else
-#define SERIAL_IO_PORT 1
+#define SERIAL_IO_PORT 0
 #endif
 #endif
 
@@ -108,8 +108,7 @@
 
 // Default poses
 // Default poses: index mapping: 0=pan, 1=tilt, 2=pi_servo_1, 3=pi_servo_2
-static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] = {90,90, 90,90};
-static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
+static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] PROGMEM = {90,90, 90,90};
 
 // Stepper skate balance PID (inverted pendulum)
 #define SKATE_KP  18.0f   // speed per degree
@@ -350,13 +349,15 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #endif
 
 // On AVR, IRremote and tone() can share timers; this may break IR reception after a beep.
-// Default: if IR is enabled, avoid tone() and use non-blocking digital beep instead.
-// By default allow tone() even when IR is enabled. If you experience IR
-// reception issues while tone() runs, set this to 1 to disable tone() and
-// fall back to simple digital toggles. Re-initialization of IR after tone()
-// is enabled via BUZZER_REINIT_IR_AFTER_TONE.
+// If IR is enabled, prefer disabling `tone()` to avoid timer conflicts that
+// occasionally block IR decoding. This setting can be overridden at build-time
+// by defining `BUZZER_DISABLE_TONE_WHEN_IR` explicitly.
 #ifndef BUZZER_DISABLE_TONE_WHEN_IR
+#if defined(IR_ENABLED) && IR_ENABLED
+#define BUZZER_DISABLE_TONE_WHEN_IR 1
+#else
 #define BUZZER_DISABLE_TONE_WHEN_IR 0
+#endif
 #endif
 
 // If tone() is used while IR is enabled (BUZZER_DISABLE_TONE_WHEN_IR=0),
@@ -466,7 +467,7 @@ static const uint8_t POSE_SIT[SERVO_COUNT_TOTAL]   = {90,90, 90,90};
 #define DS18_ENABLED 1
 #endif
 #ifndef DS18_PIN
-#define DS18_PIN 22
+#define DS18_PIN 24
 #endif
 #ifndef DS18_POLL_MS
 #define DS18_POLL_MS 5000

@@ -3,19 +3,34 @@
 
 #include <Arduino.h>
 
-// Network
+// WiFi Credentials (override via define or env)
+#ifndef WIFI_SSID
 #define WIFI_SSID "SentryBOT"
+#endif
+#ifndef WIFI_PASS
 #define WIFI_PASS "SentryBOT"
-#define HOSTNAME  "sentrybot"
+#endif
+
+// mDNS hostname (accessible as "sentrybot.local")
+#define MDNS_HOSTNAME "sentrybot"
+
+// HTTP server port
+#define HTTP_PORT 8080
 
 // UART (ESP32 UART2 -> Mega UART1)
 #define UART_RX_PIN 16
 #define UART_TX_PIN 17
 #define UART_BAUD   115200
 
+// Link/telemetry keepalive (aggressive for stability)
+#define HB_INTERVAL_MS         200
+#define TELEMETRY_INTERVAL_MS  200
+#define LINK_TIMEOUT_MS        1000
+
 // Task Priorities
 #define PRIORITY_UART   5
-#define PRIORITY_SERVER 4
+#define PRIORITY_WEB    4
+#define PRIORITY_WIFI   2
 
 // Buffers
 #define SERIAL_BUF_SIZE 1024

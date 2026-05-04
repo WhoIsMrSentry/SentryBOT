@@ -72,7 +72,7 @@ llm:
   enabled: true
   model: "qwen3.5:9b"
   prompt_template: |
-    Sen SentryBOT adında, duyguları olan bir robotsun.
+    Sen duyguları olan bir robotsun.
     
     Şu anki İç Durumun:
     - Mutluluk: {happiness}/100 (Düşükse üzgün, yüksekse neşeli)
