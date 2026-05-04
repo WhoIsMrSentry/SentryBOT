@@ -1,29 +1,24 @@
 # SentryBOT ESP Bridge Firmware (ESP32)
 
-Bu firmware, Raspberry Pi (veya Web Arayüzü) ile Arduino Mega arasındaki yüksek performanslı taşıma ve kontrol katmanıdır.
+Bu firmware, Raspberry Pi (veya başka bir üst katman) ile Arduino Mega arasındaki yüksek performanslı taşıma ve kontrol katmanıdır.
 
 ## Modern Mimari (RTOS & Modüler)
 Bu sürüm, **FreeRTOS** kullanarak eşzamanlı görev yönetimini destekler:
 - **UartTask**: Mega'dan gelen NDJSON verilerini arka planda kesintisiz okur.
-- **WebServerTask**: Web Dashboard ve API isteklerini karşılar.
-- **Modüler Yapı**: Kod; `config.h`, `RobotState.h`, `UartHandler` ve `WebServerHandler` olarak mantıksal parçalara bölünmüştür.
+- **Bridge-Only Tasarım**: ESP32 yalnızca UART köprüsü, heartbeat ve telemetry taşıma görevlerini yürütür.
+- **Modüler Yapı**: Kod; `config.h`, `RobotState.h` ve `UartHandler` olarak mantıksal parçalara bölünmüştür.
 
 ## Özellikler
-- **mDNS Erişimi**: `http://sentrybot.local` adresinden doğrudan erişim.
-- **İnteraktif Dashboard**: Canlı sensör verileri (Mesafe, IMU, Sıcaklıklar) ve RFID takibi.
-- **Sanal Kumanda**: Robotun fiziksel LCD menülerinde gezinmek için entegre IR kumanda arayüzü.
-- **Gelişmiş Kontrol**: Lazer ve Buzzer (Ses Paleti) için doğrudan kontrol butonları.
+- **UART Köprüsü**: Mega'dan gelen NDJSON satırlarını kesintisiz okur ve yollar.
+- **Link Keepalive**: Heartbeat ve telemetry akışını canlı tutar.
+- **Gözlem Amaçlı Serial Log**: Bağlantı durumu ve robot verileri seri port üzerinden izlenir.
 
 ## Endpointler
-- `GET /` -> İnteraktif Web Dashboard
-- `GET /api/state` -> Tüm sensör verilerini içeren JSON objesi
-- `POST /send` -> JSON komutlarını Mega'ya iletir
-- `POST /raw` -> Ham metin komutlarını iletir (Kumanda tuşları vb.)
-- `GET /healthz` -> Sistem sağlık kontrolü
+- Web endpointleri kaldırıldı. ESP32 artık arayüz sunmaz; yalnızca UART köprüsü olarak çalışır.
 
 ## Kurulum & Gereksinimler
 - **Kart**: ESP32 Dev Module
-- **Kütüphaneler**: `ArduinoJson`, `WebServer`, `ESPmDNS`
+- **Kütüphaneler**: `ArduinoJson`
 - **Pin Tanımları**: `config.h` içinden değiştirilebilir (Varsayılan: RX=16, TX=17).
 
 ## Donanım Bağlantısı
