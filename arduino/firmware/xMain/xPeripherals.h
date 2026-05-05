@@ -11,7 +11,7 @@
 #include "peripherals/xLaserPair.h"
 #include "peripherals/xBuzzer.h"
 #include "peripherals/xHallEncoder.h"
-#include "peripherals/xIrKeyReader.h"
+// #include "peripherals/xIrKeyReader.h"
 #include "peripherals/xEbyteRadio.h"
 #include "peripherals/xDs18b20.h"
 

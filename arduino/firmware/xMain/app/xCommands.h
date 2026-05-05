@@ -56,6 +56,11 @@ extern BuzzerSongPlayer g_song;
 extern BuzzerOut g_buzzerDefaultOut;
 #endif
 
+#if DS18_ENABLED
+#include "../xPeripherals.h"
+extern Ds18b20Manager g_ds18;
+#endif
+
 static inline bool isIrKeyStr(const String &k){
   if (k.length() == 1){
     char c = k[0];
@@ -174,6 +179,22 @@ static inline void handleJson(const String &line){
     SERIAL_IO.println('}');
 #else
     Protocol::sendErr("ultra_disabled");
+#endif
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"temp_read\"")>=0){
+#if DS18_ENABLED
+    SERIAL_IO.print(F("{\"ok\":true,\"temps\":["));
+    for (int i=0; i<DS18_SENSOR_COUNT; i++){
+      if (i > 0) SERIAL_IO.print(',');
+      float t = g_ds18.tempC(i);
+      if (isnan(t)) SERIAL_IO.print(F("null"));
+      else SERIAL_IO.print(t, 1);
+    }
+    SERIAL_IO.println(F("]}"));
+#else
+    Protocol::sendErr("ds18_disabled");
 #endif
     return;
   }
