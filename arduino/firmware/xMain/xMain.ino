@@ -105,7 +105,7 @@ uint16_t g_buzzerFreqQuiet = 1200;
 #endif
 #endif
 #if IR_ENABLED
-IrKeyReader g_ir;
+// IrKeyReader g_ir; // Disabled: Migrating to Virtual ESP Web Remote
 #endif
 
 #if IR_ENABLED
@@ -323,7 +323,7 @@ void setup(){
   g_ds18.begin(DS18_PIN);
 #endif
 #if IR_ENABLED
-  g_ir.begin(IR_PIN);
+  // g_ir.begin(IR_PIN); // Disabled: Physical IR removed
   #if LCD_ENABLED
   // IR menü olayları ana LCD'de gösterilsin
   g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.showTo(LCD_TGT_1, top, bottom, true); });
@@ -464,9 +464,9 @@ void loop(){
   #endif
 
 #if IR_ENABLED
-  if (g_ir.poll(g_irKey)){
-    g_irMenu.onKey(g_irKey, robot);
-  }
+  // if (g_ir.poll(g_irKey)){
+  //   g_irMenu.onKey(g_irKey, robot);
+  // }
   g_irMenu.tick(robot);
 #endif
 
