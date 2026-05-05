@@ -4,6 +4,7 @@
 #include <ArduinoJson.h>
 
 #include "config.h"
+#include "index.h"
 #include "RobotState.h"
 #include "UartHandler.h"
 
@@ -25,6 +26,7 @@ void setupWebServer();
 void handleSend();
 void handleRequest();
 void handleHealthz();
+void handleRoot();
 
 void setup() {
     Serial.begin(115200);
@@ -88,6 +90,7 @@ void setupWiFi() {
 }
 
 void setupWebServer() {
+    server.on("/", HTTP_GET, handleRoot);
     server.on("/send", HTTP_POST, handleSend);
     server.on("/request", HTTP_POST, handleRequest);
     server.on("/healthz", HTTP_GET, handleHealthz);
@@ -155,4 +158,8 @@ void handleHealthz() {
     String response;
     serializeJson(doc, response);
     server.send(200, "application/json", response);
+}
+
+void handleRoot() {
+    server.send(200, "text/html", INDEX_HTML);
 }
