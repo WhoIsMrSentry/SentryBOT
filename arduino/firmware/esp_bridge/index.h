@@ -338,10 +338,10 @@ const char* INDEX_HTML = R"=====(
     </header>
 
     <div class="tabs">
-        <button class="tab-btn active" onclick="switchTab('remote')">Remote</button>
-        <button class="tab-btn" onclick="switchTab('sensors')">Sensors</button>
-        <button class="tab-btn" onclick="switchTab('actions')">Actions</button>
-        <button class="tab-btn" onclick="switchTab('dev')">Dev</button>
+        <button class="tab-btn active" onclick="switchTab('remote', this)">Remote</button>
+        <button class="tab-btn" onclick="switchTab('sensors', this)">Sensors</button>
+        <button class="tab-btn" onclick="switchTab('actions', this)">Actions</button>
+        <button class="tab-btn" onclick="switchTab('dev', this)">Dev</button>
     </div>
 
     <!-- TAB 1: REMOTE -->
@@ -360,12 +360,15 @@ const char* INDEX_HTML = R"=====(
         <div class="panel">
             <h2>Menu Shortcuts</h2>
             <div class="grid-3" style="margin-bottom: 15px;">
+                <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'home'})">Home</button>
                 <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'system'})">System</button>
                 <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'servo'})">Servos</button>
                 <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'sound'})">Sound</button>
                 <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'imu'})">IMU</button>
                 <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'temps'})">Temps</button>
-                <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'remote'})">Remote</button>
+                <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'rfid'})">RFID</button>
+                <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'ultra'})">Ultra</button>
+                <button class="btn" onclick="sendCmd({cmd:'menu_goto', menu:'laser'})">Laser</button>
             </div>
 
             <div class="dpad-container">
@@ -488,8 +491,8 @@ const char* INDEX_HTML = R"=====(
         <div class="panel">
             <h2>Songs & Themes</h2>
             <div class="grid-2">
-                <button class="btn" onclick="sendCmd({cmd:'sound_play', name:'walle'})">Wall-E Theme</button>
-                <button class="btn" onclick="sendCmd({cmd:'sound_play', name:'bb8'})">BB-8 Theme</button>
+                <button class="btn" onclick="sendCmd({cmd:'sound_play', name:'walle', out:'loud'})">Wall-E Theme</button>
+                <button class="btn" onclick="sendCmd({cmd:'sound_play', name:'bb8', out:'loud'})">BB-8 Theme</button>
             </div>
         </div>
 
@@ -568,12 +571,12 @@ const char* INDEX_HTML = R"=====(
     <script>
         // Tab Switching
         let currentTab = 'remote';
-        function switchTab(tabId) {
+        function switchTab(tabId, btnEl) {
             currentTab = tabId;
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
             
-            event.currentTarget.classList.add('active');
+            if (btnEl) btnEl.classList.add('active');
             document.getElementById('tab-' + tabId).classList.add('active');
 
             // Trigger immediate poll if sensors tab is opened
