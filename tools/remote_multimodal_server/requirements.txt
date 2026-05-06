@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+opencv-python
+numpy
+pydantic
+requests
+
+# Optional accelerators (install on powerful remote host):
+# ultralytics           # YOLO object/person detection
+# face_recognition      # face embedding + identity matching
+# deepface              # age / emotion estimation
+# qwen2.5vl / qwen3-vl  # served via Ollama endpoint
+# transformers          # advanced image caption / reasoning backends
+# torch                 # required by many advanced backends
