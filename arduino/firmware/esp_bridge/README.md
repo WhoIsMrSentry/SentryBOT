@@ -14,7 +14,12 @@ Bu sürüm, **FreeRTOS** kullanarak eşzamanlı görev yönetimini destekler:
 - **Gözlem Amaçlı Serial Log**: Bağlantı durumu ve robot verileri seri port üzerinden izlenir.
 
 ## Endpointler
-- Web endpointleri kaldırıldı. ESP32 artık arayüz sunmaz; yalnızca UART köprüsü olarak çalışır.
+- `GET /` : küçük durum sayfası
+- `GET /healthz` : köprü sağlık bilgisi
+- `POST /send` : fire-and-forget JSON iletimi
+- `POST /request` : Mega yanıtını bekleyen istek
+
+Not: Firmware uyumluluk için hem `HTTP_PORT` (varsayılan 8080) hem de `80` portunu dinleyebilir.
 
 ## Kurulum & Gereksinimler
 - **Kart**: ESP32 Dev Module
