@@ -48,6 +48,10 @@ extern HallEncoder g_hall1;
 extern bool g_lcd1Ok;
 #endif
 
+#if DS18_ENABLED
+#include "../peripherals/xDs18b20.h"
+#endif
+
 extern EbyteRadio g_ebyteRadio;
 
 class IrMenuController {
@@ -73,6 +77,9 @@ public:
     _morseNextMs = 0;
     _morsePlaying = false;
     _lastProxBeepMs = 0;
+#if LCD_ENABLED
+    g_lcdStatus.setPinned(false);
+#endif
     showHome();
   }
 
@@ -95,7 +102,7 @@ public:
   }
 #endif
 
-    // Global back/cancel
+    // Global back/cancel (hierarchical navigation)
     if (k == "#"){
       if (_capture){
         cancelToken();
@@ -108,12 +115,26 @@ public:
         showServoPrompt();
         return;
       }
-      if (_state != STATE_HOME){
+      if (_state == STATE_MENU){
         enterHome();
+        return;
+      }
+      if (_state != STATE_HOME){
+        _state = STATE_MENU;
+        showMenu();
         return;
       }
       // already home
       showHome();
+      return;
+    }
+
+    // Global Home key (*) — handle BEFORE the home-state block so that
+    // pressing HOME from the website while already at home refreshes the
+    // screen instead of falling through to the unknown-key path.
+    if (k == "*"){
+      enterHome();
+      _lastInputMs = millis();
       return;
     }
 
@@ -164,21 +185,14 @@ public:
         lcdPrint("DRIVE", "FORWARD"); emitEvent("drive", 100);
         return;
       }
-      // digits on home just show key feedback
-      lcdPrint("IR", "KEY:" + k);
-      return;
-    }
-
-    // Global Home key (*)
-    if (k == "*"){
-      _state = STATE_HOME;
+      // Unknown/digit keys at home: silently re-render home so the screen
+      // never gets replaced by debug "IR KEY:" overlays.
       showHome();
-      _lastInputMs = millis();
       return;
     }
 
-    // Global Back key handler (#)
-    if (k == "BACK" || k == "#"){
+    // Global Back key handler from textual aliases
+    if (k == "BACK"){
       if (_state == STATE_MENU){
         _state = STATE_HOME;
         showHome();
@@ -404,20 +418,6 @@ public:
       return;
     }
 
-    if (_state == STATE_REMOTE){
-      if (k == "OK"){
-        g_nema.setEnabled(!g_nema.isEnabled());
-        emitEvent("remote_ctrl", g_nema.isEnabled() ? 1 : 0);
-        showRemote();
-        return;
-      }
-      if (k == "UP" || k == "DOWN"){
-        showRemote();
-        return;
-      }
-      return;
-    }
-
     // Sensor pages: allow changing subpage on IMU
     if (_state == STATE_IMU){
       if (k == "UP" || k == "DOWN"){
@@ -474,13 +474,6 @@ public:
         refreshLive(robot);
       }
     }
-    if (_state == STATE_REMOTE){
-      if (_lastUiMs == 0 || (_now - _lastUiMs) >= 250UL){
-        _lastUiMs = _now;
-        showRemote();
-      }
-    }
-
     // Non-blocking morse player
     tickMorse();
   }
@@ -494,7 +487,6 @@ public:
     STATE_SERVO_DEG,
     STATE_LASER,
     STATE_SOUND,
-    STATE_REMOTE,
     STATE_ULTRA,
     STATE_IMU,
     STATE_RFID,
@@ -512,7 +504,6 @@ public:
     MENU_IMU,
     MENU_RFID,
     MENU_SOUND,
-    MENU_REMOTE,
     MENU_CALIBRATE,
     MENU_SYSTEM,
     MENU_TEMPS,
@@ -557,7 +548,9 @@ public:
 
   void enterHome(){
 #if LCD_ENABLED
+    // Home screen is the idle screen; allow background status overlays here.
     g_lcdStatus.setPinned(false);
+    g_lcdStatus.invalidate();
 #endif
     _state = STATE_HOME;
     _capture = false;
@@ -570,6 +563,7 @@ public:
   void enterMenu(){
 #if LCD_ENABLED
     g_lcdStatus.setPinned(true);
+    g_lcdStatus.invalidate();
 #endif
     _state = STATE_MENU;
     _capture = false;
@@ -607,7 +601,6 @@ public:
       case MENU_IMU: return (const __FlashStringHelper*)F("IMU");
       case MENU_RFID: return (const __FlashStringHelper*)F("RFID");
       case MENU_SOUND: return (const __FlashStringHelper*)F("SOUND");
-      case MENU_REMOTE: return (const __FlashStringHelper*)F("REMOTE");
       case MENU_TEMPS: return (const __FlashStringHelper*)F("TEMPS");
       case MENU_CALIBRATE: return (const __FlashStringHelper*)F("CALIBRATION");
       case MENU_SYSTEM: return (const __FlashStringHelper*)F("SYSTEM INFO");
@@ -618,11 +611,13 @@ public:
   }
 
   void showHome(){
+    // Plain ASCII rows so that no part of the home screen depends on CGRAM
+    // custom characters being intact (which is fragile across menu repaints).
     char l1[21], l2[21], l3[21], l4[21];
-    snprintf_P(l1, sizeof(l1), PSTR(" \x04  SentryBOT V7  \x04 "));
+    snprintf_P(l1, sizeof(l1), PSTR("   SentryBOT  V7    "));
     snprintf_P(l2, sizeof(l2), PSTR("===================="));
     snprintf_P(l3, sizeof(l3), PSTR("  STATUS: ONLINE    "));
-    snprintf_P(l4, sizeof(l4), PSTR(" [OK] START SENTRY  "));
+    snprintf_P(l4, sizeof(l4), PSTR(" [OK] OPEN MENU     "));
     g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
   }
 
@@ -641,28 +636,39 @@ public:
     g_lcdStatus.show4To(LCD_TGT_1, rows[0], rows[1], rows[2], rows[3], true);
   }
 
+  // Render one temperature cell: "<icon><Name>:<value>C" where <value> is one
+  // decimal of precision. Avoid %f because the default AVR `printf` family does
+  // not link float support, which produces blank/garbage cells in the LCD.
+  static void formatTempCell(char *out, size_t outSz, const char *name, float t){
+    if (isnan(t)){
+      snprintf_P(out, outSz, PSTR("\x01" "%s:--.-C"), name);
+      return;
+    }
+    char num[10];
+    dtostrf(t, 4, 1, num); // e.g. "23.4" or " 5.0"
+    // dtostrf may pad the front with spaces; strip leading spaces so the cell
+    // doesn't look hollow.
+    char *p = num;
+    while (*p == ' ') p++;
+    snprintf_P(out, outSz, PSTR("\x01" "%s:%sC"), name, p);
+  }
+
   void showTemperatures(){
-    // Build four rows: left column = left sensors, right column = right sensors
     String rows[4];
     for (int r=0;r<4;r++){
-      // left sensors at indices 4..7 (shown left-justified),
-      // first 4 sensors at indices 0..3 (shown right-justified)
       uint8_t leftIdx = 4 + r;
       uint8_t rightIdx = r;
-      String leftName = String(g_ds18.name(leftIdx));
-      String rightName = String(g_ds18.name(rightIdx));
+      const char *leftName = g_ds18.name(leftIdx);
+      const char *rightName = g_ds18.name(rightIdx);
       float lt = g_ds18.tempC(leftIdx);
       float rt = g_ds18.tempC(rightIdx);
-      char lb[32]; char rb[32];
-      if (isnan(lt)) snprintf(lb, sizeof(lb), "\x01" "%s:--.-C", leftName.c_str()); else snprintf(lb, sizeof(lb), "\x01" "%s:%.1fC", leftName.c_str(), lt);
-      if (isnan(rt)) snprintf(rb, sizeof(rb), "\x01" "%s:--.-C", rightName.c_str()); else snprintf(rb, sizeof(rb), "\x01" "%s:%.1fC", rightName.c_str(), rt);
+      char lb[16]; char rb[16];
+      formatTempCell(lb, sizeof(lb), leftName, lt);
+      formatTempCell(rb, sizeof(rb), rightName, rt);
       String leftStr(lb); String rightStr(rb);
-      // truncate if too long
       if ((int)leftStr.length() > 10) leftStr = leftStr.substring(0,10);
       if ((int)rightStr.length() > 10) rightStr = rightStr.substring(0,10);
-      // left column: left-justified to width 10
       while ((int)leftStr.length() < 10) leftStr += ' ';
-      // right column: right-justified to width 10
       if ((int)rightStr.length() < 10){
         String pad = "";
         for (int p=0; p < 10 - (int)rightStr.length(); p++) pad += ' ';
@@ -670,35 +676,15 @@ public:
       }
       rows[r] = leftStr + rightStr;
     }
-    // Use 4-line printer when available
     g_lcdStatus.show4To(LCD_TGT_1, rows[0], rows[1], rows[2], rows[3], true);
   }
 
-  void showRemote(){
-    String status;
-    status.reserve(16);
-    status = g_nema.isEnabled() ? "REMOTE ON" : "REMOTE OFF";
-    String src = g_ebyteRadio.lastSource;
-    if (src.length() == 0) src = "PKT:NONE";
-    if (src.length() > 12) src = src.substring(0, 12);
-    String axes;
-    axes.reserve(16);
-    axes = "X";
-    axes += String(g_ebyteRadio.lastPkt.Rstick_X);
-    axes += "Y";
-    axes += String(g_ebyteRadio.lastPkt.Rstick_Y);
-    String bottom;
-    bottom.reserve(36);
-    bottom = src;
-    bottom += ' ';
-    bottom += axes;
-    if (g_nema.isLeftMotorEnabled()) bottom += " L";
-    if (g_nema.isRightMotorEnabled()) bottom += " R";
-    lcdPrint(status, bottom);
-  }
-
-
   void enterSelected(Robot &robot){
+#if LCD_ENABLED
+    // Each new state should start with a clean LCD so static menus do not
+    // inherit half-rendered content from previous screens.
+    g_lcdStatus.invalidate();
+#endif
     switch ((MenuItem)_menuIndex){
       case MENU_HOME:
         _state = STATE_HOME;
@@ -751,15 +737,14 @@ public:
         showSound();
         return;
 
-      case MENU_REMOTE:
-        _state = STATE_REMOTE;
-        _lastUiMs = 0;
-        showRemote();
-        return;
-
       case MENU_TEMPS:
         _state = STATE_TEMPS;
         _lastUiMs = 0;
+        // Force a fresh DS18 read on entry so the menu shows live values
+        // immediately rather than NaNs / last cached cycle.
+#if DS18_ENABLED
+        g_ds18.forceRead();
+#endif
         showTemperatures();
         return;
 
@@ -946,12 +931,20 @@ public:
 
   // Public helper for direct menu navigation from web UI / commands
   void gotoHome(){
-    _state = STATE_HOME;
+    enterHome();
     _menuIndex = 1;
-    showHome();
   }
 
   void gotoMenu(MenuItem menu, Robot &robot){
+    if (menu == MENU_HOME){
+      gotoHome();
+      return;
+    }
+#if LCD_ENABLED
+    // Web-based direct menu jumps should behave like interactive menu mode.
+    g_lcdStatus.setPinned(true);
+    g_lcdStatus.invalidate();
+#endif
     _menuIndex = (uint8_t)menu;
     enterSelected(robot);
   }

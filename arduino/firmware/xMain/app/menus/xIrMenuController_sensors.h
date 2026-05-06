@@ -68,13 +68,23 @@ void IrMenuController::refreshLive(Robot &robot){
     robot.imu.read();
     float p = robot.imu.getPitch();
     float r = robot.imu.getRoll();
-    
+
     if (LCD_ROWS >= 4){
+      // Plain ASCII so the page renders regardless of CGRAM state, and we use
+      // signed clamps so very large IMU values cannot overflow the row width
+      // (which previously truncated mid-row and gave the panel nothing to show).
+      int pi  = (int)constrain(p, -999.0f, 999.0f);
+      int ri  = (int)constrain(r, -999.0f, 999.0f);
+      int ax  = (int)constrain(robot.imu.getAccX(), -9999.0f, 9999.0f);
+      int ay  = (int)constrain(robot.imu.getAccY(), -9999.0f, 9999.0f);
+      int az  = (int)constrain(robot.imu.getAccZ(), -9999.0f, 9999.0f);
+      int tc  = (int)constrain(robot.imu.getTempC(), -99.0f,  150.0f);
+
       char l1[21], l2[21], l3[21], l4[21];
-      snprintf_P(l1, sizeof(l1), PSTR(" \x01 IMU PITCH: %-4d"), (int)p);
-      snprintf_P(l2, sizeof(l2), PSTR(" \x01 IMU ROLL:  %-4d"), (int)r);
-      snprintf_P(l3, sizeof(l3), PSTR(" A:%d %d %d        "), (int)(robot.imu.getAccX()), (int)(robot.imu.getAccY()), (int)(robot.imu.getAccZ()));
-      snprintf_P(l4, sizeof(l4), PSTR(" TEMP: %d C        "), (int)robot.imu.getTempC());
+      snprintf_P(l1, sizeof(l1), PSTR("   IMU SENSOR       "));
+      snprintf_P(l2, sizeof(l2), PSTR(" PITCH:%-4d ROLL:%-3d"), pi, ri);
+      snprintf_P(l3, sizeof(l3), PSTR(" AX:%-4d AY:%-4d    "), ax, ay);
+      snprintf_P(l4, sizeof(l4), PSTR(" AZ:%-4d  TEMP:%-3dC "), az, tc);
       g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
     } else {
       if (_imuSub == 0){
