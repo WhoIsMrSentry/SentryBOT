@@ -180,8 +180,9 @@ private:
     if (driverReady) return;
     Wire.begin();
 #if defined(ARDUINO_ARCH_AVR)
-    // Avoid hard lock if a device disappears or bus glitches.
-  Wire.setWireTimeout(25000, false);
+    // Avoid hard lock if a device disappears or bus glitches; auto-reset on
+    // timeout so other I2C peripherals (LCD) keep working after a stuck slave.
+  Wire.setWireTimeout(25000, true);
 #endif
     driverPresent = i2cPing();
     if (!driverPresent){

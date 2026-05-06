@@ -353,11 +353,9 @@ static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] PROGMEM = {90,90, 90,90};
 // occasionally block IR decoding. This setting can be overridden at build-time
 // by defining `BUZZER_DISABLE_TONE_WHEN_IR` explicitly.
 #ifndef BUZZER_DISABLE_TONE_WHEN_IR
-#if defined(IR_ENABLED) && IR_ENABLED
-#define BUZZER_DISABLE_TONE_WHEN_IR 1
-#else
+// Physical IR receiver is disabled in this build (web remote is used),
+// so keep tone() enabled for proper melody playback.
 #define BUZZER_DISABLE_TONE_WHEN_IR 0
-#endif
 #endif
 
 // If tone() is used while IR is enabled (BUZZER_DISABLE_TONE_WHEN_IR=0),

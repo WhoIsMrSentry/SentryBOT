@@ -45,14 +45,23 @@ static inline uint8_t lcdHubResolveMask(uint8_t requested){
   return (resolved == 0) ? avail : resolved;
 }
 
-static inline void lcdHubPrint(uint8_t requestedMask, const String &top, const String &bottom){
-  uint8_t m = lcdHubResolveMask(requestedMask);
-  if ((m & LCD_TGT_1) && g_lcd1Ok) g_lcd1.printLines(top, bottom);
-}
-
 static inline void lcdHubPrint4(uint8_t requestedMask, const String &l1, const String &l2, const String &l3, const String &l4){
   uint8_t m = lcdHubResolveMask(requestedMask);
   if ((m & LCD_TGT_1) && g_lcd1Ok) g_lcd1.print4Lines(l1, l2, l3, l4);
+}
+
+// Soft repaint hook for state transitions. The display content itself is not
+// hardware-cleared — subsequent `print4Lines` calls always pad each row to the
+// full column width with spaces, which guarantees stale pixels are overwritten
+// without the side effects of `LiquidCrystal_I2C::clear()` on flaky panels.
+static inline void lcdHubFullClear(uint8_t requestedMask){
+  uint8_t m = lcdHubResolveMask(requestedMask);
+  if ((m & LCD_TGT_1) && g_lcd1Ok) g_lcd1.repaint();
+}
+
+// 2-line entry routes through print4Lines so lower rows never keep stale content.
+static inline void lcdHubPrint(uint8_t requestedMask, const String &top, const String &bottom){
+  lcdHubPrint4(requestedMask, top, bottom, String(""), String(""));
 }
 
 static inline void lcdHubPrintDefault(const String &top, const String &bottom){
@@ -149,59 +158,64 @@ public:
     _defaultMsg = defaultMsg;
     _holdMs = holdMs;
     _lastShowMs = 0;
-    _lastTop = "";
-    _lastBottom = "";
+    _last = "";
     show(defaultMsg, "", true);
   }
 
   void setPinned(bool pinned){
     _pinned = pinned;
     if (!_pinned){
-      // Reset timer so we don't instantly revert right after unpin.
       _lastShowMs = millis();
     }
   }
 
   bool isPinned() const { return _pinned; }
 
+  // Force the next show*() call to redraw even when the cached content matches,
+  // and physically clear the LCD so any stale pixels left by direct writers
+  // (boot UI, raw library calls) are wiped before the next render.
+  void invalidate(){
+    _last = "";
+    lcdHubFullClear(LCD_TGT_1);
+  }
+
   void show(const String &top, const String &bottom = "", bool force=false){
-    if (!lcdHubAny()) return;
-    if (_pinned && !force) return;
-    if (top == _lastTop && bottom == _lastBottom) return; // Ignore even if forced if content is identical
-    _lastTop = top;
-    _lastBottom = bottom;
-    _lastShowMs = millis();
-    lcdHubPrintDefault(top, bottom);
+    showTo(LCD_TGT_1, top, bottom, force);
   }
 
   void show(const __FlashStringHelper* top, const __FlashStringHelper* bottom = NULL, bool force = false){
-    show(String(top), bottom ? String(bottom) : "", force);
+    showTo(LCD_TGT_1, String(top), bottom ? String(bottom) : "", force);
   }
 
   void showTo(uint8_t targetMask, const String &top, const String &bottom = "", bool force=false){
-    if (!lcdHubAny()) return;
-    if (_pinned && !force) return;
-    if (top == _lastTop && bottom == _lastBottom){
-      // Content same; if forced we might still want to ensure it's on this specific display,
-      // but to solve flicker we avoid redundant print calls.
-      return;
-    }
-    _lastTop = top;
-    _lastBottom = bottom;
-    _lastShowMs = millis();
-    lcdHubPrint(targetMask, top, bottom);
+    show4To(targetMask, top, bottom, String(""), String(""), force);
   }
 
   void show4To(uint8_t targetMask, const String &l1, const String &l2, const String &l3, const String &l4, bool force=false){
     if (!lcdHubAny()) return;
     if (_pinned && !force) return;
-    // avoid redundant prints when identical
-    String combined = l1 + "\n" + l2 + "\n" + l3 + "\n" + l4;
-    if (combined == (_lastTop + "\n" + _lastBottom)){
+
+    // Forced calls (menu/state transitions) must always reach the LCD even if
+    // the cached content matches, because direct/bypass writers (boot UI, raw
+    // library calls) may have left stale pixels. Importantly, we also skip the
+    // big String concatenation in this case so AVR doesn't run out of heap and
+    // silently drop the render.
+    if (force){
+      _last = "";
+      _lastShowMs = millis();
+      lcdHubPrint4(targetMask, l1, l2, l3, l4);
       return;
     }
-    _lastTop = l1;
-    _lastBottom = l2; // keep for backward compat
+
+    String combined = l1;
+    combined += '\n';
+    combined += l2;
+    combined += '\n';
+    combined += l3;
+    combined += '\n';
+    combined += l4;
+    if (combined == _last) return;
+    _last = combined;
     _lastShowMs = millis();
     lcdHubPrint4(targetMask, l1, l2, l3, l4);
   }
@@ -212,14 +226,14 @@ public:
     if (_holdMs == 0) return;
     if (_lastShowMs == 0) return;
     if (millis() - _lastShowMs < _holdMs) return;
-    if (_lastTop == _defaultMsg && _lastBottom.length() == 0) return;
+    String def = _defaultMsg + "\n\n\n";
+    if (_last == def) return;
     show(_defaultMsg, "", true);
   }
 
 private:
   String _defaultMsg;
-  String _lastTop;
-  String _lastBottom;
+  String _last;
   unsigned long _holdMs{3000};
   unsigned long _lastShowMs{0};
   bool _pinned{false};

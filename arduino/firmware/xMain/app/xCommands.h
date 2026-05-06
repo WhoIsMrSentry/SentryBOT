@@ -121,19 +121,18 @@ static inline void handleJson(const String &line){
     menu.toLowerCase();
 
     if (menu == "home") { g_irMenu.gotoHome(); Protocol::sendOk("menu_home"); return; }
-    // Menu values: 1=SERVO, 2=LASER, 3=ULTRA, 4=IMU, 5=RFID, 6=SOUND, 7=REMOTE, 8=CALIBRATE, 9=SYSTEM, 10=TEMPS, 11=ALERTS, 12=STATS
-    if (menu == "servo") { g_irMenu.gotoMenu((IrMenuController::MenuItem)1, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_servo"); return; }
-    if (menu == "laser") { g_irMenu.gotoMenu((IrMenuController::MenuItem)2, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_laser"); return; }
-    if (menu == "ultra") { g_irMenu.gotoMenu((IrMenuController::MenuItem)3, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_ultra"); return; }
-    if (menu == "imu") { g_irMenu.gotoMenu((IrMenuController::MenuItem)4, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_imu"); return; }
-    if (menu == "rfid") { g_irMenu.gotoMenu((IrMenuController::MenuItem)5, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_rfid"); return; }
-    if (menu == "sound") { g_irMenu.gotoMenu((IrMenuController::MenuItem)6, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_sound"); return; }
-    if (menu == "remote") { g_irMenu.gotoMenu((IrMenuController::MenuItem)7, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_remote"); return; }
-    if (menu == "calibrate") { g_irMenu.gotoMenu((IrMenuController::MenuItem)8, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_calibrate"); return; }
-    if (menu == "system") { g_irMenu.gotoMenu((IrMenuController::MenuItem)9, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_system"); return; }
-    if (menu == "temps") { g_irMenu.gotoMenu((IrMenuController::MenuItem)10, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_temps"); return; }
-    if (menu == "alerts") { g_irMenu.gotoMenu((IrMenuController::MenuItem)11, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_alerts"); return; }
-    if (menu == "stats") { g_irMenu.gotoMenu((IrMenuController::MenuItem)12, robot); g_irMenu.showMenu(); Protocol::sendOk("menu_stats"); return; }
+    // Resolve via enum names to stay correct when items are added/removed.
+    if (menu == "servo")     { g_irMenu.gotoMenu(IrMenuController::MENU_SERVO,     robot); Protocol::sendOk("menu_servo");     return; }
+    if (menu == "laser")     { g_irMenu.gotoMenu(IrMenuController::MENU_LASER,     robot); Protocol::sendOk("menu_laser");     return; }
+    if (menu == "ultra")     { g_irMenu.gotoMenu(IrMenuController::MENU_ULTRA,     robot); Protocol::sendOk("menu_ultra");     return; }
+    if (menu == "imu")       { g_irMenu.gotoMenu(IrMenuController::MENU_IMU,       robot); Protocol::sendOk("menu_imu");       return; }
+    if (menu == "rfid")      { g_irMenu.gotoMenu(IrMenuController::MENU_RFID,      robot); Protocol::sendOk("menu_rfid");      return; }
+    if (menu == "sound")     { g_irMenu.gotoMenu(IrMenuController::MENU_SOUND,     robot); Protocol::sendOk("menu_sound");     return; }
+    if (menu == "calibrate") { g_irMenu.gotoMenu(IrMenuController::MENU_CALIBRATE, robot); Protocol::sendOk("menu_calibrate"); return; }
+    if (menu == "system")    { g_irMenu.gotoMenu(IrMenuController::MENU_SYSTEM,    robot); Protocol::sendOk("menu_system");    return; }
+    if (menu == "temps")     { g_irMenu.gotoMenu(IrMenuController::MENU_TEMPS,     robot); Protocol::sendOk("menu_temps");     return; }
+    if (menu == "alerts")    { g_irMenu.gotoMenu(IrMenuController::MENU_ALERTS,    robot); Protocol::sendOk("menu_alerts");    return; }
+    if (menu == "stats")     { g_irMenu.gotoMenu(IrMenuController::MENU_STATS,     robot); Protocol::sendOk("menu_stats");     return; }
 
     Protocol::sendErr("bad_menu");
     return;
@@ -185,6 +184,7 @@ static inline void handleJson(const String &line){
 
   if (line.indexOf("\"cmd\":\"temp_read\"")>=0){
 #if DS18_ENABLED
+    g_ds18.forceRead();
     SERIAL_IO.print(F("{\"ok\":true,\"temps\":["));
     for (int i=0; i<DS18_SENSOR_COUNT; i++){
       if (i > 0) SERIAL_IO.print(',');
@@ -304,6 +304,8 @@ static inline void handleJson(const String &line){
     if (line.indexOf("\"out\":\"quiet\"")>=0) out = BUZZER_OUT_QUIET;
 
     if (name.length()==0){ Protocol::sendErr("no_name"); return; }
+    // Prevent overlap with any continuous warning tone before melody starts.
+    g_buzzer.stop();
     g_song.play(name, out);
     Protocol::sendOk("sound_play");
 #else
