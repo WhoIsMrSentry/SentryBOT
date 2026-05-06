@@ -118,6 +118,20 @@ public:
     _lcd->setCursor(0, 0);
   }
 
+  uint8_t cols() const { return _cols; }
+  uint8_t rows() const { return _rows; }
+
+  // Soft repaint: just home the cursor. We deliberately avoid `clear()` here
+  // because some HD44780/I2C panels glitch the first row writes that follow
+  // a clear, and we deliberately avoid `createChar()` because redefining
+  // CGRAM mid-flight produced the same symptom. Subsequent renders pad each
+  // row to the full column width with spaces, so any stale content is
+  // overwritten without needing a hardware clear.
+  void repaint(){
+    if (!_lcd) return;
+    _lcd->setCursor(0, 0);
+  }
+
   // Print up to 4 lines (for 20x4 displays). If device has fewer rows,
   // lines will be concatenated or truncated appropriately.
   void print4Lines(const String &l1, const String &l2, const String &l3, const String &l4){
@@ -133,8 +147,13 @@ public:
       return;
     }
 
-    // If only 2 rows, show first two lines concatenated with the remaining as overflow
+    // If only 2 rows, prefer using rows 0/1 for l1/l2 unmodified.
+    // Only concatenate the lower lines as overflow when they contain content.
     if (_rows == 2){
+      if (l3.length() == 0 && l4.length() == 0){
+        printLines(l1, l2);
+        return;
+      }
       String top = l1;
       if (l2.length()) top += " " + l2;
       String bot = l3;
@@ -143,14 +162,19 @@ public:
       return;
     }
 
-    // rows >= 3: print each available line on successive rows
-    String s[4] = {l1, l2, l3, l4};
-    for (int r = 0; r < min(4, _rows); r++){
-      String m = s[r];
-      if ((int)m.length() > _cols) m = m.substring(0, _cols);
+    // rows >= 3: render each row, padding to full column width so previous
+    // content is overwritten. We avoid building extra String copies (AVR has
+    // very little heap and copies + substring() were occasionally returning
+    // empty for the first row, which is what caused HOME/IMU top half blanks).
+    const String* lines[4] = {&l1, &l2, &l3, &l4};
+    uint8_t lim = (_rows < 4) ? _rows : 4;
+    for (uint8_t r = 0; r < lim; r++){
+      const String &src = *(lines[r]);
+      int srcLen = (int)src.length();
+      if (srcLen > _cols) srcLen = _cols;
       _lcd->setCursor(0, r);
-      _lcd->print(m);
-      for (int i = (int)m.length(); i < _cols; i++) _lcd->print(' ');
+      for (int i = 0; i < srcLen; i++) _lcd->print((char)src[i]);
+      for (int i = srcLen; i < _cols; i++) _lcd->print(' ');
     }
     _lcd->setCursor(0, 0);
   }

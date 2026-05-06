@@ -48,13 +48,29 @@ public:
       }
     }
     for (uint8_t i=found;i<DS18_SENSOR_COUNT;i++) _have[i] = false;
+    for (uint8_t i=0;i<DS18_SENSOR_COUNT;i++) _temps[i] = NAN;
     _lastPoll = 0;
+    // Prime values immediately so menus/web do not show stale/empty data.
+    forceRead();
   }
 
   void update(){
     unsigned long now = millis();
     if ((long)(now - _lastPoll) < (long)DS18_POLL_MS) return;
     _lastPoll = now;
+    performRead();
+  }
+
+  void forceRead(){
+    _lastPoll = millis();
+    performRead();
+  }
+
+  float tempC(uint8_t idx) const { if (idx>=DS18_SENSOR_COUNT) return NAN; return _temps[idx]; }
+  const char* name(uint8_t idx) const { if (idx>=DS18_SENSOR_COUNT) return ""; return _names[idx]; }
+
+private:
+  void performRead(){
     if (!_sensors) return;
     _sensors->requestTemperatures();
     for (uint8_t i=0;i<DS18_SENSOR_COUNT;i++){
@@ -78,11 +94,6 @@ public:
       }
     }
   }
-
-  float tempC(uint8_t idx) const { if (idx>=DS18_SENSOR_COUNT) return NAN; return _temps[idx]; }
-  const char* name(uint8_t idx) const { if (idx>=DS18_SENSOR_COUNT) return ""; return _names[idx]; }
-
-private:
   void triggerAlert(uint8_t idx, float temp){
     _alertState[idx] = true;
     // LCD

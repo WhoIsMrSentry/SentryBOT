@@ -24,22 +24,19 @@ String IrMenuController::soundName(uint8_t idx){
 }
 
 void IrMenuController::showSound(){
-  char l1[21], l2[21], l3[21], l4[21];
-  String buzzerState = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
-  
-  snprintf_P(l1, sizeof(l1), PSTR("   SOUND CONTROL    "));
-  snprintf_P(l2, sizeof(l2), PSTR("--------------------"));
-  
+  String top;
+  String bottom;
   if ((SoundItem)_soundIndex == SOUND_BUZZER_SETTINGS){
-    snprintf_P(l3, sizeof(l3), PSTR("L: %4d   Q: %4d "), (int)g_buzzerFreqLoud, (int)g_buzzerFreqQuiet);
-    snprintf_P(l4, sizeof(l4), PSTR(" [UP/DN]=CHG [*]=SET"));
+    top = "L:" + String((int)g_buzzerFreqLoud) + " Q:" + String((int)g_buzzerFreqQuiet);
+    bottom = "UP/DN CHG  *:SET";
   } else {
     String name = soundName(_soundIndex);
-    snprintf_P(l3, sizeof(l3), PSTR(" SEL: %-12s "), name.c_str());
-    snprintf_P(l4, sizeof(l4), PSTR(" OUT: %-5s  [OK]=PLAY"), buzzerState.c_str());
+    if ((int)name.length() > 12) name = name.substring(0, 12);
+    String out = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? "LOUD" : "QUIET";
+    top = "SND:" + name;
+    bottom = "OUT:" + out + " OK:PLAY";
   }
-  
-  g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+  lcdPrint(top, bottom);
 }
 
 void IrMenuController::playSelectedSound(){

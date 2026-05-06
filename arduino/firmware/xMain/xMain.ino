@@ -226,8 +226,12 @@ void setup(){
 #if LCD_ENABLED
   Wire.begin();
 #if defined(ARDUINO_ARCH_AVR)
-  // Keep I2C from hanging forever but do not hard-reset MCU on timeout.
-  Wire.setWireTimeout(25000, false);
+  // Keep I2C from hanging forever AND auto-recover the bus on timeout. With
+  // `reset_with_timeout=false` a single stuck slave (e.g. flaky IMU/MPU-6050)
+  // could leave Wire in a state where the LCD writes that follow silently
+  // fail, manifesting as blank menu rows. With `true` Wire resets itself and
+  // subsequent LCD transactions succeed.
+  Wire.setWireTimeout(25000, true);
 #endif
   uint8_t lcd1Addr = LCD_I2C_ADDR;
 
@@ -360,15 +364,17 @@ void loop(){
       printJsonEscaped(g_lastRfid);
       SERIAL_IO.println(F("\"}"));
   #if LCD_ENABLED
-      // Show brief RFID on main status LCD (LCD1)
-      char tail[9];
-      size_t rlen = g_lastRfid.length();
-      size_t start = (rlen > 8) ? (rlen - 8) : 0;
-      uint8_t ti = 0;
-      for (size_t p = start; p < rlen && ti < 8; ++p) tail[ti++] = g_lastRfid[p];
-      tail[ti] = '\0';
-      g_lcdLineTmp = tail;
-      g_lcdStatus.showTo(LCD_TGT_1, "RFID", g_lcdLineTmp, true);
+      // Do not steal the screen while user is browsing menus.
+      if (!g_lcdStatus.isPinned()){
+        char tail[9];
+        size_t rlen = g_lastRfid.length();
+        size_t start = (rlen > 8) ? (rlen - 8) : 0;
+        uint8_t ti = 0;
+        for (size_t p = start; p < rlen && ti < 8; ++p) tail[ti++] = g_lastRfid[p];
+        tail[ti] = '\0';
+        g_lcdLineTmp = tail;
+        g_lcdStatus.showTo(LCD_TGT_1, "RFID", g_lcdLineTmp);
+      }
 
       // Normalize UID (remove non-alnum, uppercase)
       char norm[17];
@@ -384,8 +390,10 @@ void loop(){
 
       // Owner UID (uppercase, no separators)
       if (isOwnerUid(norm)){
-        // Greet owner on LCD1
-        g_lcdStatus.showTo(LCD_TGT_1, "Merhaba", "Sahip", true);
+        // Greet owner only when LCD is not pinned by menu UI.
+        if (!g_lcdStatus.isPinned()){
+          g_lcdStatus.showTo(LCD_TGT_1, "Merhaba", "Sahip");
+        }
         playCuteSound(CUTE_SUPER_HAPPY, true);
         // Enqueue sequence: walle then three bb8 variants
         enqueueSong(SONG_WALLE);
