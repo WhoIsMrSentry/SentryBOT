@@ -1,0 +1,328 @@
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import threading
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import cv2
+import numpy as np
+
+from .backends import Backends
+from .config import RuntimeConfig
+from .models import KnownFace, known_face_from_dict, known_face_to_dict
+from .qwen_client import QwenVlmClient
+
+logger = logging.getLogger("remote_multimodal.engine")
+
+
+class MultiModalEngine:
+    def __init__(self, cfg: RuntimeConfig) -> None:
+        self.cfg = cfg
+        self._apply_profile_defaults()
+        self.backends = Backends(cfg)
+        self.qwen = QwenVlmClient(cfg)
+        self._lock = threading.Lock()
+        self._prev_gray: Optional[np.ndarray] = None
+        self._prev_hist: Optional[np.ndarray] = None
+        self._known_faces: List[KnownFace] = []
+        self._db_path = Path(cfg.face_db_path)
+        self._face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+        self._body_hog = cv2.HOGDescriptor()
+        self._body_hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        self._load_face_db()
+
+    def _apply_profile_defaults(self) -> None:
+        profile = str(self.cfg.runtime_profile or "balanced").strip().lower()
+        if profile == "ultra_fast":
+            self.cfg.yolo_conf = 0.35
+            self.cfg.yolo_imgsz = 416
+            self.cfg.motion_threshold = 0.1
+            self.cfg.scene_change_threshold = 0.4
+            self.cfg.enable_age_emotion = False
+            self.cfg.enable_advanced_caption = False
+            self.cfg.qwen_num_predict = min(self.cfg.qwen_num_predict, 120)
+            self.cfg.qwen_timeout_s = min(self.cfg.qwen_timeout_s, 5.0)
+        elif profile == "max_accuracy":
+            self.cfg.yolo_conf = 0.2
+            self.cfg.yolo_imgsz = 960
+            self.cfg.motion_threshold = 0.06
+            self.cfg.scene_change_threshold = 0.3
+            self.cfg.qwen_num_predict = max(self.cfg.qwen_num_predict, 256)
+            self.cfg.qwen_timeout_s = max(self.cfg.qwen_timeout_s, 10.0)
+        else:
+            # balanced
+            self.cfg.yolo_conf = 0.25
+            self.cfg.yolo_imgsz = 640
+            self.cfg.motion_threshold = 0.08
+            self.cfg.scene_change_threshold = 0.35
+            self.cfg.qwen_num_predict = max(160, min(self.cfg.qwen_num_predict, 224))
+            self.cfg.qwen_timeout_s = max(6.0, min(self.cfg.qwen_timeout_s, 9.0))
+
+    def _load_face_db(self) -> None:
+        if not self._db_path.exists():
+            return
+        try:
+            raw = json.loads(self._db_path.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                self._known_faces = [f for f in (known_face_from_dict(x) for x in raw) if f is not None]
+        except Exception as exc:
+            logger.warning("Failed to load face db: %s", exc)
+
+    def _save_face_db(self) -> None:
+        try:
+            payload = [known_face_to_dict(f) for f in self._known_faces]
+            self._db_path.write_text(json.dumps(payload, ensure_ascii=True), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to save face db: %s", exc)
+
+    @staticmethod
+    def decode_image(image_b64: str) -> np.ndarray:
+        raw = base64.b64decode(image_b64)
+        arr = np.frombuffer(raw, dtype=np.uint8)
+        frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("invalid image_b64")
+        return frame
+
+    def detect_objects(self, frame: np.ndarray) -> List[Dict[str, Any]]:
+        if self.backends.yolo is not None:
+            try:
+                res = self.backends.yolo.predict(
+                    frame,
+                    verbose=False,
+                    conf=float(self.cfg.yolo_conf),
+                    imgsz=int(self.cfg.yolo_imgsz),
+                )
+                if res:
+                    r0 = res[0]
+                    boxes = getattr(r0, "boxes", None)
+                    names = getattr(r0, "names", {}) or {}
+                    if boxes is not None:
+                        xyxy = boxes.xyxy.cpu().numpy().astype(int)
+                        conf = boxes.conf.cpu().numpy()
+                        cls = boxes.cls.cpu().numpy().astype(int)
+                        out: List[Dict[str, Any]] = []
+                        for i in range(len(xyxy)):
+                            x1, y1, x2, y2 = [int(v) for v in xyxy[i]]
+                            label = str(names.get(int(cls[i]), f"class_{int(cls[i])}"))
+                            out.append(
+                                {
+                                    "label": label,
+                                    "confidence": round(float(conf[i]), 3),
+                                    "bbox": [x1, y1, x2, y2],
+                                }
+                            )
+                        return out
+            except Exception as exc:
+                logger.debug("YOLO detect failed: %s", exc)
+
+        rects, weights = self._body_hog.detectMultiScale(
+            frame,
+            winStride=(8, 8),
+            padding=(8, 8),
+            scale=1.05,
+        )
+        out: List[Dict[str, Any]] = []
+        for i, (x, y, w, h) in enumerate(rects):
+            out.append(
+                {
+                    "label": "person",
+                    "confidence": round(float(weights[i]) if i < len(weights) else 0.4, 3),
+                    "bbox": [int(x), int(y), int(x + w), int(y + h)],
+                }
+            )
+        return out
+
+    def detect_faces(self, frame: np.ndarray) -> List[List[int]]:
+        fr = self.backends.face_recognition
+        if fr is not None:
+            try:
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                locs = fr.face_locations(rgb, model="hog")
+                return [[int(l[3]), int(l[0]), int(l[1]), int(l[2])] for l in locs]
+            except Exception:
+                pass
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self._face_cascade.detectMultiScale(gray, scaleFactor=1.12, minNeighbors=5, minSize=(56, 56))
+        return [[int(x), int(y), int(x + w), int(y + h)] for (x, y, w, h) in faces]
+
+    def recognize_person(self, frame: np.ndarray, face_box: List[int]) -> Tuple[str, float]:
+        fr = self.backends.face_recognition
+        if fr is None:
+            return "Unknown", 0.0
+        x1, y1, x2, y2 = face_box
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        try:
+            enc = fr.face_encodings(rgb, [(y1, x2, y2, x1)])
+            if not enc:
+                return "Unknown", 0.0
+            vec = enc[0]
+            best_name = "Unknown"
+            best_dist = 999.0
+            for known in self._known_faces:
+                dist = np.linalg.norm(np.array(known.embedding) - vec)
+                if dist < best_dist:
+                    best_dist = float(dist)
+                    best_name = known.name
+            if best_dist < 0.55:
+                conf = max(0.0, min(1.0, 1.0 - (best_dist / 0.75)))
+                return best_name, conf
+            return "Unknown", max(0.0, min(0.5, 1.0 - (best_dist / 1.2)))
+        except Exception:
+            return "Unknown", 0.0
+
+    def estimate_age_emotion(self, face_img: np.ndarray) -> Tuple[Optional[int], Optional[str]]:
+        deepface = self.backends.deepface
+        if deepface is None:
+            return None, None
+        try:
+            analysis = deepface.analyze(face_img, actions=["age", "emotion"], enforce_detection=False)
+            data = analysis[0] if isinstance(analysis, list) and analysis else analysis
+            age = int(data.get("age")) if isinstance(data, dict) and data.get("age") is not None else None
+            emotion = str(data.get("dominant_emotion")) if isinstance(data, dict) and data.get("dominant_emotion") else None
+            return age, emotion
+        except Exception:
+            return None, None
+
+    def motion_scene_change(self, frame: np.ndarray) -> Tuple[float, float]:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        gray = cv2.GaussianBlur(gray, (7, 7), 0)
+        hist = cv2.calcHist([gray], [0], None, [64], [0, 256])
+        cv2.normalize(hist, hist)
+        motion = 0.0
+        scene = 0.0
+        with self._lock:
+            if self._prev_gray is not None:
+                diff = cv2.absdiff(gray, self._prev_gray)
+                motion = float(np.mean(diff) / 255.0)
+            if self._prev_hist is not None:
+                corr = cv2.compareHist(hist, self._prev_hist, cv2.HISTCMP_CORREL)
+                scene = max(0.0, min(1.0, 1.0 - float(corr)))
+            self._prev_gray = gray
+            self._prev_hist = hist
+        return motion, scene
+
+    def _caption(self, frame: np.ndarray) -> Optional[str]:
+        pipe = self.backends.caption_pipe
+        if pipe is None:
+            return None
+        try:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            out = pipe(rgb)
+            if isinstance(out, list) and out and isinstance(out[0], dict):
+                text = str(out[0].get("generated_text", "")).strip()
+                return text or None
+        except Exception:
+            return None
+        return None
+
+    def analyze(self, image_b64: str) -> Dict[str, Any]:
+        frame = self.decode_image(image_b64)
+        h, w = frame.shape[:2]
+        objects = self.detect_objects(frame)
+        faces = self.detect_faces(frame)
+        motion, scene_change = self.motion_scene_change(frame)
+        qwen_out = self.qwen.analyze_frame(frame)
+
+        people: List[Dict[str, Any]] = []
+        for fb in faces:
+            x1, y1, x2, y2 = fb
+            x1 = max(0, min(w - 1, x1))
+            y1 = max(0, min(h - 1, y1))
+            x2 = max(0, min(w, x2))
+            y2 = max(0, min(h, y2))
+            if x2 <= x1 or y2 <= y1:
+                continue
+            crop = frame[y1:y2, x1:x2]
+            name, conf = self.recognize_person(frame, [x1, y1, x2, y2])
+            age, emotion = self.estimate_age_emotion(crop)
+            rec_level = 2 if name != "Unknown" else 0
+            people.append(
+                {
+                    "name": name,
+                    "confidence": round(float(conf), 3),
+                    "bbox": [x1, y1, x2, y2],
+                    "emotion": emotion,
+                    "age": age,
+                    "recognition_level": rec_level,
+                    "relationship": "known" if rec_level >= 2 else "unknown",
+                }
+            )
+
+        hazards = []
+        for o in objects:
+            lbl = str(o.get("label", "")).lower()
+            if lbl in {"knife", "fire", "scissors"}:
+                hazards.append({"type": lbl, "severity": "high", "bbox": o.get("bbox")})
+        for hz in qwen_out.get("hazards", []) if qwen_out.get("ok") else []:
+            hz_name = str(hz).strip().lower()
+            if hz_name and hz_name not in {str(x.get("type", "")).lower() for x in hazards}:
+                hazards.append({"type": hz_name, "severity": "medium", "bbox": None})
+
+        caption = self._caption(frame)
+        qwen_summary = str(qwen_out.get("summary", "")).strip() if qwen_out.get("ok") else ""
+        summary = qwen_summary or caption or f"{len(people)} person, {len(objects)} objects."
+        if scene_change > self.cfg.scene_change_threshold:
+            summary += " Scene changed."
+        if motion > self.cfg.motion_threshold:
+            summary += " Motion detected."
+        if hazards:
+            summary += " Hazard present."
+        persona_interpretation = (
+            str(qwen_out.get("persona_interpretation", "")).strip() if qwen_out.get("ok") else ""
+        ) or summary.strip()
+        suggested_focus = (
+            str(qwen_out.get("suggested_focus", "")).strip() if qwen_out.get("ok") else ""
+        )
+        focus_type = "person" if people else "scene"
+        if suggested_focus in {"person", "face", "human"}:
+            focus_type = "person"
+        elif suggested_focus in {"hazard", "danger", "object"} and hazards:
+            focus_type = "hazard"
+
+        importance = 0.35 + (0.2 if people else 0.0) + (0.15 if scene_change > self.cfg.scene_change_threshold else 0.0) + (0.1 if motion > self.cfg.motion_threshold else 0.0) + (0.3 if hazards else 0.0)
+        if qwen_out.get("ok"):
+            importance += 0.1
+        return {
+            "ok": True,
+            "summary": summary.strip(),
+            "persona_interpretation": persona_interpretation,
+            "objects": objects,
+            "people": people,
+            "hazards": hazards,
+            "motion": {"score": round(motion, 3), "detected": motion > self.cfg.motion_threshold},
+            "scene_change": {"score": round(scene_change, 3), "changed": scene_change > self.cfg.scene_change_threshold},
+            "interesting_events": ["scene_changed"] if scene_change > self.cfg.scene_change_threshold else [],
+            "recommended_focus": {"type": focus_type, "reason": "hybrid_cv_qwen"},
+            "importance_score": round(min(1.0, max(0.0, importance)), 3),
+            "frame_size": {"w": int(w), "h": int(h)},
+            "backend_info": {
+                "yolo": bool(self.backends.yolo is not None),
+                "face_recognition": bool(self.backends.face_recognition is not None),
+                "deepface": bool(self.backends.deepface is not None),
+                "advanced_caption": bool(self.backends.caption_pipe is not None),
+                "qwen_vlm": bool(qwen_out.get("ok")),
+                "qwen_model": qwen_out.get("model", ""),
+            },
+        }
+
+    def register_face(self, name: str, image_b64: str) -> Dict[str, Any]:
+        fr = self.backends.face_recognition
+        if fr is None:
+            return {"ok": False, "error": "face_recognition backend unavailable"}
+        frame = self.decode_image(image_b64)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        locs = fr.face_locations(rgb, model="hog")
+        if not locs:
+            return {"ok": False, "error": "no face detected"}
+        enc = fr.face_encodings(rgb, [locs[0]])
+        if not enc:
+            return {"ok": False, "error": "face encoding failed"}
+        embedding = enc[0].tolist()
+        self._known_faces = [f for f in self._known_faces if f.name.lower() != name.lower()]
+        self._known_faces.append(KnownFace(name=name, embedding=embedding))
+        self._save_face_db()
+        return {"ok": True, "name": name, "known_faces": len(self._known_faces)}
