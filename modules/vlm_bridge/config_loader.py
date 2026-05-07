@@ -9,7 +9,7 @@ from modules.config_center.agent_yaml_loader import deep_merge, load_agent_confi
 DEFAULT_CONFIG: Dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8101},
     "vision": {
-        "processing_mode": "local",  # local | remote
+        "processing_mode": "remote",  # local | remote (remote-first default)
         "camera_source": "http://127.0.0.1:8080/camera/video",
         "blind_mode": {"enabled": False, "interval_seconds": 5.0},
         "confidence_threshold": 0.5,
