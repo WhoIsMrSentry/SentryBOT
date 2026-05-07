@@ -180,7 +180,7 @@ def generate_text(
 
             if _is_direct_ollama_chat_endpoint(endpoint):
                 model = str((ollama_cfg or {}).get("model", "qwen3.5:9b")).strip() or "qwen3.5:9b"
-                num_predict = int((ollama_cfg or {}).get("num_predict", 160) or 160)
+                num_predict = int((ollama_cfg or {}).get("num_predict", 100) or 100)
                 resp = client.post(
                     endpoint,
                     json={

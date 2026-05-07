@@ -49,9 +49,45 @@ vision:
     heartbeat_interval_s: 30
     idle_lookaround_s: 60
 
+# Visual context caching
+visual_context:
+  enabled: true
+  cache_history_size: 5
+  importance_threshold: 0.3  # Only speak about contexts with importance >= this
+
+# Living Vision Agent configuration
+vision_llm:
+  enabled: true
+  base_url: "http://REMOTE_OLLAMA:11434"  # Remote Ollama HTTP API
+  model: "qwen3-vl:8b"                    # Q4 quantized, ~5GB VRAM on 24GB GPU
+  timeout_s: 18
+  max_image_width: 640
+  jpeg_quality: 70
+  min_interval_s: 4
+  active_question_timeout_s: 15
+  num_predict: 256                         # JSON çıktı için yeterli, hız kazancı
+  num_ctx: 2048                            # VLM context (image tokens dominate)
+
+person_identity:
+  store_path: "modules/vlm_bridge/data/person_identity.json"
+  recognition_levels:
+    0: "unknown"
+    1: "seen_before"
+    2: "familiar"
+    3: "friend"
+    4: "family"
+    5: "owner"
+  owner_name: ""  # Will be set by remember_person tool
+
 remote:
   auth_token: "changeme"  # Set a secure token in production or override
   accept_results: true     # Allow POST /vlm/results ingestion
+
+remote_multimodal:
+  enabled: false
+  endpoint: "http://PC_IP:8091/vision/analyze"
+  timeout_s: 6.0
+  auth_token: "changeme"
 
 robot:
   host: "localhost"  # Change to Robot IP when running remotely
@@ -59,8 +95,8 @@ robot:
 ollama:
   endpoint: "http://localhost:8080/ollama/chat"
   model: "qwen3.5:9b"
-  timeout: 12.0
-  num_predict: 160
+  timeout: 10.0
+  num_predict: 100
 
 llm:
   provider: "ollama"                 # ollama | google_ai_studio
