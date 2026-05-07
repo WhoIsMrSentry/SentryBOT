@@ -86,6 +86,25 @@ def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
             "profiles": profiles,
         }
 
+    @r.get("/profile", tags=["control"], summary="Get realtime latency profile")
+    def get_profile():
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if hasattr(processor, "get_realtime_profile_status"):
+            return processor.get_realtime_profile_status()
+        return {"ok": False, "error": "profile control not available"}
+
+    @r.post("/profile/switch", tags=["control"], summary="Switch realtime latency profile")
+    def switch_profile(body: dict):
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        mode = str((body or {}).get("mode", "")).strip().lower()
+        if not mode:
+            raise HTTPException(status_code=400, detail="mode required")
+        if hasattr(processor, "apply_realtime_profile"):
+            return processor.apply_realtime_profile(mode)
+        return {"ok": False, "error": "profile control not available"}
+
     @r.post("/mode", tags=["control"], summary="Set processing mode and/or mode flags")
     def set_mode(body: dict):
         if not processor:
@@ -256,4 +275,231 @@ def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
             raise HTTPException(status_code=503, detail="Vision processor not initialized")
         return {"people": processor.memory.list_people()}
 
+    # -----------------------------------------------------------------
+    # Living Vision Agent endpoints
+    # -----------------------------------------------------------------
+
+    @r.get("/context/latest", tags=["vision"], summary="Get latest visual context cache")
+    def get_context_latest():
+        """Return the latest cached VisionFrameContext if available."""
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        ctx = processor.get_latest_visual_context()
+        if ctx is None:
+            return {"available": False, "context": None, "reason": "No context cached yet"}
+        return {"available": True, "context": ctx}
+
+    @r.post("/context/refresh", tags=["vision"], summary="Refresh visual context (trigger VLM analysis)")
+    def refresh_context():
+        """Trigger a fresh VLM analysis of the current camera frame."""
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+
+        if hasattr(processor, "refresh_visual_context"):
+            ctx = processor.refresh_visual_context()
+        else:
+            ctx = processor.get_latest_visual_context()
+        return {"ok": True, "context_available": ctx is not None, "context": ctx}
+
+    @r.post("/ask", tags=["vision"], summary="Ask the VLM a question about the current scene")
+    def ask_vlm(body: dict):
+        """Ask the VLM a question about the current camera view."""
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        
+        question = body.get("question", "").strip()
+        if not question:
+            raise HTTPException(status_code=400, detail="question required")
+        
+        # Try to get current frame first
+        frame = None
+        with processor._frame_lock:
+            if processor._latest_raw_frame is not None:
+                frame = processor._latest_raw_frame.copy()
+        
+        # If no current frame from stream, try one-shot capture
+        if frame is None and not processor._is_http_camera_source():
+            try:
+                import cv2
+                cap = cv2.VideoCapture(processor.camera_source)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    cap.release()
+                    if not ret:
+                        frame = None
+            except Exception:
+                pass
+        
+        if frame is None:
+            # Fallback to cached context
+            ctx = processor.get_latest_visual_context()
+            if ctx:
+                return {"ok": True, "answer": ctx.get("persona_interpretation", ctx.get("summary", "Görüntü işlenemedi."))}
+            return {"ok": False, "answer": "Kamera görüntüsü alınamadı."}
+        
+        # Call VLM if available
+        if processor.vlm_client:
+            try:
+                answer = processor.vlm_client.ask_about_scene(frame, question, force=True)
+                if answer:
+                    if hasattr(processor, "refresh_visual_context"):
+                        processor.refresh_visual_context(question=question)
+                    return {"ok": True, "answer": answer}
+            except Exception:
+                pass
+        
+        # Fallback: context interpretation
+        ctx = processor.get_latest_visual_context()
+        if ctx:
+            summary = ctx.get("persona_interpretation", ctx.get("summary", "Cevap alınamadı."))
+            return {"ok": True, "answer": f"Görüntü işleme gecikti; elimdeki son görüntüye göre {summary}"}
+        
+        return {"ok": False, "answer": "VLM sistemi şu an kullanılamıyor."}
+
+    @r.post("/person/remember", tags=["vision"], summary="Remember/store person with relationship")
+    def remember_person(body: dict):
+        """Save or update a person in the identity memory."""
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not processor.person_identity:
+            raise HTTPException(status_code=501, detail="Person identity system not available")
+        
+        name = body.get("name", "").strip()
+        relationship = body.get("relationship", "known")
+        recognition_level = body.get("recognition_level", 2)
+        
+        if not name:
+            raise HTTPException(status_code=400, detail="name required")
+        
+        rec = processor.person_identity.remember_person(
+            name, relationship=relationship, recognition_level=int(recognition_level)
+        )
+        return {
+            "ok": True,
+            "person_id": rec.person_id,
+            "name": rec.name,
+            "recognition_level": rec.recognition_level,
+            "relationship": rec.relationship,
+        }
+
+    @r.post("/person/relationship", tags=["vision"], summary="Update person's relationship/recognition level")
+    def update_person_relationship(body: dict):
+        """Update a person's relationship or recognition level."""
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not processor.person_identity:
+            raise HTTPException(status_code=501, detail="Person identity system not available")
+        
+        person_id = body.get("person_id", "").strip()
+        name = body.get("name", "").strip()
+        relationship = body.get("relationship", "")
+        recognition_level = body.get("recognition_level", -1)
+        
+        if not person_id and not name:
+            raise HTTPException(status_code=400, detail="person_id or name required")
+        
+        # Support lookup by either person_id or name
+        if name and not person_id:
+            # Try to find by name
+            records = processor.person_identity._records
+            for rec in records.values():
+                if rec.name.lower() == name.lower():
+                    person_id = rec.person_id
+                    break
+        
+        if person_id:
+            rec = processor.person_identity._records.get(person_id)
+            if rec:
+                if relationship:
+                    rec.relationship = relationship
+                if recognition_level >= 0:
+                    rec.recognition_level = min(5, max(0, int(recognition_level)))
+                processor.person_identity._save_unlocked()
+                return {"ok": True, "person_id": rec.person_id, "name": rec.name}
+        
+        return {"ok": False, "error": "person not found"}
+
+    @r.get("/person/{name}", tags=["vision"], summary="Get person memory record by name")
+    def get_person(name: str):
+        """Retrieve a person's memory record."""
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not processor.person_identity:
+            raise HTTPException(status_code=501, detail="Person identity system not available")
+        
+        rec = processor.person_identity.recognize(name)
+        if rec is None:
+            return {"ok": False, "error": "person not found"}
+        return {"ok": True, "person": rec.to_dict() if hasattr(rec, "to_dict") else rec}
+
+    @r.get("/people", tags=["vision"], summary="List all remembered people")
+    def list_people():
+        """List all people in the identity memory."""
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not processor.person_identity:
+            return {"people": []}
+        
+        people = []
+        for rec in processor.person_identity._records.values():
+            people.append({
+                "person_id": rec.person_id,
+                "name": rec.name,
+                "recognition_level": rec.recognition_level,
+                "relationship": rec.relationship,
+                "seen_count": rec.seen_count,
+                "last_seen": rec.last_seen,
+            })
+        return {"people": people}
+
+    @r.post("/focus/person", tags=["vision"], summary="Focus head on specific person")
+    def focus_person(body: dict):
+        """Request the robot to look at a specific person."""
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        
+        name = body.get("name", "").strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name required")
+        
+        if hasattr(processor, "latest_results"):
+            for item in list(getattr(processor, "latest_results", []) or []):
+                if str(item.get("name", "")).strip().lower() == name.lower():
+                    bbox = item.get("bbox") or []
+                    if len(bbox) == 4:
+                        try:
+                            x1, y1, x2, y2 = [int(v) for v in bbox]
+                            cx = int((x1 + x2) / 2)
+                            cy = int((y1 + y2) / 2)
+                            pan = max(35, min(145, int(90 + ((cx - 320) / 320) * 45)))
+                            tilt = max(65, min(125, int(90 + ((cy - 240) / 240) * 30)))
+                            if hasattr(processor, "head_arbiter") and processor.head_arbiter is not None:
+                                from modules.vlm_bridge.services.head_control_arbiter import HeadCommand
+                                result = processor.head_arbiter.request_move(
+                                    HeadCommand(pan=float(pan), tilt=float(tilt), source="agent_core", priority=65, ttl_s=1.0)
+                                )
+                                return {"ok": bool(result.get("ok")), "focus_target": name, "head": result}
+                            processor._send_track(pan=pan, tilt=tilt, drive=0)
+                            return {"ok": True, "focus_target": name, "pan": pan, "tilt": tilt}
+                        except Exception:
+                            pass
+        return {"ok": False, "error": "person_not_visible", "focus_target": name}
+
+    @r.post("/follow/owner/start", tags=["vision"], summary="Start owner follow mode")
+    def owner_follow_start():
+        """Enable owner-specific follow mode (higher priority)."""
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        
+        result = processor.start_follow(person="owner")
+        return result if isinstance(result, dict) else {"ok": True}
+
+    @r.get("/head/status", tags=["vision"], summary="Get current head (pan/tilt) position")
+    def head_status():
+        """Return the current head servo position."""
+        if processor and hasattr(processor, "head_arbiter") and processor.head_arbiter is not None:
+            return processor.head_arbiter.get_status()
+        return {"pan": 90, "tilt": 90}
+
     return r
+
