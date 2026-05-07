@@ -4,6 +4,8 @@ import logging
 import os
 import threading
 import time
+import base64
+from datetime import datetime
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 import cv2
@@ -41,6 +43,50 @@ try:
     from .llm_client import generate_text
 except Exception:
     from modules.vlm_bridge.services.llm_client import generate_text  # type: ignore
+
+try:
+    from .person_identity import PersonIdentityManager
+except Exception:
+    try:
+        from modules.vlm_bridge.services.person_identity import PersonIdentityManager
+    except Exception:
+        PersonIdentityManager = None  # type: ignore
+
+try:
+    from .visual_context import VisionFrameContext, VisualContextCache
+except Exception:
+    try:
+        from modules.vlm_bridge.services.visual_context import VisionFrameContext, VisualContextCache
+    except Exception:
+        VisionFrameContext = None  # type: ignore
+        VisualContextCache = None  # type: ignore
+
+try:
+    from .ollama_vlm_client import OllamaVLMClient
+except Exception:
+    try:
+        from modules.vlm_bridge.services.ollama_vlm_client import OllamaVLMClient
+    except Exception:
+        OllamaVLMClient = None  # type: ignore
+
+try:
+    from .vision_sampler import VisionSampler
+except Exception:
+    VisionSampler = None  # type: ignore
+
+try:
+    from .vision_event_bus import VisionEventBus, EVENT_HAZARD_DETECTED, EVENT_NEW_PERSON, EVENT_OWNER_SEEN
+except Exception:
+    VisionEventBus = None  # type: ignore
+    EVENT_HAZARD_DETECTED = "hazard_detected"
+    EVENT_NEW_PERSON = "new_person"
+    EVENT_OWNER_SEEN = "owner_seen"
+
+try:
+    from .head_control_arbiter import HeadControlArbiter, HeadCommand
+except Exception:
+    HeadControlArbiter = None  # type: ignore
+    HeadCommand = None  # type: ignore
 
 
 logger = logging.getLogger("vlm_bridge")
@@ -189,16 +235,75 @@ class VisionProcessor:
         self.semantic = SemanticDescriber(config)
         self.memory = PeopleMemory()
 
+        # Living Vision Agent components
+        if PersonIdentityManager is not None:
+            person_data_path = vision_cfg.get("person_identity_store", "")
+            self.person_identity = PersonIdentityManager(
+                store_path=person_data_path,
+                face_manager=self.face_manager,
+                people_memory=self.memory,
+            )
+        else:
+            self.person_identity = None
+            logger.warning("PersonIdentityManager not available")
+
+        if VisualContextCache is not None:
+            self.visual_context_cache = VisualContextCache()
+        else:
+            self.visual_context_cache = None
+            logger.warning("VisualContextCache not available")
+
+        # Remote VLM client (Ollama)
+        vlm_cfg = config.get("vision_llm", {}) if isinstance(config.get("vision_llm", {}), dict) else {}
+        if vlm_cfg.get("enabled", True) and OllamaVLMClient is not None:
+            try:
+                self.vlm_client = OllamaVLMClient(vlm_cfg)
+                logger.info("[vlm_bridge] Remote VLM client initialized: %s", vlm_cfg.get("model", "unknown"))
+            except Exception as exc:
+                logger.warning("VLM client init failed: %s", exc)
+                self.vlm_client = None
+        else:
+            self.vlm_client = None
+            logger.info("[vlm_bridge] Remote VLM client disabled or unavailable")
+
+        mm_cfg = config.get("remote_multimodal", {}) if isinstance(config.get("remote_multimodal", {}), dict) else {}
+        self.remote_mm_enabled = bool(mm_cfg.get("enabled", False))
+        self.remote_mm_endpoint = str(mm_cfg.get("endpoint", "http://127.0.0.1:8091/vision/analyze")).strip()
+        self.remote_mm_timeout_s = float(mm_cfg.get("timeout_s", 6.0))
+        self.remote_mm_auth_token = str(mm_cfg.get("auth_token", "")).strip()
+
         actions_cfg = config.get("actions", {}) if isinstance(config, dict) else {}
         endpoint = str(actions_cfg.get("endpoint", "http://localhost:8080/autonomy/apply_actions"))
         timeout = float(actions_cfg.get("timeout", 1.5))
         enabled = bool(actions_cfg.get("default_apply", False))
         self.action_dispatcher = VisionActionDispatcher(endpoint=endpoint, timeout=timeout, enabled=enabled)
+        self.vision_sampler = VisionSampler(vlm_cfg) if VisionSampler is not None else None
+        self.event_bus = VisionEventBus() if VisionEventBus is not None else None
+        self.head_arbiter = HeadControlArbiter(self._follow_cfg) if HeadControlArbiter is not None else None
+        if self.head_arbiter is not None:
+            self.head_arbiter.set_move_callback(lambda pan, tilt: self._send_track(int(pan), int(tilt), 0))
 
         if self.processing_mode == "local":
             logger.info("[vlm_bridge] Local mode: OpenCV face recognition + CSRT tracking active")
         else:
             logger.info("[vlm_bridge] Remote mode: waiting for /vlm/results payloads")
+
+        # Runtime realtime profiles for VLM bridge latency tuning.
+        self._realtime_profiles: Dict[str, Dict[str, Any]] = {
+            "fast": {
+                "vlm_timeout_s": 14.0,
+                "vlm_min_interval_s": 4.0,
+                "vlm_num_predict": 220,
+                "follow_track_interval_s": 0.10,
+            },
+            "normal": {
+                "vlm_timeout_s": 20.0,
+                "vlm_min_interval_s": 5.0,
+                "vlm_num_predict": 320,
+                "follow_track_interval_s": 0.12,
+            },
+        }
+        self._active_realtime_profile = "fast"
 
     def get_modes(self) -> Dict[str, bool]:
         return dict(self.mode_flags)
@@ -237,6 +342,45 @@ class VisionProcessor:
         self.processing_mode = "local"
         self.start_stream_processing()
         return {"ok": True, "processing_mode": self.processing_mode}
+
+    def get_realtime_profile_status(self) -> Dict[str, Any]:
+        active = self._active_realtime_profile
+        return {
+            "ok": True,
+            "active": active,
+            "profiles": sorted(self._realtime_profiles.keys()),
+            "settings": dict(self._realtime_profiles.get(active, {})),
+        }
+
+    def apply_realtime_profile(self, mode: str) -> Dict[str, Any]:
+        key = str(mode or "").strip().lower()
+        profile = self._realtime_profiles.get(key)
+        if not profile:
+            return {
+                "ok": False,
+                "error": "unknown_profile",
+                "profiles": sorted(self._realtime_profiles.keys()),
+            }
+
+        self._active_realtime_profile = key
+        applied: Dict[str, Any] = {}
+
+        if self.vlm_client is not None:
+            if "vlm_timeout_s" in profile:
+                self.vlm_client.timeout = float(profile["vlm_timeout_s"])
+                applied["vlm_timeout_s"] = self.vlm_client.timeout
+            if "vlm_min_interval_s" in profile:
+                self.vlm_client.min_interval_s = float(profile["vlm_min_interval_s"])
+                applied["vlm_min_interval_s"] = self.vlm_client.min_interval_s
+            if "vlm_num_predict" in profile and hasattr(self.vlm_client, "num_predict"):
+                self.vlm_client.num_predict = int(profile["vlm_num_predict"])
+                applied["vlm_num_predict"] = self.vlm_client.num_predict
+
+        if "follow_track_interval_s" in profile:
+            self._follow_cfg["track_interval_s"] = float(profile["follow_track_interval_s"])
+            applied["follow_track_interval_s"] = self._follow_cfg["track_interval_s"]
+
+        return {"ok": True, "active": key, "applied": applied}
 
     # -----------------------------------------------------------------
     # Public control API
@@ -645,7 +789,14 @@ class VisionProcessor:
         pan = _clamp(pan, int(self._follow_cfg.get("min_pan", 35)), int(self._follow_cfg.get("max_pan", 145)))
         tilt = _clamp(tilt, int(self._follow_cfg.get("min_tilt", 65)), int(self._follow_cfg.get("max_tilt", 125)))
 
-        self._send_track(pan=pan, tilt=tilt, drive=0)
+        if self.head_arbiter is not None and HeadCommand is not None:
+            source = "owner_follow" if str(self._follow_target or "").lower() in {"owner", "emir"} else "active_speaker"
+            priority = 85 if source == "owner_follow" else 75
+            self.head_arbiter.request_move(
+                HeadCommand(pan=float(pan), tilt=float(tilt), source=source, priority=priority, ttl_s=1.0)
+            )
+        else:
+            self._send_track(pan=pan, tilt=tilt, drive=0)
         self._follow_last_track_ts = now
 
     def _send_track(self, pan: int, tilt: int, drive: int = 0) -> None:
@@ -713,6 +864,16 @@ class VisionProcessor:
         with self._frame_lock:
             if self._latest_raw_frame is not None:
                 frame = self._latest_raw_frame.copy()
+        if frame is None and not self._is_http_camera_source():
+            try:
+                cap = cv2.VideoCapture(self.camera_source)
+                if cap.isOpened():
+                    ok, snap = cap.read()
+                    cap.release()
+                    if ok and snap is not None:
+                        frame = snap
+            except Exception:
+                pass
         if frame is None:
             return False
         return bool(self.face_manager.register_face(name, frame))
@@ -762,6 +923,199 @@ class VisionProcessor:
 
     def record_chat(self, person: str, text: str, role: str = "assistant") -> None:
         self.memory.append_chat(person, role, text)
+
+    # -----------------------------------------------------------------
+    # Living Vision Agent: Context and VLM Integration
+    # -----------------------------------------------------------------
+
+    def _call_remote_multimodal(self, frame: Any) -> Optional[Dict[str, Any]]:
+        if not self.remote_mm_enabled or not self.remote_mm_endpoint:
+            return None
+        try:
+            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            if not ok:
+                return None
+            image_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+            payload = {"image_b64": image_b64}
+            headers = {}
+            if self.remote_mm_auth_token:
+                headers["X-Auth-Token"] = self.remote_mm_auth_token
+            resp = requests.post(
+                self.remote_mm_endpoint,
+                json=payload,
+                headers=headers,
+                timeout=self.remote_mm_timeout_s,
+            )
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            if isinstance(data, dict):
+                return data
+        except Exception as exc:
+            logger.debug("remote multimodal call failed: %s", exc)
+        return None
+
+    def _context_from_remote_multimodal(self, mm: Dict[str, Any], question: str = "") -> Dict[str, Any]:
+        people = list(mm.get("people", []) or [])
+        objects = list(mm.get("objects", []) or [])
+        hazards = list(mm.get("hazards", []) or [])
+        summary = str(mm.get("summary", "")).strip()
+        interpretation = str(mm.get("persona_interpretation", "")).strip() or summary
+        importance = float(mm.get("importance_score", 0.55 if hazards else 0.4))
+        return {
+            "timestamp": datetime.utcnow().isoformat(),
+            "summary": summary,
+            "objects": objects,
+            "people": people,
+            "hazards": hazards,
+            "interesting_events": list(mm.get("interesting_events", []) or []),
+            "recommended_focus": dict(mm.get("recommended_focus", {}) or {}),
+            "importance_score": min(1.0, max(0.0, importance + (0.1 if question else 0.0))),
+            "raw_vlm_observation": str(mm.get("raw_text", "")),
+            "persona_interpretation": interpretation,
+        }
+
+    def get_latest_visual_context(self) -> Optional[Dict[str, Any]]:
+        """Return the latest cached visual context (if available)."""
+        if self.visual_context_cache is None:
+            return None
+        ctx = self.visual_context_cache.get_latest()
+        if ctx is None:
+            fallback = self._build_context_from_results(self.latest_results)
+            if fallback is None:
+                return None
+            self.update_visual_context(fallback)
+            ctx = self.visual_context_cache.get_latest()
+            if ctx is None:
+                return None
+        return ctx.to_dict()
+
+    def refresh_visual_context(self, question: str = "") -> Optional[Dict[str, Any]]:
+        """Capture/refresh the latest context using VLM when possible."""
+        frame = None
+        with self._frame_lock:
+            if self._latest_raw_frame is not None:
+                frame = self._latest_raw_frame.copy()
+
+        # 1) Preferred path: remote multimodal server (PC-side inference stack)
+        if frame is not None and self.remote_mm_enabled:
+            mm_result = self._call_remote_multimodal(frame)
+            if isinstance(mm_result, dict) and mm_result.get("ok", True):
+                context = self._context_from_remote_multimodal(mm_result, question=question)
+                self.update_visual_context(context)
+                # Keep latest_results in sync so existing flows continue to work.
+                merged_results = []
+                for p in context.get("people", []):
+                    if isinstance(p, dict):
+                        merged_results.append(
+                            {
+                                "label": "person",
+                                "name": p.get("name", "Unknown"),
+                                "confidence": float(p.get("confidence", 0.0) or 0.0),
+                                "bbox": p.get("bbox", []),
+                                "distance_m": p.get("distance_m"),
+                            }
+                        )
+                for o in context.get("objects", []):
+                    if isinstance(o, dict):
+                        merged_results.append(o)
+                if merged_results:
+                    self.latest_results = merged_results
+                latest = self.get_latest_visual_context()
+                if latest is not None:
+                    return latest
+
+        if frame is not None and self.vlm_client is not None:
+            vlm_result = self.vlm_client.analyze_frame(frame, force=bool(question))
+            if isinstance(vlm_result, dict):
+                context = {
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "summary": str(vlm_result.get("summary", "")),
+                    "objects": list(vlm_result.get("objects", []) or []),
+                    "people": list(vlm_result.get("people", []) or []),
+                    "hazards": list(vlm_result.get("hazards", []) or []),
+                    "interesting_events": list(vlm_result.get("interesting", []) or vlm_result.get("interesting_events", []) or []),
+                    "recommended_focus": dict(vlm_result.get("recommended_focus", {}) or {}),
+                    "importance_score": 0.6 if question else 0.4,
+                    "raw_vlm_observation": str(vlm_result.get("raw_text", "")),
+                    "persona_interpretation": str(vlm_result.get("summary", "")),
+                }
+                self.update_visual_context(context)
+                latest = self.get_latest_visual_context()
+                if latest is not None:
+                    return latest
+
+        fallback = self._build_context_from_results(self.latest_results)
+        if fallback is not None:
+            self.update_visual_context(fallback)
+            return self.get_latest_visual_context()
+        return None
+
+    def _build_context_from_results(self, results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not results:
+            return None
+        people = []
+        objects = []
+        for item in results:
+            if str(item.get("label", "")).lower() == "person":
+                people.append(
+                    {
+                        "track_id": "",
+                        "person_id": "",
+                        "name": item.get("name", "Unknown"),
+                        "recognition_level": 0 if item.get("name", "Unknown") == "Unknown" else 2,
+                        "relationship": "unknown",
+                        "confidence": float(item.get("confidence", 0.0) or 0.0),
+                        "bbox": list(item.get("bbox", [0, 0, 0, 0])),
+                        "distance_m": item.get("distance_m"),
+                        "gaze_priority": 0.4,
+                        "last_seen": datetime.utcnow().isoformat(),
+                        "is_follow_target": bool(item.get("tracked", False)),
+                        "appearance_notes": "",
+                    }
+                )
+            else:
+                objects.append(item)
+        summary = f"{len(people)} kişi ve {len(objects)} nesne algılandı."
+        return {
+            "timestamp": datetime.utcnow().isoformat(),
+            "summary": summary,
+            "objects": objects,
+            "people": people,
+            "hazards": [],
+            "interesting_events": [],
+            "recommended_focus": {"type": "person" if people else "none", "target_id": "", "reason": "latest_detection"},
+            "importance_score": 0.5 if people else 0.3,
+            "raw_vlm_observation": summary,
+            "persona_interpretation": summary,
+        }
+
+    def update_visual_context(self, context: Optional[Dict[str, Any]]) -> None:
+        """Update the cached visual context (typically called by VLM after processing)."""
+        if self.visual_context_cache is None or context is None:
+            return
+        try:
+            # Reconstruct from dict if needed
+            if hasattr(self.visual_context_cache, 'set_context'):
+                self.visual_context_cache.set_context(context)
+            else:
+                # Direct assignment if it's a VisualContextCache
+                from .visual_context import VisionFrameContext, PersonContext
+                vfc = VisionFrameContext(
+                    timestamp=context.get("timestamp", ""),
+                    summary=context.get("summary", ""),
+                    objects=context.get("objects", []),
+                    people=[PersonContext(**p) if isinstance(p, dict) else p for p in context.get("people", [])],
+                    hazards=context.get("hazards", []),
+                    interesting_events=context.get("interesting_events", []),
+                    recommended_focus=context.get("recommended_focus", {}),
+                    importance_score=context.get("importance_score", 0.0),
+                    raw_vlm_observation=context.get("raw_vlm_observation", ""),
+                    persona_interpretation=context.get("persona_interpretation", ""),
+                )
+                self.visual_context_cache.update(vfc)
+        except Exception as exc:
+            logger.debug("Failed to update visual context: %s", exc)
 
     # -----------------------------------------------------------------
     # Interaction / alert layer
@@ -835,6 +1189,8 @@ class VisionProcessor:
         parts = [f"{lbl} {dist:.1f}m" for lbl, dist in hazards]
         self._send_tts("Dikkat yakın tehlike: " + ", ".join(parts))
         self._emit_emotion("alert")
+        if self.event_bus is not None:
+            self.event_bus.publish(EVENT_HAZARD_DETECTED, {"hazards": parts})
         self.last_alert_announcement = now
 
     def _emit_emotion(self, emotion: str) -> None:
@@ -858,6 +1214,19 @@ class VisionProcessor:
             name = r.get("name")
             if not name or name == "Unknown":
                 continue
+            if self.person_identity is not None:
+                rec = self.person_identity.recognize(
+                    name=str(name),
+                    confidence=float(r.get("confidence", 0.0) or 0.0),
+                    face_score=float(r.get("confidence", 0.0) or 0.0),
+                )
+                r["person_id"] = rec.person_id
+                r["recognition_level"] = rec.recognition_level
+                r["relationship"] = rec.relationship
+                if rec.recognition_level >= 5 and self.event_bus is not None:
+                    self.event_bus.publish(EVENT_OWNER_SEEN, {"name": rec.name, "person_id": rec.person_id})
+                elif rec.seen_count <= 2 and self.event_bus is not None:
+                    self.event_bus.publish(EVENT_NEW_PERSON, {"name": rec.name, "person_id": rec.person_id})
             last = self._last_person_greet.get(name, 0.0)
             if now - last < greet_cooldown:
                 continue
