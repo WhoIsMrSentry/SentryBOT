@@ -195,10 +195,21 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
         ),
         "vlm_bridge": SubAgentProfile(
             module="vlm_bridge",
-            role="Vision-language specialist",
-            goal="Bridge visual understanding with language output.",
-            allowed_tools=("get_vision", "search_memory", "get_sensor_data"),
-            keywords=("vlm", "image", "vision", "describe", "recognize"),
+            role="Visual cognition specialist",
+            goal="Understand current visual world, people identity, scene meaning, person memory, and focus target.",
+            allowed_tools=(
+                "get_vision", "get_visual_context", "describe_scene",
+                "search_memory", "focus_person", "remember_person",
+                "update_person_relationship", "ask_vlm_about_scene",
+                "get_sensor_data", "start_owner_follow", "stop_follow",
+            ),
+            keywords=(
+                "vlm", "image", "vision", "describe", "recognize",
+                "görüyorsun", "çevrede", "kim", "beni", "etrafa",
+                "ortam", "sahibi", "yüz", "takip", "geldi", "masada",
+                "tehlike", "bak", "kamera", "sahne", "kişi", "tanı",
+                "see", "look", "person", "face", "scene", "who",
+            ),
         ),
         "wakeword": SubAgentProfile(
             module="wakeword",

@@ -13,6 +13,12 @@ from .safety_filter import ActionSafetyFilter
 from .sensor_loop import SensorFeedbackLoop
 from .idle_behavior import IdleBehaviorSystem
 from .tri_layer import SubAgentProfile, TriLayerRouter, build_subagent_profiles
+from .progress import ProgressManager
+from .speech_arbiter import SpeechArbiter
+from .action_arbiter import ActionArbiter
+from .tool_execution_arbiter import ToolExecutionArbiter
+from .vision_arbiter import VisionArbiter
+from .expression_arbiter import ExpressionArbiter
 
 logger = logging.getLogger("agent.orchestrator")
 
@@ -113,20 +119,36 @@ class AgentOrchestrator:
         self.memory = EpisodicMemory()
         self.slam = TopologicalMap()
         self.safety_filter = ActionSafetyFilter(config)
+        self.tool_execution_arbiter = ToolExecutionArbiter()
         self.tool_registry = ToolRegistry(
             client=self.autonomy_client,
             memory=self.memory,
             slam=self.slam,
             world_state=self.world_state,
-            safety_filter=self.safety_filter
+            safety_filter=self.safety_filter,
+            tool_execution_arbiter=self.tool_execution_arbiter,
+            vlm_ask_timeout_s=float((config.get("tool_execution", {}) or {}).get("timeout_s", 22.0)),
         )
 
         # Background threads
         self.sensor_loop = SensorFeedbackLoop(self.world_state, client=autonomy_client)
         self.idle_system = IdleBehaviorSystem(self, client=autonomy_client)
 
+        # ── Living Vision Agent: Arbiter & Progress subsystems ──
+        self.action_arbiter = ActionArbiter()
+        self.vision_arbiter = VisionArbiter()
+        self.expression_arbiter = ExpressionArbiter()
+        self.speech_arbiter = SpeechArbiter()
+        self.progress_manager = ProgressManager(speech_arbiter=self.speech_arbiter)
+        if self.autonomy_client and hasattr(self.autonomy_client, "set_speech_tracking"):
+            self.speech_arbiter.set_tts_state_callback(
+                lambda active: self.autonomy_client.set_speech_tracking(not bool(active))
+            )
+        self._register_action_handlers()
+
         self.last_run = 0.0
         self.is_busy = False
+        self._active_progress_token: str = ""
 
         # Short-term conversational/reasoning memory across steps
         self.chat_history = []
@@ -156,8 +178,106 @@ class AgentOrchestrator:
         self.subagent_workers = self._safe_int(subagent_cfg.get("workers", 2), fallback=2, minimum=1)
         # Persona system prompt can be overridden via config.tri_layer.persona.system_prompt
         self.persona_system_prompt = str(persona_cfg.get("system_prompt", "")).strip()
-        self.persona_num_predict = self._safe_int(persona_cfg.get("num_predict", 220), fallback=220, minimum=64)
+        default_persona_np = persona_cfg.get("num_predict", 180)
+        self.persona_num_predict = self._safe_int(default_persona_np, fallback=180, minimum=64)
+        self.chat_num_predict = self._safe_int(agent_cfg.get("num_predict", 100), fallback=100, minimum=48)
+
+        # Apply active realtime profile overrides at startup
+        rt_cfg = self.config.get("realtime_profile", {}) if isinstance(self.config.get("realtime_profile", {}), dict) else {}
+        active_profile_name = str(rt_cfg.get("active", "")).strip().lower()
+        active_profile = rt_cfg.get(active_profile_name, {}) if active_profile_name else {}
+        if isinstance(active_profile, dict) and active_profile:
+            self.apply_realtime_profile(active_profile)
+
         self.last_routed_subagents: List[str] = []
+
+    def _register_action_handlers(self) -> None:
+        """Bind ActionArbiter actions to concrete side effects."""
+        def _handle_speak(req):
+            text = str(req.payload.get("text", "")).strip()
+            if not text:
+                return {"ok": False, "reason": "missing_text"}
+            self.speech_arbiter.enqueue(
+                text=text,
+                priority=max(1, min(100, int(req.priority))),
+                category="final" if req.priority >= 60 else "progress",
+                language=str(req.payload.get("language", "") or ""),
+            )
+            return {"ok": True}
+
+        def _handle_head(req):
+            if not self.autonomy_client:
+                return {"ok": False, "reason": "no_client"}
+            pan = self.safety_filter.clamp_servo(int(req.payload.get("pan", 90)))
+            tilt = self.safety_filter.clamp_servo(int(req.payload.get("tilt", 90)))
+            return self.autonomy_client.move_head(pan, tilt)
+
+        def _handle_lights(req):
+            if not self.autonomy_client:
+                return {"ok": False, "reason": "no_client"}
+            if not self.expression_arbiter.claim_lights(req.source, force=req.priority >= 90):
+                return {"ok": False, "reason": "lights_locked"}
+            try:
+                effect = str(req.payload.get("effect", "BREATHE"))
+                color = req.payload.get("color")
+                return self.autonomy_client.set_neopixel(effect, color=color if isinstance(color, list) else None)
+            finally:
+                self.expression_arbiter.release(req.source)
+
+        self.action_arbiter.register_handler("speak", _handle_speak)
+        self.action_arbiter.register_handler("head_move", _handle_head)
+        self.action_arbiter.register_handler("lights", _handle_lights)
+
+    def apply_realtime_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply runtime-safe realtime profile values without restart."""
+        if not isinstance(profile, dict):
+            return {}
+
+        applied: Dict[str, Any] = {}
+        if "num_predict_persona" in profile:
+            self.persona_num_predict = self._safe_int(profile.get("num_predict_persona"), fallback=self.persona_num_predict, minimum=64)
+            applied["num_predict_persona"] = self.persona_num_predict
+        if "num_predict_chat" in profile:
+            self.chat_num_predict = self._safe_int(profile.get("num_predict_chat"), fallback=self.chat_num_predict, minimum=48)
+            applied["num_predict_chat"] = self.chat_num_predict
+        if "num_ctx" in profile:
+            self.num_ctx = self._safe_int(profile.get("num_ctx"), fallback=self.num_ctx, minimum=512)
+            applied["num_ctx"] = self.num_ctx
+        if "temperature" in profile:
+            self.temperature = self._safe_float(profile.get("temperature"), fallback=self.temperature, minimum=0.0)
+            applied["temperature"] = self.temperature
+        if "request_timeout_s" in profile:
+            self.request_timeout = self._safe_float(profile.get("request_timeout_s"), fallback=self.request_timeout, minimum=1.0)
+            applied["request_timeout_s"] = self.request_timeout
+
+        # Keep tool VLM ask timeout aligned with active profile.
+        if hasattr(self, "tool_registry") and self.tool_registry is not None:
+            vlm_timeout = profile.get("vlm_ask_timeout_s", profile.get("request_timeout_s"))
+            if vlm_timeout is not None:
+                try:
+                    self.tool_registry.vlm_ask_timeout_s = self._safe_float(vlm_timeout, fallback=self.tool_registry.vlm_ask_timeout_s, minimum=2.0)
+                    applied["vlm_ask_timeout_s"] = self.tool_registry.vlm_ask_timeout_s
+                except Exception:
+                    pass
+
+        # Refresh ollama client timeout for subsequent chat calls.
+        if ollama:
+            try:
+                self.ollama_client = ollama.Client(host=self.ollama_base_url, timeout=self.request_timeout)
+            except Exception:
+                pass
+
+        # Propagate low-latency chat timeout to autonomy ServiceClient, if present.
+        if self.autonomy_client is not None and hasattr(self.autonomy_client, "request_timeouts"):
+            chat_timeout = profile.get("ollama_chat_timeout_s")
+            if chat_timeout is not None:
+                try:
+                    self.autonomy_client.request_timeouts["ollama_chat_s"] = float(chat_timeout)
+                    applied["ollama_chat_timeout_s"] = float(chat_timeout)
+                except Exception:
+                    pass
+
+        return applied
 
     @staticmethod
     def _safe_int(value: Any, fallback: int, minimum: int = 1) -> int:
@@ -177,11 +297,13 @@ class AgentOrchestrator:
         """Start background subsystems."""
         self.sensor_loop.start()
         self.idle_system.start()
+        self.speech_arbiter.start()
         logger.info("AgentOrchestrator subsystems started.")
 
     def stop(self):
         self.sensor_loop.stop()
         self.idle_system.stop()
+        self.speech_arbiter.stop()
         logger.info("AgentOrchestrator subsystems stopped.")
 
     def check_survival_drives(self):
@@ -211,6 +333,13 @@ class AgentOrchestrator:
             return
         try:
             progress_cb(payload)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _safe_log_warning(message: str, *args: Any) -> None:
+        try:
+            logger.warning(message, *args)
         except Exception:
             pass
 
@@ -471,6 +600,7 @@ class AgentOrchestrator:
                     options={
                         "temperature": self.temperature,
                         "num_ctx": self.num_ctx,
+                        "num_predict": self.chat_num_predict,
                     },
                 )
             except Exception as exc:
@@ -571,10 +701,11 @@ class AgentOrchestrator:
                     options={
                         "temperature": self.temperature,
                         "num_ctx": self.num_ctx,
+                        "num_predict": self.chat_num_predict,
                     },
                 )
             except Exception as exc:
-                logger.warning("Sub-agent '%s' failed: %s", profile.module, exc)
+                self._safe_log_warning("Sub-agent '%s' failed: %s", profile.module, exc)
                 final_text = "Sub-agent execution failed."
                 steps_taken = idx + 1
                 break
@@ -634,16 +765,18 @@ class AgentOrchestrator:
                 "Prioritize safety constraints when present."
             )
 
+        compact_reports = self._compact_subagent_reports(reports)
         user_payload = {
             "request": user_prompt,
             "safety_override": survival_override or "",
-            "subagent_reports": reports,
+            "subagent_reports": compact_reports,
         }
 
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
         ]
+        adaptive_persona_np = self._adaptive_persona_num_predict(user_prompt=user_prompt, report_count=len(compact_reports))
 
         try:
             response = self._chat(
@@ -652,7 +785,7 @@ class AgentOrchestrator:
                 options={
                     "temperature": self.temperature,
                     "num_ctx": self.num_ctx,
-                    "num_predict": self.persona_num_predict,
+                    "num_predict": adaptive_persona_np,
                 },
             )
             final_text = str(response.get("message", {}).get("content", "")).strip()
@@ -665,14 +798,45 @@ class AgentOrchestrator:
             return str(reports[0].get("text", ""))
         return "Task completed using internal tools."
 
+    def _compact_subagent_reports(self, reports: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        compact: List[Dict[str, Any]] = []
+        for r in reports:
+            if not isinstance(r, dict):
+                continue
+            text = str(r.get("text", "")).strip()
+            compact.append(
+                {
+                    "module": str(r.get("module", "")),
+                    "text": text[:320],
+                    "tools": list(dict.fromkeys([str(t) for t in (r.get("tools") or [])]))[:6],
+                }
+            )
+        return compact
+
+    def _adaptive_persona_num_predict(self, user_prompt: str, report_count: int) -> int:
+        """Small adaptive budget to reduce latency without clipping useful answers."""
+        base = int(self.persona_num_predict)
+        prompt = str(user_prompt or "").strip()
+        short_prompt = len(prompt) <= 40
+        is_direct_question = "?" in prompt or len(prompt.split()) <= 6
+        if short_prompt and is_direct_question and report_count <= 1:
+            return max(72, min(base, 120))
+        if report_count >= 3:
+            return min(256, max(base, 160))
+        return base
+
     def step(
         self,
         user_prompt: str = "",
         progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        One complete Agent thought cycle.
-        Executes a multi-stage tool-calling loop (max N steps).
+        One complete Agent thought cycle with staged execution.
+
+        Stage 1: Immediate ack (100-500ms, template based)
+        Stage 2: Plan summary
+        Stage 3: Tool execution with progress
+        Stage 4: Final persona response
         """
         now = time.time()
         if now - self.last_run < self.cooldown:
@@ -684,10 +848,28 @@ class AgentOrchestrator:
 
         self.is_busy = True
         previous_hook = self.tool_registry.status_hook
-        self.tool_registry.status_hook = progress_cb
+
+        # ── Create progress token for this request lifecycle ──
+        progress_token = self.progress_manager.new_request()
+        self._active_progress_token = progress_token
+
+        # Build a unified progress callback that routes through ProgressManager
+        def _unified_progress_cb(event: Dict[str, Any]) -> None:
+            event["token"] = progress_token
+            self.progress_manager.on_progress_event(event)
+            # Also call the original callback if provided
+            if progress_cb:
+                try:
+                    progress_cb(event)
+                except Exception:
+                    pass
+
+        self.tool_registry.status_hook = _unified_progress_cb
 
         try:
-            self._emit_progress(progress_cb, {"type": "status", "text": "Istek alindi, islem basliyor."})
+            # ── Stage 1: Immediate acknowledgement ──
+            self.progress_manager.emit_ack(progress_token)
+
             # 1. Collect world & survival context
             survival_override = self.check_survival_drives()
             world_context = self.world_state.inject_world_state("")
@@ -714,11 +896,13 @@ class AgentOrchestrator:
             if self.tri_layer_enabled:
                 self.last_routed_subagents = self.router.route(user_prompt)
                 logger.info("Tri-layer route selected: %s", self.last_routed_subagents)
-                # Expose lightweight planner output immediately
-                plan_summary = self._build_plan_summary(user_prompt, self.last_routed_subagents)
-                self._emit_progress(progress_cb, {"type": "plan", "plan": plan_summary})
 
-                # Run sub-agents in parallel to reduce end-to-end latency (I/O bound LLM/tool calls)
+                # ── Stage 2: Plan summary ──
+                plan_summary = self._build_plan_summary(user_prompt, self.last_routed_subagents)
+                self.progress_manager.emit_plan(progress_token, plan_summary)
+                self._emit_progress(_unified_progress_cb, {"type": "plan", "plan": plan_summary})
+
+                # ── Stage 3: Sub-agent execution with progress ──
                 if self.last_routed_subagents:
                     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(self.last_routed_subagents), self.subagent_workers)) as ex:
                         futures = {}
@@ -733,7 +917,7 @@ class AgentOrchestrator:
                                 world_context,
                                 survival_override,
                                 active_model,
-                                progress_cb,
+                                _unified_progress_cb,
                             )
                             futures[fut] = module_name
 
@@ -741,13 +925,13 @@ class AgentOrchestrator:
                             try:
                                 report = fut.result()
                             except Exception as exc:
-                                logger.warning("Sub-agent %s failed in executor: %s", futures.get(fut), exc)
+                                self._safe_log_warning("Sub-agent %s failed in executor: %s", futures.get(fut), exc)
                                 continue
                             subagent_reports.append(report)
                             total_steps += int(report.get("steps", 0))
 
                 if subagent_reports:
-                    self._emit_progress(progress_cb, {"type": "persona_start"})
+                    self._emit_progress(_unified_progress_cb, {"type": "persona_start"})
                     final_text = self._synthesize_main_persona(
                         user_prompt=user_prompt,
                         reports=subagent_reports,
@@ -761,7 +945,10 @@ class AgentOrchestrator:
             else:
                 messages = list(self.chat_history)
                 final_text, total_steps = self._run_native_history_loop(active_model, messages)
-                
+
+            # ── Stage 4: Final — cancel stale progress, deliver response ──
+            self.progress_manager.emit_final(progress_token)
+
             # 4. Save to episodic long-term memory
             self.memory.remember("dialogue", f"User: {user_prompt} | Bot: {final_text}")
 
@@ -776,5 +963,7 @@ class AgentOrchestrator:
             }
 
         finally:
+            self.progress_manager.emit_final(progress_token)
             self.tool_registry.status_hook = previous_hook
+            self._active_progress_token = ""
             self.is_busy = False
