@@ -9,12 +9,23 @@ class ToolRegistry:
     Registers Python functions as native tools for the LLM.
     Provides the JSON schemas for Ollama.
     """
-    def __init__(self, client, memory, slam, world_state, safety_filter):
+    def __init__(
+        self,
+        client,
+        memory,
+        slam,
+        world_state,
+        safety_filter,
+        tool_execution_arbiter=None,
+        vlm_ask_timeout_s: float = 22.0,
+    ):
         self.client = client
         self.memory = memory
         self.slam = slam
         self.world_state = world_state
         self.safety = safety_filter
+        self.tool_execution_arbiter = tool_execution_arbiter
+        self.vlm_ask_timeout_s = float(vlm_ask_timeout_s)
         self.status_hook: Optional[Callable[[Dict[str, Any]], None]] = None
         
         self.tools: Dict[str, Callable] = {}
@@ -32,7 +43,17 @@ class ToolRegistry:
         if tool_name not in self.tools:
             return f"Error: Tool '{tool_name}' not found."
             
+        acquired = False
         try:
+            if self.tool_execution_arbiter is not None:
+                if not self.tool_execution_arbiter.acquire(tool_name):
+                    self._emit_status({
+                        "type": "tool_error",
+                        "tool": tool_name,
+                        "error": "resource_busy",
+                    })
+                    return f"Error executing {tool_name}: resource busy"
+                acquired = True
             logger.info(f"LLM called tool: {tool_name}({kwargs})")
             self._emit_status({"type": "tool_start", "tool": tool_name, "args": kwargs})
             result = self.tools[tool_name](**kwargs)
@@ -42,6 +63,9 @@ class ToolRegistry:
             logger.error(f"Tool {tool_name} failed: {e}")
             self._emit_status({"type": "tool_error", "tool": tool_name, "error": str(e)})
             return f"Error executing {tool_name}: {e}"
+        finally:
+            if acquired and self.tool_execution_arbiter is not None:
+                self.tool_execution_arbiter.release(tool_name)
 
     def _emit_status(self, payload: Dict[str, Any]) -> None:
         hook = self.status_hook
@@ -284,6 +308,156 @@ class ToolRegistry:
             },
         })
 
+        # ── Living Vision Agent tools ─────────────────────────────
+        self._register(self.get_visual_context, {
+            "type": "function",
+            "function": {
+                "name": "get_visual_context",
+                "description": "Get the latest visual scene context: people, objects, hazards, and importance score. Returns cached result instantly.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        })
+
+        self._register(self.describe_scene, {
+            "type": "function",
+            "function": {
+                "name": "describe_scene",
+                "description": "Get a natural language description of what the camera currently sees.",
+                "parameters": {"type": "object", "properties": {}}
+            }
+        })
+
+        self._register(self.remember_person, {
+            "type": "function",
+            "function": {
+                "name": "remember_person",
+                "description": "Save or update a person in long-term memory with their relationship and recognition level (0=unknown, 1=seen, 2=familiar, 3=friend, 4=family, 5=owner).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Person's name"},
+                        "relationship": {"type": "string", "description": "Relationship: owner|family|friend|known|stranger"},
+                        "recognition_level": {"type": "integer", "description": "Recognition level 0-5"}
+                    },
+                    "required": ["name"]
+                }
+            }
+        })
+
+        self._register(self.update_person_relationship, {
+            "type": "function",
+            "function": {
+                "name": "update_person_relationship",
+                "description": "Update the relationship or recognition level of a known person by their ID.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "person_id": {"type": "string", "description": "Person's unique ID"},
+                        "relationship": {"type": "string", "description": "New relationship type"},
+                        "recognition_level": {"type": "integer", "description": "New recognition level 0-5"}
+                    },
+                    "required": ["person_id"]
+                }
+            }
+        })
+
+        self._register(self.ask_vlm_about_scene, {
+            "type": "function",
+            "function": {
+                "name": "ask_vlm_about_scene",
+                "description": "Ask the vision-language model a specific question about the current camera view. Use for detailed analysis.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "question": {"type": "string", "description": "Question about the scene in Turkish"}
+                    },
+                    "required": ["question"]
+                }
+            }
+        })
+
+        self._register(self.focus_person, {
+            "type": "function",
+            "function": {
+                "name": "focus_person",
+                "description": "Request the robot to look at (focus on) a specific person by name.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Person's name (e.g., 'Emir', 'Alice')"}
+                    },
+                    "required": ["name"]
+                }
+            }
+        })
+
+        self._register(self.start_owner_follow, {
+            "type": "function",
+            "function": {
+                "name": "start_owner_follow",
+                "description": "Start special owner-follow mode. Higher priority than regular follow mode. Robot will track the owner.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        })
+
+        self._register(self.stop_follow, {
+            "type": "function",
+            "function": {
+                "name": "stop_follow",
+                "description": "Stop any active follow mode (regular or owner).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        })
+
+        self._register(self.queue_action, {
+            "type": "function",
+            "function": {
+                "name": "queue_action",
+                "description": "Submit an action (lights, sound, animation, etc.) to the action arbiter with priority and TTL.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action_type": {"type": "string", "description": "Type of action: head_move, speak, lights, animation, sound, etc."},
+                        "priority": {"type": "integer", "description": "Priority 0-100. Higher wins. Default 50."},
+                        "ttl_ms": {"type": "integer", "description": "Time-to-live in milliseconds. Default 5000."},
+                        "payload": {"type": "object", "description": "Action-specific parameters (optional)"}
+                    },
+                    "required": ["action_type"]
+                }
+            }
+        })
+
+        self._register(self.get_action_status, {
+            "type": "function",
+            "function": {
+                "name": "get_action_status",
+                "description": "Get current action arbiter and speech arbiter status.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        })
+
+        self._register(self.cancel_action, {
+            "type": "function",
+            "function": {
+                "name": "cancel_action",
+                "description": "Cancel a queued action by action_id.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"action_id": {"type": "string"}},
+                    "required": ["action_id"],
+                },
+            },
+        })
+
+
     # ==========================================
     # TOOL LOGIC
     # ==========================================
@@ -389,3 +563,208 @@ class ToolRegistry:
         if not known:
             return "No known locations yet."
         return f"Known locations: {', '.join(known)}"
+
+    # ── Living Vision Agent tool implementations ─────────────────
+
+    def get_visual_context(self) -> str:
+        """Return the latest cached visual context."""
+        if not self.client:
+            return "Error: Vision client disconnected."
+        try:
+            import requests
+            resp = requests.get("http://127.0.0.1:8080/vlm/context/latest", timeout=2.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("available"):
+                    ctx = data.get("context", {})
+                    parts = []
+                    if ctx.get("summary"):
+                        parts.append(f"Scene: {ctx['summary']}")
+                    people = ctx.get("people", [])
+                    if people:
+                        names = [p.get('name', 'Unknown') for p in people]
+                        parts.append(f"People: {', '.join(names)}")
+                    hazards = ctx.get("hazards", [])
+                    if hazards:
+                        parts.append(f"Hazards: {hazards}")
+                    parts.append(f"Importance: {ctx.get('importance_score', 0.0)}")
+                    return " | ".join(parts) if parts else "Scene is empty."
+                refresh = requests.post("http://127.0.0.1:8080/vlm/context/refresh", timeout=8.0)
+                if refresh.status_code == 200:
+                    rdata = refresh.json()
+                    rctx = rdata.get("context") or {}
+                    if rctx:
+                        summary = rctx.get("summary", "")
+                        return f"Scene: {summary}" if summary else "Visual context refreshed."
+                return "No visual context available yet. Camera may not be active."
+            return "Vision context endpoint returned error."
+        except Exception as exc:
+            return f"Failed to get visual context: {exc}"
+
+    def describe_scene(self) -> str:
+        """Get a natural language scene description."""
+        if not self.client:
+            return "Error: Vision client disconnected."
+        try:
+            import requests
+            resp = requests.get("http://127.0.0.1:8080/vlm/context/latest", timeout=2.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                ctx = data.get("context", {})
+                interpretation = ctx.get("persona_interpretation") or ctx.get("summary")
+                if interpretation:
+                    return interpretation
+                return ctx.get("raw_vlm_observation", "No scene description available.")
+            return "Scene description not available."
+        except Exception as exc:
+            return f"Failed to describe scene: {exc}"
+
+    def remember_person(self, name: str, relationship: str = "known", recognition_level: int = 2) -> str:
+        """Save or update a person in memory."""
+        try:
+            import requests
+            resp = requests.post(
+                "http://127.0.0.1:8080/vlm/person/remember",
+                json={"name": name, "relationship": relationship, "recognition_level": recognition_level},
+                timeout=2.0,
+            )
+            if resp.status_code == 200:
+                return f"Remembered {name} as {relationship} (level {recognition_level})."
+            return f"Failed to remember person: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Failed to remember person: {exc}"
+
+    def update_person_relationship(self, person_id: str, relationship: str = "", recognition_level: int = -1) -> str:
+        """Update a person's relationship or level."""
+        try:
+            import requests
+            resp = requests.post(
+                "http://127.0.0.1:8080/vlm/person/relationship",
+                json={"person_id": person_id, "relationship": relationship, "recognition_level": recognition_level},
+                timeout=2.0,
+            )
+            if resp.status_code == 200:
+                return f"Updated person {person_id}."
+            return f"Failed to update person: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Failed to update person: {exc}"
+
+    def ask_vlm_about_scene(self, question: str) -> str:
+        """Ask the VLM a question about the current camera view."""
+        try:
+            import requests
+            resp = requests.post(
+                "http://127.0.0.1:8080/vlm/ask",
+                json={"question": question},
+                timeout=max(2.0, float(self.vlm_ask_timeout_s)),
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("answer", "No answer from VLM.")
+            return f"VLM question failed: HTTP {resp.status_code}"
+        except Exception as exc:
+            try:
+                import requests
+                ctx_resp = requests.get("http://127.0.0.1:8080/vlm/context/latest", timeout=2.0)
+                if ctx_resp.status_code == 200:
+                    data = ctx_resp.json()
+                    if data.get("available"):
+                        ctx = data.get("context", {})
+                        summary = str(ctx.get("summary", "")).strip() or str(ctx.get("persona_interpretation", "")).strip()
+                        if summary:
+                            return f"Görüntü işleme gecikti; elimdeki son görüntüye göre {summary}"
+            except Exception:
+                pass
+            return f"Görüntü işleme gecikti; elimdeki son görüntüye göre konuşuyorum. ({exc})"
+
+    def focus_person(self, name: str) -> str:
+        """Request the robot to focus on (look at) a specific person."""
+        try:
+            import requests
+            resp = requests.post(
+                "http://127.0.0.1:8080/vlm/focus/person",
+                json={"name": name},
+                timeout=2.0,
+            )
+            if resp.status_code == 200:
+                return f"Focusing on {name}."
+            return f"Focus request failed: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Focus failed: {exc}"
+
+    def start_owner_follow(self) -> str:
+        """Start special owner-follow mode (higher priority than regular follow)."""
+        try:
+            import requests
+            resp = requests.post(
+                "http://127.0.0.1:8080/vlm/follow/owner/start",
+                timeout=2.0,
+            )
+            if resp.status_code == 200:
+                return "Owner follow mode activated."
+            return f"Owner follow failed: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Owner follow failed: {exc}"
+
+    def stop_follow(self) -> str:
+        """Stop any active follow mode."""
+        try:
+            import requests
+            resp = requests.post(
+                "http://127.0.0.1:8080/vlm/follow/stop",
+                timeout=2.0,
+            )
+            if resp.status_code == 200:
+                return "Follow mode stopped."
+            return f"Stop follow failed: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Stop follow failed: {exc}"
+
+    def queue_action(self, action_type: str, priority: int = 50, ttl_ms: int = 5000, payload: dict = None) -> str:
+        """Submit an action to the action arbiter."""
+        if payload is None:
+            payload = {}
+        try:
+            import requests
+            resp = requests.post(
+                "http://127.0.0.1:8080/agent/actions/queue",
+                json={
+                    "type": action_type,
+                    "priority": priority,
+                    "ttl_ms": ttl_ms,
+                    "payload": payload,
+                },
+                timeout=2.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                action_id = data.get("action_id", "unknown")
+                return f"Action queued: {action_id}"
+            return f"Queue action failed: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Queue action failed: {exc}"
+
+    def get_action_status(self) -> str:
+        try:
+            import requests
+            resp = requests.get("http://127.0.0.1:8080/agent/actions/status", timeout=2.0)
+            if resp.status_code == 200:
+                return str(resp.json())
+            return f"Action status failed: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Action status failed: {exc}"
+
+    def cancel_action(self, action_id: str) -> str:
+        try:
+            import requests
+            resp = requests.post(
+                "http://127.0.0.1:8080/agent/actions/cancel",
+                json={"action_id": str(action_id)},
+                timeout=2.0,
+            )
+            if resp.status_code == 200:
+                return str(resp.json())
+            return f"Cancel action failed: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Cancel action failed: {exc}"
+

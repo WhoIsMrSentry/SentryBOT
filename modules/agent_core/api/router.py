@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Query
 from fastapi.responses import StreamingResponse
 from typing import Dict, Any, Optional
 import json
@@ -111,6 +111,171 @@ def get_router(agent) -> APIRouter:
         path = agent.slam.pathfind(destination)
         return {"destination": destination, "path": path}
 
+    # -----------------------------------------------------------------
+    # Living Vision Agent: Action and Progress endpoints
+    # -----------------------------------------------------------------
+
+    @router.get("/actions/status")
+    def actions_status():
+        """Get current action arbiter status and exclusive locks."""
+        if not hasattr(agent, 'action_arbiter') or agent.action_arbiter is None:
+            return {"ok": False, "error": "action arbiter not available"}
+        status = agent.action_arbiter.get_exclusive_status()
+        return {
+            "ok": True,
+            "exclusive_locks": status,
+            "vision_arbiter": agent.vision_arbiter.status() if hasattr(agent, "vision_arbiter") else {},
+            "expression_arbiter": agent.expression_arbiter.status() if hasattr(agent, "expression_arbiter") else {},
+            "speech": agent.speech_arbiter.get_status() if hasattr(agent, "speech_arbiter") else {},
+        }
+
+    @router.post("/actions/queue")
+    def actions_queue(body: dict = Body(...)):
+        """Submit an action to the action arbiter."""
+        if not hasattr(agent, 'action_arbiter') or agent.action_arbiter is None:
+            return {"ok": False, "error": "action arbiter not available"}
+        
+        from ..services.action_arbiter import ActionRequest
+        
+        action_type = str(body.get("type", "")).strip()
+        priority = int(body.get("priority", 50))
+        ttl_ms = int(body.get("ttl_ms", 5000))
+        payload = body.get("payload", {})
+        source = str(body.get("source", "agent_core")).strip()
+        
+        req = ActionRequest(
+            type=action_type,
+            source=source,
+            priority=priority,
+            ttl_ms=ttl_ms,
+            payload=payload,
+        )
+        result = agent.action_arbiter.submit(req)
+        return result
+
+    @router.post("/actions/cancel")
+    def actions_cancel(action_id: str = Body(embed=True)):
+        """Cancel a specific action by ID."""
+        if not hasattr(agent, 'action_arbiter') or agent.action_arbiter is None:
+            return {"ok": False, "error": "action arbiter not available"}
+        cancelled = agent.action_arbiter.cancel(action_id)
+        return {"ok": cancelled, "action_id": action_id}
+
+    @router.post("/progress")
+    def progress_push(body: dict = Body(...)):
+        """Push external progress event into progress manager."""
+        if not hasattr(agent, 'progress_manager') or agent.progress_manager is None:
+            return {"ok": False, "error": "progress manager not available"}
+        try:
+            agent.progress_manager.on_progress_event(dict(body))
+            return {"ok": True}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    @router.post("/events")
+    def events_push(body: dict = Body(...)):
+        """Receive autonomy/vision events and queue prioritized actions."""
+        if not hasattr(agent, "action_arbiter") or agent.action_arbiter is None:
+            return {"ok": False, "error": "action arbiter not available"}
+        from ..services.action_arbiter import ActionRequest, ActionPriority
+        event_type = str(body.get("type", "")).strip().lower()
+        payload = body.get("payload", {}) if isinstance(body.get("payload", {}), dict) else {}
+        pri_map = {
+            "hazard_detected": int(ActionPriority.SAFETY),
+            "owner_follow_intent": int(ActionPriority.OWNER_FOLLOW),
+            "new_person_seen": int(ActionPriority.VLM_INTEREST),
+            "idle_comment_request": int(ActionPriority.AUTONOMY_IDLE),
+        }
+        source_map = {
+            "hazard_detected": "safety",
+            "owner_follow_intent": "owner_follow",
+            "new_person_seen": "vlm_bridge",
+            "idle_comment_request": "autonomy",
+        }
+        req = ActionRequest(
+            type="notification",
+            source=source_map.get(event_type, "autonomy"),
+            priority=pri_map.get(event_type, int(ActionPriority.AUTONOMY_IDLE)),
+            ttl_ms=2000,
+            cooldown_key=f"event:{event_type}",
+            payload={"event_type": event_type, **payload},
+        )
+        result = agent.action_arbiter.submit(req)
+        return {"ok": True, "result": result}
+
+    @router.get("/progress/latest")
+    def progress_latest():
+        """Get the latest progress event cache (if available)."""
+        if not hasattr(agent, 'progress_manager') or agent.progress_manager is None:
+            return {"available": False, "progress": None}
+        latest = agent.progress_manager.get_latest_event() if hasattr(agent.progress_manager, "get_latest_event") else {}
+        if not latest:
+            return {"available": False, "progress": None}
+        return {
+            "available": True,
+            "progress": latest,
+        }
+
+    # -----------------------------------------------------------------
+    # Realtime Performance Profile Switch
+    # -----------------------------------------------------------------
+
+    @router.get("/profile")
+    def get_profile():
+        """Return active realtime profile and available modes."""
+        rt_cfg = agent.config.get("realtime_profile", {})
+        active = str(rt_cfg.get("active", "fast"))
+        return {
+            "ok": True,
+            "active": active,
+            "modes": ["fast", "normal"],
+            "settings": rt_cfg.get(active, {}),
+        }
+
+    @router.post("/profile/switch")
+    def switch_profile(
+        mode: Optional[str] = Body(default=None, embed=True),
+        mode_q: Optional[str] = Query(default=None, alias="mode"),
+    ):
+        """Switch realtime profile: 'fast' or 'normal'. Applies immediately."""
+        mode_value = mode if mode is not None else mode_q
+        mode = str(mode_value or "").strip().lower()
+        if mode not in ("fast", "normal"):
+            return {"ok": False, "error": f"Invalid mode '{mode}'. Use 'fast' or 'normal'."}
+
+        rt_cfg = agent.config.get("realtime_profile", {})
+        profile = rt_cfg.get(mode, {})
+        if not profile:
+            return {"ok": False, "error": f"Profile '{mode}' not configured."}
+
+        rt_cfg["active"] = mode
+
+        applied = {}
+        if hasattr(agent, "apply_realtime_profile"):
+            applied = agent.apply_realtime_profile(profile) or {}
+        else:
+            if hasattr(agent, "persona_num_predict"):
+                agent.persona_num_predict = int(profile.get("num_predict_persona", agent.persona_num_predict))
+            if hasattr(agent, "num_ctx"):
+                agent.num_ctx = int(profile.get("num_ctx", agent.num_ctx))
+            if hasattr(agent, "temperature"):
+                agent.temperature = float(profile.get("temperature", agent.temperature))
+            if hasattr(agent, "request_timeout"):
+                agent.request_timeout = float(profile.get("request_timeout_s", agent.request_timeout))
+            applied = {
+                "num_predict_persona": getattr(agent, "persona_num_predict", None),
+                "num_ctx": getattr(agent, "num_ctx", None),
+                "temperature": getattr(agent, "temperature", None),
+                "request_timeout_s": getattr(agent, "request_timeout", None),
+            }
+
+        return {
+            "ok": True,
+            "active": mode,
+            "applied": applied,
+        }
+
     # Removed legacy /executor/* endpoints since the queue is replaced by true Agentic loops
 
     return router
+

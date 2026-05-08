@@ -10,9 +10,10 @@ agent:
   model: "qwen3.5:9b"
   temperature: 0.15
   num_ctx: 4096
-  cooldown_s: 1.0       # LLM çağrıları arasındaki minimum süre (saniye)
-  request_timeout: 60   # Ollama HTTP timeout (s)
-  status_interval_s: 3.0
+  num_predict: 100      # sub-agent / tool-loop response budget
+  cooldown_s: 0.2       # LLM çağrıları arasındaki minimum süre (saniye)
+  request_timeout: 20   # Ollama HTTP timeout (s)
+  status_interval_s: 1.0
   waiting_messages:
     - "Beklemedeyim..."
     - "Islem suruyor..."
@@ -37,7 +38,7 @@ tri_layer:
   subagent:
     max_steps: 2
   persona:
-    num_predict: 220
+    num_predict: 180
 
 safety:
   max_servo_angle: 180
@@ -49,6 +50,24 @@ sensor_loop:
   poll_hz: 5.0           # Sensör okuma hızı (Hz)
   enabled: true
 
+# Living Vision Agent configuration
+action_arbiter:
+  default_cooldown_s: 0.5
+  dedup_window_s: 2.0
+
+speech_arbiter:
+  max_queue_size: 10
+  dedup_window_s: 5.0
+
+progress:
+  enabled: true
+  # Templates defined in progress.py
+
+tool_execution:
+  timeout_s: 22.0        # VLM calls: keep responsive with fallback
+  retry_on_timeout: true
+  max_retries: 1
+
 idle:
   enabled: true
   breathe_interval_s: 15.0     # "Yaşam belirtisi" ışık aralığı
@@ -58,3 +77,32 @@ memory:
 
 slam:
   map_file: "map.json"         # data/ klasörü altında oluşturulur
+
+# ─── Realtime Performance Profile ───────────────────────────────────────────
+# Remote GPU: 24GB VRAM, models are Q4 quantized.
+# Switch between "fast" (low-latency, short output) and "normal" (balanced).
+# Toggle via POST /agent/profile/switch (body: {"mode":"fast"}) or ?mode=fast
+realtime_profile:
+  active: "fast"               # fast | normal
+
+  fast:
+    num_predict_chat: 100      # Ollama sohbet max token (kısa cevap)
+    num_predict_persona: 120   # Agent persona sentezi max token
+    num_predict_vlm: 256       # VLM scene analysis max token (JSON)
+    num_predict_vlm_bridge: 100  # vlm_bridge llm_client kısa yorum
+    num_ctx: 3072              # Daha küçük context = daha hızlı prefill
+    temperature: 0.1
+    request_timeout_s: 15
+    ollama_chat_timeout_s: 12
+    vlm_ask_timeout_s: 14
+
+  normal:
+    num_predict_chat: 180
+    num_predict_persona: 180
+    num_predict_vlm: 384
+    num_predict_vlm_bridge: 160
+    num_ctx: 4096
+    temperature: 0.15
+    request_timeout_s: 25
+    ollama_chat_timeout_s: 20
+    vlm_ask_timeout_s: 20
