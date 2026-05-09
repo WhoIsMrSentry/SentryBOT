@@ -25,6 +25,11 @@ class _OfflineClient:
         self.spoken.append(text)
         return {"ok": True}
 
+    def queue_action(self, action_type, priority=50, payload=None, source="test", ttl_ms=5000):
+        if action_type == "speak" and payload and payload.get("text"):
+            self.spoken.append(payload["text"])
+        return {"ok": True}
+
     def chat(self, query, apply_actions: bool = False, source_lang=None, response_lang=None):
         self.chat_called += 1
         return {"answer": "should-not-happen"}
