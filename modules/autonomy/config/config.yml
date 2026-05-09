@@ -1,5 +1,5 @@
 defaults:
-  loop_interval_ms: 1000
+  loop_interval_ms: 500
   boredom_threshold_s: 20
   mood:
     decay_rate: 0.5
@@ -43,6 +43,7 @@ endpoints:
   camera: "http://localhost:8080/camera"
   notifier: "http://localhost:8080/notify"
   autonomy: "http://localhost:8080/autonomy"
+  agent_core: "http://localhost:8080/agent"
 
 behaviors:
   idle:
@@ -71,6 +72,8 @@ behaviors:
 llm:
   enabled: true
   model: "qwen3.5:9b"
+  auto_select_persona: false
+  warmup_on_start: true
   prompt_template: |
     Sen duyguları olan bir robotsun.
     
@@ -129,9 +132,51 @@ offline_mode:
     generic:
       - "Baglanti gecici olarak yok, ama etkileşim devam ediyor."
 
+request_timeouts:
+  default_post_s: 1.0
+  default_get_s: 0.8
+  ollama_chat_s: 18.0
+  ollama_warmup_s: 2.5
+  speech_min_interval_s: 0.8
+
+visual_state:
+  emotion_min_interval_s: 2.2
+  default_lock_s: 2.4
+  strong_lock_s: 4.8
+  state_hold_s: 3.2
+  strong_emotions: ["fear", "angry", "furious"]
+  transition_graph:
+    neutral: ["curiosity", "joy", "tired", "sad", "fear", "angry", "furious"]
+    curiosity: ["joy", "neutral", "sad", "fear", "angry"]
+    joy: ["neutral", "curiosity", "tired", "sad"]
+    sad: ["neutral", "curiosity", "fear"]
+    tired: ["neutral", "sad"]
+    angry: ["neutral", "fear", "furious"]
+    furious: ["angry", "fear", "neutral"]
+    fear: ["neutral", "curiosity", "angry"]
+
+companion:
+  enabled: true
+  relationship_memory_path: "modules/autonomy/data/relationship_memory.json"
+  rituals:
+    enabled: true
+    morning_window_h: [6, 11]
+    owner_return_min_absence_s: 180
+    owner_return_cooldown_s: 300
+  proactive:
+    enabled: true
+    cooldown_s: 75
+    min_idle_s: 50
+    max_per_hour: 4
+    owner_only: false
+    enable_callback_lines: true
+    policy:
+      owner_style: "warm"
+      guest_style: "respectful"
+
 vision_hooks:
   enabled: true
-  poll_interval_s: 3
+  poll_interval_s: 2
   max_results: 5
   person_cooldown_s: 25
   ignore_labels:
@@ -139,6 +184,7 @@ vision_hooks:
     - "tv"
   prefer_llm_greetings: true
   speak_on_unknown: false
+  importance_speak_threshold: 0.6
   focus:
     jitter_min: -3
     jitter_max: 3
@@ -305,7 +351,6 @@ owner:
     handle: "WhoIsMrSentry"
   presence_timeout_s: 45
   require_presence: false
-  permission_grace_s: 900
   max_requests_without_owner: 3
   cooldown_s: 20
   speaker_window_s: 10
@@ -313,22 +358,10 @@ owner:
   angry_message: "Baba yokken beni zorlamanı istemiyorum."
   cooldown_message: "Baba gelene kadar konuşmak istemiyorum."
   greeting: "Baba! Geldiğine çok sevindim."
-  permission_message: "Tamam Baba, yanında olmasan da cevap vereceğim."
   restricted_keywords:
     - "format"
     - "kendini kapat"
     - "delete"
-  temporary:
-    enabled: true
-    # support single or list of keywords; include the new Khar language trigger
-    command_keyword:
-      - "geçici sahip"
-    duration_s: 600
-    restricted_features:
-      - "high_torque"
-      - "network_admin"
-    animation: "temp_owner"
-    revoke_message: "Geçici yetkiler sona erdi."
   # Note: Kharuun-specific irreversible triggers removed.
   rfid:
     endpoint: "http://localhost:8080/arduino/rfid/authorize"

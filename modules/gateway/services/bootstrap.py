@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 from typing import Dict, Any, Optional
 import os
 
@@ -603,6 +603,24 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             logger.info("arduino->neopixel event bridge mounted (rate-limited)")
         except Exception as exc:
             logger.warning("arduino->neopixel bridge mount failed: %s", exc)
+
+    # Living Vision wiring: VLM event bus -> Autonomy -> Agent Core events
+    vlm_bridge = started.get("vlm_bridge")
+    autonomy = started.get("autonomy")
+    try:
+        brain = getattr(autonomy, "brain", None)
+        if vlm_bridge is not None and brain is not None and hasattr(vlm_bridge, "event_bus") and getattr(vlm_bridge, "event_bus", None):
+            def _forward_vlm_event(event_type: str, data: Dict[str, Any]) -> None:
+                try:
+                    if hasattr(brain, "client") and hasattr(brain.client, "emit_agent_event"):
+                        brain.client.emit_agent_event(event_type, data)
+                except Exception:
+                    pass
+
+            vlm_bridge.event_bus.subscribe_all(_forward_vlm_event)
+            logger.info("vlm event bus -> agent event bridge mounted")
+    except Exception as exc:
+        logger.warning("vlm/autonomy event bridge mount failed: %s", exc)
 
     return started
 
