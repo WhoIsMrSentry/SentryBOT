@@ -26,27 +26,30 @@ class ServiceClient:
         cfg = config or {}
         self.speech_quiet_cfg = dict(cfg.get("speech_quiet_hours", {}))
         self.offline_cfg = dict(cfg.get("offline_mode", {}))
+        self.request_timeouts = dict(cfg.get("request_timeouts", {}))
         self._availability_cache = {}
 
-    def _post(self, service, endpoint, json=None, params=None):
+    def _post(self, service, endpoint, json=None, params=None, timeout_s=None):
         url = self.urls.get(service)
         if not url:
             return None
         try:
             full_url = f"{url}{endpoint}"
-            resp = requests.post(full_url, json=json, params=params, timeout=1.0)
+            timeout = float(timeout_s) if timeout_s is not None else float(self.request_timeouts.get("default_post_s", 1.0))
+            resp = requests.post(full_url, json=json, params=params, timeout=timeout)
             return resp.json() if resp.status_code == 200 else None
         except Exception as e:
             logger.debug(f"Failed to post to {service}: {e}")
             return None
 
-    def _get(self, service, endpoint, params=None):
+    def _get(self, service, endpoint, params=None, timeout_s=None):
         url = self.urls.get(service)
         if not url:
             return None
         try:
             full_url = f"{url}{endpoint}"
-            resp = requests.get(full_url, params=params, timeout=1.0)
+            timeout = float(timeout_s) if timeout_s is not None else float(self.request_timeouts.get("default_get_s", 1.0))
+            resp = requests.get(full_url, params=params, timeout=timeout)
             return resp.json() if resp.status_code == 200 else None
         except Exception as e:
             logger.debug(f"Failed to get from {service}: {e}")
@@ -246,7 +249,12 @@ class ServiceClient:
             params["source_lang"] = str(source_lang)
         if response_lang:
             params["response_lang"] = str(response_lang)
-        return self._post("ollama", "/chat", None, params=params)
+        timeout = float(self.request_timeouts.get("ollama_chat_s", 20.0))
+        return self._post("ollama", "/chat", None, params=params, timeout_s=timeout)
+
+    def warmup_ollama(self):
+        timeout = float(self.request_timeouts.get("ollama_warmup_s", 2.5))
+        return self._post("ollama", "/warmup", timeout_s=timeout)
 
     def get_speech_direction(self):
         return self._get("speech", "/direction")
@@ -375,6 +383,22 @@ class ServiceClient:
     def get_face_follow_status(self):
         return self._get_vlm("/follow/status")
 
+    # ── Living Vision Agent Methods ──
+
+    def get_visual_context(self):
+        return self._get_vlm("/context/latest")
+
+    def refresh_visual_context(self):
+        return self._post("vlm", "/context/refresh")
+
+    def focus_person(self, person: str):
+        if not person:
+            return None
+        return self._post("vlm", "/focus/person", params={"person": str(person)})
+
+    def start_owner_follow(self):
+        return self._post("vlm", "/follow/owner/start")
+
     def check_rfid(self, endpoint):
         if not endpoint:
             return False
@@ -389,3 +413,35 @@ class ServiceClient:
         except Exception as exc:
             logger.debug("RFID check failed: %s", exc)
             return False
+
+    def queue_action(self, action_type: str, priority: int = 50, ttl_ms: int = 5000, payload: dict = None):
+        if payload is None:
+            payload = {}
+        # Try routing through agent core endpoint (assuming gateway exposes it at /agent)
+        url = self.urls.get("agent_core") or "http://127.0.0.1:8080/agent"
+        try:
+            resp = requests.post(f"{url}/actions/queue", json={
+                "type": action_type,
+                "priority": priority,
+                "ttl_ms": ttl_ms,
+                "payload": payload,
+            }, timeout=1.0)
+            return resp.json() if resp.status_code == 200 else None
+        except Exception as e:
+            logger.debug(f"Failed to queue action {action_type}: {e}")
+            return None
+
+    def emit_agent_event(self, event_type: str, payload: dict | None = None):
+        if payload is None:
+            payload = {}
+        url = self.urls.get("agent_core") or "http://127.0.0.1:8080/agent"
+        try:
+            resp = requests.post(
+                f"{url}/events",
+                json={"type": str(event_type), "payload": payload},
+                timeout=1.0,
+            )
+            return resp.json() if resp.status_code == 200 else None
+        except Exception as e:
+            logger.debug(f"Failed to emit agent event {event_type}: {e}")
+            return None
