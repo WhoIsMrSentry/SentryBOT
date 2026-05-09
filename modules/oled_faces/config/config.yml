@@ -4,6 +4,20 @@ server:
 
 enabled: true
 poll_interval_s: 0.7
+min_switch_interval_s: 0.55
+animation_hold_s: 1.4
+bitmap_hold_s: 0.35
+event_cooldown_s: 0.8
+priority_map:
+  error: 95
+  warning: 90
+  owner.locked: 92
+  autonomy.look_around: 45
+  autonomy.blink: 35
+  vision.focus: 55
+  emotion:fear: 88
+  emotion:angry: 86
+  emotion:furious: 90
 
 display:
   enabled: true

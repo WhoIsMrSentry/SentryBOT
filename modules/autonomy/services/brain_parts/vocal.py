@@ -46,9 +46,13 @@ class VocalMixin:
             return
         tone = self._tone_profile(emotion)
         try:
-            self.client.speak(text, tone=tone, language=language)
+            self.client.queue_action("speak", priority=50, ttl_ms=10000, payload={
+                "text": text,
+                "tone": tone,
+                "language": language
+            })
         except Exception as exc:  # pragma: no cover - best effort speech
-            logger.debug("Failed to speak with tone %s: %s", tone, exc)
+            logger.debug("Failed to queue speech action: %s", exc)
 
     def _tone_profile(self, emotion: str | None = None) -> dict:
         emotion = emotion or self.state.get("last_emotion") or self.mood.get_dominant_emotion() or "neutral"

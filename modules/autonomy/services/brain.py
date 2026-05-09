@@ -4,12 +4,16 @@ import logging
 import random
 import datetime
 import json
+import uuid
 from typing import List
 
 from .client import ServiceClient
 from .idle_behaviors import IdleBehaviorPlanner
 from .mood import MoodManager
 from .memory import ShortTermMemory
+from .companion_rituals import CompanionRituals
+from .proactive_planner import ProactivePlanner
+from .relationship_memory import RelationshipMemory
 from .brain_parts.animations import AnimationSupportMixin
 from .brain_parts.owner_guard import OwnerGuardMixin
 from .brain_parts.responses import ResponseTagMixin
@@ -47,6 +51,15 @@ class AutonomyBrain(
         self.client = ServiceClient(config.get("endpoints", {}), config=config)
         self.idle_planner = IdleBehaviorPlanner(config)
         self.memory = ShortTermMemory(max_items=20)
+        companion_cfg = config.get("companion", {}) if isinstance(config.get("companion", {}), dict) else {}
+        self.relationship_memory = RelationshipMemory(
+            enabled=bool(companion_cfg.get("enabled", True)),
+            path=str(companion_cfg.get("relationship_memory_path", "modules/autonomy/data/relationship_memory.json")),
+        )
+        self.companion_rituals = CompanionRituals(
+            companion_cfg.get("rituals", {}) if isinstance(companion_cfg.get("rituals", {}), dict) else {}
+        )
+        self.proactive_planner = ProactivePlanner(companion_cfg.get("proactive", {}) if isinstance(companion_cfg.get("proactive", {}), dict) else {})
         self._vision_cfg = config.get("vision_hooks", {})
         self.owner_cfg = config.get("owner", {})
 
@@ -84,9 +97,6 @@ class AutonomyBrain(
             "owner_last_seen": 0.0,
             "owner_lockout_until": 0.0,
             "owner_last_greet": 0.0,
-            "owner_permission_until": 0.0,
-            "temp_owner": None,
-            "temp_owner_expires": 0.0,
             "rfid_authorized_until": 0.0,
             "last_speaker": None,
             "persona_mode": None,
@@ -99,16 +109,53 @@ class AutonomyBrain(
         self._last_owner_scan = 0.0
         self._last_idle_action = 0.0
         self._reset_daily_timeline()
+        self._speech_req_lock = threading.Lock()
+        self._active_speech_req_id: str = ""
+        self._speech_busy: bool = False
+        self._speech_min_interval_s = float(self.config.get("request_timeouts", {}).get("speech_min_interval_s", 0.8))
+        visuals_cfg = self.config.get("visual_state", {}) if isinstance(self.config.get("visual_state", {}), dict) else {}
+        self._visual_emotion_min_interval_s = float(visuals_cfg.get("emotion_min_interval_s", 2.0))
+        self._visual_lock_default_s = float(visuals_cfg.get("default_lock_s", 2.2))
+        self._visual_lock_strong_s = float(visuals_cfg.get("strong_lock_s", 4.5))
+        self._visual_state_hold_s = float(visuals_cfg.get("state_hold_s", 3.0))
+        self._visual_strong_emotions = {
+            str(x).strip().lower()
+            for x in (visuals_cfg.get("strong_emotions", ["fear", "angry", "furious"]) or [])
+            if str(x).strip()
+        }
+        graph_cfg = visuals_cfg.get("transition_graph", {}) if isinstance(visuals_cfg.get("transition_graph", {}), dict) else {}
+        self._visual_transition_graph = {
+            str(src).strip().lower(): [
+                str(dst).strip().lower()
+                for dst in (targets if isinstance(targets, list) else [])
+                if str(dst).strip()
+            ]
+            for src, targets in graph_cfg.items()
+            if str(src).strip()
+        }
+        self._last_emotion_sync_ts: float = 0.0
+        self._visual_lock_until: float = 0.0
+        self._visual_lock_reason: str = ""
+        self._visual_state_emotion: str = "neutral"
+        self._visual_state_since: float = time.time()
 
     def start(self):
         if self.running:
             return
         self.running = True
 
-        try:
-            self.client.select_persona("sentry")
-        except Exception:
-            logger.warning("Failed to select persona 'sentry'")
+        auto_select_persona = bool(self.config.get("llm", {}).get("auto_select_persona", False))
+        if auto_select_persona:
+            try:
+                self.client.select_persona("sentry")
+            except Exception:
+                logger.warning("Failed to select persona 'sentry'")
+
+        if bool(self.config.get("llm", {}).get("warmup_on_start", True)):
+            try:
+                self.client.warmup_ollama()
+            except Exception:
+                pass
 
         # Start Agent Core subsystems (sensors, idle behaviors, memory)
         if self.agent:
@@ -172,26 +219,39 @@ class AutonomyBrain(
                 text = speech["text"]
                 lang = str(speech.get("language") or self.state.get("last_speech_language") or "tr")
                 elapsed = time.time() - self.state["last_speech_time"]
-                if text != self.state["last_speech_text"] and elapsed > 2:
+                if text != self.state["last_speech_text"] and elapsed > self._speech_min_interval_s:
                     self.state["last_speech_text"] = text
                     self.state["last_speech_time"] = time.time()
                     self.state["last_speech_language"] = lang
-                    self._react_to_speech(text, source_lang=lang)
+                    threading.Thread(
+                        target=self._react_to_speech,
+                        args=(text,),
+                        kwargs={"source_lang": lang},
+                        daemon=True,
+                    ).start()
         except Exception:
             pass
 
     def _sync_emotion(self):
         dominant = self.mood.get_dominant_emotion()
-        if not dominant or dominant == self._last_emotion_sent:
+        now = time.time()
+        if not dominant:
             return
-        self._last_emotion_sent = dominant
-        self.state["last_emotion"] = dominant
-        self.client.update_emotions([dominant])
-        self.client.push_interaction_event(f"emotion.{dominant}")
+        target_emotion = self._select_visual_emotion(dominant)
+        if target_emotion == self._last_emotion_sent:
+            return
+        if (now - self._last_emotion_sync_ts) < self._visual_emotion_min_interval_s:
+            return
+        self._last_emotion_sent = target_emotion
+        self._last_emotion_sync_ts = now
+        self.state["last_emotion"] = target_emotion
+        self.client.update_emotions([target_emotion])
+        self.client.push_interaction_event(f"emotion.{target_emotion}")
+        self._apply_emotion_visual_state(target_emotion)
         # Try to run a matching scene for the dominant emotion (e.g. emotion_joy)
         try:
-            scene_name = f"emotion_{dominant}"
-            ran = self._run_scene(scene_name, context={"emotion": dominant})
+            scene_name = f"emotion_{target_emotion}"
+            ran = self._run_scene(scene_name, context={"emotion": target_emotion})
             if ran:
                 # emit a scene-level interaction event for other subsystems
                 try:
@@ -219,6 +279,7 @@ class AutonomyBrain(
             self._perform_micro_movement()
 
         self._maybe_scan_for_owner()
+        self._forward_visual_events_to_agent()
 
         boredom_threshold = self.config.get("defaults", {}).get("boredom_threshold_s", 20)
         time_since_interaction = now - self.state["last_interaction"]
@@ -238,6 +299,104 @@ class AutonomyBrain(
         else:
             self.state["is_bored"] = False
 
+        self._run_companion_rituals(now)
+        self._run_companion_proactive(now)
+
+    def _run_companion_rituals(self, now: float) -> None:
+        if self._speech_busy:
+            return
+        owner_present = bool(self._owner_seen_recently()) if hasattr(self, "_owner_seen_recently") else False
+        plan = self.companion_rituals.propose(
+            now_ts=now,
+            owner_present=owner_present,
+            is_sleeping=bool(self.state.get("is_sleeping", False)),
+        )
+        if not plan:
+            return
+        text = str(plan.get("text", "")).strip()
+        if not text:
+            return
+        emotion = str(plan.get("emotion", "joy")).strip()
+        event = str(plan.get("event", "companion.ritual")).strip()
+        self.client.push_interaction_event(event, {"text": text, "emotion": emotion})
+        self._speak_with_mood(text, emotion=emotion)
+        self.memory.add_event(f"Companion ritual: {text}")
+        logger.info(
+            "Companion ritual fired | event=%s emotion=%s text=%s",
+            event,
+            emotion,
+            text,
+        )
+
+    def _run_companion_proactive(self, now: float) -> None:
+        if self.state.get("is_sleeping"):
+            return
+        if self._speech_busy:
+            return
+        idle_s = max(0.0, now - float(self.state.get("last_interaction", now)))
+        dominant = str(self.mood.get_dominant_emotion() or "neutral")
+        speaker = str(self.state.get("last_speaker") or "")
+        owner_present = bool(self._owner_seen_recently()) if hasattr(self, "_owner_seen_recently") else False
+        social_profile = self.relationship_memory.social_profile(speaker) if speaker else {}
+        plan = self.proactive_planner.propose(
+            now_ts=now,
+            idle_s=idle_s,
+            dominant_emotion=dominant,
+            last_speaker=speaker,
+            owner_present=owner_present,
+            social_profile=social_profile,
+        )
+        if not plan:
+            return
+        text = str(plan.get("text", "")).strip()
+        if not text:
+            return
+        emotion = str(plan.get("emotion", "curiosity")).strip()
+        event = str(plan.get("event", "companion.proactive")).strip()
+        self.client.push_interaction_event(event, {"text": text, "emotion": emotion})
+        self._speak_with_mood(text, emotion=emotion)
+        self.memory.add_event(f"Proactive companion line: {text}")
+        logger.info(
+            "Companion proactive fired | event=%s emotion=%s text=%s",
+            event,
+            emotion,
+            text,
+        )
+
+    def _forward_visual_events_to_agent(self) -> None:
+        """Forward key autonomy/vision signals to Agent Core event endpoint."""
+        if not hasattr(self.client, "emit_agent_event"):
+            return
+        try:
+            ctx_resp = self.client.get_visual_context()
+            if not (isinstance(ctx_resp, dict) and ctx_resp.get("available")):
+                return
+            ctx = ctx_resp.get("context", {}) if isinstance(ctx_resp.get("context", {}), dict) else {}
+            hazards = ctx.get("hazards", []) if isinstance(ctx.get("hazards", []), list) else []
+            people = ctx.get("people", []) if isinstance(ctx.get("people", []), list) else []
+            if hazards:
+                self.client.emit_agent_event("hazard_detected", {"count": len(hazards)})
+                return
+            owner_seen = False
+            new_people = 0
+            for p in people:
+                if not isinstance(p, dict):
+                    continue
+                lvl = int(p.get("recognition_level", 0) or 0)
+                rel = str(p.get("relationship", "")).lower()
+                if lvl >= 5 or rel == "owner":
+                    owner_seen = True
+                if lvl <= 1:
+                    new_people += 1
+            if owner_seen:
+                self.client.emit_agent_event("owner_follow_intent", {})
+            elif new_people > 0:
+                self.client.emit_agent_event("new_person_seen", {"count": new_people})
+            elif self.state.get("is_bored"):
+                self.client.emit_agent_event("idle_comment_request", {"prompt": "look around and comment naturally"})
+        except Exception:
+            pass
+
     def _run_idle_behavior(self, now: float) -> bool:
         choice = self.idle_planner.pick(now=now)
         if choice is None:
@@ -254,11 +413,15 @@ class AutonomyBrain(
             return
 
         events = "\n".join(self.memory.get_recent_events())
+        social_context = self.relationship_memory.build_social_context(
+            current_speaker=str(self.state.get("last_speaker") or "")
+        )
         prompt = (
             f"You are currently BORED and IDLE.\n"
             f"Internal State:\n"
             f"- Happiness: {int(self.mood['happiness'])}/100, Energy: {int(self.mood['energy'])}/100, Curiosity: {int(self.mood['curiosity'])}/100\n"
             f"Recent Events:\n{events}\n\n"
+            f"{social_context}\n\n"
             f"Use your internal physical tools right now (such as looking around, playing an animation on OLED, "
             f"or changing body lights) to entertain yourself or find something interesting to do. Do not ask for permission."
         )
@@ -276,11 +439,16 @@ class AutonomyBrain(
 
     def _execute_action(self, action):
         if action == "LOOK_AROUND":
+            if self._visual_lock_active():
+                logger.debug("Skipping LOOK_AROUND due to visual lock: %s", self._visual_lock_reason)
+                return
             self.client.push_interaction_event("autonomy.look_around")
             self._emit_idle_visuals("look_around")
             if not self._trigger_animation("look_around"):
                 self._head_scan_fallback()
         elif action == "BLINK":
+            if self._visual_lock_active():
+                return
             # Always emit a visual event so LED/OLED can react even if
             # servo animation endpoint reports success while degrading.
             self.client.push_interaction_event("autonomy.blink")
@@ -292,6 +460,8 @@ class AutonomyBrain(
             self.client.push_interaction_event("autonomy.bored")
             self._emit_idle_visuals("bored")
         elif action == "STRETCH":
+            if self._visual_lock_active():
+                return
             self.client.push_interaction_event("autonomy.stretch")
             self._emit_idle_visuals("stretch")
             if not self._trigger_animation("stretch"):
@@ -308,6 +478,8 @@ class AutonomyBrain(
         feedback alive when interactions adapter/config is degraded.
         """
         key = str(action or "").strip().lower()
+        if self._visual_lock_active():
+            return
         neo_map = {
             "blink": "RANDOM_BLINK",
             "look_around": "COMET",
@@ -343,6 +515,67 @@ class AutonomyBrain(
         except Exception:
             pass
 
+    @staticmethod
+    def _normalize_emotion_name(emotion: str) -> str:
+        e = str(emotion or "neutral").strip().lower()
+        aliases = {
+            "sadness": "sad",
+            "anger": "angry",
+            "tire": "tired",
+            "anxious": "fear",
+        }
+        return aliases.get(e, e or "neutral")
+
+    def _select_visual_emotion(self, dominant_emotion: str) -> str:
+        now = time.time()
+        candidate = self._normalize_emotion_name(dominant_emotion)
+        current = self._normalize_emotion_name(self._visual_state_emotion)
+        strong = self._visual_strong_emotions
+        if not current:
+            self._visual_state_emotion = candidate
+            self._visual_state_since = now
+            return candidate
+        if candidate == current:
+            return current
+        if candidate in strong:
+            self._visual_state_emotion = candidate
+            self._visual_state_since = now
+            return candidate
+        if (now - self._visual_state_since) < max(0.1, self._visual_state_hold_s):
+            return current
+        allowed = self._visual_transition_graph.get(current, [])
+        if allowed and candidate not in allowed:
+            return current
+        self._visual_state_emotion = candidate
+        self._visual_state_since = now
+        return candidate
+
+    def _visual_lock_active(self) -> bool:
+        return time.time() < float(self._visual_lock_until)
+
+    def _apply_emotion_visual_state(self, emotion: str) -> None:
+        e = str(emotion or "neutral").strip().lower()
+        mapping = {
+            "joy": {"effect": "RAINBOW_CYCLE", "oled": "happy", "color": [255, 190, 80], "strong": False},
+            "curiosity": {"effect": "COMET", "oled": "focused", "color": [60, 190, 255], "strong": False},
+            "sadness": {"effect": "PULSE", "oled": "sad", "color": [60, 90, 180], "strong": False},
+            "tired": {"effect": "BREATHE", "oled": "sleepy", "color": [80, 70, 120], "strong": False},
+            "fear": {"effect": "PULSE", "oled": "scared", "color": [255, 40, 40], "strong": True},
+            "neutral": {"effect": "BREATHE", "oled": "normal", "color": [120, 120, 140], "strong": False},
+        }
+        spec = mapping.get(e, mapping["neutral"])
+        lock_s = self._visual_lock_strong_s if spec.get("strong") else self._visual_lock_default_s
+        self._visual_lock_until = max(self._visual_lock_until, time.time() + max(0.2, float(lock_s)))
+        self._visual_lock_reason = f"emotion:{e}"
+        try:
+            self.client.set_neopixel(str(spec.get("effect", "BREATHE")), emotions=[e], color=spec.get("color"))
+        except Exception:
+            pass
+        try:
+            self.client.oled_show(str(spec.get("oled", "normal")))
+        except Exception:
+            pass
+
     def _react_to_sound(self, angle):
         """Turn head towards sound source."""
         logger.info("Sound detected at %s", angle)
@@ -354,7 +587,7 @@ class AutonomyBrain(
             context={"angle": int(angle), "target_pan": int(target_pan)},
         )
         if not ran:
-            self.client.move_head(target_pan, self.state["current_tilt"])
+            self.client.queue_action("head_move", priority=60, payload={"pan": target_pan, "tilt": self.state["current_tilt"]})
         self.client.push_interaction_event("autonomy.excited")
         self.state["last_interaction"] = time.time()
         self.mood.modify("curiosity", 5)
@@ -363,6 +596,11 @@ class AutonomyBrain(
 
     def _react_to_speech(self, text, source_lang: str | None = None):
         """React to heard text."""
+        request_id = uuid.uuid4().hex[:10]
+        with self._speech_req_lock:
+            self._active_speech_req_id = request_id
+            self._speech_busy = True
+
         logger.info("Heard: %s", text)
         self.state["last_interaction"] = time.time()
         self.mood.modify("happiness", 5)
@@ -375,6 +613,7 @@ class AutonomyBrain(
         speaker = self._guess_active_person()
         if speaker:
             self.state["last_speaker"] = speaker
+            self._note_person_seen(speaker, emotion=str(self.state.get("last_emotion") or ""))
             self._remember_person_chat(speaker, text, role="user")
 
         self.client.push_interaction_event("autonomy.excited")
@@ -413,62 +652,42 @@ class AutonomyBrain(
         raw_response = None
         try:
             # ── PRIMARY PATH: Agent Core (ReAct + Tool Calling + Safety) ──
+            # Uses built-in ProgressManager + SpeechArbiter for staged
+            # ack → progress → final lifecycle.  No manual _waiter thread
+            # needed — agent.step() emits its own progress events.
             if self.agent:
                 try:
-                    # Speak a short ack immediately, then periodic waiting messages while agent runs.
-                    waiting_messages = [
-                        "Beklemedeyim...",
-                        "Islem suruyor...",
-                        "Hala isliyorum...",
-                    ]
-                    try:
-                        agent_cfg = self.agent.config.get("agent", {}) if isinstance(self.agent.config, dict) else {}
-                        cfg_waiting = agent_cfg.get("waiting_messages")
-                        if isinstance(cfg_waiting, list) and cfg_waiting:
-                            waiting_messages = [str(m) for m in cfg_waiting if str(m).strip()]
-                    except Exception:
-                        pass
+                    # Wire SpeechArbiter speak_fn to autonomy's speak client
+                    if not self.agent.speech_arbiter._speak_fn:
+                        self.agent.speech_arbiter.set_speak_fn(
+                            lambda text, tone=None, language=None: self.client.speak(
+                                text, tone=tone, language=language or lang,
+                            )
+                        )
 
-                    interval = float(getattr(self.agent, "status_interval_s", 3.0))
-                    wait_done = threading.Event()
-
-                    def _waiter():
-                        idx = 0
-                        while not wait_done.wait(timeout=interval):
-                            if not waiting_messages:
-                                continue
-                            msg = waiting_messages[idx % len(waiting_messages)]
-                            idx += 1
-                            self._speak_with_mood(msg, emotion="neutral", language=lang)
-
-                    self._speak_with_mood("Tamam, bakiyorum.", emotion="neutral", language=lang)
-                    wait_thread = threading.Thread(target=_waiter, daemon=True)
-                    wait_thread.start()
-                    try:
-                        agent_result = self.agent.step(text)
-                    finally:
-                        wait_done.set()
-                        try:
-                            wait_thread.join(timeout=0.1)
-                        except Exception:
-                            pass
+                    enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
+                    agent_result = self.agent.step(enriched_text)
                     if agent_result and agent_result.get("text"):
+                        if not self._is_active_request(request_id):
+                            return
                         response_text = agent_result["text"]
                         # Actions are already executed by the agent pipeline
                         # (validated -> safety filtered -> routed -> HAL)
-                        # So we only need to speak the text response here.
                         logger.info("Agent Core handled speech with full pipeline.")
-                        # Log to short-term memory too
                         self.memory.add_event(f"Agent replied: {response_text}")
                         self._remember_person_chat(speaker, response_text, role="assistant")
-                        self._speak_with_mood(response_text, language=lang)
+                        # Final response is spoken via SpeechArbiter
+                        self.agent.speech_arbiter.enqueue_final(
+                            response_text, language=lang,
+                        )
                         return
                 except Exception as exc:
                     logger.warning("Agent Core step failed, falling back to direct LLM: %s", exc)
 
             # ── FALLBACK PATH: Direct Ollama (no tool-calling) ──
             logger.info("Routing to Ollama...")
-            resp = self.client.chat(text, source_lang="auto", response_lang=None)
+            enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
+            resp = self.client.chat(enriched_text, source_lang="auto", response_lang=None)
             if resp and "answer" in resp:
                 response_text = resp["answer"]
                 response_actions = resp.get("actions")
@@ -478,8 +697,12 @@ class AutonomyBrain(
                     lang = str(trans.get("response_lang"))
 
             if response_text:
+                if not self._is_active_request(request_id):
+                    return
                 clean_text = self.apply_llm_response(response_text, response_actions, raw_response, speak=False)
                 if clean_text:
+                    if not self._is_active_request(request_id):
+                        return
                     self._remember_person_chat(speaker, clean_text, role="assistant")
                     self._speak_with_mood(clean_text, language=lang)
                     logger.info("Reply: %s", clean_text)
@@ -488,13 +711,75 @@ class AutonomyBrain(
                     logger.info("LLM response only triggered physical actions.")
         except Exception as exc:
             logger.error("Failed to generate reply: %s", exc)
+            self.mood.modify("fear", 15)
+            self.client.push_interaction_event("error", {"source": "ollama", "reason": "chat_failed"})
+            self._apply_emotion_visual_state("fear")
+        finally:
+            with self._speech_req_lock:
+                if self._active_speech_req_id == request_id:
+                    self._speech_busy = False
+
+    def _is_active_request(self, request_id: str) -> bool:
+        with self._speech_req_lock:
+            return self._active_speech_req_id == request_id
 
     def _remember_person_chat(self, speaker: str | None, text: str, role: str) -> None:
         person = str(speaker or "").strip()
         if not person or person.lower() == "unknown" or not text:
             return
         try:
+            self.relationship_memory.add_chat(name=person, role=role, text=text)
+        except Exception:
+            pass
+        try:
             self.client.append_person_chat(person=person, text=text, role=role)
+        except Exception:
+            pass
+
+    def _enrich_user_text_with_companion_context(self, text: str, speaker: str | None) -> str:
+        raw = str(text or "").strip()
+        spk = str(speaker or "").strip()
+        if not raw:
+            return raw
+        if not spk:
+            return raw
+        profile = self.relationship_memory.social_profile(spk)
+        if not profile:
+            return raw
+        likes = profile.get("likes", []) if isinstance(profile.get("likes", []), list) else []
+        topics = profile.get("topics", []) if isinstance(profile.get("topics", []), list) else []
+        top_memory = str(profile.get("top_memory", "")).strip()
+        hints = []
+        if likes:
+            hints.append(f"likes={','.join([str(x) for x in likes[:3]])}")
+        if topics:
+            hints.append(f"topics={','.join([str(x) for x in topics[:3]])}")
+        if top_memory:
+            hints.append(f"memory={top_memory[:90]}")
+        if not hints:
+            return raw
+        enriched = f"{raw}\n\n[CompanionContext speaker={spk}] {', '.join(hints)}"
+        logger.info(
+            "Companion context injected | speaker=%s hints=%s",
+            spk,
+            ", ".join(hints),
+        )
+        try:
+            self.client.push_interaction_event("companion.context_injected", {"speaker": spk})
+        except Exception:
+            pass
+        return enriched
+
+    def _note_person_seen(self, name: str, emotion: str = "") -> None:
+        person = str(name or "").strip()
+        if not person or person.lower() == "unknown":
+            return
+        try:
+            self.relationship_memory.observe_person(
+                name=person,
+                is_owner=bool(self._is_owner_name(person)) if hasattr(self, "_is_owner_name") else False,
+                emotion=emotion,
+            )
         except Exception:
             pass
 
@@ -622,7 +907,7 @@ class AutonomyBrain(
             self.client.push_interaction_event("autonomy.sleep")
             ran = self._run_scene("sleepy_entry", context={"hour": hour})
             if not ran:
-                self.client.move_head(90, 120)
+                self.client.queue_action("head_move", priority=70, payload={"pan": 90, "tilt": 120})
                 self._speak_with_mood("İyi geceler.", emotion="tired")
             self.client.set_speech_tracking(False)
 

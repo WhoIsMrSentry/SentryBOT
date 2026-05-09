@@ -65,78 +65,9 @@ class OwnerGuardMixin:
         return False
 
     def _handle_owner_commands(self, text: str, speaker: str | None) -> bool:
-        if not self._is_owner_context(speaker):
-            return False
-        lowered = text.lower()
-        handled = False
-        temp_cfg = self.owner_cfg.get("temporary", {})
-        # support single keyword or list of keywords for temporary owner commands
-        cmd_kw = temp_cfg.get("command_keyword") or "geçici sahip"
-        if isinstance(cmd_kw, str):
-            keywords = [cmd_kw.lower()]
-        else:
-            keywords = [k.lower() for k in cmd_kw if k]
-        if temp_cfg.get("enabled"):
-            for keyword in keywords:
-                if keyword in lowered:
-                    target = self._extract_temp_owner_name(text, keyword)
-                    if target:
-                        self._assign_temp_owner(target)
-                        handled = True
-                        break
-        if any(phrase in lowered for phrase in ["geçici yetki iptal", "geçici sahip değil"]):
-            self._clear_temp_owner(announce=True)
-            handled = True
-        if any(phrase in lowered for phrase in ["izin ver", "serbest", "cevap verebilirsin"]):
-            self._grant_owner_permission()
-            handled = True
-        # Legacy: Kharuun-specific trigger handling removed.
-        return handled
-
-    def _is_owner_context(self, speaker: str | None) -> bool:
-        if speaker and self._is_owner_name(speaker):
-            return True
-        return self._owner_seen_recently()
-
-    def _extract_temp_owner_name(self, text: str, keyword: str) -> str | None:
-        lower_text = text.lower()
-        idx = lower_text.find(keyword)
-        if idx <= 0:
-            return None
-        candidate = text[:idx].replace("adlı kişi", "").strip()
-        return candidate or None
-
-    def _assign_temp_owner(self, name: str) -> None:
-        cfg = self.owner_cfg.get("temporary", {})
-        duration = cfg.get("duration_s", 600)
-        self.state["temp_owner"] = name
-        self.state["temp_owner_expires"] = time.time() + duration
-        self.client.push_interaction_event("owner.temp_granted", {"name": name})
-        if cfg.get("animation"):
-            self._trigger_animation(cfg["animation"])
-        msg = f"{name}, Baba yokken seni dinleyebilirim ama dikkatli ol."
-        self._speak_with_mood(msg, emotion="neutral")
-        self.memory.add_event(f"Temp owner: {name}")
-
-    def _clear_temp_owner(self, announce: bool = False) -> None:
-        if not self.state.get("temp_owner"):
-            return
-        name = self.state.get("temp_owner")
-        self.state["temp_owner"] = None
-        self.state["temp_owner_expires"] = 0.0
-        self.client.push_interaction_event("owner.temp_revoked", {"name": name})
-        if announce:
-            msg = self.owner_cfg.get("temporary", {}).get("revoke_message", "Geçici yetkiler sona erdi.")
-            self._speak_with_mood(msg, emotion="neutral")
-        self.memory.add_event(f"Temp owner cleared: {name}")
-
-    def _grant_owner_permission(self) -> None:
-        grace = self.owner_cfg.get("permission_grace_s", 600)
-        self.state["owner_permission_until"] = time.time() + grace
-        message = self.owner_cfg.get("permission_message", "Tamam, yanında olmasan da cevap vereceğim.")
-        message = message.replace("{nickname}", self._address_owner("affectionate"))
-        self._speak_with_mood(message, emotion="joy")
-        self.client.push_interaction_event("owner.permission_granted")
+        # Delegation is intentionally disabled: owner cannot transfer authority
+        # to a third person via voice commands.
+        return False
 
     def _owner_guard_enabled(self) -> bool:
         return bool(self.owner_cfg.get("enabled") and self.owner_cfg.get("require_presence", True))
@@ -151,37 +82,21 @@ class OwnerGuardMixin:
     def _owner_cooldown_active(self) -> bool:
         return time.time() < self.state.get("owner_lockout_until", 0.0)
 
-    def _owner_permission_active(self) -> bool:
-        return time.time() < self.state.get("owner_permission_until", 0.0)
-
     def _rfid_active(self) -> bool:
         return time.time() < self.state.get("rfid_authorized_until", 0.0)
-
-    def _temp_owner_active(self) -> bool:
-        now = time.time()
-        expires = self.state.get("temp_owner_expires", 0.0)
-        if self.state.get("temp_owner") and now < expires:
-            return True
-        if self.state.get("temp_owner") and now >= expires:
-            self._clear_temp_owner(announce=True)
-        return False
 
     def _has_full_owner_authority(self) -> bool:
         if not self.owner_cfg.get("enabled"):
             return True
         return any([
             self._owner_seen_recently(),
-            self._owner_permission_active(),
             self._rfid_active(),
         ])
-
-    def _has_any_authority(self) -> bool:
-        return self._has_full_owner_authority() or self._temp_owner_active()
 
     def _maybe_block_request(self, text: str) -> tuple[str, str] | None:
         if not self._owner_guard_enabled():
             return None
-        if self._has_any_authority():
+        if self._has_full_owner_authority():
             return None
         entry = self._record_external_request(text)
         affectionate = self._address_owner("affectionate")
@@ -258,8 +173,6 @@ class OwnerGuardMixin:
         self.state["owner_last_seen"] = timestamp
         self.state["owner_lockout_until"] = 0.0
         self.state["rfid_authorized_until"] = 0.0
-        self.state["owner_permission_until"] = 0.0
-        self._clear_temp_owner()
         affectionate = self._address_owner("affectionate")
         greet_cooldown = max(10, self.owner_cfg.get("presence_timeout_s", 30) / 2)
         if timestamp - self.state.get("owner_last_greet", 0.0) > greet_cooldown:
