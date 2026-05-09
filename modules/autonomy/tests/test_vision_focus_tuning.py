@@ -14,6 +14,11 @@ class _FocusClient:
     def move_head(self, pan, tilt):
         self.moves.append((int(pan), int(tilt)))
 
+    def queue_action(self, action_type, priority=50, ttl_ms=5000, payload=None):
+        payload = payload or {}
+        if action_type == "head_move":
+            self.moves.append((int(payload.get("pan", 90)), int(payload.get("tilt", 90))))
+
 
 class _FocusBrain(VisionMixin):
     def __init__(self):
@@ -63,3 +68,12 @@ def test_scene_picker_prefers_owner_then_close_variants():
     assert brain._pick_vision_scene("owner", {"distance_m": 2.0}) == "vision_greeting_owner"
     assert brain._pick_vision_scene("Unknown", {"distance_m": 0.9}) == "vision_greeting_unknown_close"
     assert brain._pick_vision_scene("Ali", {"distance_m": 0.9}) == "vision_greeting_known_close"
+
+
+def test_vision_announce_threshold_gate():
+    brain = _FocusBrain()
+    brain._vision_cfg["importance_speak_threshold"] = 0.6
+    brain.state["last_visual_importance"] = 0.59
+    assert brain._should_announce_vision() is False
+    brain.state["last_visual_importance"] = 0.6
+    assert brain._should_announce_vision() is True

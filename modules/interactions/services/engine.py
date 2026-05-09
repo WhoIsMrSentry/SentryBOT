@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -13,6 +14,8 @@ except Exception:  # pragma: no cover
 from .metrics import MetricsCollector
 from .rules import Rule, eval_condition, priority_rank
 from .adapters.neopixel_client import NeoHttpClient, NoOpNeoClient
+
+logger = logging.getLogger("interactions.engine")
 
 
 class InteractionEngine:
@@ -98,6 +101,7 @@ class InteractionEngine:
         self._last_base: Optional[Tuple[str, Optional[str | tuple[int, int, int]]]] = None
         self._active_effect_until: float = 0.0
         self._ctx: Dict[str, Any] = {"arduino_connected": False}
+        self._event_counts: Dict[str, int] = {}
         self._last_net_burst: float = 0.0
         self.monitor_cfg = dict(cfg.get("monitor", {}))
         self._last_arduino_check = 0.0
@@ -119,13 +123,18 @@ class InteractionEngine:
 
     # API
     def push_event(self, type_: str, data: Optional[Dict[str, Any]] = None) -> None:
+        evt = str(type_ or "").strip()
         with self._lock:
-            self._ctx["event"] = type_
+            self._ctx["event"] = evt
             if data:
                 self._ctx.setdefault("event_data", {}).update(data)
+            if evt:
+                self._event_counts[evt] = int(self._event_counts.get(evt, 0)) + 1
+        if evt.startswith("companion."):
+            logger.info("Companion event received: %s data=%s", evt, data or {})
         for handler in list(self._event_handlers):
             try:
-                handler(type_, data or {})
+                handler(evt, data or {})
             except Exception:
                 pass
 
@@ -152,6 +161,7 @@ class InteractionEngine:
                 "metrics": self._ctx.get("metrics"),
                 "active_base": self._last_base,
                 "effect_active": time.time() < self._active_effect_until,
+                "event_counts": dict(self._event_counts),
                 "ctx": {k: v for k, v in self._ctx.items() if k not in ("metrics",)},
             }
 

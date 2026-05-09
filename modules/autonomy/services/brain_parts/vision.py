@@ -18,6 +18,26 @@ class VisionMixin:
         if now - last_poll < interval:
             return
         self.state["last_vision_poll"] = now
+
+        # Use visual context importance score to influence persona polish
+        try:
+            ctx_resp = self.client.get_visual_context()
+            if ctx_resp and ctx_resp.get("available"):
+                ctx_data = ctx_resp.get("context", {})
+                importance = float(ctx_data.get("importance_score", 0.0))
+                self.state["last_visual_importance"] = importance
+                if importance > 0.6:
+                    self.mood.modify("curiosity", int(importance * 20))
+                    self.mood.modify("energy", 10)
+                    if self.state.get("is_bored"):
+                        self.state["is_bored"] = False
+                        self.memory.add_event("Saw something important, no longer bored.")
+                elif importance < 0.2 and self.state.get("is_bored"):
+                    self.mood.modify("happiness", -2)
+        except Exception as exc:
+            import logging
+            logging.getLogger("autonomy.vision").debug("Failed to get visual context: %s", exc)
+
         max_results = self._vision_cfg.get("max_results", 5)
         results = self.client.get_latest_vision_results(limit=max_results)
         if not results:
@@ -52,12 +72,19 @@ class VisionMixin:
         self.memory.add_event(f"Vision {name} tespit etti.")
         if name != "Unknown":
             self._track_person_stat(name)
+            if hasattr(self, "_note_person_seen"):
+                try:
+                    self._note_person_seen(name, emotion=str(result.get("emotion", "") or ""))
+                except Exception:
+                    pass
         happiness_boost = 10 if name != "Unknown" else 4
         self.mood.modify("happiness", happiness_boost)
         self.mood.modify("curiosity", 5)
         self.client.push_interaction_event("vision.person", {"name": name})
         self._focus_on_target(result)
         should_speak = name != "Unknown" or self._vision_cfg.get("speak_on_unknown", False)
+        if not self._should_announce_vision():
+            should_speak = False
         if should_speak:
             utterance = self._compose_greeting_for_person(name, result)
             if utterance:
@@ -101,6 +128,9 @@ class VisionMixin:
             except Exception:
                 pass
         pieces = [f"Merhaba {name}"]
+        conf = result.get("confidence")
+        if isinstance(conf, (int, float)) and float(conf) < 0.5 and name != "Unknown":
+            pieces = [f"Merhaba, bu kişi {name} olabilir"]
         if distance:
             try:
                 pieces.append(f"yaklaşık {float(distance):.1f} metre uzaklıktasın.")
@@ -109,6 +139,11 @@ class VisionMixin:
         if summary:
             pieces.append(summary[:120])
         return " ".join(pieces)
+
+    def _should_announce_vision(self) -> bool:
+        threshold = float(self._vision_cfg.get("importance_speak_threshold", 0.6))
+        current = float(self.state.get("last_visual_importance", 0.0) or 0.0)
+        return current >= threshold
 
     def _focus_on_target(self, result: Dict[str, Any]) -> None:
         if self._trigger_animation("vision_focus"):
@@ -128,7 +163,7 @@ class VisionMixin:
 
         target = int(round((current * smooth) + (proposed * (1.0 - smooth))))
         self.state["current_pan"] = target
-        self.client.move_head(target, self.state["current_tilt"])
+        self.client.queue_action("head_move", priority=60, payload={"pan": target, "tilt": self.state["current_tilt"]})
         self._blink_fallback()
 
     def _compute_person_cooldown(self, result: Dict[str, Any]) -> float:

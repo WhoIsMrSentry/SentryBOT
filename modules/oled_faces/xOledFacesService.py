@@ -24,6 +24,10 @@ class xOledFacesService:
         self._last_operational = None
         self._last_emotions = None
         self._last_sent: Optional[tuple[str, str]] = None
+        self._last_apply_ts: float = 0.0
+        self._active_hold_until: float = 0.0
+        self._active_priority: int = 0
+        self._last_event_ts: Dict[str, float] = {}
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -57,12 +61,15 @@ class xOledFacesService:
     def on_interaction_event(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
         if not self.cfg.get("enabled", True):
             return
+        if self._event_rate_limited(event_type):
+            return
         action = self.mapper.from_interaction_event(event_type)
-        self._apply(action)
+        pri = self._priority_for(source="event", event_type=event_type, action=action)
+        self._apply(action, priority=pri)
 
     def apply_manual(self, mode: str, name: str) -> Dict[str, Any]:
         action = OledAction(mode=str(mode), name=str(name))
-        ok = self._apply(action)
+        ok = self._apply(action, priority=100, force=True)
         return {"ok": ok, "mode": action.mode, "name": action.name}
 
     def _loop(self) -> None:
@@ -84,24 +91,72 @@ class xOledFacesService:
 
         if emotions != self._last_emotions and emotions:
             self._last_emotions = list(emotions)
-            self._apply(self.mapper.from_emotions(emotions))
+            action = self.mapper.from_emotions(emotions)
+            pri = self._priority_for(source="emotion", event_type=f"emotion:{emotions[0]}", action=action)
+            self._apply(action, priority=pri)
             return
 
         if operational != self._last_operational:
             self._last_operational = operational
-            self._apply(self.mapper.from_operational(operational))
+            action = self.mapper.from_operational(operational)
+            pri = self._priority_for(source="state", event_type=operational, action=action)
+            self._apply(action, priority=pri)
 
     def _boot_action(self) -> OledAction:
         boot_mode = str(self.cfg.get("boot", {}).get("mode", "logo"))
         boot_name = str(self.cfg.get("boot", {}).get("name", "logo"))
         return OledAction(mode=boot_mode, name=boot_name)
 
-    def _apply(self, action: OledAction) -> bool:
+    def _event_rate_limited(self, event_type: str) -> bool:
+        now = time.time()
+        cooldown_s = float(self.cfg.get("event_cooldown_s", 0.8))
+        key = str(event_type or "").strip().lower()
+        if not key:
+            return False
+        last = float(self._last_event_ts.get(key, 0.0))
+        if now - last < max(0.05, cooldown_s):
+            return True
+        self._last_event_ts[key] = now
+        return False
+
+    def _priority_for(self, source: str, event_type: str, action: OledAction) -> int:
+        key = str(event_type or "").strip().lower()
+        pri_map = self.cfg.get("priority_map", {}) if isinstance(self.cfg.get("priority_map"), dict) else {}
+        if key in pri_map:
+            try:
+                return int(pri_map.get(key))
+            except Exception:
+                pass
+        mode = str(action.mode or "").strip().lower()
+        if source == "event":
+            if "error" in key or "warning" in key or "owner.locked" in key:
+                return 90
+            if mode == "animation":
+                return 70
+            return 65
+        if source == "emotion":
+            if "fear" in key or "angry" in key or "furious" in key:
+                return 85
+            return 60
+        if source == "state":
+            return 40 if mode == "bitmap" else 50
+        return 50
+
+    def _apply(self, action: OledAction, priority: int = 50, force: bool = False) -> bool:
         if not bool(self.cfg.get("enabled", True)):
             return False
+        now = time.time()
         mode = action.mode.strip().lower()
         name = action.name.strip().lower()
         sent_key = (mode, name)
+
+        min_interval = float(self.cfg.get("min_switch_interval_s", 0.45))
+        if not force and sent_key != self._last_sent and (now - self._last_apply_ts) < max(0.03, min_interval):
+            return False
+
+        if not force and now < self._active_hold_until and priority < self._active_priority and sent_key != self._last_sent:
+            return False
+
         if sent_key == self._last_sent and mode != "animation":
             return True
         try:
@@ -119,6 +174,12 @@ class xOledFacesService:
             if not ok:
                 return False
             self._last_sent = sent_key
+            self._last_apply_ts = now
+            self._active_priority = int(priority)
+            if mode == "animation":
+                self._active_hold_until = now + max(0.2, float(self.cfg.get("animation_hold_s", 1.2)))
+            else:
+                self._active_hold_until = now + max(0.05, float(self.cfg.get("bitmap_hold_s", 0.25)))
             return True
         except Exception:
             return False
