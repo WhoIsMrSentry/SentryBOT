@@ -3,7 +3,7 @@ server:
   port: 8101
 
 vision:
-  processing_mode: local  # local | remote
+  processing_mode: remote  # local | remote
   # camera_source can be device index (0) or gateway camera stream URL
   camera_source: "http://127.0.0.1:8080/camera/video"  # Gateway camera MJPEG feed (Pi camera safe path)
   confidence_threshold: 0.5

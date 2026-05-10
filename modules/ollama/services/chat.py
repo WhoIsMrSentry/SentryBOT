@@ -14,11 +14,13 @@ class OllamaChatService:
         persona_name: str = "sentry",
         max_history: int = 6,
         use_persona_as_model: bool = True,
+        num_predict: int = 100,
     ) -> None:
         self.client = client
         self.persona_name = persona_name
         self.memory = ChatMemory(max_turns=max_history)
         self.use_persona_as_model = bool(use_persona_as_model)
+        self.num_predict = int(num_predict)
 
     def chat(
         self,
@@ -37,7 +39,8 @@ class OllamaChatService:
         messages.append({"role": "user", "content": query})
         
         model_name = self.persona_name if self.use_persona_as_model else None
-        res = self.client.chat(messages, format=response_format, model=model_name)
+        options: Dict[str, Any] = {"num_predict": self.num_predict}
+        res = self.client.chat(messages, format=response_format, model=model_name, options=options)
         raw_text = str(res.get("message", {}).get("content", ""))
         
         # Native unstructured conversation
