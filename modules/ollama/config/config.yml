@@ -3,15 +3,18 @@ server:
   port: 8099
 llm:
   provider: ollama   # ollama | google_ai_studio
+  single_model_mode: true      # Keep one base model; do not create persona-derived models
+  use_persona_models: false    # Disable legacy persona model injection
 ollama:
   base_url: http://127.0.0.1:11434
   model: qwen3.5:9b
-  request_timeout: 60
+  request_timeout: 15
+  num_predict: 100          # Fast mode default — kısa cevaplar
 google_ai_studio:
   api_key: ""        # boşsa GOOGLE_API_KEY env kullanılır
   model: gemini-3.1-flash-lite-preview
   base_url: https://generativelanguage.googleapis.com
-  request_timeout: 60
+  request_timeout: 20
 persona:
   default: sentry
   dir: modules/ollama/config/personalities
