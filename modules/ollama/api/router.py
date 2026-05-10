@@ -35,14 +35,23 @@ def _load_persona_text(cfg: dict, name: Optional[str] = None) -> str:
 logger = logging.getLogger("ollama.api")
 
 
-def _should_use_persona_model(provider_name: str, single_model_mode: bool) -> bool:
-    return str(provider_name or "").strip().lower() == "ollama" and not bool(single_model_mode)
+def _should_use_persona_model(
+    provider_name: str,
+    single_model_mode: bool,
+    use_persona_models: bool,
+) -> bool:
+    return (
+        str(provider_name or "").strip().lower() == "ollama"
+        and not bool(single_model_mode)
+        and bool(use_persona_models)
+    )
 
 
 def get_router(cfg: dict) -> APIRouter:
     r = APIRouter(prefix="/ollama", tags=["ollama"])
     llm_cfg = cfg.get("llm", {}) if isinstance(cfg.get("llm", {}), dict) else {}
-    single_model_mode = bool(llm_cfg.get("single_model_mode", False))
+    single_model_mode = bool(llm_cfg.get("single_model_mode", True))
+    use_persona_models = bool(llm_cfg.get("use_persona_models", False))
 
     provider_name = "ollama"
     try:
@@ -64,11 +73,13 @@ def get_router(cfg: dict) -> APIRouter:
 
     active_persona = str(cfg.get("persona", {}).get("default", "sentry"))
     persona_text = _load_persona_text(cfg, active_persona)
+    _ollama_num_predict = int(cfg.get("ollama", {}).get("num_predict", 100))
     chat = OllamaChatService(
         client,
         persona_name=active_persona,
         max_history=6,
-        use_persona_as_model=_should_use_persona_model(provider_name, single_model_mode),
+        use_persona_as_model=_should_use_persona_model(provider_name, single_model_mode, use_persona_models),
+        num_predict=_ollama_num_predict,
     )
     # Preload persona texts and optional urls placeholders
     _persona_cache: Dict[str, str] = {}
@@ -219,6 +230,16 @@ def get_router(cfg: dict) -> APIRouter:
         items = client.list_models()
         return {"ok": True, "provider": provider_name, "items": items, "active": model}
 
+    @r.post("/warmup")
+    def warmup() -> Dict[str, Any]:
+        """Best-effort short call to warm model weights/KV cache."""
+        try:
+            _ = chat.chat("ok")
+            return {"ok": True}
+        except Exception as exc:
+            logger.debug("Warmup failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
     @r.post("/model/add")
     def add_model(name: str, set_default: bool = True) -> Dict[str, Any]:
         nonlocal model
@@ -268,13 +289,13 @@ def get_router(cfg: dict) -> APIRouter:
             modelfile = f'FROM {base_model}\nSYSTEM """\n{raw_content}\n"""'
 
         success = False
-        if provider_name == "ollama" and not single_model_mode:
+        if provider_name == "ollama" and not single_model_mode and use_persona_models:
             # Create/Update persona model only for Ollama provider.
             success = client.create_model(name, modelfile)
             if not success:
                 logger.error(f"Failed to create model for persona {name}")
-        elif provider_name == "ollama" and single_model_mode:
-            logger.info("Single-model mode is active, skipping persona model creation for '%s'.", name)
+        elif provider_name == "ollama":
+            logger.info("Persona model creation disabled (single_model_mode/use_persona_models) for '%s'.", name)
             
         persona_text = raw_content
         _persona_cache[name] = persona_text
@@ -282,7 +303,8 @@ def get_router(cfg: dict) -> APIRouter:
             client,
             persona_name=active_persona,
             max_history=6,
-            use_persona_as_model=_should_use_persona_model(provider_name, single_model_mode),
+            use_persona_as_model=_should_use_persona_model(provider_name, single_model_mode, use_persona_models),
+            num_predict=_ollama_num_predict,
         )
         return {
             "ok": True,
