@@ -1,0 +1,6 @@
+path: "data/social.sqlite3"
+wal: true
+cache_size_kb: 4096
+busy_timeout_ms: 5000
+default_owner_name: ""
+auto_migrate: true
