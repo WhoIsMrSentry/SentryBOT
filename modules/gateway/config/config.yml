@@ -2,6 +2,7 @@
   host: 0.0.0.0
   port: 8080
 include:
+  social_db: true
   esp_link: true
   arduino: true
   vlm_bridge: true
@@ -16,6 +17,7 @@ include:
   animate: true
   piservo: true
   autonomy: true
+  agent_core: true
   ota: true
   mutagen: true
   hardware: true
@@ -27,6 +29,7 @@ include:
   notifier: true
   calibration: true
   config_center: true
+  admin_ui: true
 speech:
   listening: false
 
