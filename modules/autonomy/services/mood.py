@@ -1,21 +1,51 @@
 import time
 import logging
+from typing import Any, Optional
 
 logger = logging.getLogger("autonomy.mood")
 
 class MoodManager:
-    def __init__(self, config):
+    def __init__(self, config, social_db: Optional[Any] = None):
         self.config = config
         defaults = config.get("defaults", {}).get("mood", {})
-        
+
         self.state = {
             "happiness": defaults.get("initial_happiness", 50),
             "energy": defaults.get("initial_energy", 100),
             "curiosity": 50,
             "fear": 0
         }
-        
+
         self.last_update = time.time()
+        if social_db is None:
+            try:
+                from modules.social_db import get_default as _social_default  # type: ignore
+
+                social_db = _social_default()
+            except Exception:
+                social_db = None
+        self._social_db = social_db
+        self._last_snapshot_ts = 0.0
+        self._snapshot_interval_s = float(defaults.get("snapshot_interval_s", 30.0))
+
+    def _maybe_snapshot(self) -> None:
+        if self._social_db is None:
+            return
+        now = time.time()
+        if now - self._last_snapshot_ts < self._snapshot_interval_s:
+            return
+        try:
+            self._social_db.mood_snapshots.record(
+                happiness=float(self.state.get("happiness", 0) or 0),
+                energy=float(self.state.get("energy", 0) or 0),
+                curiosity=float(self.state.get("curiosity", 0) or 0),
+                fear=float(self.state.get("fear", 0) or 0),
+                dominant=self.get_dominant_emotion(),
+                ts=now,
+            )
+            self._last_snapshot_ts = now
+        except Exception:
+            pass
         
     def update(self):
         """Called periodically to decay/update moods"""
@@ -30,10 +60,12 @@ class MoodManager:
         self.state["energy"] = max(0, self.state["energy"] - (decay * 0.2))
         self.state["curiosity"] = min(100, self.state["curiosity"] + (decay * 0.5)) # Curiosity grows when idle
         self.state["fear"] = max(0, self.state["fear"] - (decay * 2.0)) # Fear recovers quickly
-        
+        self._maybe_snapshot()
+
     def modify(self, mood, delta):
         if mood in self.state:
             self.state[mood] = max(0, min(100, self.state[mood] + delta))
+            self._maybe_snapshot()
             
     def get_dominant_emotion(self):
         # Simple logic to determine dominant emotion for LED/Expression

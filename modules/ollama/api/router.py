@@ -209,6 +209,19 @@ def get_router(cfg: dict) -> APIRouter:
         out = translator.translate(text, source, target)
         return {"ok": True, "text": out, "source_lang": source, "target_lang": target}
 
+    @r.post("/runtime/num_predict")
+    def runtime_num_predict(body: Dict[str, Any]):
+        """Hot-adjust default generation horizon for routed chat completions."""
+        np_raw = body.get("num_predict")
+        if np_raw is None:
+            raise HTTPException(status_code=400, detail="num_predict required")
+        try:
+            np_val = max(48, int(np_raw))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=f"invalid num_predict: {exc}") from exc
+        chat.num_predict = np_val
+        return {"ok": True, "num_predict": chat.num_predict}
+
     @r.get("/persona")
     def get_persona():
         return {"ok": True, "active": active_persona, "persona": persona_text[:4096]}

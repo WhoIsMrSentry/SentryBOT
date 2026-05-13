@@ -105,6 +105,24 @@ def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
             return processor.apply_realtime_profile(mode)
         return {"ok": False, "error": "profile control not available"}
 
+    @r.get("/modes/categories", tags=["control"], summary="Get hierarchical mode categories")
+    def get_mode_categories():
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not hasattr(processor, "get_mode_categories"):
+            raise HTTPException(status_code=501, detail="mode_categories not supported")
+        return {"ok": True, "mode_categories": processor.get_mode_categories()}
+
+    @r.post("/modes/categories", tags=["control"], summary="Patch hierarchical mode categories")
+    def patch_mode_categories(body: dict):
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not hasattr(processor, "set_mode_categories"):
+            raise HTTPException(status_code=501, detail="mode_categories not supported")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be object")
+        return processor.set_mode_categories(body)
+
     @r.post("/mode", tags=["control"], summary="Set processing mode and/or mode flags")
     def set_mode(body: dict):
         if not processor:
@@ -129,6 +147,20 @@ def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
         out["modes"] = processor.get_modes() if hasattr(processor, "get_modes") else {}
         out["processing_mode_current"] = getattr(processor, "processing_mode", "unknown")
         return out
+
+    @r.post("/ocr", tags=["analysis"], summary="Run OCR on current frame via remote multimodal server")
+    def ocr_endpoint(body: dict | None = None):
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not hasattr(processor, "run_ocr_remote"):
+            raise HTTPException(status_code=501, detail="OCR proxy not available")
+        body = body or {}
+        languages = body.get("languages") if isinstance(body, dict) else None
+        if isinstance(languages, (list, tuple)):
+            languages = [str(x).strip() for x in languages if str(x).strip()]
+        else:
+            languages = None
+        return processor.run_ocr_remote(frame=None, languages=languages)
 
     @r.post("/analyze", tags=["analysis"], summary="Analyze single frame (local)")
     def analyze_snapshot():

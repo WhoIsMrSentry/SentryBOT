@@ -74,6 +74,11 @@ class PersonIdentityManager:
     """Manages person recognition, relationship levels, and persistence.
 
     Thread-safe. Wraps existing FaceManager/PeopleMemory without breaking them.
+
+    When a :class:`modules.social_db.SocialDB` instance is supplied (or registered
+    as the process default), writes are persisted to the shared SQLite store
+    instead of the legacy JSON file. The in-memory cache mirrors the database
+    rows for fast reads.
     """
 
     def __init__(
@@ -81,10 +86,19 @@ class PersonIdentityManager:
         store_path: str = "",
         face_manager: Optional[Any] = None,
         people_memory: Optional[Any] = None,
+        social_db: Optional[Any] = None,
     ) -> None:
         self._store_path = store_path or _DEFAULT_STORE
         self._face_manager = face_manager
         self._people_memory = people_memory
+        if social_db is None:
+            try:
+                from modules.social_db import get_default as _social_default  # type: ignore
+
+                social_db = _social_default()
+            except Exception:
+                social_db = None
+        self._social_db = social_db
         self._lock = threading.Lock()
         self._records: Dict[str, PersonMemoryRecord] = {}
         self._name_index: Dict[str, str] = {}  # name.lower() -> person_id
@@ -189,6 +203,16 @@ class PersonIdentityManager:
             rec.conversation_notes.append(line)
             if len(rec.conversation_notes) > 100:
                 rec.conversation_notes = rec.conversation_notes[-100:]
+            if self._social_db is not None:
+                try:
+                    self._social_db.chat_episodes.append(
+                        person_id=person_id,
+                        role="note",
+                        text=line,
+                    )
+                except Exception as exc:
+                    logger.debug("chat_episodes append failed: %s", exc)
+                return True
             self._save_unlocked()
             return True
 
@@ -247,6 +271,37 @@ class PersonIdentityManager:
             rec.recognition_level = 1
 
     def _load(self) -> None:
+        if self._social_db is not None:
+            try:
+                rows = self._social_db.persons.list_all()
+            except Exception as exc:
+                logger.warning("Failed to read persons from social_db: %s", exc)
+                rows = []
+            for row in rows:
+                rec = PersonMemoryRecord(
+                    person_id=str(row.get("id") or ""),
+                    name=str(row.get("display_name") or "Unknown"),
+                    recognition_level=int(row.get("recognition_level") or 0),
+                    relationship=str(row.get("relationship") or "unknown"),
+                    seen_count=int(row.get("seen_count") or 0),
+                    trust_score=float(row.get("trust_score") or 0.0),
+                    owner_priority=bool(row.get("owner_priority")),
+                )
+                extra = row.get("extra") if isinstance(row.get("extra"), dict) else {}
+                if isinstance(extra, dict):
+                    rec.appearance_notes = list(extra.get("appearance_notes", []))
+                    rec.voice_notes = list(extra.get("voice_notes", []))
+                    rec.first_seen = str(extra.get("first_seen", "") or "")
+                    rec.last_seen = str(extra.get("last_seen", "") or "")
+                    rec.extra = {k: v for k, v in extra.items() if k not in {"appearance_notes", "voice_notes", "first_seen", "last_seen"}}
+                if rec.person_id:
+                    self._records[rec.person_id] = rec
+                    name_key = rec.name.strip().lower()
+                    if name_key and name_key != "unknown":
+                        self._name_index[name_key] = rec.person_id
+            logger.info("Loaded %d person records from social_db", len(self._records))
+            return
+
         try:
             if os.path.exists(self._store_path):
                 with open(self._store_path, "r", encoding="utf-8") as f:
@@ -265,6 +320,28 @@ class PersonIdentityManager:
             logger.warning("Failed to load person identity store: %s", exc)
 
     def _save_unlocked(self) -> None:
+        if self._social_db is not None:
+            try:
+                for rec in self._records.values():
+                    extra = dict(rec.extra or {})
+                    extra.setdefault("appearance_notes", list(rec.appearance_notes))
+                    extra.setdefault("voice_notes", list(rec.voice_notes))
+                    extra.setdefault("first_seen", rec.first_seen)
+                    extra.setdefault("last_seen", rec.last_seen)
+                    self._social_db.persons.upsert(
+                        name=rec.name,
+                        person_id=rec.person_id,
+                        recognition_level=int(rec.recognition_level),
+                        relationship=str(rec.relationship),
+                        is_owner=bool(rec.owner_priority) or int(rec.recognition_level) >= 5,
+                        owner_priority=bool(rec.owner_priority),
+                        trust_score=float(rec.trust_score),
+                        extra_patch=extra,
+                    )
+            except Exception as exc:
+                logger.warning("Failed to persist persons to social_db: %s", exc)
+            return
+
         try:
             os.makedirs(os.path.dirname(self._store_path), exist_ok=True)
             data = {pid: r.to_dict() for pid, r in self._records.items()}
