@@ -26,14 +26,47 @@ vision:
   blind_mode:
     enabled: false
     interval_seconds: 5.0
+  # Backward-compatible flat layout. New code should consult `mode_categories`
+  # below for routing decisions (local | remote | onsensor).
   modes:
-    objects: true      # localde YOLO yok; nesne listesi remote /vlm/results ile gelebilir
+    objects: true      # routed remote/onsensor; YOLO removed from local
     people: true
     faces: true
-    depth: false        # remote heavy model (e.g. MiDaS) için
-    ocr: false          # metin okuma
-    hazards: true       # tehlike algılama
+    depth: false        # remote heavy model (e.g. MiDaS) for fallback
+    ocr: true           # text reading via remote OCR backend
+    hazards: true       # hazard detection
     semantic_scene: true
+  # Hierarchical categorization. Modes listed under `local` should be runnable
+  # on-device with no GPU. Remote routes through the remote multimodal server.
+  # Onsensor routes through IMX500 / Pi AI Camera.
+  mode_categories:
+    local:
+      face_match: true            # ORB descriptor + bookkeeping only
+      visual_logger: true          # frame ring + screenshot only
+    remote:
+      objects: true                # YOLO / VLM detection on remote GPU
+      people: true                 # detection + age/emotion + face id
+      faces: true                  # remote face matching
+      ocr: true                    # PaddleOCR / EasyOCR / Tesseract (remote server)
+      hazards: true
+      semantic_scene: true
+      depth: false                 # heavy model, keep disabled by default
+    onsensor:
+      tiny_detect: false           # SSD MobileNet on IMX500
+      tiny_pose: false             # PoseNet on IMX500 (optional)
+  # Optional shorthand for the triple routing layers (merged into mode_categories)
+  local_modes:
+    face_match: true
+    visual_logger: true
+  remote_modes:
+    objects: true
+    people: true
+    faces: true
+    ocr: true
+    hazards: true
+    semantic_scene: true
+  disabled_modes:
+    depth: true                    # keep MiDaS/depth off until explicitly re-enabled
   alerts:
     classes: ["person"]
     distance_threshold_m: 1.2
@@ -86,8 +119,11 @@ remote:
 remote_multimodal:
   enabled: false
   endpoint: "http://PC_IP:8091/vision/analyze"
+  ocr_endpoint: "http://PC_IP:8091/vision/ocr"  # remote OCR backend
   timeout_s: 6.0
+  ocr_timeout_s: 10.0
   auth_token: "changeme"
+  ocr_languages: ["en", "tr"]
 
 robot:
   host: "localhost"  # Change to Robot IP when running remotely
