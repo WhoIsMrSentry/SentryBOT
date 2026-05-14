@@ -1,0 +1,16 @@
+enabled: true
+mount_prefix: /admin
+bind_lan_only: true
+allowed_networks:
+  - "127.0.0.1/32"
+  - "::1/128"
+  - "10.0.0.0/8"
+  - "172.16.0.0/12"
+  - "192.168.0.0/16"
+  - "169.254.0.0/16"
+auth:
+  token: ""
+  header: X-Admin-Token
+sse:
+  interval_s: 1.0
+  heartbeat_s: 10.0

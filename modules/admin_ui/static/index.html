@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>SentryBOT Admin</title>
+  <link rel="stylesheet" href="/admin/ui/style.css" />
+</head>
+<body>
+  <header class="sb-top">
+    <h1>SentryBOT operator console</h1>
+    <p class="muted">LAN-only gateway view — status, vision, profiles, people, embedded config/logs.</p>
+    <nav class="tabs" id="tabs">
+      <button type="button" data-tab="status" class="active">Status</button>
+      <button type="button" data-tab="vision">Vision</button>
+      <button type="button" data-tab="people">People</button>
+      <button type="button" data-tab="profiles">Profiles</button>
+      <button type="button" data-tab="config">Config YAML</button>
+      <button type="button" data-tab="logs">Logs</button>
+      <button type="button" data-tab="hardware">Hardware</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="pane-status" class="pane active">
+      <div class="row">
+        <div class="card grow">
+          <h2>Live status</h2>
+          <pre id="status-pre" class="json"></pre>
+        </div>
+        <div class="card">
+          <h2>SSE feed</h2>
+          <p class="muted" id="sse-state">SSE idle</p>
+          <button type="button" id="sse-toggle">Start stream</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="pane-vision" class="pane">
+      <div class="card">
+        <h2>Vision pipeline</h2>
+        <pre id="vision-pre" class="json"></pre>
+      </div>
+    </section>
+
+    <section id="pane-people" class="pane">
+      <div class="card">
+        <h2>People (social snapshot)</h2>
+        <pre id="people-pre" class="json"></pre>
+      </div>
+    </section>
+
+    <section id="pane-profiles" class="pane">
+      <div class="card">
+        <h2>Realtime profile</h2>
+        <p class="muted">Switches orchestrator presets from <code>config/agent.yaml</code>.</p>
+        <div class="profiles-grid" id="profile-buttons"></div>
+        <p class="muted" id="profile-result"></p>
+        <hr />
+        <label>Manual max_subagents<br />
+          <input type="range" id="slider-subagents" min="1" max="6" value="3" />
+          <span id="slider-subagents-label">3</span>
+        </label>
+      </div>
+    </section>
+
+    <section id="pane-config" class="pane">
+      <div class="card">
+        <h2>Config Center</h2>
+        <iframe title="Config Center UI" src="/config/ui"></iframe>
+      </div>
+    </section>
+
+    <section id="pane-logs" class="pane">
+      <div class="card">
+        <h2>Logs</h2>
+        <p>Polling <code id="logs-url">/logs/?n=40</code></p>
+        <pre id="logs-pre" class="json small"></pre>
+      </div>
+    </section>
+
+    <section id="pane-hardware" class="pane">
+      <div class="card">
+        <h2>Hardware bridge</h2>
+        <p>Open ESP dashboard when the microcontroller is reachable on the LAN:</p>
+        <p><a id="esp-link" href="http://192.168.4.1" target="_blank" rel="noreferrer">http://192.168.4.1</a> (update host as needed)</p>
+        <pre id="hardware-pre" class="json"></pre>
+      </div>
+    </section>
+  </main>
+
+  <footer class="sb-foot muted">
+    <span id="poll-hint">Auto-refresh 4s · read-only dashboards</span>
+  </footer>
+  <script src="/admin/ui/app.js"></script>
+</body>
+</html>
