@@ -19,8 +19,16 @@ logger = logging.getLogger("interactions.engine")
 
 
 class InteractionEngine:
-    def __init__(self, cfg: Dict[str, Any], neo_client: Any | None = None):
+    def __init__(self, cfg: Dict[str, Any], neo_client: Any | None = None, social_db: Any | None = None):
         self.cfg = cfg
+        if social_db is None:
+            try:
+                from modules.social_db import get_default as _social_default  # type: ignore
+
+                social_db = _social_default()
+            except Exception:
+                social_db = None
+        self._social_db = social_db
         self.metrics = MetricsCollector(window_s=int(cfg.get("thresholds", {}).get("cpu_load", {}).get("window_s", 60)))
         # If a local neo_client (NeoRunner) is provided, wrap it to match NeoHttpClient interface
         provided = neo_client
@@ -132,6 +140,11 @@ class InteractionEngine:
                 self._event_counts[evt] = int(self._event_counts.get(evt, 0)) + 1
         if evt.startswith("companion."):
             logger.info("Companion event received: %s data=%s", evt, data or {})
+        if evt and self._social_db is not None:
+            try:
+                self._social_db.interaction_events.log(evt, payload=data or {})
+            except Exception:
+                pass
         for handler in list(self._event_handlers):
             try:
                 handler(evt, data or {})
