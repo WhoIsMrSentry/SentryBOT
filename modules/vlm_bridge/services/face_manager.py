@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -31,12 +31,22 @@ class FaceManager:
         ratio_test: float = 0.72,
         min_good_matches: int = 10,
         min_score: float = 0.15,
+        social_db: Optional[object] = None,
     ):
         self.data_dir = data_dir
         self.faces_file = os.path.join(data_dir, filename)
         self.ratio_test = float(ratio_test)
         self.min_good_matches = int(min_good_matches)
         self.min_score = float(min_score)
+
+        if social_db is None:
+            try:
+                from modules.social_db import get_default as _social_default  # type: ignore
+
+                social_db = _social_default()
+            except Exception:
+                social_db = None
+        self._social_db = social_db
 
         self.known_face_names: List[str] = []
         self._known_descriptors: Dict[str, np.ndarray] = {}
@@ -145,6 +155,35 @@ class FaceManager:
         self.known_face_names = []
         self._known_descriptors = {}
 
+        if self._social_db is not None:
+            try:
+                rows = self._social_db.face_descriptors.list_all_by_kind("orb")
+            except Exception as exc:
+                logger.warning("face_descriptors load from social_db failed: %s", exc)
+                rows = []
+            for _pid, row in rows:
+                try:
+                    rows_n = int(row.get("rows") or 0)
+                    cols_n = int(row.get("cols") or 32)
+                    blob = bytes(row.get("blob") or b"")
+                    if not blob or cols_n <= 0:
+                        continue
+                    arr = np.frombuffer(blob, dtype=np.uint8)
+                    if rows_n <= 0:
+                        rows_n = max(1, arr.size // max(1, cols_n))
+                    arr = arr.reshape(rows_n, cols_n)
+                    if arr.ndim != 2 or arr.shape[1] != 32:
+                        continue
+                    name = str(row.get("display_name") or row.get("canonical_name") or "").strip()
+                    if not name:
+                        continue
+                    self._known_descriptors[name] = arr
+                except Exception:
+                    continue
+            self.known_face_names = sorted(self._known_descriptors.keys())
+            logger.info("Loaded %d known faces from social_db.", len(self.known_face_names))
+            return
+
         if not os.path.exists(self.faces_file):
             logger.info("No existing faces file found.")
             return
@@ -182,6 +221,27 @@ class FaceManager:
         logger.info("Loaded %d known faces.", len(self.known_face_names))
 
     def save_faces(self) -> None:
+        if self._social_db is not None:
+            try:
+                for name, desc in self._known_descriptors.items():
+                    arr = desc.astype(np.uint8)
+                    rec = self._social_db.persons.upsert(name=name)
+                    pid = str(rec.get("id") or "")
+                    if not pid:
+                        continue
+                    self._social_db.face_descriptors.replace_for_person(
+                        person_id=pid,
+                        kind="orb",
+                        blob=arr.tobytes(),
+                        rows=int(arr.shape[0]),
+                        cols=int(arr.shape[1]),
+                        score=1.0,
+                    )
+                logger.info("Faces persisted to social_db.")
+            except Exception as exc:
+                logger.error("Failed to persist faces to social_db: %s", exc)
+            return
+
         data: Dict[str, Dict[str, List[List[int]]]] = {}
         for name, desc in self._known_descriptors.items():
             data[name] = {"descriptors": desc.astype(np.uint8).tolist()}
