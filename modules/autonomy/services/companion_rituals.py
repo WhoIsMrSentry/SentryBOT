@@ -6,14 +6,27 @@ from typing import Any, Dict, Optional
 
 
 class CompanionRituals:
-    """Low-frequency social rituals to improve companion continuity."""
+    """Low-frequency social rituals to improve companion continuity.
 
-    def __init__(self, cfg: Dict[str, Any]) -> None:
+    When a :class:`modules.social_db.SocialDB` instance is registered, the
+    "morning greeting done" flag is persisted in the ``rituals`` table so the
+    ritual is not repeated after a restart on the same day.
+    """
+
+    def __init__(self, cfg: Dict[str, Any], social_db: Optional[Any] = None) -> None:
         self.cfg = cfg if isinstance(cfg, dict) else {}
         self.enabled = bool(self.cfg.get("enabled", True))
         self.min_absence_s = float(self.cfg.get("owner_return_min_absence_s", 180.0))
         self.owner_return_cooldown_s = float(self.cfg.get("owner_return_cooldown_s", 300.0))
         self.morning_window = tuple(self.cfg.get("morning_window_h", [6, 11]))  # inclusive start/end
+        if social_db is None:
+            try:
+                from modules.social_db import get_default as _social_default  # type: ignore
+
+                social_db = _social_default()
+            except Exception:
+                social_db = None
+        self._social_db = social_db
         self._last_owner_return_ts: float = 0.0
         self._owner_absent_since: float = time.time()
         self._owner_prev_present: bool = False
@@ -40,10 +53,26 @@ class CompanionRituals:
         day_key = now.strftime("%Y-%m-%d")
         if self._morning_done_day == day_key:
             return None
+        if self._social_db is not None:
+            try:
+                if self._social_db.rituals.is_done("morning", day=day_key):
+                    self._morning_done_day = day_key
+                    return None
+            except Exception:
+                pass
         start_h, end_h = self._safe_window()
         if not (start_h <= now.hour <= end_h):
             return None
         self._morning_done_day = day_key
+        if self._social_db is not None:
+            try:
+                self._social_db.rituals.mark_done(
+                    "morning",
+                    day=day_key,
+                    payload={"hour": now.hour, "minute": now.minute},
+                )
+            except Exception:
+                pass
         return {
             "text": "Gunaydin, bugun nasil hissettigini merak ediyorum.",
             "emotion": "joy",
@@ -61,6 +90,14 @@ class CompanionRituals:
         if (now_ts - self._last_owner_return_ts) < self.owner_return_cooldown_s:
             return None
         self._last_owner_return_ts = now_ts
+        if self._social_db is not None:
+            try:
+                self._social_db.rituals.mark_done(
+                    "owner_return",
+                    payload={"ts": now_ts, "absence_s": absence_s},
+                )
+            except Exception:
+                pass
         return {
             "text": "Tekrar hos geldin, seni gormek iyi hissettirdi.",
             "emotion": "joy",
