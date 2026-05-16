@@ -31,7 +31,6 @@ PROGRESS_TYPES = frozenset({
     "subagent_start",    # sub-agent started
     "subagent_done",     # sub-agent completed
     "persona_start",     # persona synthesis started
-    "arbiter_status",    # periodic arbiter snapshot for admin UI
 })
 
 
@@ -95,59 +94,6 @@ class ProgressManager:
         self._active_tokens: Dict[str, float] = {}  # token -> created_at
         self._last_progress_text: Dict[str, str] = {}  # token -> last spoken text
         self._latest_event: Dict[str, Any] = {}
-        # Optional arbiter references injected after construction.
-        self._action_arbiter: Optional[Any] = None
-        self._vision_arbiter: Optional[Any] = None
-        self._expression_arbiter: Optional[Any] = None
-        self._tool_execution_arbiter: Optional[Any] = None
-
-    def attach_arbiters(
-        self,
-        *,
-        action_arbiter: Optional[Any] = None,
-        vision_arbiter: Optional[Any] = None,
-        expression_arbiter: Optional[Any] = None,
-        tool_execution_arbiter: Optional[Any] = None,
-    ) -> None:
-        """Wire arbiter references so :meth:`arbiter_snapshot` can read them."""
-        if action_arbiter is not None:
-            self._action_arbiter = action_arbiter
-        if vision_arbiter is not None:
-            self._vision_arbiter = vision_arbiter
-        if expression_arbiter is not None:
-            self._expression_arbiter = expression_arbiter
-        if tool_execution_arbiter is not None:
-            self._tool_execution_arbiter = tool_execution_arbiter
-
-    def arbiter_snapshot(self) -> Dict[str, Any]:
-        """Build a defensive snapshot of every arbiter status.
-
-        Designed for SSE feeds and admin dashboards. Missing arbiters simply
-        report ``{}`` instead of raising, so the snapshot keeps working in
-        degraded environments.
-        """
-        out: Dict[str, Any] = {"timestamp": time.time()}
-        try:
-            out["action"] = self._action_arbiter.get_exclusive_status() if self._action_arbiter else {}
-        except Exception:
-            out["action"] = {}
-        try:
-            out["speech"] = self._speech_arbiter.get_status() if self._speech_arbiter and hasattr(self._speech_arbiter, "get_status") else {}
-        except Exception:
-            out["speech"] = {}
-        try:
-            out["vision"] = self._vision_arbiter.status() if self._vision_arbiter else {}
-        except Exception:
-            out["vision"] = {}
-        try:
-            out["expression"] = self._expression_arbiter.status() if self._expression_arbiter else {}
-        except Exception:
-            out["expression"] = {}
-        try:
-            out["tool_execution"] = self._tool_execution_arbiter.get_status() if self._tool_execution_arbiter else {}
-        except Exception:
-            out["tool_execution"] = {}
-        return out
 
     def set_speech_arbiter(self, arbiter: Any) -> None:
         self._speech_arbiter = arbiter

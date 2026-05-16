@@ -232,58 +232,14 @@ speech:
 tri_layer:
   enabled: true
   router:
-    max_subagents: 3
+    max_subagents: 1
     default_modules:
       - vlm_bridge
   subagent:
-    max_steps: 4
+    max_steps: 2
   persona:
-    num_predict: 384
-
-realtime_profile:
-  active: normal
-  profiles:
-    ultra_fast:
-      num_predict_chat: 96
-      num_predict_persona: 96
-      max_subagents: 2
-      subagent_max_steps: 2
-      request_timeout_s: 28
-      ollama_num_predict: 112
-      speak_max_chunk_chars: 220
-      vlm_ask_timeout_s: 10
-      ollama_chat_timeout_s: 25
-    fast:
-      num_predict_chat: 192
-      num_predict_persona: 192
-      max_subagents: 2
-      subagent_max_steps: 3
-      request_timeout_s: 36
-      ollama_num_predict: 176
-      speak_max_chunk_chars: 260
-      vlm_ask_timeout_s: 12
-      ollama_chat_timeout_s: 32
-    normal:
-      num_predict_chat: 384
-      num_predict_persona: 384
-      max_subagents: 3
-      subagent_max_steps: 4
-      request_timeout_s: 48
-      ollama_num_predict: 256
-      speak_max_chunk_chars: 320
-      vlm_ask_timeout_s: 16
-      ollama_chat_timeout_s: 45
-    thorough:
-      num_predict_chat: 768
-      num_predict_persona: 768
-      max_subagents: 4
-      subagent_max_steps: 6
-      request_timeout_s: 70
-      ollama_num_predict: 512
-      speak_max_chunk_chars: 380
-      vlm_ask_timeout_s: 22
-      ollama_chat_timeout_s: 60
-
+    num_predict: 220
+  
 safety:
   max_servo_angle: 180
   min_servo_angle: 0

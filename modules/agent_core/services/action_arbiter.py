@@ -50,21 +50,15 @@ VALID_SOURCES = frozenset({
 # ── Action types ──────────────────────────────────────────────────────
 VALID_ACTION_TYPES = frozenset({
     "head_move", "speak", "listen", "vision_capture",
-    "vision_vlm_call", "vision_query", "lights", "oled_face", "animation",
-    "sound", "follow", "follow_owner", "stop_follow", "look_around",
-    "face_register", "face_focus", "idle_behavior", "tool_call", "notification",
+    "vision_vlm_call", "lights", "oled_face", "animation",
+    "sound", "follow", "idle_behavior", "tool_call", "notification",
 })
 
 # Exclusive resource groups – at most one active action per group.
 _EXCLUSIVE_GROUPS: Dict[str, str] = {
     "speak": "tts",
     "vision_vlm_call": "vlm",
-    "vision_query": "vlm",
     "head_move": "head",
-    "look_around": "head",
-    "face_focus": "head",
-    "follow_owner": "head",
-    "stop_follow": "head",
 }
 
 

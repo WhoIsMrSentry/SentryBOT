@@ -120,20 +120,6 @@ class AgentOrchestrator:
         self.slam = TopologicalMap()
         self.safety_filter = ActionSafetyFilter(config)
         self.tool_execution_arbiter = ToolExecutionArbiter()
-        # ── Living Vision Agent: Arbiter & Progress subsystems ──
-        # Instantiated before ToolRegistry so vlm tools can lock the vision arbiter.
-        self.action_arbiter = ActionArbiter()
-        self.vision_arbiter = VisionArbiter()
-        self.expression_arbiter = ExpressionArbiter()
-        self.speech_arbiter = SpeechArbiter()
-        self.progress_manager = ProgressManager(speech_arbiter=self.speech_arbiter)
-        self.progress_manager.attach_arbiters(
-            action_arbiter=self.action_arbiter,
-            vision_arbiter=self.vision_arbiter,
-            expression_arbiter=self.expression_arbiter,
-            tool_execution_arbiter=self.tool_execution_arbiter,
-        )
-
         self.tool_registry = ToolRegistry(
             client=self.autonomy_client,
             memory=self.memory,
@@ -141,21 +127,23 @@ class AgentOrchestrator:
             world_state=self.world_state,
             safety_filter=self.safety_filter,
             tool_execution_arbiter=self.tool_execution_arbiter,
-            vision_arbiter=self.vision_arbiter,
             vlm_ask_timeout_s=float((config.get("tool_execution", {}) or {}).get("timeout_s", 22.0)),
         )
 
         # Background threads
         self.sensor_loop = SensorFeedbackLoop(self.world_state, client=autonomy_client)
         self.idle_system = IdleBehaviorSystem(self, client=autonomy_client)
+
+        # ── Living Vision Agent: Arbiter & Progress subsystems ──
+        self.action_arbiter = ActionArbiter()
+        self.vision_arbiter = VisionArbiter()
+        self.expression_arbiter = ExpressionArbiter()
+        self.speech_arbiter = SpeechArbiter()
+        self.progress_manager = ProgressManager(speech_arbiter=self.speech_arbiter)
         if self.autonomy_client and hasattr(self.autonomy_client, "set_speech_tracking"):
             self.speech_arbiter.set_tts_state_callback(
                 lambda active: self.autonomy_client.set_speech_tracking(not bool(active))
             )
-        # Gateway base URL for HTTP-fronted arbiter actions (head/vision/follow).
-        actions_cfg = config.get("actions", {}) if isinstance(config.get("actions", {}), dict) else {}
-        self._gateway_base_url = str(actions_cfg.get("gateway_base_url", "http://127.0.0.1:8080")).rstrip("/")
-        self._action_http_timeout_s = float(actions_cfg.get("http_timeout_s", 2.5))
         self._register_action_handlers()
 
         self.last_run = 0.0
@@ -197,22 +185,14 @@ class AgentOrchestrator:
         # Apply active realtime profile overrides at startup
         rt_cfg = self.config.get("realtime_profile", {}) if isinstance(self.config.get("realtime_profile", {}), dict) else {}
         active_profile_name = str(rt_cfg.get("active", "")).strip().lower()
-        profiles_map = rt_cfg.get("profiles", {}) if isinstance(rt_cfg.get("profiles", {}), dict) else {}
-        active_profile = profiles_map.get(active_profile_name, {}) if active_profile_name else {}
-        if not isinstance(active_profile, dict) or not active_profile:
-            active_profile = rt_cfg.get(active_profile_name, {}) if active_profile_name else {}
+        active_profile = rt_cfg.get(active_profile_name, {}) if active_profile_name else {}
         if isinstance(active_profile, dict) and active_profile:
             self.apply_realtime_profile(active_profile)
 
         self.last_routed_subagents: List[str] = []
 
     def _register_action_handlers(self) -> None:
-        """Bind ActionArbiter actions to concrete side effects.
-
-        ``head_move`` and the vision-oriented action types are routed through
-        the VLM bridge HTTP surface so the unified :class:`HeadControlArbiter`
-        and :class:`VisionArbiter` arbitrate every request.
-        """
+        """Bind ActionArbiter actions to concrete side effects."""
         def _handle_speak(req):
             text = str(req.payload.get("text", "")).strip()
             if not text:
@@ -225,35 +205,12 @@ class AgentOrchestrator:
             )
             return {"ok": True}
 
-        def _http_post(path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-            try:
-                import requests  # type: ignore
-            except Exception as exc:
-                return {"ok": False, "reason": "no_requests", "error": str(exc)}
-            url = f"{self._gateway_base_url}{path}"
-            try:
-                resp = requests.post(
-                    url,
-                    json=payload or {},
-                    timeout=self._action_http_timeout_s,
-                )
-                if resp.status_code != 200:
-                    return {"ok": False, "reason": "http_error", "status": resp.status_code}
-                try:
-                    return {"ok": True, "data": resp.json()}
-                except Exception:
-                    return {"ok": True, "data": {}}
-            except Exception as exc:
-                return {"ok": False, "reason": "http_exception", "error": str(exc)}
-
         def _handle_head(req):
+            if not self.autonomy_client:
+                return {"ok": False, "reason": "no_client"}
             pan = self.safety_filter.clamp_servo(int(req.payload.get("pan", 90)))
             tilt = self.safety_filter.clamp_servo(int(req.payload.get("tilt", 90)))
-            drive = int(req.payload.get("drive", 0) or 0)
-            return _http_post(
-                "/vlm/track",
-                {"head_pan": pan, "head_tilt": tilt, "drive": drive},
-            )
+            return self.autonomy_client.move_head(pan, tilt)
 
         def _handle_lights(req):
             if not self.autonomy_client:
@@ -267,75 +224,12 @@ class AgentOrchestrator:
             finally:
                 self.expression_arbiter.release(req.source)
 
-        def _handle_vision_query(req):
-            question = str(req.payload.get("question", "")).strip()
-            if not question:
-                return {"ok": False, "reason": "missing_question"}
-            return _http_post("/vlm/ask", {"question": question})
-
-        def _handle_follow_owner(req):
-            return _http_post("/vlm/follow/owner/start", {})
-
-        def _handle_stop_follow(req):
-            return _http_post("/vlm/follow/stop", {})
-
-        def _handle_look_around(req):
-            steps = req.payload.get("steps") if isinstance(req.payload, dict) else None
-            if not isinstance(steps, list) or not steps:
-                steps = [(60, 90), (90, 90), (120, 90), (90, 90)]
-            last: Dict[str, Any] = {}
-            for entry in steps:
-                if isinstance(entry, dict):
-                    pan = entry.get("pan", 90)
-                    tilt = entry.get("tilt", 90)
-                else:
-                    try:
-                        pan, tilt = entry
-                    except Exception:
-                        continue
-                last = _http_post(
-                    "/vlm/track",
-                    {
-                        "head_pan": self.safety_filter.clamp_servo(int(pan or 90)),
-                        "head_tilt": self.safety_filter.clamp_servo(int(tilt or 90)),
-                    },
-                )
-            return last
-
-        def _handle_face_focus(req):
-            name = str(req.payload.get("name", "")).strip()
-            if not name:
-                return {"ok": False, "reason": "missing_name"}
-            return _http_post("/vlm/focus/person", {"name": name})
-
-        def _handle_face_register(req):
-            name = str(req.payload.get("name", "")).strip()
-            relationship = str(req.payload.get("relationship", "known")).strip() or "known"
-            level = int(req.payload.get("recognition_level", 2) or 2)
-            if not name:
-                return {"ok": False, "reason": "missing_name"}
-            return _http_post(
-                "/vlm/person/remember",
-                {"name": name, "relationship": relationship, "recognition_level": level},
-            )
-
         self.action_arbiter.register_handler("speak", _handle_speak)
         self.action_arbiter.register_handler("head_move", _handle_head)
         self.action_arbiter.register_handler("lights", _handle_lights)
-        self.action_arbiter.register_handler("vision_query", _handle_vision_query)
-        self.action_arbiter.register_handler("follow_owner", _handle_follow_owner)
-        self.action_arbiter.register_handler("stop_follow", _handle_stop_follow)
-        self.action_arbiter.register_handler("look_around", _handle_look_around)
-        self.action_arbiter.register_handler("face_focus", _handle_face_focus)
-        self.action_arbiter.register_handler("face_register", _handle_face_register)
 
     def apply_realtime_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply runtime-safe realtime profile values without restart.
-
-        Supports atomic swaps for chat/persona ``num_predict``, context window,
-        temperature, request timeout, sub-agent fan-out (``max_subagents``) and
-        the sub-agent worker pool size.
-        """
+        """Apply runtime-safe realtime profile values without restart."""
         if not isinstance(profile, dict):
             return {}
 
@@ -355,19 +249,6 @@ class AgentOrchestrator:
         if "request_timeout_s" in profile:
             self.request_timeout = self._safe_float(profile.get("request_timeout_s"), fallback=self.request_timeout, minimum=1.0)
             applied["request_timeout_s"] = self.request_timeout
-        if "max_subagents" in profile:
-            value = self._safe_int(profile.get("max_subagents"), fallback=getattr(self.router, "max_subagents", 2), minimum=1)
-            if hasattr(self.router, "set_max"):
-                applied["max_subagents"] = self.router.set_max(value)
-            else:
-                self.router.max_subagents = value
-                applied["max_subagents"] = self.router.max_subagents
-        if "subagent_workers" in profile:
-            self.subagent_workers = self._safe_int(profile.get("subagent_workers"), fallback=self.subagent_workers, minimum=1)
-            applied["subagent_workers"] = self.subagent_workers
-        if "subagent_max_steps" in profile:
-            self.subagent_max_steps = self._safe_int(profile.get("subagent_max_steps"), fallback=self.subagent_max_steps, minimum=1)
-            applied["subagent_max_steps"] = self.subagent_max_steps
 
         # Keep tool VLM ask timeout aligned with active profile.
         if hasattr(self, "tool_registry") and self.tool_registry is not None:

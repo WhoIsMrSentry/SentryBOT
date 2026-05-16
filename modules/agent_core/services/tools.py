@@ -17,7 +17,6 @@ class ToolRegistry:
         world_state,
         safety_filter,
         tool_execution_arbiter=None,
-        vision_arbiter=None,
         vlm_ask_timeout_s: float = 22.0,
     ):
         self.client = client
@@ -26,38 +25,13 @@ class ToolRegistry:
         self.world_state = world_state
         self.safety = safety_filter
         self.tool_execution_arbiter = tool_execution_arbiter
-        self.vision_arbiter = vision_arbiter
         self.vlm_ask_timeout_s = float(vlm_ask_timeout_s)
         self.status_hook: Optional[Callable[[Dict[str, Any]], None]] = None
-
+        
         self.tools: Dict[str, Callable] = {}
         self.schemas: List[Dict[str, Any]] = []
-
+        
         self._register_all()
-
-    # ── Vision arbitration helpers ───────────────────────────────────
-    _VLM_TOOL_NAMES: frozenset = frozenset({
-        "get_visual_context",
-        "describe_scene",
-        "ask_vlm_about_scene",
-        "focus_person",
-    })
-
-    def _acquire_vision(self, tool_name: str) -> bool:
-        if self.vision_arbiter is None or tool_name not in self._VLM_TOOL_NAMES:
-            return True
-        try:
-            return bool(self.vision_arbiter.acquire(f"tool:{tool_name}", ttl_s=20.0))
-        except Exception:
-            return True
-
-    def _release_vision(self, tool_name: str) -> None:
-        if self.vision_arbiter is None or tool_name not in self._VLM_TOOL_NAMES:
-            return
-        try:
-            self.vision_arbiter.release(f"tool:{tool_name}")
-        except Exception:
-            pass
 
     def _register(self, func: Callable, schema: Dict[str, Any]):
         name = schema["function"]["name"]
@@ -68,9 +42,8 @@ class ToolRegistry:
         """Executes the mapped tool and returns the string result."""
         if tool_name not in self.tools:
             return f"Error: Tool '{tool_name}' not found."
-
+            
         acquired = False
-        vision_held = False
         try:
             if self.tool_execution_arbiter is not None:
                 if not self.tool_execution_arbiter.acquire(tool_name):
@@ -81,14 +54,6 @@ class ToolRegistry:
                     })
                     return f"Error executing {tool_name}: resource busy"
                 acquired = True
-            if not self._acquire_vision(tool_name):
-                self._emit_status({
-                    "type": "tool_error",
-                    "tool": tool_name,
-                    "error": "vision_busy",
-                })
-                return f"Error executing {tool_name}: vision arbiter busy"
-            vision_held = tool_name in self._VLM_TOOL_NAMES
             logger.info(f"LLM called tool: {tool_name}({kwargs})")
             self._emit_status({"type": "tool_start", "tool": tool_name, "args": kwargs})
             result = self.tools[tool_name](**kwargs)
@@ -99,8 +64,6 @@ class ToolRegistry:
             self._emit_status({"type": "tool_error", "tool": tool_name, "error": str(e)})
             return f"Error executing {tool_name}: {e}"
         finally:
-            if vision_held:
-                self._release_vision(tool_name)
             if acquired and self.tool_execution_arbiter is not None:
                 self.tool_execution_arbiter.release(tool_name)
 
