@@ -42,11 +42,11 @@ def test_vlm_config_loader_accepts_google_provider(tmp_path: Path):
     agent_cfg.write_text(
         """
 agent:
-  model: gemini-2.0-flash
+  model: gemini-3-flash-preview
 llm:
   provider: google_ai_studio
 google_ai_studio:
-  model: gemini-2.0-flash
+  model: gemini-3-flash-preview
   request_timeout: 30
 ollama:
   base_url: "http://127.0.0.1:11434"
@@ -63,7 +63,7 @@ vlm_bridge:
     cfg = load_config(base_dir=str(agent_cfg))
     assert cfg["llm"]["provider"] == "google_ai_studio"
     assert cfg["vision_llm"]["provider"] == "google_ai_studio"
-    assert cfg["ollama"]["model"] == "gemini-2.0-flash"
+    assert cfg["ollama"]["model"] == "gemini-3-flash-preview"
 
 
 def test_vlm_config_loader_rejects_non_qwen3_5_9b_model(tmp_path: Path):

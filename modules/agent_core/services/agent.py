@@ -827,7 +827,9 @@ class AgentOrchestrator:
         try:
             from modules.ollama.services.clients import GoogleAIStudioClient  # type: ignore
 
-            if GoogleAIStudioClient.is_rate_limited():
+            if GoogleAIStudioClient.is_rate_limited(
+                str(getattr(self.provider_client, "api_key", ""))
+            ):
                 return {
                     "module": profile.module,
                     "text": "Sub-agent skipped (LLM rate limit cooldown).",
@@ -1079,7 +1081,9 @@ class AgentOrchestrator:
                     try:
                         from modules.ollama.services.clients import GoogleAIStudioClient  # type: ignore
 
-                        gemini_limited = GoogleAIStudioClient.is_rate_limited()
+                        gemini_limited = GoogleAIStudioClient.is_rate_limited(
+                            str(getattr(self.provider_client, "api_key", ""))
+                        )
                     except Exception:
                         gemini_limited = False
 

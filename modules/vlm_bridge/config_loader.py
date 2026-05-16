@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from modules.config_center.agent_yaml_loader import deep_merge, load_agent_config, require_dict_section
+from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8101},
@@ -57,7 +58,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "google_ai_studio": {
         "api_key": "",
-        "model": "gemini-2.0-flash",
+        "model": DEFAULT_GEMINI_MODEL,
         "base_url": "https://generativelanguage.googleapis.com",
         "request_timeout": 45.0,
     },
@@ -141,7 +142,7 @@ def _enforce_google_policy(cfg: Dict[str, Any], root_cfg: Dict[str, Any]) -> Dic
     model = (
         str(root_google.get("model", "")).strip()
         or _pick_model(root_agent, root_llm, {})
-        or "gemini-2.0-flash"
+        or DEFAULT_GEMINI_MODEL
     )
     google_timeout = _to_float(
         root_google.get("request_timeout", root_agent.get("request_timeout", 45.0)),

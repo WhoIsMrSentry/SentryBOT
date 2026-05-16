@@ -42,7 +42,9 @@ class GoogleVLMClient:
         if not api_key:
             raise RuntimeError("Google AI Studio vision selected but api_key is missing")
 
-        model = str(google_cfg.get("model", cfg.get("model", "gemini-2.0-flash"))).strip() or "gemini-2.0-flash"
+        from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
+
+        model = str(google_cfg.get("model", cfg.get("model", DEFAULT_GEMINI_MODEL))).strip() or DEFAULT_GEMINI_MODEL
         base_url = str(
             google_cfg.get("base_url", "https://generativelanguage.googleapis.com")
         ).strip()

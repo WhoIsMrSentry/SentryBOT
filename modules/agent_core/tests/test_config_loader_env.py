@@ -40,18 +40,18 @@ def test_agent_core_load_config_accepts_google_provider(tmp_path: Path):
     cfg_file.write_text(
         """
 agent:
-  model: gemini-2.0-flash
+  model: gemini-3-flash-preview
 llm:
   provider: google_ai_studio
 google_ai_studio:
-  model: gemini-2.0-flash
+  model: gemini-3-flash-preview
 """.strip(),
         encoding="utf-8",
     )
 
     cfg = load_config(str(cfg_file))
     assert cfg["llm"]["provider"] == "google_ai_studio"
-    assert cfg["agent"]["model"] == "gemini-2.0-flash"
+    assert cfg["agent"]["model"] == "gemini-3-flash-preview"
 
 
 def test_agent_core_load_config_rejects_non_qwen3_5_9b_model(tmp_path: Path):

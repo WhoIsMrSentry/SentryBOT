@@ -4,6 +4,7 @@ import os
 from typing import Any, Dict
 
 from modules.config_center.agent_yaml_loader import load_agent_config, require_dict_section
+from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
 
 _REQUIRED_OLLAMA_MODEL = "qwen3.5:9b"
 _GOOGLE_PROVIDERS = frozenset({"google", "google_ai_studio", "gemini"})
@@ -42,7 +43,7 @@ def _enforce_google_policy(cfg: Dict[str, Any]) -> Dict[str, Any]:
     model = (
         str(google_cfg.get("model", "")).strip()
         or _pick_model(agent_cfg, llm_cfg, {})
-        or "gemini-2.0-flash"
+        or DEFAULT_GEMINI_MODEL
     )
     request_timeout = _to_float(
         google_cfg.get("request_timeout", agent_cfg.get("request_timeout", 45.0)),

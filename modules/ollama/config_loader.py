@@ -4,6 +4,7 @@ import os
 from typing import Any, Dict
 
 from modules.config_center.agent_yaml_loader import deep_merge, load_agent_config, require_dict_section
+from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
 
 _REQUIRED_MODEL = "qwen3.5:9b"
 _GOOGLE_PROVIDERS = frozenset({"google", "google_ai_studio", "gemini"})
@@ -14,7 +15,7 @@ _DEFAULT_CFG: Dict[str, Any] = {
     "ollama": {"base_url": "http://127.0.0.1:11434", "model": _REQUIRED_MODEL, "request_timeout": 60.0},
     "google_ai_studio": {
         "api_key": "",
-        "model": "gemini-2.0-flash",
+        "model": DEFAULT_GEMINI_MODEL,
         "base_url": "https://generativelanguage.googleapis.com",
         "request_timeout": 45.0,
     },
@@ -78,7 +79,7 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
         model = (
             str(google_global.get("model", "")).strip()
             or _pick_model(agent_cfg, llm_cfg, ollama_global)
-            or "gemini-2.0-flash"
+            or DEFAULT_GEMINI_MODEL
         )
         google_timeout = _to_float(google_global.get("request_timeout", request_timeout), request_timeout)
         core_cfg: Dict[str, Any] = {
@@ -139,6 +140,11 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
 
     merged = deep_merge(_DEFAULT_CFG, service_cfg)
     merged = deep_merge(merged, core_cfg)
+
+    if provider in _GOOGLE_PROVIDERS:
+        trans = merged.get("translation", {})
+        if isinstance(trans, dict):
+            merged["translation"] = {**trans, "enabled": False}
 
     google_cfg = merged.get("google_ai_studio", {})
     if isinstance(google_cfg, dict):

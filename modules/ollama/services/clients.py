@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import requests
 
+from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
 from modules.config_center.log_redact import redact_secrets
 
 try:
@@ -176,20 +177,49 @@ class LLMClientProtocol(Protocol):
 class GoogleAIStudioClient:
     """Google AI Studio (Gemini) REST istemcisi."""
 
-    _rate_limited_until: float = 0.0
-    _RATE_LIMIT_COOLDOWN_S: float = 120.0
+    _rate_limited_until_by_key: Dict[str, float] = {}
+    _RATE_LIMIT_COOLDOWN_S: float = 90.0
+
+    @staticmethod
+    def _rate_bucket(api_key: str) -> str:
+        key = str(api_key or "").strip()
+        return key[-8:] if len(key) >= 8 else key or "default"
 
     @classmethod
-    def is_rate_limited(cls) -> bool:
-        return time.time() < cls._rate_limited_until
+    def is_rate_limited(cls, api_key: str = "") -> bool:
+        if api_key:
+            return time.time() < cls._rate_limited_until_by_key.get(cls._rate_bucket(api_key), 0.0)
+        return any(time.time() < t for t in cls._rate_limited_until_by_key.values())
 
     @classmethod
-    def rate_limit_remaining_s(cls) -> int:
-        return max(0, int(cls._rate_limited_until - time.time()))
+    def rate_limit_remaining_s(cls, api_key: str = "") -> int:
+        if api_key:
+            until = cls._rate_limited_until_by_key.get(cls._rate_bucket(api_key), 0.0)
+            return max(0, int(until - time.time()))
+        if not cls._rate_limited_until_by_key:
+            return 0
+        latest = max(cls._rate_limited_until_by_key.values())
+        return max(0, int(latest - time.time()))
 
-    @classmethod
-    def _arm_rate_limit(cls) -> None:
-        cls._rate_limited_until = time.time() + cls._RATE_LIMIT_COOLDOWN_S
+    def _is_rate_limited(self) -> bool:
+        return self.is_rate_limited(self.api_key)
+
+    def _arm_rate_limit(self) -> None:
+        self._rate_limited_until_by_key[self._rate_bucket(self.api_key)] = (
+            time.time() + self._RATE_LIMIT_COOLDOWN_S
+        )
+
+    @staticmethod
+    def _parse_api_error(resp: requests.Response) -> str:
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                err = body.get("error", {})
+                if isinstance(err, dict):
+                    return redact_secrets(str(err.get("message", resp.text[:300])))
+        except Exception:
+            pass
+        return redact_secrets(resp.text[:300])
 
     def __init__(
         self,
@@ -285,9 +315,9 @@ class GoogleAIStudioClient:
         return {"message": {"content": text}, "raw": data}
 
     def _post_generate_content(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        if self.is_rate_limited():
+        if self._is_rate_limited():
             raise RuntimeError(
-                f"Gemini rate limited; retry in {self.rate_limit_remaining_s()}s"
+                f"Gemini rate limited; retry in {self.rate_limit_remaining_s(self.api_key)}s"
             )
         backoff_s = (2.0, 5.0)
         last_exc: Optional[Exception] = None
@@ -313,7 +343,10 @@ class GoogleAIStudioClient:
                     raise RuntimeError(
                         f"Gemini rate limited (429); cooldown {int(self._RATE_LIMIT_COOLDOWN_S)}s"
                     )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    raise RuntimeError(
+                        f"Gemini API {resp.status_code}: {self._parse_api_error(resp)}"
+                    )
                 return resp.json()
             except requests.HTTPError as exc:
                 last_exc = exc
@@ -324,6 +357,11 @@ class GoogleAIStudioClient:
                     self._arm_rate_limit()
                     raise RuntimeError(
                         f"Gemini rate limited (429); cooldown {int(self._RATE_LIMIT_COOLDOWN_S)}s"
+                    ) from exc
+                if exc.response is not None:
+                    raise RuntimeError(
+                        f"Gemini API {exc.response.status_code}: "
+                        f"{self._parse_api_error(exc.response)}"
                     ) from exc
                 raise RuntimeError(redact_secrets(str(exc))) from exc
             except Exception as exc:
@@ -384,7 +422,7 @@ def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
         api_key = _sanitize_google_api_key(gcfg.get("api_key", ""))
         if not api_key:
             api_key = _sanitize_google_api_key(os.environ.get("GOOGLE_API_KEY", ""))
-        model = str(gcfg.get("model", "gemini-1.5-flash")).strip() or "gemini-1.5-flash"
+        model = str(gcfg.get("model", DEFAULT_GEMINI_MODEL)).strip() or DEFAULT_GEMINI_MODEL
         base_url = str(gcfg.get("base_url", "https://generativelanguage.googleapis.com")).strip()
         timeout = float(gcfg.get("request_timeout", 60.0))
         if not api_key:

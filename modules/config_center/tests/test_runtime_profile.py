@@ -17,7 +17,7 @@ runtime_profile:
       llm:
         provider: google_ai_studio
       agent:
-        model: gemini-2.0-flash
+        model: gemini-3-flash-preview
 agent:
   model: qwen3.5:9b
 llm:
@@ -29,7 +29,7 @@ llm:
     cfg = load_agent_config(agent_cfg)
     assert active_runtime_profile(cfg) == "google_ai_studio"
     assert cfg["llm"]["provider"] == "google_ai_studio"
-    assert cfg["agent"]["model"] == "gemini-2.0-flash"
+    assert cfg["agent"]["model"] == "gemini-3-flash-preview"
 
 
 def test_apply_runtime_profile_noop_without_active():

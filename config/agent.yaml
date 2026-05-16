@@ -29,7 +29,7 @@ ollama:
 
 google_ai_studio:
   api_key: ""   # bos birakilirsa GOOGLE_API_KEY env kullanilir
-  model: "gemini-2.0-flash"
+  model: "gemini-3-flash-preview"
   base_url: "https://generativelanguage.googleapis.com"
   request_timeout: 45
 
@@ -42,11 +42,11 @@ runtime_profile:
       llm:
         provider: google_ai_studio
       agent:
-        model: "gemini-2.0-flash"
+        model: "gemini-3-flash-preview"
         request_timeout: 45
       google_ai_studio:
         # api_key: profil bos birakir; ustteki google_ai_studio.api_key veya GOOGLE_API_KEY env
-        model: "gemini-2.0-flash"
+        model: "gemini-3-flash-preview"
         request_timeout: 45
       vlm_bridge:
         llm:
@@ -103,7 +103,7 @@ ollama_service:
     default_apply: true
     timeout: 1.5
   translation:
-    enabled: true
+    enabled: false   # Gemini handles Turkish natively; saves API quota
     default_source_lang: tr
     model: ""
     cache_size: 128
