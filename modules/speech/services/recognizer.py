@@ -151,3 +151,17 @@ class Recognizer:
         text = data.get("text", "")
         conf = data.get("confidence")
         return RecognitionResult(text=text, is_final=True, confidence=conf)
+
+    def recognize_pcm(self, pcm: bytes) -> str:
+        """One-shot decode of a mono PCM16 utterance buffer."""
+        if not pcm:
+            return ""
+        self._ensure_model()
+        rec = KaldiRecognizer(self._model, self.cfg.samplerate)
+        if self.cfg.max_alternatives:
+            rec.SetMaxAlternatives(self.cfg.max_alternatives)
+        step = max(4000, int(self.cfg.samplerate * 0.02) * 2)
+        for i in range(0, len(pcm), step):
+            rec.AcceptWaveform(pcm[i : i + step])
+        data = json.loads(rec.FinalResult())
+        return str(data.get("text", "") or "").strip()

@@ -53,10 +53,17 @@ def get_router(cfg: dict) -> APIRouter:
     single_model_mode = bool(llm_cfg.get("single_model_mode", True))
     use_persona_models = bool(llm_cfg.get("use_persona_models", False))
 
+    llm_provider_requested = str(llm_cfg.get("provider", "ollama")).strip().lower()
     provider_name = "ollama"
     try:
         client, provider_name = create_llm_client(cfg)
     except Exception as exc:
+        if llm_provider_requested in {"google", "google_ai_studio", "gemini"}:
+            logger.error(
+                "Google AI Studio init failed — set config/agent.yaml google_ai_studio.api_key "
+                "or export GOOGLE_API_KEY (profile must not use empty api_key). Error: %s",
+                exc,
+            )
         logger.warning("LLM provider init failed, fallback to ollama: %s", exc)
         fallback_cfg = {
             "llm": {"provider": "ollama"},
@@ -103,7 +110,9 @@ def get_router(cfg: dict) -> APIRouter:
         if provider_name == "ollama":
             info["base_url"] = str(cfg.get("ollama", {}).get("base_url", "http://127.0.0.1:11434"))
         elif provider_name == "google_ai_studio":
-            info["base_url"] = str(cfg.get("google_ai_studio", {}).get("base_url", "https://generativelanguage.googleapis.com"))
+            gcfg = cfg.get("google_ai_studio", {}) if isinstance(cfg.get("google_ai_studio", {}), dict) else {}
+            info["base_url"] = str(gcfg.get("base_url", "https://generativelanguage.googleapis.com"))
+            info["api_key_configured"] = bool(str(gcfg.get("api_key", "")).strip() or os.getenv("GOOGLE_API_KEY"))
         return info
 
     def _format_chat_payload(result: Dict[str, Any], translation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -156,7 +165,9 @@ def get_router(cfg: dict) -> APIRouter:
         try:
             result = chat.chat(query_en)
         except requests.HTTPError as exc:
-            logger.warning("LLM upstream request failed: %s", exc)
+            from modules.config_center.log_redact import redact_secrets
+
+            logger.warning("LLM upstream request failed: %s", redact_secrets(exc))
             raise HTTPException(status_code=502, detail="LLM upstream request failed") from exc
         except Exception as exc:
             logger.exception("LLM chat failed: %s", exc)

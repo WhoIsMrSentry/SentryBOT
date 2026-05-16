@@ -51,6 +51,8 @@ class CaptureConfig:
     picam_frame_rate: int
     picam_af_mode: int
     flip: str
+    opencv_max_open_attempts: int = 5
+    opencv_retry_interval_s: float = 1.0
 
 
 class FramePublisher:
@@ -75,6 +77,11 @@ class CameraCapture:
         self._thread: Optional[threading.Thread] = None
         self._cap: Optional[Any] = None
         self._picam: Optional["Picamera2"] = None
+        self._gave_up = False
+
+    @property
+    def gave_up(self) -> bool:
+        return self._gave_up
 
     def _opencv_api_candidates(self, src: object) -> list[Optional[int]]:
         if cv2 is None or not isinstance(src, int):
@@ -193,6 +200,8 @@ class CameraCapture:
         def loop() -> None:
             q = self.cfg.jpeg_quality
             open_fail_count = 0
+            max_attempts = max(1, int(self.cfg.opencv_max_open_attempts))
+            retry_s = max(0.2, float(self.cfg.opencv_retry_interval_s))
             nonlocal cap, api_name
             while not self._stop.is_set():
                 if cap is None or not cap.isOpened():
@@ -200,13 +209,23 @@ class CameraCapture:
                     self._cap = cap
                     if cap is None:
                         open_fail_count += 1
-                        if open_fail_count == 1 or (open_fail_count % 10) == 0:
+                        if open_fail_count >= max_attempts:
+                            if not self._gave_up:
+                                self._gave_up = True
+                                logger.warning(
+                                    "OpenCV camera unavailable after %d attempts (source=%r); stopping retries",
+                                    max_attempts,
+                                    src,
+                                )
+                            break
+                        if open_fail_count == 1 or open_fail_count == max_attempts:
                             logger.warning(
-                                "OpenCV camera source not ready: source=%r attempt=%d",
+                                "OpenCV camera source not ready: source=%r attempt=%d/%d",
                                 src,
                                 open_fail_count,
+                                max_attempts,
                             )
-                        time.sleep(1.0)
+                        time.sleep(retry_s)
                         continue
 
                     open_fail_count = 0
@@ -236,12 +255,19 @@ class CameraCapture:
         if cv2 is None:
             raise RuntimeError("OpenCV (cv2) is required for JPEG encoding with picamera2 backend")
         cam = Picamera2()
-        w, h = self.cfg.picam_size
-        cam.configure(cam.create_video_configuration(
-            main={"size": (w, h), "format": self.cfg.picam_format},
-            controls={"AfMode": self.cfg.picam_af_mode, "FrameRate": self.cfg.picam_frame_rate}
-        ))
-        cam.start()
+        try:
+            w, h = self.cfg.picam_size
+            cam.configure(cam.create_video_configuration(
+                main={"size": (w, h), "format": self.cfg.picam_format},
+                controls={"AfMode": self.cfg.picam_af_mode, "FrameRate": self.cfg.picam_frame_rate}
+            ))
+            cam.start()
+        except Exception:
+            try:
+                cam.close()
+            except Exception:
+                pass
+            raise
         self._picam = cam
 
         def _apply_flip(img):
@@ -303,9 +329,16 @@ class CameraCapture:
             )
         logger.info("CameraCapture starting backend=%s source=%r picam_available=%s", backend, self.cfg.source, PICAM_AVAILABLE)
         if backend == "picamera2":
-            self._start_picam()
-        else:
-            self._start_opencv()
+            try:
+                self._start_picam()
+                return
+            except Exception as exc:
+                logger.warning(
+                    "picamera2 start failed (%s); falling back to opencv source=%r",
+                    exc,
+                    self.cfg.source,
+                )
+        self._start_opencv()
 
     def stop(self) -> None:
         self._stop.set()

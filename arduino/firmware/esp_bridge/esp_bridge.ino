@@ -62,6 +62,8 @@ void setupWiFi() {
     Serial.println(WIFI_SSID);
     
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(WIFI_PS_NONE);
+    WiFi.setAutoReconnect(true);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     
     int retry = 0;

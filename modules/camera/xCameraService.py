@@ -33,8 +33,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
         picam_size=(int(cfg.get("picamera2", {}).get("size", {}).get("width", 1920)), int(cfg.get("picamera2", {}).get("size", {}).get("height", 1080))),
         picam_format=str(cfg.get("picamera2", {}).get("format", "RGB888")),
         picam_frame_rate=int(cfg.get("picamera2", {}).get("frame_rate", 30)),
-    picam_af_mode=int(cfg.get("picamera2", {}).get("af_mode", 2)),
-    flip=str(cfg.get("flip", "none")),
+        picam_af_mode=int(cfg.get("picamera2", {}).get("af_mode", 2)),
+        flip=str(cfg.get("flip", "none")),
+        opencv_max_open_attempts=int(cfg.get("opencv", {}).get("max_open_attempts", 5)),
+        opencv_retry_interval_s=float(cfg.get("opencv", {}).get("retry_interval_s", 1.0)),
     )
 
     publisher = FramePublisher()

@@ -135,6 +135,8 @@ class VisionProcessor:
 
         self.processing_mode = str(vision_cfg.get("processing_mode", "local")).strip().lower()
         self.camera_source = vision_cfg.get("camera_source", 0)
+        self._max_camera_wait_attempts = max(1, int(vision_cfg.get("max_camera_wait_attempts", 5)))
+        self._camera_gave_up = False
         self.conf_threshold = float(vision_cfg.get("confidence_threshold", 0.5))
 
         raw_modes = vision_cfg.get("modes", {}) if isinstance(vision_cfg.get("modes", {}), dict) else {}
@@ -303,12 +305,22 @@ class VisionProcessor:
             self.visual_context_cache = None
             logger.warning("VisualContextCache not available")
 
-        # Remote VLM client (Ollama)
+        # Remote VLM client (Ollama or Google AI Studio)
         vlm_cfg = config.get("vision_llm", {}) if isinstance(config.get("vision_llm", {}), dict) else {}
-        if vlm_cfg.get("enabled", True) and OllamaVLMClient is not None:
+        if vlm_cfg.get("enabled", True):
             try:
-                self.vlm_client = OllamaVLMClient(vlm_cfg)
-                logger.info("[vlm_bridge] Remote VLM client initialized: %s", vlm_cfg.get("model", "unknown"))
+                try:
+                    from .google_vlm_client import create_vision_llm_client
+                except Exception:
+                    from modules.vlm_bridge.services.google_vlm_client import create_vision_llm_client  # type: ignore
+
+                self.vlm_client = create_vision_llm_client(config)
+                provider = str(vlm_cfg.get("provider", "ollama"))
+                logger.info(
+                    "[vlm_bridge] Vision LLM client initialized (%s): %s",
+                    provider,
+                    getattr(self.vlm_client, "model", "unknown"),
+                )
             except Exception as exc:
                 logger.warning("VLM client init failed: %s", exc)
                 self.vlm_client = None
@@ -579,11 +591,21 @@ class VisionProcessor:
 
                 if self._is_http_camera_source() and not self._http_camera_ready():
                     open_fail_count += 1
-                    if open_fail_count == 1 or (open_fail_count % 10) == 0:
+                    if open_fail_count >= self._max_camera_wait_attempts:
+                        if not self._camera_gave_up:
+                            self._camera_gave_up = True
+                            logger.warning(
+                                "Camera source unavailable after %d attempts (%s); stopping capture retries",
+                                self._max_camera_wait_attempts,
+                                self.camera_source,
+                            )
+                        break
+                    if open_fail_count == 1 or open_fail_count == self._max_camera_wait_attempts:
                         logger.info(
-                            "Camera source not ready yet: %s (attempt=%d), waiting...",
+                            "Camera source not ready yet: %s (attempt=%d/%d), waiting...",
                             self.camera_source,
                             open_fail_count,
+                            self._max_camera_wait_attempts,
                         )
                     time.sleep(1.0)
                     continue
@@ -591,11 +613,21 @@ class VisionProcessor:
                 cap = cv2.VideoCapture(self.camera_source)
                 if not cap.isOpened():
                     open_fail_count += 1
-                    if open_fail_count == 1 or (open_fail_count % 10) == 0:
+                    if open_fail_count >= self._max_camera_wait_attempts:
+                        if not self._camera_gave_up:
+                            self._camera_gave_up = True
+                            logger.warning(
+                                "Could not open camera source after %d attempts: %s; stopping retries",
+                                self._max_camera_wait_attempts,
+                                self.camera_source,
+                            )
+                        break
+                    if open_fail_count == 1 or open_fail_count == self._max_camera_wait_attempts:
                         logger.warning(
-                            "Could not open camera source: %s (attempt=%d), retrying...",
+                            "Could not open camera source: %s (attempt=%d/%d), retrying...",
                             self.camera_source,
                             open_fail_count,
+                            self._max_camera_wait_attempts,
                         )
                     time.sleep(1.0)
                     continue

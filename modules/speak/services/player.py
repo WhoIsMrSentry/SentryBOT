@@ -1,9 +1,12 @@
 from __future__ import annotations
 import io
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Dict, Optional
 from .pcm import PCM
+
+_play_lock = threading.Lock()
 
 try:
     import sounddevice as sd
@@ -53,8 +56,9 @@ class AudioPlayer:
             else:
                 data = np.stack([data[:, 0]] * self.cfg.channels, axis=1).astype(np.float32)
 
-        sd.play(data, samplerate=pcm.samplerate, device=self.cfg.device, blocking=True)
-        sd.stop()
+        with _play_lock:
+            sd.play(data, samplerate=pcm.samplerate, device=self.cfg.device, blocking=True)
+            sd.stop()
         dur = len(data) / float(pcm.samplerate)
         logger.info("Played audio: %.2fs @ %d Hz via %s", dur, pcm.samplerate, self.cfg.device or "default")
         return dur

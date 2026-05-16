@@ -1,0 +1,32 @@
+from __future__ import annotations
+"""
+{{SERVICE_NAME}} Service — {{DESCRIPTION}}
+"""
+import logging
+from .config_loader import load_config
+
+logger = logging.getLogger("{{MODULE_NAME}}.service")
+
+
+class {{SERVICE_NAME}}Service:
+    """{{DESCRIPTION}}"""
+
+    def __init__(self, cfg: dict | None = None):
+        self.cfg = cfg or load_config()
+        logger.info("{{SERVICE_NAME}}Service initialized")
+
+    def start(self):
+        """Servisi başlat."""
+        logger.info("{{SERVICE_NAME}}Service starting")
+
+    def stop(self):
+        """Servisi durdur."""
+        logger.info("{{SERVICE_NAME}}Service stopping")
+
+
+def _include_{{MODULE_NAME}}(app, cfg: dict) -> dict:
+    """Gateway bootstrap entegrasyon fonksiyonu."""
+    from .api.router import get_router
+    svc = {{SERVICE_NAME}}Service(cfg.get("{{MODULE_NAME}}", {}))
+    app.include_router(get_router(svc), prefix="/{{MODULE_NAME}}", tags=["{{MODULE_NAME}}"])
+    return {"{{MODULE_NAME}}": svc}

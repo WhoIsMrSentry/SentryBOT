@@ -448,6 +448,18 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.speech.api import get_router as get_speech_router  # type: ignore
     svc = SpeechService()
     started["speech"] = svc
+    try:
+        from pathlib import Path
+
+        model_dir = Path(__file__).resolve().parents[2] / "speech" / "models" / "vosk-tr"
+        if not model_dir.is_dir():
+            logger.error(
+                "Vosk TR model missing at %s — speech/STT will not work after wakeword. "
+                "Run: python tools/install_vosk_tr.py",
+                model_dir,
+            )
+    except Exception:
+        pass
     # If gateway config requests speech to start listening on boot, start it.
     try:
         # cfg is passed to bootstrap and available in outer scope; read flag if present
@@ -517,6 +529,8 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
         picam_frame_rate=int(ccfg.get("picamera2", {}).get("frame_rate", 30)),
         picam_af_mode=int(ccfg.get("picamera2", {}).get("af_mode", 2)),
         flip=str(ccfg.get("flip", "none")),
+        opencv_max_open_attempts=int(ccfg.get("opencv", {}).get("max_open_attempts", 5)),
+        opencv_retry_interval_s=float(ccfg.get("opencv", {}).get("retry_interval_s", 1.0)),
     )
     publisher = FramePublisher()
     capture = CameraCapture(cap_cfg, publisher)

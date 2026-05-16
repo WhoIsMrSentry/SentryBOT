@@ -1,0 +1,36 @@
+# {{SERVICE_NAME}} Module
+
+**{{DESCRIPTION}}**
+
+## Katman
+{{LAYER}}
+
+## Kullanım
+
+### Kütüphane olarak
+```python
+from modules.{{MODULE_NAME}} import {{SERVICE_NAME}}Service
+svc = {{SERVICE_NAME}}Service()
+svc.start()
+```
+
+### Servis olarak
+Gateway bootstrap ile otomatik başlatılır.
+
+## API Endpoint'leri
+
+| Endpoint | Metod | Açıklama |
+|----------|-------|----------|
+| `/{{MODULE_NAME}}/status` | GET | Modül durumu |
+| `/{{MODULE_NAME}}/healthz` | GET | Sağlık kontrolü |
+
+## Konfigürasyon
+
+| Ayar | Varsayılan | Açıklama |
+|------|-----------|----------|
+| `settings.enabled` | `true` | Modül etkin mi |
+
+## Testler
+```bash
+python -m pytest modules/{{MODULE_NAME}}/tests/ -v
+```

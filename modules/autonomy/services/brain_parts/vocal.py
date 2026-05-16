@@ -14,6 +14,9 @@ class VocalMixin:
     def _generate_monologue(self) -> None:
         if not self.config.get("llm", {}).get("enabled", False):
             return
+        if time.time() < float(getattr(self, "_llm_rate_limit_until", 0.0)):
+            logger.debug("Monologue skipped (LLM rate limit cooldown active)")
+            return
 
         template = self.config.get("llm", {}).get("prompt_template", "")
         now = time.time()
@@ -39,7 +42,14 @@ class VocalMixin:
                 self._speak_with_mood(text, emotion="neutral")
                 self.memory.add_event(f"Said to myself: {text}")
         except Exception as exc:
-            logger.error("Monologue failed: %s", exc)
+            from modules.config_center.log_redact import redact_secrets
+
+            msg = redact_secrets(exc)
+            if "429" in msg:
+                self._llm_rate_limit_until = time.time() + 90.0
+                logger.warning("Monologue skipped for 90s (Gemini rate limit)")
+                return
+            logger.error("Monologue failed: %s", msg)
 
     def _speak_with_mood(self, text: str, emotion: str | None = None, language: str | None = None) -> None:
         if not text:

@@ -2,13 +2,17 @@
 # transport: esp_http (production) or serial (legacy/fallback)
 transport: esp_http
 
-# ESP bridge endpoint (ESP32 HTTP server)
-esp_base_url: "http://sentrybot.local"
+# ESP bridge endpoint (ESP32 HTTP server). Prefer static IP + :8080 on Pi; avoid
+# sharing mDNS name "sentrybot" with the Pi hostname (use sentrybot-pi for the Pi).
+# Example: esp_base_url: "http://10.88.255.55:8080"
+esp_base_url: "http://sentrybot-2.local:8080"
 esp_request_path: "/request"
 esp_send_path: "/send"
 esp_health_path: "/healthz"
-esp_timeout_sec: 1.2
-esp_connect_timeout_sec: 0.4
+esp_timeout_sec: 2.5
+esp_connect_timeout_sec: 1.5
+esp_pause_after_failures: 5   # stop HTTP spam when ESP is offline
+esp_pause_sec: 120
 
 # Legacy serial fallback config (used only when transport=serial)
 port: /dev/serial0
@@ -17,12 +21,12 @@ timeout: 0.05
 write_timeout: 0.1
 reconnect_sec: 2.0
 
-# Link liveness
-heartbeat_ms: 100
+# Link liveness (ESP linkTask also sends UART hb every 200ms)
+heartbeat_ms: 250
 auto_heartbeat: true
 # Request/retry tuning (milliseconds for timeouts where noted)
-request_max_retries: 0    # number of additional retries after first attempt
-request_timeout_ms: 1000 # default timeout for requests (ms) if not provided
+request_max_retries: 1    # number of additional retries after first attempt
+request_timeout_ms: 2000 # default timeout for requests (ms) if not provided
 telemetry:
   enabled: false
   interval_ms: 100

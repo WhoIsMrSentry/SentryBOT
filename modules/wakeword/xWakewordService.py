@@ -48,6 +48,24 @@ def _post_json(url: str, payload: dict | None = None, timeout: float = 0.2) -> N
         logger.debug("wakeword http post failed: %s", exc)
 
 
+_WAKE_PHRASES = ("hey sentrybot", "hey sentry", "sentrybot", "sentry")
+
+
+def _normalize_command_text(text: str, wakeword: str = "") -> str:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return ""
+    for phrase in _WAKE_PHRASES + ((wakeword or "").lower(),):
+        p = str(phrase or "").strip().lower()
+        if p:
+            lowered = lowered.replace(p, " ")
+    return " ".join(lowered.split())
+
+
+def _is_wakeword_only(text: str, wakeword: str = "") -> bool:
+    return len(_normalize_command_text(text, wakeword)) < 2
+
+
 def _get_json(url: str, timeout: float = 0.2) -> dict:
     if not url or requests is None:
         return {}
@@ -85,6 +103,7 @@ class WakewordActions:
         self.speech_last_url = str(cfg.get("speech_last_url", ""))
         self.interactions_event_url = str(cfg.get("interactions_event_url", ""))
         self.listen_window_sec = float(cfg.get("listen_window_sec", 8.0))
+        self.min_listen_before_final_sec = float(cfg.get("min_listen_before_final_sec", 1.5))
         self.stop_on_final = bool(cfg.get("stop_on_final", True))
         self.poll_interval_ms = int(cfg.get("poll_interval_ms", 200))
 
@@ -99,17 +118,24 @@ class WakewordActions:
             return
         _post_json(self.interactions_event_url, {"type": event_type, "wakeword": wakeword})
 
-    def has_final_speech(self, since_ts: float | None = None) -> bool:
+    def has_final_speech(self, since_ts: float | None = None, wakeword: str = "") -> bool:
         if not self.speech_last_url:
             return False
         data = _get_json(self.speech_last_url)
+        if not data.get("final"):
+            return False
+        text = str(data.get("text", "")).strip()
+        if not text:
+            return False
         if since_ts is not None:
             try:
                 if float(data.get("ts", 0.0)) < float(since_ts):
                     return False
             except Exception:
                 return False
-        return bool(data.get("final") and str(data.get("text", "")).strip())
+        if _is_wakeword_only(text, wakeword):
+            return False
+        return True
 
 
 class WakewordService:
@@ -168,6 +194,9 @@ class WakewordService:
                 for label in self._openwakeword.run(stream):
                     if self._stop_event.is_set():
                         break
+                    with self._lock:
+                        if self._active_window:
+                            continue
                     logger.info("openwakeword detected: %s", label)
                     self._on_wakeword(label)
             else:
@@ -257,8 +286,13 @@ class WakewordService:
             if self.actions.listen_window_sec <= 0:
                 return
             deadline = _now() + self.actions.listen_window_sec
+            grace_until = window_started_ts + max(0.0, self.actions.min_listen_before_final_sec)
             while _now() < deadline:
-                if self.actions.stop_on_final and self.actions.has_final_speech(window_started_ts):
+                if (
+                    _now() >= grace_until
+                    and self.actions.stop_on_final
+                    and self.actions.has_final_speech(window_started_ts, wakeword)
+                ):
                     break
                 time.sleep(max(0.05, self.actions.poll_interval_ms / 1000.0))
             self.actions.stop_speech()

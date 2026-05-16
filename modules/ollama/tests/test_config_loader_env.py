@@ -48,14 +48,16 @@ ollama_service:
     assert int(cfg["server"]["port"]) == 9001
 
 
-def test_load_config_rejects_non_ollama_provider(tmp_path: Path):
+def test_load_config_accepts_google_provider(tmp_path: Path):
     agent_cfg = tmp_path / "agent.yaml"
     agent_cfg.write_text(
         """
 agent:
-  model: qwen3.5:9b
+  model: gemini-3-flash-preview
 llm:
   provider: google_ai_studio
+google_ai_studio:
+  model: gemini-3-flash-preview
 ollama:
   base_url: "http://127.0.0.1:11434"
   model: qwen3.5:9b
@@ -66,8 +68,9 @@ ollama_service:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError):
-        load_config(str(agent_cfg))
+    cfg = load_config(str(agent_cfg))
+    assert cfg["llm"]["provider"] == "google_ai_studio"
+    assert cfg["google_ai_studio"]["model"] == "gemini-3-flash-preview"
 
 
 def test_load_config_rejects_non_qwen3_5_9b_model(tmp_path: Path):

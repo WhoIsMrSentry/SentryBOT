@@ -130,6 +130,29 @@ def _mark_cooldown(endpoint: str, seconds: float) -> None:
     _CHAT_COOLDOWN_UNTIL[endpoint] = time.time() + max(1.0, float(seconds))
 
 
+def _generate_google_text(prompt: str, *, timeout: float) -> Optional[str]:
+    try:
+        from modules.ollama.config_loader import load_config as load_ollama_config  # type: ignore
+        from modules.ollama.services.clients import create_llm_client  # type: ignore
+    except Exception:
+        return None
+
+    try:
+        cfg = load_ollama_config(None)
+        client, _ = create_llm_client(cfg)
+        client.timeout = float(timeout)
+        result = client.chat(
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.4},
+        )
+        msg = result.get("message", {}) if isinstance(result, dict) else {}
+        out = str(msg.get("content", "")).strip()
+        return out or None
+    except Exception as exc:
+        logger.debug("Gemini text request failed: %s", exc)
+        return None
+
+
 def generate_text(
     prompt: str,
     ollama_cfg: Dict[str, Any],
@@ -137,32 +160,23 @@ def generate_text(
     timeout: float = 5.0,
     response_lang: str = "tr",
 ) -> Optional[str]:
-    if httpx is None:
-        return None
-
     text = str(prompt or "").strip()
     if not text:
         return None
 
-    endpoint = _normalize_endpoint(ollama_cfg)
-    cooldown_s = float((ollama_cfg or {}).get("cooldown_on_failure_s", 30.0))
-
     hint = _provider_hint()
     provider = str(hint.get("provider", "") or "").strip().lower()
 
-    # When Google provider is selected, direct Ollama REST endpoints are incompatible.
-    # In that mode only gateway chat endpoint (/ollama/chat) should be used.
     if provider in {"google", "google_ai_studio", "gemini"}:
-        if _is_direct_ollama_chat_endpoint(endpoint) or _is_legacy_generate_endpoint(endpoint):
-            return None
-
-    # Google provider selected but key is missing/placeholder: skip remote call and fall back.
-    if (
-        provider in {"google", "google_ai_studio", "gemini"}
-        and not bool(hint.get("google_key_ready"))
-        and not _is_legacy_generate_endpoint(endpoint)
-    ):
+        if bool(hint.get("google_key_ready")):
+            return _generate_google_text(text, timeout=timeout)
         return None
+
+    if httpx is None:
+        return None
+
+    endpoint = _normalize_endpoint(ollama_cfg)
+    cooldown_s = float((ollama_cfg or {}).get("cooldown_on_failure_s", 30.0))
 
     try:
         with httpx.Client(timeout=float(timeout)) as client:

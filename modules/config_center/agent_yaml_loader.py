@@ -46,13 +46,19 @@ def resolve_agent_cfg_path(explicit_path: Optional[str | os.PathLike[str]] = Non
 
 
 def load_agent_config(explicit_path: Optional[str | os.PathLike[str]] = None) -> Dict[str, Any]:
+    from modules.config_center.runtime_profile import apply_runtime_profile
+
     cfg_path = resolve_agent_cfg_path(explicit_path)
     with open(cfg_path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
     if not isinstance(raw, dict):
         raise ValueError(f"agent.yaml must be a mapping at top-level: {cfg_path}")
-    return raw
+
+    from modules.config_center.google_keys import inject_google_api_key
+
+    cfg = apply_runtime_profile(raw)
+    return inject_google_api_key(cfg)
 
 
 def require_dict_section(cfg: Dict[str, Any], section: str) -> Dict[str, Any]:

@@ -11,22 +11,36 @@ audio_out:
   dtype: float32
 
 tts:
-  engine: pyttsx3      # pyttsx3 | piper | xtts | dummy
+  engine: piper      # pyttsx3 | piper | xtts | dummy
   language: tr
   voice: source         # optional voice id — default olarak kaynak sesi kullanılacak
   rate: 170
   volume: 1.0
   samplerate: 22050
   # Piper ayarları
-  piper:
-    bin_path: /home/sentrybot/SentryBOT/venv/bin/piper  # Raspberry Pi venv piper binary
-    model_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx  # sentrybot kullanıcısı için model yolu
-    config_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx.json
+    piper:
+      bin_path: piper
+      voice: tr
+      auto_language: true
+      prefer_text_language: true
+      lock_session_language: true
+    language_voices:
+      tr: tr
+      en: glados
+    model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
+    config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
     samplerate: 22050
-    speaker: null             # model çoklu speaker destekliyorsa id
+    speaker: null
     length_scale: null
     noise_scale: null
     noise_w: null
+    voices:
+      tr:
+        model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
+        config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
+      glados:
+        model_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx
+        config_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx.json
 
   # XTTS ayarları (ayrı env'de çalışan local HTTP servis)
   # Örn: PC üzerindeki server_app TTS proxy: http://PC_IP:5000/tts/synthesize

@@ -105,14 +105,20 @@ class AgentOrchestrator:
                 except Exception:
                     self.ollama_client = None
 
-        if self.llm_provider != "ollama" and create_llm_client and load_ollama_runtime_config:
+        if self.llm_provider != "ollama" and create_llm_client:
             try:
-                runtime_cfg = load_ollama_runtime_config(None)
-                if isinstance(runtime_cfg, dict):
-                    runtime_cfg.setdefault("llm", {})["provider"] = self.llm_provider
-                self.provider_client, self.provider_name = create_llm_client(runtime_cfg)
+                self.provider_client, self.provider_name = create_llm_client(self.config)
+                logger.info(
+                    "LLM provider client ready: %s (model=%s)",
+                    self.provider_name,
+                    getattr(self.provider_client, "model", ""),
+                )
             except Exception as exc:
-                logger.warning("Provider client init failed for provider %s: %s", self.llm_provider, exc)
+                logger.error(
+                    "Provider client init failed for %s: %s",
+                    self.llm_provider,
+                    exc,
+                )
 
         # Subsystems
         self.world_state = WorldState()
@@ -666,7 +672,14 @@ class AgentOrchestrator:
         kwargs["model"] = selected_model
 
         if self.llm_provider != "ollama":
+            if self.provider_client is None:
+                raise RuntimeError(
+                    f"Provider '{self.llm_provider}' selected but client is not initialized"
+                )
             return self._chat_via_provider(selected_model, messages, tools, options)
+
+        if self.ollama_client is None and ollama is None:
+            raise RuntimeError("Ollama provider selected but ollama client is unavailable")
 
         try:
             if self.ollama_client is not None:
@@ -810,6 +823,21 @@ class AgentOrchestrator:
         used_tools: List[str] = []
         steps_taken = 0
         max_steps = self.subagent_max_steps if tools else 1
+
+        try:
+            from modules.ollama.services.clients import GoogleAIStudioClient  # type: ignore
+
+            if GoogleAIStudioClient.is_rate_limited(
+                str(getattr(self.provider_client, "api_key", ""))
+            ):
+                return {
+                    "module": profile.module,
+                    "text": "Sub-agent skipped (LLM rate limit cooldown).",
+                    "tools": [],
+                    "steps": 0,
+                }
+        except Exception:
+            pass
 
         for idx in range(max_steps):
             try:
@@ -1050,14 +1078,29 @@ class AgentOrchestrator:
                             total_steps += int(report.get("steps", 0))
 
                 if subagent_reports:
-                    self._emit_progress(_unified_progress_cb, {"type": "persona_start"})
-                    final_text = self._synthesize_main_persona(
-                        user_prompt=user_prompt,
-                        reports=subagent_reports,
-                        survival_override=survival_override,
-                        active_model=active_model,
-                    )
-                    self._append_history("assistant", final_text)
+                    try:
+                        from modules.ollama.services.clients import GoogleAIStudioClient  # type: ignore
+
+                        gemini_limited = GoogleAIStudioClient.is_rate_limited(
+                            str(getattr(self.provider_client, "api_key", ""))
+                        )
+                    except Exception:
+                        gemini_limited = False
+
+                    if gemini_limited:
+                        final_text = (
+                            "Şu an yapay zeka kotası dolu. Bir iki dakika sonra tekrar dener misin?"
+                        )
+                        self._append_history("assistant", final_text)
+                    else:
+                        self._emit_progress(_unified_progress_cb, {"type": "persona_start"})
+                        final_text = self._synthesize_main_persona(
+                            user_prompt=user_prompt,
+                            reports=subagent_reports,
+                            survival_override=survival_override,
+                            active_model=active_model,
+                        )
+                        self._append_history("assistant", final_text)
                 else:
                     messages = list(self.chat_history)
                     final_text, total_steps = self._run_native_history_loop(active_model, messages)

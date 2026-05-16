@@ -90,8 +90,8 @@ llm:
 
 speech_quiet_hours:
   enabled: true
-  start: "23:00"
-  end: "07:00"
+  start: "01:00"
+  end: "05:00"
   tone: "calm"
   max_chars: 120
   prefix: ""

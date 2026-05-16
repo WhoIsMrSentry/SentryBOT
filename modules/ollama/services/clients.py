@@ -1,9 +1,13 @@
 from __future__ import annotations
 import logging
 import os
+import time
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import requests
+
+from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
+from modules.config_center.log_redact import redact_secrets
 
 try:
     from ollama import Client  # type: ignore
@@ -173,6 +177,50 @@ class LLMClientProtocol(Protocol):
 class GoogleAIStudioClient:
     """Google AI Studio (Gemini) REST istemcisi."""
 
+    _rate_limited_until_by_key: Dict[str, float] = {}
+    _RATE_LIMIT_COOLDOWN_S: float = 90.0
+
+    @staticmethod
+    def _rate_bucket(api_key: str) -> str:
+        key = str(api_key or "").strip()
+        return key[-8:] if len(key) >= 8 else key or "default"
+
+    @classmethod
+    def is_rate_limited(cls, api_key: str = "") -> bool:
+        if api_key:
+            return time.time() < cls._rate_limited_until_by_key.get(cls._rate_bucket(api_key), 0.0)
+        return any(time.time() < t for t in cls._rate_limited_until_by_key.values())
+
+    @classmethod
+    def rate_limit_remaining_s(cls, api_key: str = "") -> int:
+        if api_key:
+            until = cls._rate_limited_until_by_key.get(cls._rate_bucket(api_key), 0.0)
+            return max(0, int(until - time.time()))
+        if not cls._rate_limited_until_by_key:
+            return 0
+        latest = max(cls._rate_limited_until_by_key.values())
+        return max(0, int(latest - time.time()))
+
+    def _is_rate_limited(self) -> bool:
+        return self.is_rate_limited(self.api_key)
+
+    def _arm_rate_limit(self) -> None:
+        self._rate_limited_until_by_key[self._rate_bucket(self.api_key)] = (
+            time.time() + self._RATE_LIMIT_COOLDOWN_S
+        )
+
+    @staticmethod
+    def _parse_api_error(resp: requests.Response) -> str:
+        try:
+            body = resp.json()
+            if isinstance(body, dict):
+                err = body.get("error", {})
+                if isinstance(err, dict):
+                    return redact_secrets(str(err.get("message", resp.text[:300])))
+        except Exception:
+            pass
+        return redact_secrets(resp.text[:300])
+
     def __init__(
         self,
         api_key: str,
@@ -256,15 +304,7 @@ class GoogleAIStudioClient:
             payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
         url = f"{self.base_url}/v1beta/models/{selected_model}:generateContent"
-        resp = requests.post(
-            url,
-            params={"key": self.api_key},
-            json=payload,
-            timeout=float(self.timeout),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
+        data = self._post_generate_content(url, payload)
         text = ""
         try:
             parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
@@ -273,6 +313,104 @@ class GoogleAIStudioClient:
             text = ""
 
         return {"message": {"content": text}, "raw": data}
+
+    def _post_generate_content(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self._is_rate_limited():
+            raise RuntimeError(
+                f"Gemini rate limited; retry in {self.rate_limit_remaining_s(self.api_key)}s"
+            )
+        backoff_s = (2.0, 5.0)
+        last_exc: Optional[Exception] = None
+        for attempt in range(len(backoff_s) + 1):
+            try:
+                resp = requests.post(
+                    url,
+                    params={"key": self.api_key},
+                    json=payload,
+                    timeout=float(self.timeout),
+                )
+                if resp.status_code == 429:
+                    if attempt < len(backoff_s):
+                        logger.warning(
+                            "Gemini rate limited (429); retrying in %.0fs (attempt %d/%d)",
+                            backoff_s[attempt],
+                            attempt + 1,
+                            len(backoff_s),
+                        )
+                        time.sleep(backoff_s[attempt])
+                        continue
+                    self._arm_rate_limit()
+                    raise RuntimeError(
+                        f"Gemini rate limited (429); cooldown {int(self._RATE_LIMIT_COOLDOWN_S)}s"
+                    )
+                if resp.status_code >= 400:
+                    raise RuntimeError(
+                        f"Gemini API {resp.status_code}: {self._parse_api_error(resp)}"
+                    )
+                return resp.json()
+            except requests.HTTPError as exc:
+                last_exc = exc
+                if exc.response is not None and exc.response.status_code == 429:
+                    if attempt < len(backoff_s):
+                        time.sleep(backoff_s[attempt])
+                        continue
+                    self._arm_rate_limit()
+                    raise RuntimeError(
+                        f"Gemini rate limited (429); cooldown {int(self._RATE_LIMIT_COOLDOWN_S)}s"
+                    ) from exc
+                if exc.response is not None:
+                    raise RuntimeError(
+                        f"Gemini API {exc.response.status_code}: "
+                        f"{self._parse_api_error(exc.response)}"
+                    ) from exc
+                raise RuntimeError(redact_secrets(str(exc))) from exc
+            except Exception as exc:
+                last_exc = exc
+                raise
+        if last_exc:
+            raise RuntimeError(redact_secrets(str(last_exc))) from last_exc
+        raise RuntimeError("Gemini request failed")
+
+    def generate_with_image(
+        self,
+        prompt: str,
+        image_b64: str,
+        *,
+        mime_type: str = "image/jpeg",
+        model: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Multimodal generateContent (text + inline image)."""
+        selected_model = str(model or self.model).strip() or self.model
+        if model and not selected_model.lower().startswith("gemini"):
+            selected_model = self.model
+
+        generation_config: Dict[str, Any] = {"temperature": 0.3}
+        if isinstance(options, dict) and "temperature" in options:
+            generation_config["temperature"] = options["temperature"]
+
+        payload: Dict[str, Any] = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": str(prompt or "")},
+                        {"inline_data": {"mime_type": mime_type, "data": image_b64}},
+                    ],
+                }
+            ],
+            "generationConfig": generation_config,
+        }
+
+        url = f"{self.base_url}/v1beta/models/{selected_model}:generateContent"
+        data = self._post_generate_content(url, payload)
+        try:
+            parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
+            return "\n".join(
+                str(p.get("text", "")) for p in parts if isinstance(p, dict)
+            ).strip()
+        except Exception:
+            return ""
 
 
 def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
@@ -284,7 +422,7 @@ def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
         api_key = _sanitize_google_api_key(gcfg.get("api_key", ""))
         if not api_key:
             api_key = _sanitize_google_api_key(os.environ.get("GOOGLE_API_KEY", ""))
-        model = str(gcfg.get("model", "gemini-1.5-flash")).strip() or "gemini-1.5-flash"
+        model = str(gcfg.get("model", DEFAULT_GEMINI_MODEL)).strip() or DEFAULT_GEMINI_MODEL
         base_url = str(gcfg.get("base_url", "https://generativelanguage.googleapis.com")).strip()
         timeout = float(gcfg.get("request_timeout", 60.0))
         if not api_key:

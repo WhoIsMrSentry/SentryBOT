@@ -149,7 +149,14 @@ class OllamaTranslator:
             self._cache_put(key, translated)
             return translated
         except Exception as exc:
-            logger.warning("Translation failed (%s->%s), using original text: %s", src, tgt, exc)
+            from modules.config_center.log_redact import redact_secrets
+
+            logger.warning(
+                "Translation failed (%s->%s), using original text: %s",
+                src,
+                tgt,
+                redact_secrets(exc),
+            )
             return value
 
     def to_bridge(self, text: str, source_lang: Optional[str]) -> str:

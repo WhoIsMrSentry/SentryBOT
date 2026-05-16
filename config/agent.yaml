@@ -27,6 +27,70 @@ ollama:
   model: "qwen3.5:9b"
   request_timeout: 60
 
+google_ai_studio:
+  api_key: ""   # bos birakilirsa GOOGLE_API_KEY env kullanilir
+  model: "gemini-3-flash-preview"
+  base_url: "https://generativelanguage.googleapis.com"
+  request_timeout: 45
+
+# Tek anahtar ile LLM + VLM + ESP URL degistir: active satirini degistir.
+runtime_profile:
+  active: google_ai_studio   # google_ai_studio | remote_ollama
+
+  profiles:
+    google_ai_studio:
+      llm:
+        provider: google_ai_studio
+      agent:
+        model: "gemini-3-flash-preview"
+        request_timeout: 45
+      google_ai_studio:
+        # api_key: profil bos birakir; ustteki google_ai_studio.api_key veya GOOGLE_API_KEY env
+        model: "gemini-3-flash-preview"
+        request_timeout: 45
+      vlm_bridge:
+        llm:
+          provider: google_ai_studio
+        vision_llm:
+          enabled: true
+          provider: google_ai_studio
+        ollama:
+          endpoint: "http://127.0.0.1:8080/ollama/chat"
+          timeout: 12.0
+      arduino_serial:
+        esp_base_url: "http://10.88.255.55:8080"
+      esp_link:
+        base_url: "http://10.88.255.55:8080"
+
+    remote_ollama:
+      llm:
+        provider: ollama
+      agent:
+        model: "qwen3.5:9b"
+        ollama_base_url: "http://127.0.0.1:11434"
+        request_timeout: 60
+      ollama:
+        base_url: "http://127.0.0.1:11434"
+        model: "qwen3.5:9b"
+        request_timeout: 60
+      vlm_bridge:
+        llm:
+          provider: ollama
+        vision_llm:
+          enabled: true
+          provider: ollama
+          base_url: "http://127.0.0.1:11434"
+          model: "qwen3-vl:8b"
+          timeout_s: 18
+        ollama:
+          endpoint: "http://127.0.0.1:8080/ollama/chat"
+          model: "qwen3.5:9b"
+          timeout: 12.0
+      arduino_serial:
+        esp_base_url: "http://10.88.255.55:8080"
+      esp_link:
+        base_url: "http://10.88.255.55:8080"
+
 ollama_service:
   server:
     host: 0.0.0.0
@@ -39,7 +103,7 @@ ollama_service:
     default_apply: true
     timeout: 1.5
   translation:
-    enabled: true
+    enabled: false   # Gemini handles Turkish natively; saves API quota
     default_source_lang: tr
     model: ""
     cache_size: 128
@@ -134,7 +198,7 @@ speak:
     channels: 1
     dtype: float32
   tts:
-    engine: pyttsx3
+    engine: piper
     language: tr
     voice: source
     rate: 170
@@ -146,14 +210,34 @@ speak:
       timeout: 120
       auth_token: ""
     piper:
-      bin_path: /home/sentrybot/SentryBOT/venv/bin/piper
-      model_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx
-      config_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx.json
+      bin_path: piper
+      voice: tr
+      auto_language: true
+      prefer_text_language: true
+      lock_session_language: true
+      language_voices:
+        tr: tr
+        en: glados
+      model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
+      config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
       samplerate: 22050
       speaker: null
       length_scale: null
       noise_scale: null
       noise_w: null
+      voices:
+        tr:
+          model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
+          config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
+        tr-fahrettin:
+          model_path: data/piper_models/tr_TR-fahrettin-medium/tr_TR-fahrettin-medium.onnx
+          config_path: data/piper_models/tr_TR-fahrettin-medium/tr_TR-fahrettin-medium.onnx.json
+        tr-fettah:
+          model_path: data/piper_models/tr_TR-fettah-medium/tr_TR-fettah-medium.onnx
+          config_path: data/piper_models/tr_TR-fettah-medium/tr_TR-fettah-medium.onnx.json
+        glados:
+          model_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx
+          config_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx.json
     xtts:
       endpoint: http://192.168.1.100:5000/tts/synthesize
       timeout: 120
@@ -196,7 +280,7 @@ speech:
     host: 0.0.0.0
     port: 8082
   audio:
-    device: plughw:0,0
+    device: null
     samplerate: 16000
     channels: 2
     dtype: int16
@@ -204,6 +288,11 @@ speech:
   recognition:
     source_language: tr
     language: tr
+    default_language: tr
+    auto_language: true
+    auto_switch_model: true
+    dual_decode_margin: 0.6
+    utterance_buffer_sec: 20
     model_path: null
     language_models:
       tr: models/vosk-tr

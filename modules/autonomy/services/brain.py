@@ -67,18 +67,18 @@ class AutonomyBrain(
         self.agent = None
         if _AGENT_CORE_AVAILABLE:
             try:
-                import yaml, os
-                agent_cfg_path = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "..", "config", "agent.yaml"
-                )
-                if os.path.exists(agent_cfg_path):
-                    with open(agent_cfg_path, "r") as f:
-                        agent_cfg = yaml.safe_load(f) or {}
-                else:
-                    agent_cfg = {}
+                from modules.agent_core.config_loader import load_config as load_agent_core_config  # type: ignore
+
+                agent_cfg = load_agent_core_config()
                 self.agent = AgentOrchestrator(agent_cfg, autonomy_client=self.client)
-                logger.info("Agent Core integrated successfully.")
+                llm_cfg = agent_cfg.get("llm", {}) if isinstance(agent_cfg.get("llm", {}), dict) else {}
+                provider = str(llm_cfg.get("provider", "ollama"))
+                model = str(agent_cfg.get("agent", {}).get("model", ""))
+                logger.info(
+                    "Agent Core integrated successfully (provider=%s model=%s).",
+                    provider,
+                    model,
+                )
             except Exception as exc:
                 logger.warning("Agent Core init failed (non-fatal): %s", exc)
 
@@ -106,6 +106,7 @@ class AutonomyBrain(
         self._current_people = {}
         self._attempt_log = []
         self._owner_report_pending = False
+        self._llm_rate_limit_until = 0.0
         self._last_owner_scan = 0.0
         self._last_idle_action = 0.0
         self._reset_daily_timeline()
@@ -608,8 +609,15 @@ class AutonomyBrain(
         self._log_conversation(text)
         lang = str(source_lang or self.state.get("last_speech_language") or "tr")
         low = str(text or "").lower()
-        if any(k in low for k in ["hey sentry", "hey sentrybot", "sentry", "sentrybot"]):
+        wake_only = any(k in low for k in ["hey sentry", "hey sentrybot", "sentry", "sentrybot"])
+        if wake_only:
             self._run_scene("wakeword_reaction", context={"text": text})
+            stripped = low
+            for phrase in ("hey sentrybot", "hey sentry", "sentrybot", "sentry"):
+                stripped = stripped.replace(phrase, " ")
+            if len(stripped.split()) < 1:
+                logger.info("Wakeword-only utterance; skipping LLM until a command is spoken.")
+                return
         speaker = self._guess_active_person()
         if speaker:
             self.state["last_speaker"] = speaker
@@ -677,8 +685,14 @@ class AutonomyBrain(
                         self.memory.add_event(f"Agent replied: {response_text}")
                         self._remember_person_chat(speaker, response_text, role="assistant")
                         # Final response is spoken via SpeechArbiter
+                        try:
+                            from modules.speak.services.lang_detect import detect_text_language
+
+                            reply_lang = detect_text_language(response_text, default=lang)
+                        except Exception:
+                            reply_lang = lang
                         self.agent.speech_arbiter.enqueue_final(
-                            response_text, language=lang,
+                            response_text, language=reply_lang,
                         )
                         return
                 except Exception as exc:
@@ -704,7 +718,13 @@ class AutonomyBrain(
                     if not self._is_active_request(request_id):
                         return
                     self._remember_person_chat(speaker, clean_text, role="assistant")
-                    self._speak_with_mood(clean_text, language=lang)
+                    try:
+                        from modules.speak.services.lang_detect import detect_text_language
+
+                        reply_lang = detect_text_language(clean_text, default=lang)
+                    except Exception:
+                        reply_lang = lang
+                    self._speak_with_mood(clean_text, language=reply_lang)
                     logger.info("Reply: %s", clean_text)
                     self.memory.add_event(f"I replied: {clean_text}")
                 else:

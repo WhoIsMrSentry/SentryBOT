@@ -2,7 +2,7 @@ from __future__ import annotations
 import argparse
 import logging
 import re
-from typing import Optional
+from typing import Any, Dict, Optional
 
 try:
     import requests  # type: ignore
@@ -26,6 +26,19 @@ except Exception:
 
 logger = logging.getLogger("speak")
 
+_TONE_PRESETS: Dict[str, Dict[str, float]] = {
+    "neutral": {"rate": 170, "volume": 0.85},
+    "joy": {"rate": 190, "volume": 1.0},
+    "fast": {"rate": 190, "volume": 1.0},
+    "calm": {"rate": 170, "volume": 0.7},
+    "excited": {"rate": 200, "volume": 1.0},
+    "sadness": {"rate": 150, "volume": 0.75},
+    "sad": {"rate": 150, "volume": 0.75},
+    "curiosity": {"rate": 185, "volume": 0.9},
+    "tired": {"rate": 140, "volume": 0.65},
+    "fear": {"rate": 200, "volume": 0.9},
+}
+
 
 class SpeakService:
     """Metni sese dönüştürüp MAX98357A üzerinden çalar."""
@@ -35,6 +48,25 @@ class SpeakService:
         self.tts = TextToSpeech(self.cfg.get("tts", {}))
         self.player = AudioPlayer(self.cfg.get("audio_out", {}))
         self._liveliness_cfg = self.cfg.get("liveliness", {}) or {}
+
+    @staticmethod
+    def _coerce_tone(tone: Any) -> Optional[dict]:
+        """Accept dict overrides or named presets (e.g. quiet-hours ``tone: calm``)."""
+        if tone is None:
+            return None
+        if isinstance(tone, dict):
+            return dict(tone)
+        if isinstance(tone, str):
+            key = tone.strip().lower()
+            if not key or key in {"default", "none"}:
+                return None
+            preset = _TONE_PRESETS.get(key)
+            if preset:
+                return dict(preset)
+            logger.debug("unknown tone label %r, ignoring", tone)
+            return None
+        logger.warning("unsupported tone type %s, ignoring", type(tone).__name__)
+        return None
 
     def _post_interactions(self, endpoint: str, payload: dict) -> None:
         if requests is None:
@@ -183,7 +215,7 @@ class SpeakService:
         self,
         text: str,
         engine: Optional[str] = None,
-        tone: Optional[dict] = None,
+        tone: Optional[dict] | str = None,
         speaker_wav: Optional[str] = None,
         language: Optional[str] = None,
     ) -> dict:
@@ -192,14 +224,15 @@ class SpeakService:
         """
         if not text or not text.strip():
             raise ValueError("text is empty")
-        overrides = dict(tone or {})
+        tone_dict = self._coerce_tone(tone)
+        overrides = dict(tone_dict or {})
         if engine:
             overrides["engine"] = engine
         if speaker_wav:
             overrides["speaker_wav"] = speaker_wav
         if language:
             overrides["language"] = language
-        self._emit_speech_liveliness_start(text, tone)
+        self._emit_speech_liveliness_start(text, tone_dict)
         wav = self.tts.synthesize(text, overrides=overrides or None)
         dur = self.player.play_blocking(wav)
         self._emit_speech_liveliness_end(dur)

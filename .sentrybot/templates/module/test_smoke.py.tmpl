@@ -1,0 +1,28 @@
+"""{{MODULE_NAME}} smoke testleri — temel sağlık kontrolü."""
+
+
+def test_import():
+    """Modül import edilebilir mi?"""
+    from modules.{{MODULE_NAME}} import {{SERVICE_NAME}}Service
+    assert {{SERVICE_NAME}}Service is not None
+
+
+def test_config_loader():
+    """Config yüklenebilir mi?"""
+    from modules.{{MODULE_NAME}}.config_loader import load_config
+    cfg = load_config()
+    assert isinstance(cfg, dict)
+
+
+def test_service_instantiation():
+    """Service oluşturulabilir mi?"""
+    from modules.{{MODULE_NAME}} import {{SERVICE_NAME}}Service
+    svc = {{SERVICE_NAME}}Service(cfg={})
+    assert svc is not None
+
+
+def test_router():
+    """Router oluşturulabilir mi?"""
+    from modules.{{MODULE_NAME}}.api.router import get_router
+    router = get_router()
+    assert router is not None

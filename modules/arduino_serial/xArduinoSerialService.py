@@ -69,6 +69,10 @@ class SerialTransport:
 
 
 class xArduinoSerialService:
+    _class_esp_paused_until: float = 0.0
+    _class_esp_pause_logged: bool = False
+    _class_esp_fail_streak: int = 0
+
     """NDJSON tabanlı Arduino seri haberleşme servisi.
 
     - Her satır bir JSON mesajıdır. `{ "cmd": ... }` gönderilir.
@@ -121,6 +125,14 @@ class xArduinoSerialService:
         self._esp_health_path = str(self.cfg.get("esp_health_path", "/healthz"))
         self._esp_timeout = float(self.cfg.get("esp_timeout_sec", 1.2) or 1.2)
         self._esp_connect_timeout = float(self.cfg.get("esp_connect_timeout_sec", 0.4) or 0.4)
+        self._esp_fail_streak = 0
+        self._esp_paused_until = 0.0
+        self._esp_pause_after = max(1, int(self.cfg.get("esp_pause_after_failures", 5) or 5))
+        self._esp_pause_sec = max(10.0, float(self.cfg.get("esp_pause_sec", 120) or 120))
+        self._esp_pause_logged = False
+        self._esp_http: Any = None
+        if self._esp_mode and requests is not None:
+            self._esp_http = requests.Session()
         self.transport_factory = transport_factory or (lambda port, baudrate, timeout, write_timeout: SerialTransport(port, baudrate, timeout, write_timeout))
         self._ser: Optional[SerialTransport] = None
         self._rx_thread: Optional[threading.Thread] = None
@@ -154,26 +166,69 @@ class xArduinoSerialService:
             p = "/" + p
         return f"{self._esp_base_url}{p}"
 
+    def _esp_is_paused(self) -> bool:
+        return time.time() < max(self._esp_paused_until, self._class_esp_paused_until)
+
+    def _esp_note_failure(self, exc: Exception) -> None:
+        self._class_esp_fail_streak += 1
+        if self._class_esp_fail_streak < self._esp_pause_after:
+            return
+        until = time.time() + self._esp_pause_sec
+        self._esp_paused_until = until
+        xArduinoSerialService._class_esp_paused_until = until
+        if not self._class_esp_pause_logged:
+            self._logger.warning(
+                "ESP bridge unreachable after %d failures (%s); pausing HTTP for %.0fs",
+                self._class_esp_fail_streak,
+                exc.__class__.__name__,
+                self._esp_pause_sec,
+            )
+            xArduinoSerialService._class_esp_pause_logged = True
+
+    def _esp_note_success(self) -> None:
+        self._esp_fail_streak = 0
+        self._esp_paused_until = 0.0
+        self._esp_pause_logged = False
+        xArduinoSerialService._class_esp_fail_streak = 0
+        xArduinoSerialService._class_esp_paused_until = 0.0
+        xArduinoSerialService._class_esp_pause_logged = False
+
     def _esp_post(self, path: str, payload: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if requests is None:
             raise RuntimeError("requests is required for ESP HTTP transport")
+        if self._esp_is_paused():
+            raise RuntimeError(
+                f"ESP bridge paused (unreachable); retry in {max(0, int(self._esp_paused_until - time.time()))}s"
+            )
         req_timeout = float(timeout if timeout is not None else self._esp_timeout)
         req_timeout = max(0.05, req_timeout)
         conn_timeout = max(0.05, float(self._esp_connect_timeout))
-        resp = requests.post(
-            self._esp_url(path),
-            json=payload,
-            params=params,
-            timeout=(conn_timeout, req_timeout),
-        )
+        client = self._esp_http if self._esp_http is not None else requests
+        try:
+            resp = client.post(
+                self._esp_url(path),
+                json=payload,
+                params=params,
+                timeout=(conn_timeout, req_timeout),
+            )
+        except Exception as exc:
+            self._esp_note_failure(exc)
+            raise
         if resp.status_code != 200:
-            raise RuntimeError(f"ESP bridge HTTP {resp.status_code}: {resp.text[:200]}")
+            err = RuntimeError(f"ESP bridge HTTP {resp.status_code}: {resp.text[:200]}")
+            self._esp_note_failure(err)
+            raise err
         try:
             data = resp.json()
         except Exception as exc:
-            raise RuntimeError(f"ESP bridge returned non-JSON payload: {exc}") from exc
+            wrapped = RuntimeError(f"ESP bridge returned non-JSON payload: {exc}")
+            self._esp_note_failure(wrapped)
+            raise wrapped from exc
         if not isinstance(data, dict):
-            raise RuntimeError("ESP bridge response must be a JSON object")
+            err = RuntimeError("ESP bridge response must be a JSON object")
+            self._esp_note_failure(err)
+            raise err
+        self._esp_note_success()
         return data
 
     # -------- lifecycle --------
@@ -196,6 +251,12 @@ class xArduinoSerialService:
             self._rx_thread.join(timeout=1.0)
         if self._hb_thread:
             self._hb_thread.join(timeout=1.0)
+        if self._esp_http is not None:
+            try:
+                self._esp_http.close()
+            except Exception:
+                pass
+            self._esp_http = None
         if not self._esp_mode:
             self._disconnect()
 
