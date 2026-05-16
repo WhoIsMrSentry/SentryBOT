@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 import threading
 from pathlib import Path
-from .lang_detect import piper_voice_for_language, resolve_speak_language
+from .lang_detect import normalize_lang, piper_voice_for_language, resolve_speak_language
 from .pcm import PCM
 
 import io
@@ -421,8 +421,6 @@ class TextToSpeech:
         explicit = overrides.get("language") if isinstance(overrides, dict) else None
         lock_session = bool(piper_cfg.get("lock_session_language", True))
         if explicit and str(explicit).strip() and lock_session:
-            from .lang_detect import normalize_lang, piper_voice_for_language
-
             lang = normalize_lang(explicit, fallback=str(cfg.get("language", "tr")))
         else:
             lang = resolve_speak_language(
