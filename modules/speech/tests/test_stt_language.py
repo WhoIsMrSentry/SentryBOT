@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from modules.speak.services.tts import TextToSpeech
 from modules.speech.services.stt_language import resolve_stt_text_and_language
 
 
@@ -16,21 +17,44 @@ def test_resolve_stt_keeps_turkish_on_primary() -> None:
     )
     assert lang == "tr"
     assert text == "bugün hava nasıl"
-    primary.recognize_pcm.assert_not_called()
 
 
-def test_resolve_stt_redecodes_english_with_secondary() -> None:
-    primary = MagicMock()
+def test_resolve_stt_picks_en_over_tr_garbage() -> None:
     secondary = MagicMock()
-    secondary.recognize_pcm.return_value = "what is the weather today"
+    secondary.recognize_pcm.return_value = "please introduce yourself"
     text, lang = resolve_stt_text_and_language(
-        "what is the weather",
-        b"\x00\x01" * 100,
-        primary=primary,
+        "parayı entrika görsel",
+        b"\x00\x01" * 200,
+        primary=MagicMock(),
         secondary=secondary,
         default_language="tr",
-        auto_switch_model=True,
     )
     assert lang == "en"
-    assert "weather" in text
+    assert "introduce" in text.lower()
     secondary.recognize_pcm.assert_called_once()
+
+
+def test_piper_locks_voice_from_explicit_language() -> None:
+    tts = TextToSpeech(
+        {
+            "engine": "piper",
+            "language": "tr",
+            "piper": {
+                "voice": "tr",
+                "auto_language": True,
+                "lock_session_language": True,
+                "language_voices": {"tr": "tr", "en": "glados"},
+                "model_path": "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx",
+                "voices": {
+                    "tr": {"model_path": "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx"},
+                    "glados": {"model_path": "data/piper_models/en-glados-medium/glados_piper_medium.onnx"},
+                },
+            },
+        }
+    )
+    voice = tts._resolve_piper_voice_key(
+        "Merhaba nasılsın",
+        tts._base_cfg,
+        {"language": "en"},
+    )
+    assert voice == "glados"

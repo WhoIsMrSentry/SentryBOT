@@ -419,12 +419,18 @@ class TextToSpeech:
         if not isinstance(piper_cfg, dict) or not bool(piper_cfg.get("auto_language", True)):
             return None
         explicit = overrides.get("language") if isinstance(overrides, dict) else None
-        lang = resolve_speak_language(
-            text,
-            explicit=explicit,
-            default=str(cfg.get("language", "tr")),
-            prefer_text=bool(piper_cfg.get("prefer_text_language", True)),
-        )
+        lock_session = bool(piper_cfg.get("lock_session_language", True))
+        if explicit and str(explicit).strip() and lock_session:
+            from .lang_detect import normalize_lang, piper_voice_for_language
+
+            lang = normalize_lang(explicit, fallback=str(cfg.get("language", "tr")))
+        else:
+            lang = resolve_speak_language(
+                text,
+                explicit=explicit,
+                default=str(cfg.get("language", "tr")),
+                prefer_text=bool(piper_cfg.get("prefer_text_language", True)),
+            )
         voice_key = piper_voice_for_language(lang, piper_cfg)
         logger.debug("piper language=%s voice=%s", lang, voice_key)
         return voice_key

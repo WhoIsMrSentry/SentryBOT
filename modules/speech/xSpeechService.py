@@ -105,6 +105,7 @@ class SpeechService:
         self._default_language = str(rec_cfg.get("default_language") or self.source_language or "tr")
         self._auto_language = bool(rec_cfg.get("auto_language", True))
         self._auto_switch_model = bool(rec_cfg.get("auto_switch_model", True))
+        self._dual_decode_margin = float(rec_cfg.get("dual_decode_margin", 0.6))
         self._utterance_pcm = bytearray()
         self._max_utterance_bytes = int(
             rec_cfg.get("utterance_buffer_sec", 20) or 20
@@ -263,6 +264,7 @@ class SpeechService:
             secondary=self._secondary_recognizer,
             default_language=self._default_language,
             auto_switch_model=self._auto_switch_model,
+            dual_decode_margin=self._dual_decode_margin,
         )
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
