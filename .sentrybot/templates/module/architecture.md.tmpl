@@ -1,0 +1,46 @@
+# {{SERVICE_NAME}} — Mimari Dokümantasyon
+
+## Genel Bakış
+
+{{DESCRIPTION}}
+
+## Modül Yapısı
+
+```
+modules/{{MODULE_NAME}}/
+├── __init__.py
+├── x{{SERVICE_NAME}}Service.py
+├── config_loader.py
+├── config/
+│   └── config.yml
+├── api/
+│   ├── __init__.py
+│   └── router.py
+├── services/
+│   └── __init__.py
+├── tests/
+│   └── test_smoke.py
+├── architecture_{{MODULE_NAME}}.md
+└── README.md
+```
+
+## Veri Akışı
+
+```mermaid
+flowchart TD
+    API[API İsteği] --> SVC[{{SERVICE_NAME}}Service]
+    SVC --> CFG[Config Loader]
+    SVC --> BL[İş Mantığı]
+    BL --> RES[Yanıt]
+```
+
+## Modüller Arası Etkileşim
+
+| Modül | İlişki |
+|---|---|
+| `gateway` | Bootstrap ile mount edilir |
+
+## Tasarım Kararları
+
+- DryCode prensiplerine uygun yapılandırılmıştır.
+- Config değerleri hardcode edilmez, config.yml üzerinden okunur.

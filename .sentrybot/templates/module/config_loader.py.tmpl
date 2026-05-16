@@ -1,0 +1,20 @@
+from __future__ import annotations
+import os
+import yaml
+import logging
+
+logger = logging.getLogger("{{MODULE_NAME}}.config")
+
+_DEFAULT_PATH = os.path.join(os.path.dirname(__file__), "config", "config.yml")
+
+
+def load_config(path: str | None = None) -> dict:
+    """{{MODULE_NAME}} config dosyasını yükle."""
+    cfg_path = path or os.environ.get("{{MODULE_NAME_UPPER}}_CONFIG", _DEFAULT_PATH)
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        logger.warning("Config not found at %s, using defaults", cfg_path)
+        cfg = {}
+    return cfg
