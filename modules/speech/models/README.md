@@ -1,4 +1,20 @@
 # Vosk Models
 
 Buraya Vosk offline model klasörünü yerleştirin.
-Örn: `vosk-model-small-tr-0.22` klasörünü `vosk-tr` adına kopyalayın ve config.yml'de `recognition.model_path: models/vosk-tr` olarak kullanın.
+
+**Otomatik kurulum (Pi):**
+
+```bash
+python tools/install_vosk_tr.py
+```
+
+SSL hatası (`CERTIFICATE_VERIFY_FAILED`) alırsanız:
+
+```bash
+sudo apt update && sudo apt install -y ca-certificates
+python tools/install_vosk_tr.py
+# veya acil:
+python tools/install_vosk_tr.py --insecure
+```
+
+Manuel: `vosk-model-small-tr-0.22` klasörünü `vosk-tr` adına kopyalayın.
