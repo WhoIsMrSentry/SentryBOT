@@ -83,7 +83,7 @@ slam:
 # Switch between "fast" (low-latency, short output) and "normal" (balanced).
 # Toggle via POST /agent/profile/switch (body: {"mode":"fast"}) or ?mode=fast
 realtime_profile:
-  active: "fast"               # fast | normal
+  active: "fast"               # fast | normal | rich
 
   fast:
     num_predict_chat: 100      # Ollama sohbet max token (kısa cevap)
@@ -95,6 +95,9 @@ realtime_profile:
     request_timeout_s: 15
     ollama_chat_timeout_s: 12
     vlm_ask_timeout_s: 14
+    max_subagents: 1
+    subagent_workers: 1
+    subagent_max_steps: 2
 
   normal:
     num_predict_chat: 180
@@ -106,3 +109,20 @@ realtime_profile:
     request_timeout_s: 25
     ollama_chat_timeout_s: 20
     vlm_ask_timeout_s: 20
+    max_subagents: 2
+    subagent_workers: 2
+    subagent_max_steps: 3
+
+  rich:
+    num_predict_chat: 240
+    num_predict_persona: 260
+    num_predict_vlm: 512
+    num_predict_vlm_bridge: 220
+    num_ctx: 6144
+    temperature: 0.2
+    request_timeout_s: 35
+    ollama_chat_timeout_s: 28
+    vlm_ask_timeout_s: 24
+    max_subagents: 4
+    subagent_workers: 3
+    subagent_max_steps: 4

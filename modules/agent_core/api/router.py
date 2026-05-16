@@ -8,7 +8,7 @@ import time
 
 
 def get_router(agent) -> APIRouter:
-    router = APIRouter(tags=["Agent Core"])
+    router = APIRouter(prefix="/agent", tags=["Agent Core"])
 
     @router.get("/healthz")
     def healthz():
@@ -129,6 +129,37 @@ def get_router(agent) -> APIRouter:
             "speech": agent.speech_arbiter.get_status() if hasattr(agent, "speech_arbiter") else {},
         }
 
+    @router.get("/arbiters/status")
+    def arbiters_status():
+        """Aggregate snapshot of every arbiter for admin/SSE consumers."""
+        pm = getattr(agent, "progress_manager", None)
+        if pm is None or not hasattr(pm, "arbiter_snapshot"):
+            return {"ok": False, "error": "progress_manager unavailable"}
+        snapshot = pm.arbiter_snapshot()
+        return {"ok": True, **snapshot}
+
+    @router.get("/arbiters/stream")
+    def arbiters_stream(interval_s: float = Query(1.0, ge=0.2, le=10.0)):
+        """Server-Sent Events feed with periodic arbiter snapshots."""
+        pm = getattr(agent, "progress_manager", None)
+        if pm is None or not hasattr(pm, "arbiter_snapshot"):
+            return {"ok": False, "error": "progress_manager unavailable"}
+
+        def gen():
+            yield f"data: {json.dumps({'type': 'arbiter_status', 'snapshot': pm.arbiter_snapshot()}, default=str)}\n\n"
+            while True:
+                time.sleep(max(0.2, float(interval_s)))
+                try:
+                    payload = {"type": "arbiter_status", "snapshot": pm.arbiter_snapshot()}
+                    yield f"data: {json.dumps(payload, default=str)}\n\n"
+                except GeneratorExit:
+                    break
+                except Exception as exc:
+                    yield f"data: {json.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+                    break
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
     @router.post("/actions/queue")
     def actions_queue(body: dict = Body(...)):
         """Submit an action to the action arbiter."""
@@ -225,10 +256,13 @@ def get_router(agent) -> APIRouter:
         """Return active realtime profile and available modes."""
         rt_cfg = agent.config.get("realtime_profile", {})
         active = str(rt_cfg.get("active", "fast"))
+        known = [str(k) for k, v in rt_cfg.items() if isinstance(v, dict)]
+        if not known:
+            known = ["fast", "normal"]
         return {
             "ok": True,
             "active": active,
-            "modes": ["fast", "normal"],
+            "modes": known,
             "settings": rt_cfg.get(active, {}),
         }
 
@@ -237,11 +271,13 @@ def get_router(agent) -> APIRouter:
         mode: Optional[str] = Body(default=None, embed=True),
         mode_q: Optional[str] = Query(default=None, alias="mode"),
     ):
-        """Switch realtime profile: 'fast' or 'normal'. Applies immediately."""
+        """Switch realtime profile atomically (e.g. 'fast', 'normal', 'rich')."""
         mode_value = mode if mode is not None else mode_q
         mode = str(mode_value or "").strip().lower()
-        if mode not in ("fast", "normal"):
-            return {"ok": False, "error": f"Invalid mode '{mode}'. Use 'fast' or 'normal'."}
+        rt_cfg_known = agent.config.get("realtime_profile", {}) if isinstance(getattr(agent, "config", {}), dict) else {}
+        valid_modes = {str(k) for k, v in rt_cfg_known.items() if isinstance(v, dict)}
+        if mode not in valid_modes:
+            return {"ok": False, "error": f"Invalid mode '{mode}'. Allowed: {sorted(valid_modes)}"}
 
         rt_cfg = agent.config.get("realtime_profile", {})
         profile = rt_cfg.get(mode, {})
