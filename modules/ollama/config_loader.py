@@ -139,4 +139,14 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
 
     merged = deep_merge(_DEFAULT_CFG, service_cfg)
     merged = deep_merge(merged, core_cfg)
+
+    google_cfg = merged.get("google_ai_studio", {})
+    if isinstance(google_cfg, dict):
+        key = str(google_cfg.get("api_key", "")).strip()
+        if not key:
+            env_key = str(os.getenv("GOOGLE_API_KEY", "")).strip()
+            if env_key:
+                google_cfg = {**google_cfg, "api_key": env_key}
+                merged["google_ai_studio"] = google_cfg
+
     return merged

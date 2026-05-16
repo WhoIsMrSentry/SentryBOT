@@ -61,5 +61,6 @@ actions:
   speech_last_url: "http://localhost:8080/speech/last"
   interactions_event_url: "http://localhost:8080/interactions/event"
   listen_window_sec: 8.0
+  min_listen_before_final_sec: 1.5   # ignore early finals (often the wakeword itself)
   stop_on_final: true
   poll_interval_ms: 200

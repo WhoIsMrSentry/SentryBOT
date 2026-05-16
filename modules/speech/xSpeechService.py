@@ -225,7 +225,15 @@ class SpeechService:
                 self._on_result_cb = on_result
         with self._listen_lock:
             if self._listening:
-                return
+                self._stop_event.set()
+                thread = self._thread
+            else:
+                thread = None
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.8)
+        self._stop_event = Event()
+        with self._listen_lock:
+            self._listening = False
         t = threading.Thread(target=self.start, kwargs={"on_result": None}, daemon=True)
         self._thread = t
         t.start()

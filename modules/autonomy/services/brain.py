@@ -608,8 +608,15 @@ class AutonomyBrain(
         self._log_conversation(text)
         lang = str(source_lang or self.state.get("last_speech_language") or "tr")
         low = str(text or "").lower()
-        if any(k in low for k in ["hey sentry", "hey sentrybot", "sentry", "sentrybot"]):
+        wake_only = any(k in low for k in ["hey sentry", "hey sentrybot", "sentry", "sentrybot"])
+        if wake_only:
             self._run_scene("wakeword_reaction", context={"text": text})
+            stripped = low
+            for phrase in ("hey sentrybot", "hey sentry", "sentrybot", "sentry"):
+                stripped = stripped.replace(phrase, " ")
+            if len(stripped.split()) < 1:
+                logger.info("Wakeword-only utterance; skipping LLM until a command is spoken.")
+                return
         speaker = self._guess_active_person()
         if speaker:
             self.state["last_speaker"] = speaker

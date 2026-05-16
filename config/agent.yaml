@@ -45,6 +45,8 @@ runtime_profile:
         model: "gemini-2.0-flash"
         request_timeout: 45
       google_ai_studio:
+        # api_key buraya yazilabilir; bos birakilirsa Pi'de: export GOOGLE_API_KEY="..."
+        api_key: ""
         model: "gemini-2.0-flash"
         request_timeout: 45
       vlm_bridge:
