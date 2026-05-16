@@ -121,6 +121,9 @@ class xArduinoSerialService:
         self._esp_health_path = str(self.cfg.get("esp_health_path", "/healthz"))
         self._esp_timeout = float(self.cfg.get("esp_timeout_sec", 1.2) or 1.2)
         self._esp_connect_timeout = float(self.cfg.get("esp_connect_timeout_sec", 0.4) or 0.4)
+        self._esp_http: Any = None
+        if self._esp_mode and requests is not None:
+            self._esp_http = requests.Session()
         self.transport_factory = transport_factory or (lambda port, baudrate, timeout, write_timeout: SerialTransport(port, baudrate, timeout, write_timeout))
         self._ser: Optional[SerialTransport] = None
         self._rx_thread: Optional[threading.Thread] = None
@@ -160,7 +163,8 @@ class xArduinoSerialService:
         req_timeout = float(timeout if timeout is not None else self._esp_timeout)
         req_timeout = max(0.05, req_timeout)
         conn_timeout = max(0.05, float(self._esp_connect_timeout))
-        resp = requests.post(
+        client = self._esp_http if self._esp_http is not None else requests
+        resp = client.post(
             self._esp_url(path),
             json=payload,
             params=params,
@@ -196,6 +200,12 @@ class xArduinoSerialService:
             self._rx_thread.join(timeout=1.0)
         if self._hb_thread:
             self._hb_thread.join(timeout=1.0)
+        if self._esp_http is not None:
+            try:
+                self._esp_http.close()
+            except Exception:
+                pass
+            self._esp_http = None
         if not self._esp_mode:
             self._disconnect()
 
