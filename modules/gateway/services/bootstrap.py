@@ -69,6 +69,262 @@ def _should_autostart_services() -> bool:
     return not bool(os.getenv("PYTEST_CURRENT_TEST"))
 
 
+def _register_runtime_keys(registry: Any, started: Dict[str, object]) -> None:
+    """Seed the runtime registry with hot-applyable keys exposed by modules.
+
+    Each ``apply_fn`` updates the corresponding live instance, so the admin UI
+    can flip vision modes, swap realtime profiles, or rebind autonomy hooks
+    without restarting the gateway.
+    """
+    vlm_bridge = started.get("vlm_bridge")
+    autonomy = started.get("autonomy")
+    agent = None
+    if autonomy is not None and hasattr(autonomy, "brain"):
+        agent = getattr(autonomy.brain, "agent", None)
+
+    def _vlm_apply_mode(key: str):
+        def _apply(value: Any) -> Optional[Dict[str, Any]]:
+            if vlm_bridge is None or not hasattr(vlm_bridge, "set_modes"):
+                return None
+            return vlm_bridge.set_modes({key: bool(value)})
+        return _apply
+
+    if vlm_bridge is not None and hasattr(vlm_bridge, "get_modes"):
+        modes = vlm_bridge.get_modes() if callable(getattr(vlm_bridge, "get_modes", None)) else {}
+        for mode_name, default in modes.items():
+            registry.register(
+                "vlm_bridge",
+                f"modes.{mode_name}",
+                type="bool",
+                default=bool(default),
+                description=f"Enable/disable VLM bridge mode '{mode_name}'.",
+                apply_fn=_vlm_apply_mode(mode_name),
+            )
+
+        def _apply_profile(value: Any) -> Optional[Dict[str, Any]]:
+            if not hasattr(vlm_bridge, "apply_mode_profile"):
+                return None
+            return vlm_bridge.apply_mode_profile(str(value))
+
+        if hasattr(vlm_bridge, "list_profiles"):
+            try:
+                choices = tuple(vlm_bridge.list_profiles())
+            except Exception:
+                choices = None
+            registry.register(
+                "vlm_bridge",
+                "mode_profile",
+                type="choice",
+                default="balanced",
+                choices=choices,
+                description="VLM bridge mode profile.",
+                apply_fn=_apply_profile,
+            )
+
+        def _apply_realtime(value: Any) -> Optional[Dict[str, Any]]:
+            if not hasattr(vlm_bridge, "apply_realtime_profile"):
+                return None
+            return vlm_bridge.apply_realtime_profile(str(value))
+
+        registry.register(
+            "vlm_bridge",
+            "realtime_profile",
+            type="choice",
+            default="fast",
+            choices=("fast", "normal"),
+            description="VLM bridge realtime latency profile.",
+            apply_fn=_apply_realtime,
+        )
+
+        def _apply_processing_mode(value: Any) -> Optional[Dict[str, Any]]:
+            if vlm_bridge is None or not hasattr(vlm_bridge, "set_processing_mode"):
+                return None
+            return vlm_bridge.set_processing_mode(str(value or "local"))
+
+        registry.register(
+            "vlm_bridge",
+            "vision.processing_mode",
+            type="string",
+            default="local",
+            description="VLM bridge processing pipeline (local or remote)",
+            apply_fn=_apply_processing_mode,
+        )
+
+        if hasattr(vlm_bridge, "get_mode_categories") and hasattr(vlm_bridge, "set_mode_categories"):
+            try:
+                categories = vlm_bridge.get_mode_categories()
+            except Exception:
+                categories = {}
+
+            def _make_cat_apply(category: str, key: str):
+                def _apply(value: Any) -> Optional[Dict[str, Any]]:
+                    return vlm_bridge.set_mode_categories({category: {key: bool(value)}})
+                return _apply
+
+            for category, flags in categories.items():
+                for key, default in flags.items():
+                    registry.register(
+                        "vlm_bridge",
+                        f"mode_categories.{category}.{key}",
+                        type="bool",
+                        default=bool(default),
+                        description=f"Enable/disable '{key}' under '{category}' vision pipeline.",
+                        apply_fn=_make_cat_apply(category, key),
+                    )
+
+    if agent is not None:
+        def _apply_agent_profile(value: Any) -> Optional[Dict[str, Any]]:
+            mode = str(value or "").strip().lower()
+            rt_cfg = agent.config.get("realtime_profile", {}) if isinstance(agent.config, dict) else {}
+            if not isinstance(rt_cfg, dict):
+                return {"ok": False, "error": "invalid_config"}
+            profiles_map = rt_cfg.get("profiles", {}) if isinstance(rt_cfg.get("profiles", {}), dict) else {}
+            profile = profiles_map.get(mode, {}) if mode else {}
+            if not isinstance(profile, dict) or not profile:
+                profile = rt_cfg.get(mode, {})
+            if not isinstance(profile, dict) or not profile:
+                return {"ok": False, "error": "unknown_profile"}
+            rt_cfg["active"] = mode
+            applied = agent.apply_realtime_profile(profile) if hasattr(agent, "apply_realtime_profile") else {}
+            return {"ok": True, "applied": applied}
+
+        registry.register(
+            "agent_core",
+            "realtime_profile",
+            type="choice",
+            default="normal",
+            choices=None,
+            description="Named Agent Core realtime profile (matches realtime_profile.profiles keys).",
+            apply_fn=_apply_agent_profile,
+        )
+
+        def _apply_max_subagents(value: Any) -> Optional[Dict[str, Any]]:
+            try:
+                n = max(1, int(value))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "invalid_value"}
+            router = getattr(agent, "router", None)
+            if router is None:
+                return {"ok": False, "error": "no_router"}
+            if hasattr(router, "set_max"):
+                clamped = router.set_max(n)
+                return {"ok": True, "max_subagents": clamped}
+            if hasattr(router, "max_subagents"):
+                router.max_subagents = n
+            return {"ok": True, "max_subagents": getattr(router, "max_subagents", n)}
+
+        registry.register(
+            "agent_core",
+            "max_subagents",
+            type="int",
+            default=2,
+            minimum=1,
+            maximum=8,
+            description="Maximum concurrent sub-agents launched per request.",
+            apply_fn=_apply_max_subagents,
+        )
+
+    imx_runner = started.get("imx500_runner")
+
+    def _apply_imx500_enabled(value: Any) -> Optional[Dict[str, Any]]:
+        if imx_runner is None:
+            return {"ok": False, "error": "no_runner"}
+        try:
+            from modules.camera.services import imx500_runner as imx_mod  # type: ignore
+
+            imx_runner.cfg.enabled = bool(value)
+            imx_runner._available = bool(value) and bool(getattr(imx_mod, "IMX500_AVAILABLE", False))
+            if imx_runner.available and imx_runner.cfg.enabled:
+                imx_runner.start()
+            else:
+                imx_runner.stop()
+            return {"ok": True, "enabled": imx_runner.cfg.enabled}
+        except Exception as exc:
+            logger.warning("IMX500 hot toggle failed: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+    def _apply_imx500_conf(value: Any) -> Optional[Dict[str, Any]]:
+        if imx_runner is None:
+            return {"ok": False, "error": "no_runner"}
+        try:
+            imx_runner.cfg.confidence = float(value)
+            return {"ok": True, "confidence": imx_runner.cfg.confidence}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    if imx_runner is not None:
+        registry.register(
+            "camera",
+            "imx500.enabled",
+            type="bool",
+            default=bool(getattr(getattr(imx_runner, "cfg", None), "enabled", False)),
+            description="Toggle IMX500 on-sensor inference loop.",
+            apply_fn=_apply_imx500_enabled,
+        )
+        registry.register(
+            "camera",
+            "imx500.confidence",
+            type="float",
+            default=float(getattr(getattr(imx_runner, "cfg", None), "confidence", 0.45)),
+            minimum=0.05,
+            maximum=1.0,
+            description="Confidence threshold forwarded to SSD post-filter.",
+            apply_fn=_apply_imx500_conf,
+        )
+
+    state_manager = started.get("state_manager")
+    if state_manager is not None and hasattr(state_manager, "set_operational"):
+        def _apply_operational(value: Any) -> Optional[Dict[str, Any]]:
+            state_manager.set_operational(str(value or "idle"))
+            return {"ok": True, "operational": str(value or "idle")}
+
+        registry.register(
+            "state_manager",
+            "operational",
+            type="choice",
+            default="idle",
+            choices=("idle", "active", "sleep", "maintenance"),
+            description="Global operational state for SentryBOT.",
+            apply_fn=_apply_operational,
+        )
+
+
+def _include_admin_ui(app: FastAPI, started: Dict[str, object], gw_cfg: Dict[str, Any]) -> None:
+    """Expose the consolidated operator dashboard plus REST aggregates."""
+    from modules.admin_ui.api.router import mount as mount_admin_ui  # type: ignore
+    from modules.admin_ui.config_loader import load_config as load_admin_cfg  # type: ignore
+
+    admin_cfg = _merge_with_agent_section(load_admin_cfg(None), "admin_ui")
+    server_blk = gw_cfg.get("server", {}) if isinstance(gw_cfg.get("server", {}), dict) else {}
+    explicit_base = str(gw_cfg.get("gateway_base_url", "") or "").strip().rstrip("/")
+    if explicit_base:
+        started["gateway_base_url"] = explicit_base
+    else:
+        port = int(server_blk.get("port", 8080))
+        started["gateway_base_url"] = f"http://127.0.0.1:{port}"
+    mount_admin_ui(app, admin_cfg, started)
+    started["admin_ui"] = True
+    logger.info("module admin_ui mounted at prefix %s", admin_cfg.get("mount_prefix", "/admin"))
+
+
+def _include_social_db(app: FastAPI, started: Dict[str, object]) -> None:
+    """Initialise the shared SQLite social store before any consumer needs it."""
+    from modules.social_db.config_loader import load_config as load_social_cfg  # type: ignore
+    from modules.social_db.db import SocialDB, set_default  # type: ignore
+
+    scfg = _merge_with_agent_section(load_social_cfg(None), "social_db")
+    db = SocialDB(
+        path=str(scfg.get("path", "data/social.sqlite3")),
+        wal=bool(scfg.get("wal", True)),
+        cache_size_kb=int(scfg.get("cache_size_kb", 4096)),
+        busy_timeout_ms=int(scfg.get("busy_timeout_ms", 5000)),
+        auto_migrate=bool(scfg.get("auto_migrate", True)),
+    )
+    set_default(db)
+    started["social_db"] = db
+    logger.info("module social_db mounted (path=%s)", db.path)
+
+
 def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore
@@ -244,6 +500,8 @@ def _include_logs(app: FastAPI, started: Dict[str, object]) -> None:
 def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.camera.config_loader import load_config as load_cam_cfg  # type: ignore
     from modules.camera.services.capture import CameraCapture, FramePublisher, CaptureConfig  # type: ignore
+    from modules.camera.services.imx500_runner import Imx500Config, Imx500Runner  # type: ignore
+    from modules.camera.services.onsensor_bus import get_default_bus  # type: ignore
     from modules.camera.api import get_router as get_cam_router  # type: ignore
     ccfg = _merge_with_agent_section(load_cam_cfg(None), "camera")
     cap_cfg = CaptureConfig(
@@ -268,7 +526,26 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
         logger.info("camera auto-start skipped (autostart disabled)")
     app.include_router(get_cam_router(capture, cap_cfg.fps_target), prefix="/camera", tags=["camera"])
     started["camera"] = capture
-    logger.info("module camera mounted")
+    started["onsensor_bus"] = get_default_bus()
+
+    imx_cfg_raw = ccfg.get("imx500", {}) if isinstance(ccfg.get("imx500", {}), dict) else {}
+    imx_cfg = Imx500Config(
+        enabled=bool(imx_cfg_raw.get("enabled", False)),
+        model_path=str(imx_cfg_raw.get("model_path", "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")),
+        labels_path=str(imx_cfg_raw.get("labels_path", "/usr/share/imx500-models/coco_labels.txt")),
+        confidence=float(imx_cfg_raw.get("confidence", 0.45)),
+        publish_metadata=bool(imx_cfg_raw.get("publish_metadata", True)),
+        publish_interval_s=float(imx_cfg_raw.get("publish_interval_s", 0.05)),
+        classes_of_interest=tuple(imx_cfg_raw.get("classes_of_interest", []) or []),
+    )
+    runner = Imx500Runner(imx_cfg, bus=started["onsensor_bus"], picam=getattr(capture, "_picam", None))
+    if imx_cfg.enabled and _should_autostart_services():
+        try:
+            runner.start()
+        except Exception as exc:
+            logger.warning("IMX500 runner failed to start: %s", exc)
+    started["imx500_runner"] = runner
+    logger.info("module camera mounted (imx500_enabled=%s, available=%s)", imx_cfg.enabled, runner.available)
 
 
 def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
@@ -318,6 +595,27 @@ def _include_autonomy(app: FastAPI, started: Dict[str, object]) -> None:
     started["autonomy"] = svc
     app.include_router(get_autonomy_router(svc.brain))
     logger.info("module autonomy mounted")
+
+
+def _include_agent_core(app: FastAPI, started: Dict[str, object]) -> None:
+    """Expose the embedded :class:`AgentOrchestrator` over HTTP.
+
+    The autonomy service constructs its own ``AgentOrchestrator`` instance
+    (``brain.agent``); mounting the router here ensures ``/agent/*`` paths
+    such as ``/agent/events``, ``/agent/arbiters/stream`` and
+    ``/agent/actions/queue`` are reachable from the rest of the system.
+    """
+    autonomy = started.get("autonomy")
+    brain = getattr(autonomy, "brain", None) if autonomy is not None else None
+    agent = getattr(brain, "agent", None) if brain is not None else None
+    if agent is None:
+        logger.info("agent_core mount skipped: no orchestrator found on autonomy.brain.agent")
+        return
+    from modules.agent_core.api.router import get_router as get_agent_router  # type: ignore
+
+    started["agent_core"] = agent
+    app.include_router(get_agent_router(agent))
+    logger.info("module agent_core mounted (in-process orchestrator)")
 
 
 def _include_notifier(app: FastAPI, started: Dict[str, object]) -> None:
@@ -397,6 +695,10 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         except Exception as exc:
             logger.warning("module %s failed to mount: %s", name or fn.__name__, exc)
 
+    # social_db is the persistence backbone for identity, mood and rituals; mount first.
+    if include.get("social_db", True):
+        _try(lambda: _include_social_db(app, started), "social_db")
+
     if include.get("arduino"):
         _try(lambda: _include_arduino(app, started), "arduino")
     if include.get("esp_link"):
@@ -425,6 +727,8 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         _try(lambda: _include_piservo(app, started), "piservo")
     if include.get("autonomy"):
         _try(lambda: _include_autonomy(app, started), "autonomy")
+    if include.get("agent_core", True):
+        _try(lambda: _include_agent_core(app, started), "agent_core")
 
     # optional: mutagen
     if include.get("mutagen"):
@@ -527,13 +831,26 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         started["calibration"] = True
 
     if include.get("config_center"):
-        _try(lambda: app.include_router(__import__("modules.config_center.api.router", fromlist=["get_router"]).get_router(
-            _merge_with_agent_section(
-                __import__("modules.config_center.config_loader", fromlist=["load_config"]).load_config(None),
-                "config_center",
+        def _mount_config_center():
+            from modules.config_center.config_loader import load_config as load_cc_cfg  # type: ignore
+            from modules.config_center.api.router import get_router as get_cc_router  # type: ignore
+            from modules.config_center.services import (  # type: ignore
+                RuntimeConfigRegistry,
+                set_default_registry,
             )
-        )), "config_center")
+
+            cc_cfg = _merge_with_agent_section(load_cc_cfg(None), "config_center")
+            registry = RuntimeConfigRegistry()
+            set_default_registry(registry)
+            _register_runtime_keys(registry, started)
+            started["runtime_registry"] = registry
+            app.include_router(get_cc_router(cc_cfg, registry=registry))
+
+        _try(_mount_config_center, "config_center")
         started["config_center"] = True
+
+    if include.get("admin_ui", True):
+        _try(lambda: _include_admin_ui(app, started, cfg), "admin_ui")
 
     arduino = started.get("arduino")
     neopixel = started.get("neopixel")
@@ -621,6 +938,15 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             logger.info("vlm event bus -> agent event bridge mounted")
     except Exception as exc:
         logger.warning("vlm/autonomy event bridge mount failed: %s", exc)
+
+    # On-sensor (IMX500) detections -> VLM processor cache
+    bus = started.get("onsensor_bus")
+    if vlm_bridge is not None and bus is not None and hasattr(vlm_bridge, "attach_onsensor_bus"):
+        try:
+            vlm_bridge.attach_onsensor_bus(bus)
+            logger.info("onsensor bus -> vlm_bridge subscriber attached")
+        except Exception as exc:
+            logger.warning("onsensor bus attach failed: %s", exc)
 
     return started
 
