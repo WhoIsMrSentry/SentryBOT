@@ -27,11 +27,23 @@ def load_config(path: str | os.PathLike | None = None, overrides: Dict[str, Any]
         data = yaml.safe_load(f) or {}
 
     env: Dict[str, Any] = {}
-    base = os.getenv("ESP_LINK_BASE_URL")
+    base = os.getenv("ESP_LINK_BASE_URL") or os.getenv("SENTRYBOT_ESP_BASE_URL")
     if base:
         env["base_url"] = str(base).strip()
 
     out = _deep_update(data, env)
+
+    try:
+        from modules.config_center.agent_yaml_loader import load_agent_config
+
+        root = load_agent_config()
+        link_cfg = root.get("esp_link")
+        if isinstance(link_cfg, dict):
+            out = _deep_update(out, link_cfg)
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
     if overrides:
         out = _deep_update(out, dict(overrides))
     return out

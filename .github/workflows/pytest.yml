@@ -214,6 +214,10 @@ jobs:
       - name: Update PR latest test status section
         if: ${{ github.event_name == 'pull_request' && always() }}
         uses: actions/github-script@v7
+        env:
+          PYTEST_STATUS: ${{ steps.summary.outputs.status }}
+          PYTEST_STAGE: ${{ steps.summary.outputs.stage }}
+          PYTEST_SUMMARY_LINE: ${{ steps.summary.outputs.summary_line }}
         with:
           script: |
             const fs = require('fs');
@@ -222,11 +226,11 @@ jobs:
             const repo = context.repo.repo;
             const issue_number = context.payload.pull_request.number;
 
-            const status = '${{ steps.summary.outputs.status }}';
-            const stage = '${{ steps.summary.outputs.stage }}';
+            const status = process.env.PYTEST_STATUS || '';
+            const stage = process.env.PYTEST_STAGE || '';
             const icon = status === 'PASSED' ? '✅' : '❌';
 
-            let summary = '${{ steps.summary.outputs.summary_line }}';
+            let summary = process.env.PYTEST_SUMMARY_LINE || '';
             if (!summary || summary.trim() === '') {
               if (fs.existsSync('pytest_collect_output.txt')) {
                 const lines = fs.readFileSync('pytest_collect_output.txt', 'utf8').split(/\r?\n/).filter(Boolean);
