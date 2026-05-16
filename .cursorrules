@@ -1,0 +1,16 @@
+# SentryBOT — Cursor AI Kuralları
+# ⚠️ Bu dosya eski (legacy) format. Cursor, `.cursor/rules/*.mdc` dosyalarını otomatik okur.
+# Detaylı kurallar: .cursor/rules/ dizini
+# Tüm agent/skill/context: .sentrybot/ dizini
+
+## Kritik Kurallar
+1. DryCode: tekrar yok, tek sorumluluk, kısa fonksiyonlar
+2. Modül yapısı: x<Name>Service.py + config_loader.py + config/config.yml + api/router.py
+3. Arduino: contract.py builder zorunlu, elle payload YASAK
+4. Config: hardcode YASAK, YAML'den oku
+5. Test: her modülde tests/test_smoke.py zorunlu
+
+## Tam Kurallar → `.sentrybot/context/conventions.md`
+## Agent'lar → `.sentrybot/agents/`
+## Skill'ler → `.sentrybot/skills/`
+## Cursor MDC kuralları → `.cursor/rules/`

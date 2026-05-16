@@ -1,0 +1,22 @@
+---
+description: "Test yazarken veya test dosyalarıyla çalışırken aktif olur."
+globs: ["modules/**/tests/**", "**/test_*.py"]
+alwaysApply: false
+---
+
+# Test Kuralları
+
+## Zorunlu: Smoke Test
+Her modülde `tests/test_smoke.py`:
+- `test_import` — modül import edilebilir mi
+- `test_config_loader` — config yüklenebilir mi
+- `test_service_init` — service boş config ile oluşturulabilir mi
+- `test_router` — router oluşturulabilir mi
+
+## CI Kuralları
+- Python 3.10, `--maxfail=1`
+- Donanım testleri `@pytest.mark.skipif`
+- Mock: `unittest.mock.patch` ile donanım/HTTP/Arduino
+
+## Detaylı kalıplar
+`.sentrybot/skills/write-tests.md` dosyasını oku.

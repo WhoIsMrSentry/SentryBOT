@@ -1,0 +1,20 @@
+---
+description: "SentryBOT projesinin temel kuralları. DryCode prensipleri, modül yapısı, Arduino kontrat zorunlulukları."
+alwaysApply: true
+---
+
+# SentryBOT — Temel Kurallar
+
+## Kritik Kurallar
+1. **DryCode** — Tekrar yok, sade, net, her dosya tek sorumluluk
+2. **Arduino kontratı** — `modules/arduino_serial/contract.py` builder zorunlu, elle payload YASAK
+3. **Config** — Hardcode yasak, YAML'den oku
+4. **Test** — Her modülde `tests/test_smoke.py` zorunlu
+5. **Modül yapısı** — `x<Name>Service.py` + `config_loader.py` + `api/router.py`
+
+## Agent & Skill Sistemi
+Tüm detaylı prosedürler `.sentrybot/` dizininde:
+- `.sentrybot/agents/` — 5 iş akışı yöneticisi
+- `.sentrybot/skills/` — 12 adım adım prosedür
+- `.sentrybot/context/` — Modül listesi, API haritası, mimari özet, kurallar
+- `.sentrybot/templates/` — Modül iskelet şablonları

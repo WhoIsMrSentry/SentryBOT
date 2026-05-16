@@ -1,0 +1,21 @@
+from __future__ import annotations
+import logging
+from fastapi import APIRouter
+
+logger = logging.getLogger("{{MODULE_NAME}}.api")
+
+
+def get_router(svc=None) -> APIRouter:
+    router = APIRouter()
+
+    @router.get("/status")
+    async def status():
+        """Modül durum kontrolü."""
+        return {"ok": True, "module": "{{MODULE_NAME}}"}
+
+    @router.get("/healthz")
+    async def healthz():
+        """Sağlık kontrolü."""
+        return {"status": "healthy"}
+
+    return router
