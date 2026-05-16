@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 import threading
 from pathlib import Path
+from .lang_detect import piper_voice_for_language, resolve_speak_language
 from .pcm import PCM
 
 import io
@@ -91,19 +92,11 @@ class DummyBackend(TTSBackend):
         return PCM(data=data, samplerate=sr, channels=1)
 
 
-class PiperBackend(TTSBackend):
-    """Piper TTS subprocess backend.
+class _PiperModel:
+    """Single Piper ONNX voice runner."""
 
-    Config fields:
-      - model_path: .onnx veya .onnx.gz
-      - bin_path: piper ikili yolu (varsayılan: 'piper')
-      - speaker: opsiyonel speaker id
-      - length_scale, noise_scale, noise_w: opsiyonel parametreler
-      - samplerate: beklenen örnekleme
-    """
-    def __init__(self, cfg: TTSConfig, piper_cfg: Dict):
+    def __init__(self, cfg: TTSConfig, piper_cfg: Dict, resolved: Dict[str, Any]):
         self.bin_path = str(piper_cfg.get("bin_path", "piper"))
-        resolved = self._resolve_voice_cfg(piper_cfg)
         self.model_path = str(resolved.get("model_path") or piper_cfg.get("model_path") or "").strip()
         if not self.model_path:
             raise ValueError("piper.model_path is required (or piper.voices.<voice>)")
@@ -120,18 +113,7 @@ class PiperBackend(TTSBackend):
         self.noise_scale = piper_cfg.get("noise_scale")
         self.noise_w = piper_cfg.get("noise_w")
 
-    @staticmethod
-    def _resolve_voice_cfg(piper_cfg: Dict) -> Dict[str, Any]:
-        voices = piper_cfg.get("voices", {})
-        voice_key = str(piper_cfg.get("voice", "tr")).strip().lower() or "tr"
-        if not isinstance(voices, dict):
-            return {}
-        entry = voices.get(voice_key)
-        if isinstance(entry, dict):
-            return entry
-        return {}
-
-    def synthesize(self, text: str):
+    def synthesize(self, text: str) -> PCM:
         import subprocess, tempfile, os
         import soundfile as sf
 
@@ -210,6 +192,48 @@ class PiperBackend(TTSBackend):
                     last_error = f"exit={proc.returncode}; stderr={stderr_txt or '<empty>'}"
 
             raise RuntimeError(f"piper failed: {last_error}")
+
+
+class PiperBackend(TTSBackend):
+    """Piper TTS with lazy-loaded per-voice models (language_voices / voices map)."""
+
+    def __init__(self, cfg: TTSConfig, piper_cfg: Dict):
+        self.tcfg = cfg
+        self.piper_cfg = copy.deepcopy(piper_cfg)
+        self.default_voice = str(piper_cfg.get("voice", "tr")).strip().lower() or "tr"
+        self._models: Dict[str, _PiperModel] = {}
+        self._ensure_model(self.default_voice)
+
+    @staticmethod
+    def _resolve_voice_cfg(piper_cfg: Dict, voice_key: Optional[str] = None) -> Dict[str, Any]:
+        voices = piper_cfg.get("voices", {})
+        key = str(voice_key or piper_cfg.get("voice", "tr")).strip().lower() or "tr"
+        if not isinstance(voices, dict):
+            return {}
+        entry = voices.get(key)
+        if isinstance(entry, dict):
+            return entry
+        return {}
+
+    def _ensure_model(self, voice_key: str) -> _PiperModel:
+        key = str(voice_key or self.default_voice).strip().lower() or self.default_voice
+        cached = self._models.get(key)
+        if cached is not None:
+            return cached
+        resolved = self._resolve_voice_cfg(self.piper_cfg, key)
+        try:
+            model = _PiperModel(self.tcfg, self.piper_cfg, resolved)
+        except FileNotFoundError:
+            if key != self.default_voice:
+                logger.warning("piper voice %s unavailable, falling back to %s", key, self.default_voice)
+                return self._ensure_model(self.default_voice)
+            raise
+        self._models[key] = model
+        return model
+
+    def synthesize(self, text: str, voice_key: Optional[str] = None) -> PCM:
+        key = str(voice_key or self.default_voice).strip().lower() or self.default_voice
+        return self._ensure_model(key).synthesize(text)
 
 
 class XTTSHttpBackend(TTSBackend):
@@ -350,7 +374,15 @@ class TextToSpeech:
         if tcfg.engine in {"piper", "xtts"} and bool(remote_cfg.get("enabled", False)):
             return RemoteTTSHttpBackend(tcfg, cfg)
         if tcfg.engine == "piper":
-            return PiperBackend(tcfg, cfg.get("piper", {}))
+            try:
+                return PiperBackend(tcfg, cfg.get("piper", {}))
+            except (FileNotFoundError, ValueError, OSError) as exc:
+                logger.warning(
+                    "piper unavailable (install models: python tools/install_piper_models.py), "
+                    "falling back to dummy: %s",
+                    exc,
+                )
+                return DummyBackend(tcfg)
         if tcfg.engine == "xtts":
             return XTTSHttpBackend(tcfg, cfg.get("xtts", {}))
         if tcfg.engine == "pyttsx3":
@@ -377,13 +409,39 @@ class TextToSpeech:
             merged[key] = value
         return merged
 
+    def _resolve_piper_voice_key(
+        self,
+        text: str,
+        cfg: Dict,
+        overrides: Optional[Dict],
+    ) -> Optional[str]:
+        piper_cfg = cfg.get("piper", {})
+        if not isinstance(piper_cfg, dict) or not bool(piper_cfg.get("auto_language", True)):
+            return None
+        explicit = overrides.get("language") if isinstance(overrides, dict) else None
+        lang = resolve_speak_language(
+            text,
+            explicit=explicit,
+            default=str(cfg.get("language", "tr")),
+            prefer_text=bool(piper_cfg.get("prefer_text_language", True)),
+        )
+        voice_key = piper_voice_for_language(lang, piper_cfg)
+        logger.debug("piper language=%s voice=%s", lang, voice_key)
+        return voice_key
+
     def synthesize(self, text: str, overrides: Optional[Dict] = None):
-        if overrides:
-            cfg = self._merge_overrides(overrides)
-            backend = self._build_backend(cfg or self._base_cfg)
-            if isinstance(backend, (XTTSHttpBackend, RemoteTTSHttpBackend)):
-                speaker_wav = overrides.get("speaker_wav") if isinstance(overrides, dict) else None
-                language = overrides.get("language") if isinstance(overrides, dict) else None
-                return backend.synthesize(text, speaker_wav=speaker_wav, language=language)
-            return backend.synthesize(text)
-        return self.backend.synthesize(text)
+        cfg = self._merge_overrides(overrides) if overrides else copy.deepcopy(self._base_cfg)
+        backend = self._build_backend(cfg) if overrides else self.backend
+        piper_voice = None
+        if str(cfg.get("engine", "")).strip().lower() == "piper":
+            piper_voice = self._resolve_piper_voice_key(text, cfg, overrides)
+
+        if isinstance(backend, PiperBackend):
+            return backend.synthesize(text, voice_key=piper_voice)
+        if isinstance(backend, (XTTSHttpBackend, RemoteTTSHttpBackend)):
+            speaker_wav = overrides.get("speaker_wav") if isinstance(overrides, dict) else None
+            language = overrides.get("language") if isinstance(overrides, dict) else None
+            if not language and piper_voice:
+                language = piper_voice
+            return backend.synthesize(text, speaker_wav=speaker_wav, language=language)
+        return backend.synthesize(text)

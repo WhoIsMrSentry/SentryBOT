@@ -685,8 +685,14 @@ class AutonomyBrain(
                         self.memory.add_event(f"Agent replied: {response_text}")
                         self._remember_person_chat(speaker, response_text, role="assistant")
                         # Final response is spoken via SpeechArbiter
+                        try:
+                            from modules.speak.services.lang_detect import detect_text_language
+
+                            reply_lang = detect_text_language(response_text, default=lang)
+                        except Exception:
+                            reply_lang = lang
                         self.agent.speech_arbiter.enqueue_final(
-                            response_text, language=lang,
+                            response_text, language=reply_lang,
                         )
                         return
                 except Exception as exc:
@@ -712,7 +718,13 @@ class AutonomyBrain(
                     if not self._is_active_request(request_id):
                         return
                     self._remember_person_chat(speaker, clean_text, role="assistant")
-                    self._speak_with_mood(clean_text, language=lang)
+                    try:
+                        from modules.speak.services.lang_detect import detect_text_language
+
+                        reply_lang = detect_text_language(clean_text, default=lang)
+                    except Exception:
+                        reply_lang = lang
+                    self._speak_with_mood(clean_text, language=reply_lang)
                     logger.info("Reply: %s", clean_text)
                     self.memory.add_event(f"I replied: {clean_text}")
                 else:

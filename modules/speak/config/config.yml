@@ -21,6 +21,11 @@ tts:
   piper:
     bin_path: piper
     voice: tr
+    auto_language: true
+    prefer_text_language: true
+    language_voices:
+      tr: tr
+      en: glados
     model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
     config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
     samplerate: 22050
