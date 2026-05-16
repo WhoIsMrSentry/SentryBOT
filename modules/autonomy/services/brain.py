@@ -67,18 +67,18 @@ class AutonomyBrain(
         self.agent = None
         if _AGENT_CORE_AVAILABLE:
             try:
-                import yaml, os
-                agent_cfg_path = os.path.join(
-                    os.path.dirname(os.path.abspath(__file__)),
-                    "..", "..", "..", "config", "agent.yaml"
-                )
-                if os.path.exists(agent_cfg_path):
-                    with open(agent_cfg_path, "r") as f:
-                        agent_cfg = yaml.safe_load(f) or {}
-                else:
-                    agent_cfg = {}
+                from modules.agent_core.config_loader import load_config as load_agent_core_config  # type: ignore
+
+                agent_cfg = load_agent_core_config()
                 self.agent = AgentOrchestrator(agent_cfg, autonomy_client=self.client)
-                logger.info("Agent Core integrated successfully.")
+                llm_cfg = agent_cfg.get("llm", {}) if isinstance(agent_cfg.get("llm", {}), dict) else {}
+                provider = str(llm_cfg.get("provider", "ollama"))
+                model = str(agent_cfg.get("agent", {}).get("model", ""))
+                logger.info(
+                    "Agent Core integrated successfully (provider=%s model=%s).",
+                    provider,
+                    model,
+                )
             except Exception as exc:
                 logger.warning("Agent Core init failed (non-fatal): %s", exc)
 

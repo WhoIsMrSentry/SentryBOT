@@ -6,6 +6,7 @@ SentryBOT ana başlatıcı
 - Uvicorn ile servis başlatma
 """
 import os
+import signal
 import sys
 import logging
 import uvicorn  # type: ignore
@@ -69,10 +70,20 @@ def main() -> None:
         owner_cfg = aut_cfg.get("owner", {})
         logger.info("Autonomy owner: enabled=%s require_presence=%s polite_message=%s", owner_cfg.get("enabled"), owner_cfg.get("require_presence"), owner_cfg.get("polite_message"))
 
-    # Uvicorn başlat
     host = str(cfg["server"]["host"])
     port = int(cfg["server"]["port"])
-    uvicorn.run(app, host=host, port=port)
+    uvicorn_config = uvicorn.Config(app, host=host, port=port, log_level="info")
+    server = uvicorn.Server(uvicorn_config)
+
+    def _request_shutdown(signum: int, _frame) -> None:
+        logger.info("Shutdown signal received (%s); stopping gateway...", signum)
+        server.should_exit = True
+
+    signal.signal(signal.SIGINT, _request_shutdown)
+    signal.signal(signal.SIGTERM, _request_shutdown)
+
+    logger.info("Press Ctrl+C once to stop (may take a few seconds for threads to exit).")
+    server.run()
 
 
 if __name__ == "__main__":

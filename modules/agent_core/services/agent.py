@@ -105,14 +105,20 @@ class AgentOrchestrator:
                 except Exception:
                     self.ollama_client = None
 
-        if self.llm_provider != "ollama" and create_llm_client and load_ollama_runtime_config:
+        if self.llm_provider != "ollama" and create_llm_client:
             try:
-                runtime_cfg = load_ollama_runtime_config(None)
-                if isinstance(runtime_cfg, dict):
-                    runtime_cfg.setdefault("llm", {})["provider"] = self.llm_provider
-                self.provider_client, self.provider_name = create_llm_client(runtime_cfg)
+                self.provider_client, self.provider_name = create_llm_client(self.config)
+                logger.info(
+                    "LLM provider client ready: %s (model=%s)",
+                    self.provider_name,
+                    getattr(self.provider_client, "model", ""),
+                )
             except Exception as exc:
-                logger.warning("Provider client init failed for provider %s: %s", self.llm_provider, exc)
+                logger.error(
+                    "Provider client init failed for %s: %s",
+                    self.llm_provider,
+                    exc,
+                )
 
         # Subsystems
         self.world_state = WorldState()
@@ -666,7 +672,14 @@ class AgentOrchestrator:
         kwargs["model"] = selected_model
 
         if self.llm_provider != "ollama":
+            if self.provider_client is None:
+                raise RuntimeError(
+                    f"Provider '{self.llm_provider}' selected but client is not initialized"
+                )
             return self._chat_via_provider(selected_model, messages, tools, options)
+
+        if self.ollama_client is None and ollama is None:
+            raise RuntimeError("Ollama provider selected but ollama client is unavailable")
 
         try:
             if self.ollama_client is not None:

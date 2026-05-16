@@ -303,9 +303,16 @@ class CameraCapture:
             )
         logger.info("CameraCapture starting backend=%s source=%r picam_available=%s", backend, self.cfg.source, PICAM_AVAILABLE)
         if backend == "picamera2":
-            self._start_picam()
-        else:
-            self._start_opencv()
+            try:
+                self._start_picam()
+                return
+            except Exception as exc:
+                logger.warning(
+                    "picamera2 start failed (%s); falling back to opencv source=%r",
+                    exc,
+                    self.cfg.source,
+                )
+        self._start_opencv()
 
     def stop(self) -> None:
         self._stop.set()
