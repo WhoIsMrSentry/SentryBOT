@@ -53,10 +53,17 @@ def get_router(cfg: dict) -> APIRouter:
     single_model_mode = bool(llm_cfg.get("single_model_mode", True))
     use_persona_models = bool(llm_cfg.get("use_persona_models", False))
 
+    llm_provider_requested = str(llm_cfg.get("provider", "ollama")).strip().lower()
     provider_name = "ollama"
     try:
         client, provider_name = create_llm_client(cfg)
     except Exception as exc:
+        if llm_provider_requested in {"google", "google_ai_studio", "gemini"}:
+            logger.error(
+                "Google AI Studio init failed — set config/agent.yaml google_ai_studio.api_key "
+                "or export GOOGLE_API_KEY (profile must not use empty api_key). Error: %s",
+                exc,
+            )
         logger.warning("LLM provider init failed, fallback to ollama: %s", exc)
         fallback_cfg = {
             "llm": {"provider": "ollama"},

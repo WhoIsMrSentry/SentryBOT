@@ -194,6 +194,9 @@ class WakewordService:
                 for label in self._openwakeword.run(stream):
                     if self._stop_event.is_set():
                         break
+                    with self._lock:
+                        if self._active_window:
+                            continue
                     logger.info("openwakeword detected: %s", label)
                     self._on_wakeword(label)
             else:

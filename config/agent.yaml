@@ -45,8 +45,7 @@ runtime_profile:
         model: "gemini-2.0-flash"
         request_timeout: 45
       google_ai_studio:
-        # api_key buraya yazilabilir; bos birakilirsa Pi'de: export GOOGLE_API_KEY="..."
-        api_key: ""
+        # api_key: profil bos birakir; ustteki google_ai_studio.api_key veya GOOGLE_API_KEY env
         model: "gemini-2.0-flash"
         request_timeout: 45
       vlm_bridge:
@@ -59,9 +58,9 @@ runtime_profile:
           endpoint: "http://127.0.0.1:8080/ollama/chat"
           timeout: 12.0
       arduino_serial:
-        esp_base_url: "http://sentrybot-2.local:8080"
+        esp_base_url: "http://10.88.255.55:8080"
       esp_link:
-        base_url: "http://sentrybot-2.local:8080"
+        base_url: "http://10.88.255.55:8080"
 
     remote_ollama:
       llm:
@@ -88,9 +87,9 @@ runtime_profile:
           model: "qwen3.5:9b"
           timeout: 12.0
       arduino_serial:
-        esp_base_url: "http://sentrybot-2.local:8080"
+        esp_base_url: "http://10.88.255.55:8080"
       esp_link:
-        base_url: "http://sentrybot-2.local:8080"
+        base_url: "http://10.88.255.55:8080"
 
 ollama_service:
   server:
@@ -261,7 +260,7 @@ speech:
     host: 0.0.0.0
     port: 8082
   audio:
-    device: plughw:0,0
+    device: null
     samplerate: 16000
     channels: 2
     dtype: int16

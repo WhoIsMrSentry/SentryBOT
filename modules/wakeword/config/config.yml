@@ -38,7 +38,7 @@ openwakeword:
   model_paths:
     - models/hey_sentribot.onnx
   inference_framework: onnx
-  threshold: 0.5
+  threshold: 0.55
   smooth_window: 3
   input_gain: 3.0
   # Print a periodic score probe in INFO logs (0 disables)
@@ -46,7 +46,7 @@ openwakeword:
   # Runner input channel count. If omitted, xWakewordService injects audio.channels.
   input_channels: 2
   auto_calibration:
-    enabled: true
+    enabled: false
     duration_sec: 12.0
     min_samples: 120
     percentile: 99.5

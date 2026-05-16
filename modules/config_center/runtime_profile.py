@@ -13,6 +13,21 @@ from typing import Any, Dict, Iterable, List
 from modules.config_center.agent_yaml_loader import deep_merge
 
 
+def _deep_merge_profile(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge profile patch; do not overwrite with empty strings/null."""
+    out = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge_profile(dict(out[key]), value)
+            continue
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        out[key] = value
+    return out
+
+
 _PROFILE_SECTION_KEYS: tuple[str, ...] = (
     "agent",
     "llm",
@@ -51,7 +66,7 @@ def apply_runtime_profile(cfg: Dict[str, Any]) -> Dict[str, Any]:
             continue
         existing = cfg.get(key)
         if isinstance(existing, dict):
-            cfg[key] = deep_merge(dict(existing), section_patch)
+            cfg[key] = _deep_merge_profile(dict(existing), section_patch)
         else:
             cfg[key] = dict(section_patch)
 

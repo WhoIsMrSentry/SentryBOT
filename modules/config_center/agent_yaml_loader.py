@@ -54,7 +54,11 @@ def load_agent_config(explicit_path: Optional[str | os.PathLike[str]] = None) ->
 
     if not isinstance(raw, dict):
         raise ValueError(f"agent.yaml must be a mapping at top-level: {cfg_path}")
-    return apply_runtime_profile(raw)
+
+    from modules.config_center.google_keys import inject_google_api_key
+
+    cfg = apply_runtime_profile(raw)
+    return inject_google_api_key(cfg)
 
 
 def require_dict_section(cfg: Dict[str, Any], section: str) -> Dict[str, Any]:

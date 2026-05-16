@@ -448,6 +448,18 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.speech.api import get_router as get_speech_router  # type: ignore
     svc = SpeechService()
     started["speech"] = svc
+    try:
+        from pathlib import Path
+
+        model_dir = Path(__file__).resolve().parents[2] / "speech" / "models" / "vosk-tr"
+        if not model_dir.is_dir():
+            logger.error(
+                "Vosk TR model missing at %s — speech/STT will not work after wakeword. "
+                "Run: python tools/install_vosk_tr.py",
+                model_dir,
+            )
+    except Exception:
+        pass
     # If gateway config requests speech to start listening on boot, start it.
     try:
         # cfg is passed to bootstrap and available in outer scope; read flag if present
