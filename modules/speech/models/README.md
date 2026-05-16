@@ -17,4 +17,4 @@ python tools/install_vosk_tr.py
 python tools/install_vosk_tr.py --insecure
 ```
 
-Manuel: `vosk-model-small-tr-0.22` klasörünü `vosk-tr` adına kopyalayın.
+Manuel: `vosk-model-small-tr-0.3` klasörünü `vosk-tr` adına kopyalayın (0.22 artık yayımlanmıyor).

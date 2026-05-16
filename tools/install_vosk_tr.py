@@ -16,10 +16,10 @@ from typing import Iterable, List
 
 TARGET = Path(__file__).resolve().parents[1] / "modules" / "speech" / "models" / "vosk-tr"
 
-# Primary + mirrors (HuggingFace often has valid TLS when alphacephei cert is stale on Pi).
+# Turkish small model is 0.3 on alphacephei (0.22 removed). HF mirror is reliable on Pi.
 MODEL_URLS: List[str] = [
-    "https://alphacephei.com/vosk/models/vosk-model-small-tr-0.22.zip",
     "https://huggingface.co/rhasspy/vosk-models/resolve/main/tr/vosk-model-small-tr-0.3.zip",
+    "https://alphacephei.com/vosk/models/vosk-model-small-tr-0.3.zip",
 ]
 
 
@@ -34,23 +34,57 @@ def _ssl_context(*, insecure: bool) -> ssl.SSLContext:
         return ssl.create_default_context()
 
 
+def _format_bytes(num: int) -> str:
+    if num < 1024 * 1024:
+        return f"{num / 1024:.1f} KiB"
+    return f"{num / (1024 * 1024):.1f} MiB"
+
+
 def _download(url: str, dest: Path, *, insecure: bool) -> None:
+    if insecure:
+        try:
+            import urllib3  # type: ignore
+
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        except Exception:
+            pass
+
     headers = {"User-Agent": "SentryBOT-vosk-install/1.0"}
     try:
         import requests  # type: ignore
 
-        resp = requests.get(url, stream=True, timeout=300, verify=not insecure, headers=headers)
-        resp.raise_for_status()
-        with dest.open("wb") as handle:
-            for chunk in resp.iter_content(chunk_size=1024 * 256):
-                if chunk:
+        with requests.get(
+            url,
+            stream=True,
+            timeout=(30, 600),
+            verify=not insecure,
+            headers=headers,
+        ) as resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length", 0) or 0)
+            done = 0
+            with dest.open("wb") as handle:
+                for chunk in resp.iter_content(chunk_size=1024 * 256):
+                    if not chunk:
+                        continue
                     handle.write(chunk)
+                    done += len(chunk)
+                    if total > 0:
+                        pct = min(100, int(done * 100 / total))
+                        print(
+                            f"\r  progress: {_format_bytes(done)} / {_format_bytes(total)} ({pct}%)",
+                            end="",
+                            flush=True,
+                        )
+                    elif done % (1024 * 1024 * 2) < len(chunk):
+                        print(f"\r  downloaded {_format_bytes(done)} ...", end="", flush=True)
+            print()
         return
     except ImportError:
         pass
 
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, context=_ssl_context(insecure=insecure), timeout=300) as resp:
+    with urllib.request.urlopen(req, context=_ssl_context(insecure=insecure), timeout=600) as resp:
         with dest.open("wb") as handle:
             shutil.copyfileobj(resp, handle)
 
@@ -88,7 +122,7 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument(
         "--insecure",
         action="store_true",
-        help="Skip TLS certificate verification (use if Pi CA bundle is outdated)",
+        help="Skip TLS verification (alphacephei cert often expired on Pi)",
     )
     args = parser.parse_args(argv)
     insecure = bool(args.insecure or os.getenv("VOSK_INSTALL_INSECURE", "").strip().lower() in {"1", "true", "yes"})
@@ -100,19 +134,15 @@ def main(argv: List[str] | None = None) -> int:
     TARGET.parent.mkdir(parents=True, exist_ok=True)
 
     if insecure:
-        print("WARNING: downloading with TLS verification disabled.", file=sys.stderr)
+        print("NOTE: TLS verification disabled for this run.", file=sys.stderr)
 
     with tempfile.TemporaryDirectory() as tmp:
         zpath = Path(tmp) / "vosk-tr.zip"
         used_url = _try_urls(MODEL_URLS, zpath, insecure=insecure)
         _install_from_zip(zpath)
 
-    print(f"Installed Vosk TR model at {TARGET} (from {used_url})")
-    if insecure:
-        print(
-            "Tip: fix Pi certificates with: sudo apt update && sudo apt install -y ca-certificates",
-            file=sys.stderr,
-        )
+    print(f"Installed Vosk TR model at {TARGET}")
+    print(f"Source: {used_url}")
     return 0
 
 
