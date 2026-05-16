@@ -51,6 +51,22 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
     if overrides:
         cfg.update({k: v for k, v in overrides.items() if v is not None})
 
+    try:
+        from modules.config_center.agent_yaml_loader import load_agent_config
+
+        root = load_agent_config()
+        serial_cfg = root.get("arduino_serial")
+        if isinstance(serial_cfg, dict):
+            cfg.update({k: v for k, v in serial_cfg.items() if v is not None})
+    except FileNotFoundError:
+        pass
+    except Exception:
+        pass
+
+    env_esp = os.getenv("SENTRYBOT_ESP_BASE_URL", "").strip()
+    if env_esp:
+        cfg["esp_base_url"] = env_esp
+
     # env overrides
     env_port = os.getenv("ARDUINO_PORT")
     if env_port:

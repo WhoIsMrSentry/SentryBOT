@@ -27,6 +27,69 @@ ollama:
   model: "qwen3.5:9b"
   request_timeout: 60
 
+google_ai_studio:
+  api_key: ""   # bos birakilirsa GOOGLE_API_KEY env kullanilir
+  model: "gemini-2.0-flash"
+  base_url: "https://generativelanguage.googleapis.com"
+  request_timeout: 45
+
+# Tek anahtar ile LLM + VLM + ESP URL degistir: active satirini degistir.
+runtime_profile:
+  active: google_ai_studio   # google_ai_studio | remote_ollama
+
+  profiles:
+    google_ai_studio:
+      llm:
+        provider: google_ai_studio
+      agent:
+        model: "gemini-2.0-flash"
+        request_timeout: 45
+      google_ai_studio:
+        model: "gemini-2.0-flash"
+        request_timeout: 45
+      vlm_bridge:
+        llm:
+          provider: google_ai_studio
+        vision_llm:
+          enabled: true
+          provider: google_ai_studio
+        ollama:
+          endpoint: "http://127.0.0.1:8080/ollama/chat"
+          timeout: 12.0
+      arduino_serial:
+        esp_base_url: "http://sentrybot-2.local:8080"
+      esp_link:
+        base_url: "http://sentrybot-2.local:8080"
+
+    remote_ollama:
+      llm:
+        provider: ollama
+      agent:
+        model: "qwen3.5:9b"
+        ollama_base_url: "http://127.0.0.1:11434"
+        request_timeout: 60
+      ollama:
+        base_url: "http://127.0.0.1:11434"
+        model: "qwen3.5:9b"
+        request_timeout: 60
+      vlm_bridge:
+        llm:
+          provider: ollama
+        vision_llm:
+          enabled: true
+          provider: ollama
+          base_url: "http://127.0.0.1:11434"
+          model: "qwen3-vl:8b"
+          timeout_s: 18
+        ollama:
+          endpoint: "http://127.0.0.1:8080/ollama/chat"
+          model: "qwen3.5:9b"
+          timeout: 12.0
+      arduino_serial:
+        esp_base_url: "http://sentrybot-2.local:8080"
+      esp_link:
+        base_url: "http://sentrybot-2.local:8080"
+
 ollama_service:
   server:
     host: 0.0.0.0

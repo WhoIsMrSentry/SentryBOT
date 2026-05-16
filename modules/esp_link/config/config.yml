@@ -6,7 +6,7 @@ network:
   ssid: "SentryBOT"
   password: "SentryBOT"
 
-base_url: "http://sentrybot.local"
+base_url: "http://sentrybot-2.local:8080"
 paths:
   health: "/healthz"
   send: "/send"

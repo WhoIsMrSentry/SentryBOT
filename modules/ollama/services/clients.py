@@ -274,6 +274,55 @@ class GoogleAIStudioClient:
 
         return {"message": {"content": text}, "raw": data}
 
+    def generate_with_image(
+        self,
+        prompt: str,
+        image_b64: str,
+        *,
+        mime_type: str = "image/jpeg",
+        model: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Multimodal generateContent (text + inline image)."""
+        selected_model = str(model or self.model).strip() or self.model
+        if model and not selected_model.lower().startswith("gemini"):
+            selected_model = self.model
+
+        generation_config: Dict[str, Any] = {"temperature": 0.3}
+        if isinstance(options, dict) and "temperature" in options:
+            generation_config["temperature"] = options["temperature"]
+
+        payload: Dict[str, Any] = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": str(prompt or "")},
+                        {"inline_data": {"mime_type": mime_type, "data": image_b64}},
+                    ],
+                }
+            ],
+            "generationConfig": generation_config,
+        }
+
+        url = f"{self.base_url}/v1beta/models/{selected_model}:generateContent"
+        resp = requests.post(
+            url,
+            params={"key": self.api_key},
+            json=payload,
+            timeout=float(self.timeout),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        try:
+            parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
+            return "\n".join(
+                str(p.get("text", "")) for p in parts if isinstance(p, dict)
+            ).strip()
+        except Exception:
+            return ""
+
 
 def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
     llm_cfg = cfg.get("llm", {}) or {}

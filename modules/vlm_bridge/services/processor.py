@@ -303,12 +303,22 @@ class VisionProcessor:
             self.visual_context_cache = None
             logger.warning("VisualContextCache not available")
 
-        # Remote VLM client (Ollama)
+        # Remote VLM client (Ollama or Google AI Studio)
         vlm_cfg = config.get("vision_llm", {}) if isinstance(config.get("vision_llm", {}), dict) else {}
-        if vlm_cfg.get("enabled", True) and OllamaVLMClient is not None:
+        if vlm_cfg.get("enabled", True):
             try:
-                self.vlm_client = OllamaVLMClient(vlm_cfg)
-                logger.info("[vlm_bridge] Remote VLM client initialized: %s", vlm_cfg.get("model", "unknown"))
+                try:
+                    from .google_vlm_client import create_vision_llm_client
+                except Exception:
+                    from modules.vlm_bridge.services.google_vlm_client import create_vision_llm_client  # type: ignore
+
+                self.vlm_client = create_vision_llm_client(config)
+                provider = str(vlm_cfg.get("provider", "ollama"))
+                logger.info(
+                    "[vlm_bridge] Vision LLM client initialized (%s): %s",
+                    provider,
+                    getattr(self.vlm_client, "model", "unknown"),
+                )
             except Exception as exc:
                 logger.warning("VLM client init failed: %s", exc)
                 self.vlm_client = None
