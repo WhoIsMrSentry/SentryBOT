@@ -1,0 +1,34 @@
+---
+description: "Yeni modül oluşturma veya modül iskeleti üretme talebi geldiğinde aktif olur."
+globs: ["modules/**/x*Service.py", "modules/**/__init__.py"]
+alwaysApply: false
+---
+
+# Modül Oluşturma / Düzenleme
+
+## Yeni Modül Oluşturmak İçin
+1. `.sentrybot/context/module-registry.md` oku — 29 mevcut modül
+2. `.sentrybot/agents/module-creator.md` oku — iş akışı
+3. `.sentrybot/skills/scaffold-module.md` takip et — iskelet oluşturma
+
+## Modül Düzenlemek İçin
+1. Hedef modülün `architecture_*.md` dosyasını oku
+2. `.sentrybot/agents/module-editor.md` oku
+3. Değişiklik türüne göre skill seç:
+   - Endpoint → `.sentrybot/skills/add-api-endpoint.md`
+   - Service → `.sentrybot/skills/add-service-class.md`
+   - Config → `.sentrybot/skills/update-config.md`
+
+## Standart Modül Yapısı
+```
+modules/<name>/
+├── __init__.py
+├── x<Name>Service.py
+├── config_loader.py
+├── config/config.yml
+├── api/router.py
+├── services/
+├── tests/test_smoke.py
+├── architecture_<name>.md
+└── README.md
+```

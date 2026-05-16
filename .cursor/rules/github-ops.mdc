@@ -1,0 +1,17 @@
+---
+description: "GitHub işlemleri, PR veya Issue hazırlarken aktif olur."
+globs: [".github/**"]
+alwaysApply: false
+---
+
+# GitHub İşlemleri
+
+## PR → `.sentrybot/skills/create-pr.md`
+## Issue → `.sentrybot/skills/create-issue.md`
+## CI Analiz → `.sentrybot/agents/github-ops.md`
+
+## Branch Format
+- `feat/<modül>-<açıklama>` | `fix/<modül>-<açıklama>` | `refactor/<modül>-<açıklama>`
+
+## Commit Format
+- `feat(modül): açıklama` | `fix(modül): açıklama`

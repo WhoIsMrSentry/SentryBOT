@@ -1,0 +1,20 @@
+---
+description: "Arduino serial modülüyle çalışırken veya donanım komutu gönderen kod yazarken aktif olur."
+globs: ["modules/arduino_serial/**", "modules/autonomy/**", "modules/vlm_bridge/**", "modules/animate/**", "modules/calibration/**"]
+alwaysApply: false
+---
+
+# Arduino Kontrat Kuralları
+
+## ZORUNLU
+- Tüm Arduino komutları `modules/arduino_serial/contract.py` builder kullanır
+- Elle `{"cmd": ...}` payload YASAK
+- Kritik komutlar `/arduino/request` (ACK bekler, timeout 0.8-1.5s)
+
+## Yeni Komut Eklerken (aynı PR'da)
+1. `contract.py` → `build_<cmd>` + `validate_<cmd>`
+2. Validator unit testi
+3. Gateway davranış testi
+
+## Detaylı prosedür
+`.sentrybot/skills/arduino-contract.md` dosyasını oku.
