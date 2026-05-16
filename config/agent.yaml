@@ -198,7 +198,7 @@ speak:
     channels: 1
     dtype: float32
   tts:
-    engine: pyttsx3
+    engine: piper
     language: tr
     voice: source
     rate: 170
@@ -210,14 +210,28 @@ speak:
       timeout: 120
       auth_token: ""
     piper:
-      bin_path: /home/sentrybot/SentryBOT/venv/bin/piper
-      model_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx
-      config_path: /home/sentrybot/models/tr_TR-dfki-medium.onnx.json
+      bin_path: piper
+      voice: tr
+      model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
+      config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
       samplerate: 22050
       speaker: null
       length_scale: null
       noise_scale: null
       noise_w: null
+      voices:
+        tr:
+          model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
+          config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
+        tr-fahrettin:
+          model_path: data/piper_models/tr_TR-fahrettin-medium/tr_TR-fahrettin-medium.onnx
+          config_path: data/piper_models/tr_TR-fahrettin-medium/tr_TR-fahrettin-medium.onnx.json
+        tr-fettah:
+          model_path: data/piper_models/tr_TR-fettah-medium/tr_TR-fettah-medium.onnx
+          config_path: data/piper_models/tr_TR-fettah-medium/tr_TR-fettah-medium.onnx.json
+        glados:
+          model_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx
+          config_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx.json
     xtts:
       endpoint: http://192.168.1.100:5000/tts/synthesize
       timeout: 120

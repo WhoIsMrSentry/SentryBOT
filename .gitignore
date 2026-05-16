@@ -24,3 +24,6 @@ tmp/
 frontend_knowledge.md
 backend_knowledge.md
 *.sqlite3
+data/piper_models/**/*.onnx
+data/piper_models/**/*.onnx.json
+modules/speech/models/vosk-en/

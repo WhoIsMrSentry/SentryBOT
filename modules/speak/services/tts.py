@@ -103,12 +103,15 @@ class PiperBackend(TTSBackend):
     """
     def __init__(self, cfg: TTSConfig, piper_cfg: Dict):
         self.bin_path = str(piper_cfg.get("bin_path", "piper"))
-        self.model_path = str(piper_cfg.get("model_path") or "").strip()
+        resolved = self._resolve_voice_cfg(piper_cfg)
+        self.model_path = str(resolved.get("model_path") or piper_cfg.get("model_path") or "").strip()
         if not self.model_path:
-            raise ValueError("piper.model_path is required")
+            raise ValueError("piper.model_path is required (or piper.voices.<voice>)")
         if not Path(self.model_path).exists():
             raise FileNotFoundError(f"piper.model_path not found: {self.model_path}")
-        self.config_path = str(piper_cfg.get("config_path") or f"{self.model_path}.json").strip()
+        self.config_path = str(
+            resolved.get("config_path") or piper_cfg.get("config_path") or f"{self.model_path}.json"
+        ).strip()
         if self.config_path and not Path(self.config_path).exists():
             logger.warning("piper model config not found: %s", self.config_path)
         self.samplerate = int(piper_cfg.get("samplerate", cfg.samplerate))
@@ -116,6 +119,17 @@ class PiperBackend(TTSBackend):
         self.length_scale = piper_cfg.get("length_scale")
         self.noise_scale = piper_cfg.get("noise_scale")
         self.noise_w = piper_cfg.get("noise_w")
+
+    @staticmethod
+    def _resolve_voice_cfg(piper_cfg: Dict) -> Dict[str, Any]:
+        voices = piper_cfg.get("voices", {})
+        voice_key = str(piper_cfg.get("voice", "tr")).strip().lower() or "tr"
+        if not isinstance(voices, dict):
+            return {}
+        entry = voices.get(voice_key)
+        if isinstance(entry, dict):
+            return entry
+        return {}
 
     def synthesize(self, text: str):
         import subprocess, tempfile, os
