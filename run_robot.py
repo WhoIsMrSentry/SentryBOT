@@ -10,20 +10,16 @@ import sys
 import logging
 import uvicorn  # type: ignore
 
-# Proje kökünü PYTHONPATH'e ekle (script doğrudan çalıştığında)
+# Proje kökünü PYTHONPATH'e ekle (script doğrudan çalıştığında).
+# Not: modules/<mod>/ alt dizinlerini sys.path'e eklemeyin; bu,
+# "from modules.gateway.xGatewayService" gibi importları bozar.
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-# Ayrıca her modülün kendi dizinini PYTHONPATH'e ekle (eski düz importları desteklemek için)
-modules_dir = os.path.join(ROOT, "modules")
-if os.path.isdir(modules_dir):
-    for _d in sorted(os.listdir(modules_dir)):
-        _p = os.path.join(modules_dir, _d)
-        if os.path.isdir(_p) and _p not in sys.path:
-            sys.path.insert(0, _p)
-
 logger = logging.getLogger("run_robot")
+
+_GATEWAY_SERVICE_FILE = os.path.join(ROOT, "modules", "gateway", "xGatewayService.py")
 
 
 def main() -> None:
@@ -34,7 +30,13 @@ def main() -> None:
     except Exception as exc:
         logger.debug("init_logging skipped: %s", exc)
 
-    # Gateway app'i oluştur (platforms klasörü gereksiz; ana dizinden çalışır)
+    if not os.path.isfile(_GATEWAY_SERVICE_FILE):
+        raise SystemExit(
+            f"Missing gateway entrypoint: {_GATEWAY_SERVICE_FILE}\n"
+            "Repo incomplete — on the Pi run: git fetch origin dev && git reset --hard origin/dev"
+        )
+
+    # Gateway app'i oluştur (repo kökünden çalıştırın: python run_robot.py)
     from modules.gateway.xGatewayService import create_app  # type: ignore
     from modules.gateway.config_loader import load_config  # type: ignore
     # Ayrıca autonomy konfigunu okuyup startup durumunu run_robot log'una yazalım
