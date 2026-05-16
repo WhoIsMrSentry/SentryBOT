@@ -17,24 +17,6 @@ picamera2:
   format: RGB888
   frame_rate: 120
   af_mode: 2
-imx500:
-  enabled: false
-  model_path: "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
-  labels_path: "/usr/share/imx500-models/coco_labels.txt"
-  confidence: 0.45
-  publish_metadata: true
-  publish_interval_s: 0.05
-  classes_of_interest:
-    - person
-    - cat
-    - dog
-    - chair
-    - bottle
-    - cup
-    - book
-    - laptop
-    - cell phone
-    - tv
 server:
   host: 0.0.0.0
   port: 8000
