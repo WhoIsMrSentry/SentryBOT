@@ -9,17 +9,11 @@ from pydantic import BaseModel
 
 class AnalyzeRequest(BaseModel):
     image_b64: str
-    requested_tasks: Optional[List[str]] = None
 
 
 class RegisterFaceRequest(BaseModel):
     name: str
     image_b64: str
-
-
-class OcrRequest(BaseModel):
-    image_b64: str
-    languages: Optional[List[str]] = None
 
 
 @dataclass

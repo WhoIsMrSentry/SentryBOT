@@ -7,7 +7,7 @@ from fastapi import FastAPI, Header, HTTPException
 
 from .config import RuntimeConfig, load_runtime_config
 from .engine import MultiModalEngine
-from .models import AnalyzeRequest, OcrRequest, RegisterFaceRequest
+from .models import AnalyzeRequest, RegisterFaceRequest
 
 logger = logging.getLogger("remote_multimodal_server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
@@ -51,7 +51,7 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
     @app.post("/vision/analyze")
     def analyze(req: AnalyzeRequest, x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
         _require_auth(x_auth_token)
-        return engine.analyze(req.image_b64, requested_tasks=req.requested_tasks)
+        return engine.analyze(req.image_b64)
 
     @app.post("/vision/register_face")
     def register_face(req: RegisterFaceRequest, x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
@@ -60,15 +60,6 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
         if not name:
             raise HTTPException(status_code=400, detail="name required")
         return engine.register_face(name=name, image_b64=req.image_b64)
-
-    @app.post("/vision/ocr")
-    def ocr(req: OcrRequest, x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
-        _require_auth(x_auth_token)
-        try:
-            frame = engine.decode_image(req.image_b64)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-        return engine.ocr_frame(frame)
 
     return app
 

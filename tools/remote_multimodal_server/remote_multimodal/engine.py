@@ -219,81 +219,13 @@ class MultiModalEngine:
             return None
         return None
 
-    def ocr_frame(self, frame: np.ndarray) -> Dict[str, Any]:
-        """Run OCR with whichever backend was initialised.
-
-        Returns ``{"ok": True, "backend": str, "text": str, "lines": [...]}``.
-        """
-        ocr = self.backends.ocr
-        backend = self.backends.ocr_backend_name
-        if ocr is None or not backend:
-            return {"ok": False, "error": "ocr_backend_unavailable", "text": "", "lines": []}
-        try:
-            if backend == "paddleocr":
-                results = ocr.ocr(frame, cls=True)
-                lines = []
-                texts = []
-                if results and isinstance(results, list):
-                    for block in results:
-                        if not block:
-                            continue
-                        for entry in block:
-                            try:
-                                bbox, (text, conf) = entry
-                            except Exception:
-                                continue
-                            if float(conf) < self.cfg.ocr_min_confidence:
-                                continue
-                            lines.append({"text": str(text), "confidence": round(float(conf), 3), "bbox": [[int(p[0]), int(p[1])] for p in bbox]})
-                            texts.append(str(text))
-                return {"ok": True, "backend": backend, "text": " ".join(texts).strip(), "lines": lines}
-
-            if backend == "easyocr":
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = ocr.readtext(rgb)
-                lines = []
-                texts = []
-                for entry in results or []:
-                    try:
-                        bbox, text, conf = entry
-                    except Exception:
-                        continue
-                    if float(conf) < self.cfg.ocr_min_confidence:
-                        continue
-                    lines.append({"text": str(text), "confidence": round(float(conf), 3), "bbox": [[int(p[0]), int(p[1])] for p in bbox]})
-                    texts.append(str(text))
-                return {"ok": True, "backend": backend, "text": " ".join(texts).strip(), "lines": lines}
-
-            if backend == "tesseract":
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                text = str(ocr.image_to_string(gray) or "").strip()
-                lines = [{"text": line, "confidence": 0.0, "bbox": []} for line in text.splitlines() if line.strip()]
-                return {"ok": True, "backend": backend, "text": text, "lines": lines}
-        except Exception as exc:
-            return {"ok": False, "error": str(exc), "text": "", "lines": []}
-        return {"ok": False, "error": "unsupported_backend", "text": "", "lines": []}
-
-    def analyze(self, image_b64: str, requested_tasks: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Analyse a frame, honouring an optional ``requested_tasks`` allowlist.
-
-        ``requested_tasks`` may include any of ``objects``, ``faces``, ``people``,
-        ``ocr``, ``hazards``, ``semantic_scene``. When omitted or empty, the
-        engine runs every available pipeline (legacy behaviour).
-        """
+    def analyze(self, image_b64: str) -> Dict[str, Any]:
         frame = self.decode_image(image_b64)
         h, w = frame.shape[:2]
-        allow = {str(t).strip().lower() for t in (requested_tasks or []) if str(t).strip()}
-        run_objects = (not allow) or ("objects" in allow) or ("hazards" in allow)
-        run_faces = (not allow) or ("faces" in allow) or ("people" in allow)
-        run_ocr = ("ocr" in allow) if allow else False
-        run_qwen = (not allow) or ("semantic_scene" in allow) or ("hazards" in allow)
-        objects = self.detect_objects(frame) if run_objects else []
-        faces = self.detect_faces(frame) if run_faces else []
+        objects = self.detect_objects(frame)
+        faces = self.detect_faces(frame)
         motion, scene_change = self.motion_scene_change(frame)
-        qwen_out = self.qwen.analyze_frame(frame) if run_qwen else {"ok": False}
-        ocr_payload: Dict[str, Any] = {"ok": False}
-        if run_ocr:
-            ocr_payload = self.ocr_frame(frame)
+        qwen_out = self.qwen.analyze_frame(frame)
 
         people: List[Dict[str, Any]] = []
         for fb in faces:
@@ -367,8 +299,6 @@ class MultiModalEngine:
             "recommended_focus": {"type": focus_type, "reason": "hybrid_cv_qwen"},
             "importance_score": round(min(1.0, max(0.0, importance)), 3),
             "frame_size": {"w": int(w), "h": int(h)},
-            "ocr": ocr_payload,
-            "requested_tasks": sorted(allow) if allow else [],
             "backend_info": {
                 "yolo": bool(self.backends.yolo is not None),
                 "face_recognition": bool(self.backends.face_recognition is not None),
@@ -376,7 +306,6 @@ class MultiModalEngine:
                 "advanced_caption": bool(self.backends.caption_pipe is not None),
                 "qwen_vlm": bool(qwen_out.get("ok")),
                 "qwen_model": qwen_out.get("model", ""),
-                "ocr": self.backends.ocr_backend_name,
             },
         }
 

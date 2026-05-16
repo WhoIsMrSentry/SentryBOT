@@ -37,10 +37,6 @@ class RuntimeConfig(BaseModel):
     qwen_temperature: float = 0.1
     enable_advanced_caption: bool = False
     advanced_caption_model: str = "microsoft/Florence-2-base"
-    enable_ocr: bool = True
-    ocr_backend: str = "auto"  # auto | paddleocr | easyocr | tesseract
-    ocr_languages: str = "en,tr"
-    ocr_min_confidence: float = 0.4
 
 
 def load_runtime_config() -> RuntimeConfig:
@@ -76,8 +72,4 @@ def load_runtime_config() -> RuntimeConfig:
         advanced_caption_model=str(
             os.getenv("MM_ADVANCED_CAPTION_MODEL", "microsoft/Florence-2-base")
         ).strip(),
-        enable_ocr=bool_env("MM_ENABLE_OCR", True),
-        ocr_backend=str(os.getenv("MM_OCR_BACKEND", "auto")).strip().lower() or "auto",
-        ocr_languages=str(os.getenv("MM_OCR_LANGUAGES", "en,tr")).strip() or "en,tr",
-        ocr_min_confidence=float(os.getenv("MM_OCR_MIN_CONFIDENCE", "0.4")),
     )

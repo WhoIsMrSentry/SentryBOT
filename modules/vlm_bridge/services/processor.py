@@ -88,12 +88,6 @@ except Exception:
     HeadControlArbiter = None  # type: ignore
     HeadCommand = None  # type: ignore
 
-try:
-    from modules.camera.services.onsensor_bus import OnSensorEventBus, OnSensorSnapshot  # type: ignore
-except Exception:
-    OnSensorEventBus = None  # type: ignore
-    OnSensorSnapshot = None  # type: ignore
-
 
 logger = logging.getLogger("vlm_bridge")
 
@@ -147,48 +141,6 @@ class VisionProcessor:
             "hazards": bool(raw_modes.get("hazards", True)),
             "semantic_scene": bool(raw_modes.get("semantic_scene", True)),
         }
-        raw_categories = vision_cfg.get("mode_categories", {}) if isinstance(vision_cfg.get("mode_categories", {}), dict) else {}
-        def _bool_map(section: Dict[str, Any]) -> Dict[str, bool]:
-            return {str(k): bool(v) for k, v in (section or {}).items()}
-        self.mode_categories: Dict[str, Dict[str, bool]] = {
-            "local": _bool_map(raw_categories.get("local", {"face_match": True, "visual_logger": True})),
-            "remote": _bool_map(raw_categories.get("remote", {
-                "objects": self.mode_flags["objects"],
-                "people": self.mode_flags["people"],
-                "faces": self.mode_flags["faces"],
-                "ocr": self.mode_flags["ocr"],
-                "hazards": self.mode_flags["hazards"],
-                "semantic_scene": self.mode_flags["semantic_scene"],
-                "depth": self.mode_flags["depth"],
-            })),
-            "onsensor": _bool_map(raw_categories.get("onsensor", {"tiny_detect": False, "tiny_pose": False})),
-        }
-        # Optional ergonomics buckets (backward compatible aliases for mode_categories)
-        lm = vision_cfg.get("local_modes")
-        rm = vision_cfg.get("remote_modes")
-        om = vision_cfg.get("onsensor_modes") or vision_cfg.get("sensor_modes")
-        if isinstance(lm, dict):
-            for key, value in lm.items():
-                if key in self.mode_categories["local"]:
-                    self.mode_categories["local"][key] = bool(value)
-        if isinstance(rm, dict):
-            for key, value in rm.items():
-                if key in self.mode_categories["remote"]:
-                    self.mode_categories["remote"][key] = bool(value)
-        if isinstance(om, dict):
-            for key, value in om.items():
-                if key in self.mode_categories["onsensor"]:
-                    self.mode_categories["onsensor"][key] = bool(value)
-        disabled = vision_cfg.get("disabled_modes") or {}
-        if isinstance(disabled, dict):
-            for key, value in disabled.items():
-                if not bool(value):
-                    continue
-                for cat_name, bucket in list(self.mode_categories.items()):
-                    if key in bucket:
-                        bucket[key] = False
-                if key in self.mode_flags:
-                    self.mode_flags[key] = False
         self.mode_profiles: Dict[str, Dict[str, bool]] = {
             "balanced": dict(self.mode_flags),
             "people_focus": {
@@ -296,9 +248,7 @@ class VisionProcessor:
             logger.warning("PersonIdentityManager not available")
 
         if VisualContextCache is not None:
-            vctx_cfg = config.get("visual_context", {}) if isinstance(config.get("visual_context", {}), dict) else {}
-            max_hist = max(1, int(vctx_cfg.get("cache_history_size", 5)))
-            self.visual_context_cache = VisualContextCache(max_history=max_hist)
+            self.visual_context_cache = VisualContextCache()
         else:
             self.visual_context_cache = None
             logger.warning("VisualContextCache not available")
@@ -321,14 +271,6 @@ class VisionProcessor:
         self.remote_mm_endpoint = str(mm_cfg.get("endpoint", "http://127.0.0.1:8091/vision/analyze")).strip()
         self.remote_mm_timeout_s = float(mm_cfg.get("timeout_s", 6.0))
         self.remote_mm_auth_token = str(mm_cfg.get("auth_token", "")).strip()
-        default_ocr_endpoint = self.remote_mm_endpoint.replace("/vision/analyze", "/vision/ocr") if self.remote_mm_endpoint else ""
-        self.remote_mm_ocr_endpoint = str(mm_cfg.get("ocr_endpoint", default_ocr_endpoint)).strip()
-        self.remote_mm_ocr_timeout_s = float(mm_cfg.get("ocr_timeout_s", 10.0))
-        ocr_langs = mm_cfg.get("ocr_languages", ["en", "tr"])
-        if isinstance(ocr_langs, (list, tuple)):
-            self.remote_mm_ocr_languages = [str(x).strip() for x in ocr_langs if str(x).strip()]
-        else:
-            self.remote_mm_ocr_languages = ["en", "tr"]
 
         actions_cfg = config.get("actions", {}) if isinstance(config, dict) else {}
         endpoint = str(actions_cfg.get("endpoint", "http://localhost:8080/autonomy/apply_actions"))
@@ -345,11 +287,6 @@ class VisionProcessor:
             logger.info("[vlm_bridge] Local mode: OpenCV face recognition + CSRT tracking active")
         else:
             logger.info("[vlm_bridge] Remote mode: waiting for /vlm/results payloads")
-
-        self._onsensor_bus: Optional[Any] = None
-        self._onsensor_unsub: Optional[Callable[[], None]] = None
-        self._onsensor_lock = threading.Lock()
-        self._latest_onsensor: Optional[Any] = None
 
         # Runtime realtime profiles for VLM bridge latency tuning.
         self._realtime_profiles: Dict[str, Dict[str, Any]] = {
@@ -370,26 +307,6 @@ class VisionProcessor:
 
     def get_modes(self) -> Dict[str, bool]:
         return dict(self.mode_flags)
-
-    def get_mode_categories(self) -> Dict[str, Dict[str, bool]]:
-        """Return the hierarchical (local | remote | onsensor) mode map."""
-        return {
-            "local": dict(self.mode_categories.get("local", {})),
-            "remote": dict(self.mode_categories.get("remote", {})),
-            "onsensor": dict(self.mode_categories.get("onsensor", {})),
-        }
-
-    def set_mode_categories(self, updates: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
-        """Patch the hierarchical mode map. ``updates`` is keyed by category."""
-        changed: Dict[str, Dict[str, bool]] = {}
-        for category, payload in (updates or {}).items():
-            if category not in self.mode_categories or not isinstance(payload, dict):
-                continue
-            for key, value in payload.items():
-                if key in self.mode_categories[category]:
-                    self.mode_categories[category][key] = bool(value)
-                    changed.setdefault(category, {})[key] = self.mode_categories[category][key]
-        return {"ok": True, "changed": changed, "mode_categories": self.get_mode_categories()}
 
     def list_profiles(self) -> List[str]:
         return sorted(self.mode_profiles.keys())
@@ -637,10 +554,6 @@ class VisionProcessor:
                 continue
 
             parsed_results, annotated = self._analyze_frame(frame, enable_follow=True)
-            if self._onsensor_active():
-                extras = self._onsensor_object_results()
-                if extras:
-                    parsed_results = list(parsed_results) + extras
             self.latest_results = parsed_results
 
             # Follow aktifken VLM sahne aksiyonu / tehlike anonsu bastirilir,
@@ -666,22 +579,15 @@ class VisionProcessor:
     def _analyze_frame(self, frame: Any, enable_follow: bool) -> Tuple[List[Dict[str, Any]], Any]:
         boxes: List[Tuple[int, int, int, int]] = []
         tracked_box = None
-        onsensor_active = self._onsensor_active()
 
         if enable_follow and self._follow_active:
             tracked_box = self._update_tracker(frame)
             if tracked_box is not None:
                 boxes = [tracked_box]
             else:
-                if onsensor_active:
-                    boxes = self._onsensor_boxes_for_label(frame.shape, "person")
-                if not boxes:
-                    boxes = self._detect_face_boxes(frame)
-        else:
-            if onsensor_active:
-                boxes = self._onsensor_boxes_for_label(frame.shape, "person")
-            if not boxes:
                 boxes = self._detect_face_boxes(frame)
+        else:
+            boxes = self._detect_face_boxes(frame)
 
         parsed: List[Dict[str, Any]] = []
         annotated = frame.copy()
@@ -1022,188 +928,6 @@ class VisionProcessor:
     # Living Vision Agent: Context and VLM Integration
     # -----------------------------------------------------------------
 
-    def attach_onsensor_bus(self, bus: Any) -> None:
-        """Subscribe to an on-sensor (IMX500) event bus.
-
-        The processor caches the most recent snapshot and prefers IMX500 boxes
-        over Haar when ``mode_categories.onsensor.tiny_detect`` is enabled.
-        """
-        if bus is None:
-            return
-        if self._onsensor_unsub is not None:
-            try:
-                self._onsensor_unsub()
-            except Exception:
-                pass
-            self._onsensor_unsub = None
-        self._onsensor_bus = bus
-        if hasattr(bus, "subscribe"):
-            try:
-                self._onsensor_unsub = bus.subscribe(self._on_sensor_snapshot)
-            except Exception as exc:
-                logger.debug("onsensor subscribe failed: %s", exc)
-
-    def detach_onsensor_bus(self) -> None:
-        if self._onsensor_unsub is not None:
-            try:
-                self._onsensor_unsub()
-            except Exception:
-                pass
-            self._onsensor_unsub = None
-        self._onsensor_bus = None
-
-    def _on_sensor_snapshot(self, snapshot: Any) -> None:
-        with self._onsensor_lock:
-            self._latest_onsensor = snapshot
-
-    def _latest_onsensor_snapshot(self) -> Optional[Any]:
-        with self._onsensor_lock:
-            return self._latest_onsensor
-
-    def _onsensor_active(self) -> bool:
-        if self._onsensor_bus is None:
-            return False
-        flags = self.mode_categories.get("onsensor", {})
-        return bool(flags.get("tiny_detect", False))
-
-    def _onsensor_boxes_for_label(self, frame_shape: Tuple[int, ...], label: str) -> List[Tuple[int, int, int, int]]:
-        snap = self._latest_onsensor_snapshot()
-        if snap is None:
-            return []
-        max_age = 1.5
-        try:
-            if (time.time() - float(getattr(snap, "ts", 0.0))) > max_age:
-                return []
-        except Exception:
-            return []
-        h, w = frame_shape[:2]
-        boxes: List[Tuple[int, int, int, int]] = []
-        for det in getattr(snap, "detections", []) or []:
-            if str(getattr(det, "label", "")).strip().lower() != label.strip().lower():
-                continue
-            bbox = getattr(det, "bbox_xyxy_norm", None)
-            if not bbox or len(bbox) != 4:
-                continue
-            x1n, y1n, x2n, y2n = [float(v) for v in bbox]
-            if max(x2n, y2n) <= 1.5:
-                x1 = int(_clamp(int(x1n * w), 0, w - 1))
-                y1 = int(_clamp(int(y1n * h), 0, h - 1))
-                x2 = int(_clamp(int(x2n * w), 0, w))
-                y2 = int(_clamp(int(y2n * h), 0, h))
-            else:
-                x1 = int(_clamp(int(x1n), 0, w - 1))
-                y1 = int(_clamp(int(y1n), 0, h - 1))
-                x2 = int(_clamp(int(x2n), 0, w))
-                y2 = int(_clamp(int(y2n), 0, h))
-            if x2 > x1 and y2 > y1:
-                boxes.append((x1, y1, x2, y2))
-        return boxes
-
-    def _onsensor_object_results(self) -> List[Dict[str, Any]]:
-        snap = self._latest_onsensor_snapshot()
-        if snap is None:
-            return []
-        results: List[Dict[str, Any]] = []
-        for det in getattr(snap, "detections", []) or []:
-            label = str(getattr(det, "label", "")).strip()
-            if not label or label.lower() == "person":
-                continue
-            bbox = list(getattr(det, "bbox_xyxy_norm", []) or [])
-            results.append(
-                {
-                    "label": label,
-                    "confidence": float(getattr(det, "score", 0.0) or 0.0),
-                    "bbox": bbox,
-                    "distance_m": None,
-                    "name": "",
-                    "source": "imx500",
-                }
-            )
-        return results
-
-    def _grab_frame(self) -> Optional[Any]:
-        with self._frame_lock:
-            if self._latest_raw_frame is not None:
-                return self._latest_raw_frame.copy()
-        if self._is_http_camera_source():
-            return None
-        try:
-            cap = cv2.VideoCapture(self.camera_source)
-            if cap.isOpened():
-                ok, snap = cap.read()
-                cap.release()
-                if ok and snap is not None:
-                    return snap
-        except Exception:
-            pass
-        return None
-
-    def _encode_frame_b64(self, frame: Any, quality: int = 80) -> Optional[str]:
-        try:
-            ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
-            if not ok:
-                return None
-            return base64.b64encode(buf.tobytes()).decode("ascii")
-        except Exception:
-            return None
-
-    def run_ocr_remote(self, frame: Optional[Any] = None, languages: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Forward an OCR request to the remote multimodal server.
-
-        Pulls the latest frame if ``frame`` is not provided. Returns a JSON-able
-        dict that mirrors the remote ``/vision/ocr`` response, with explicit
-        ``ok`` and ``error`` fields when the remote backend is disabled.
-        """
-        if not self.mode_categories.get("remote", {}).get("ocr", False) and not self.mode_flags.get("ocr", False):
-            return {"ok": False, "error": "ocr_mode_disabled"}
-        if not self.remote_mm_enabled:
-            return {"ok": False, "error": "remote_multimodal_disabled"}
-        endpoint = self.remote_mm_ocr_endpoint
-        if not endpoint:
-            return {"ok": False, "error": "remote_ocr_endpoint_missing"}
-
-        target_frame = frame if frame is not None else self._grab_frame()
-        if target_frame is None:
-            return {"ok": False, "error": "no_frame_available"}
-        image_b64 = self._encode_frame_b64(target_frame, quality=80)
-        if not image_b64:
-            return {"ok": False, "error": "frame_encode_failed"}
-
-        langs = languages or self.remote_mm_ocr_languages
-        payload: Dict[str, Any] = {"image_b64": image_b64}
-        if langs:
-            payload["languages"] = list(langs)
-        headers: Dict[str, str] = {}
-        if self.remote_mm_auth_token:
-            headers["X-Auth-Token"] = self.remote_mm_auth_token
-        try:
-            resp = requests.post(
-                endpoint,
-                json=payload,
-                headers=headers,
-                timeout=self.remote_mm_ocr_timeout_s,
-            )
-        except Exception as exc:
-            return {"ok": False, "error": f"remote_call_failed: {exc}"}
-        if resp.status_code != 200:
-            return {"ok": False, "error": f"remote_http_{resp.status_code}"}
-        try:
-            data = resp.json()
-        except Exception as exc:
-            return {"ok": False, "error": f"remote_json_failed: {exc}"}
-        if not isinstance(data, dict):
-            return {"ok": False, "error": "remote_payload_invalid"}
-        data.setdefault("ok", True)
-        return data
-
-    def _remote_requested_tasks(self) -> List[str]:
-        remote = self.mode_categories.get("remote", {})
-        tasks: List[str] = []
-        for key in ("objects", "people", "faces", "ocr", "hazards", "semantic_scene", "depth"):
-            if bool(remote.get(key, False)):
-                tasks.append(key)
-        return tasks
-
     def _call_remote_multimodal(self, frame: Any) -> Optional[Dict[str, Any]]:
         if not self.remote_mm_enabled or not self.remote_mm_endpoint:
             return None
@@ -1212,10 +936,7 @@ class VisionProcessor:
             if not ok:
                 return None
             image_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
-            payload: Dict[str, Any] = {"image_b64": image_b64}
-            requested = self._remote_requested_tasks()
-            if requested:
-                payload["requested_tasks"] = requested
+            payload = {"image_b64": image_b64}
             headers = {}
             if self.remote_mm_auth_token:
                 headers["X-Auth-Token"] = self.remote_mm_auth_token
