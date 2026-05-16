@@ -250,7 +250,8 @@ class TriLayerRouter:
         default_modules: Sequence[str] | None = None,
     ):
         self.profiles = profiles
-        self.max_subagents = max(1, int(max_subagents or 1))
+        self._absolute_max = 8
+        self.max_subagents = self._coerce_max(max_subagents)
         fallback = tuple(default_modules or ("vlm_bridge", "autonomy", "agent_core"))
         self.default_modules = [m for m in fallback if m in profiles]
         if not self.default_modules:
@@ -263,6 +264,22 @@ class TriLayerRouter:
                 toks.update(self._tokenize(keyword))
             toks.update(self._tokenize(module_name.replace("_", " ")))
             self._profile_tokens[module_name] = toks
+
+    def _coerce_max(self, value: int) -> int:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            n = 1
+        return max(1, min(self._absolute_max, n))
+
+    def set_max(self, value: int) -> int:
+        """Update the maximum sub-agent count at runtime.
+
+        Returns the value actually applied after clamping to the configured
+        absolute bounds.
+        """
+        self.max_subagents = self._coerce_max(value)
+        return self.max_subagents
 
     @staticmethod
     def _tokenize(text: str) -> set[str]:
