@@ -106,6 +106,7 @@ class AutonomyBrain(
         self._current_people = {}
         self._attempt_log = []
         self._owner_report_pending = False
+        self._llm_rate_limit_until = 0.0
         self._last_owner_scan = 0.0
         self._last_idle_action = 0.0
         self._reset_daily_timeline()

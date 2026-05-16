@@ -165,7 +165,9 @@ def get_router(cfg: dict) -> APIRouter:
         try:
             result = chat.chat(query_en)
         except requests.HTTPError as exc:
-            logger.warning("LLM upstream request failed: %s", exc)
+            from modules.config_center.log_redact import redact_secrets
+
+            logger.warning("LLM upstream request failed: %s", redact_secrets(exc))
             raise HTTPException(status_code=502, detail="LLM upstream request failed") from exc
         except Exception as exc:
             logger.exception("LLM chat failed: %s", exc)

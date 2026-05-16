@@ -1,9 +1,12 @@
 from __future__ import annotations
 import logging
 import os
+import time
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import requests
+
+from modules.config_center.log_redact import redact_secrets
 
 try:
     from ollama import Client  # type: ignore
@@ -256,15 +259,7 @@ class GoogleAIStudioClient:
             payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
 
         url = f"{self.base_url}/v1beta/models/{selected_model}:generateContent"
-        resp = requests.post(
-            url,
-            params={"key": self.api_key},
-            json=payload,
-            timeout=float(self.timeout),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
+        data = self._post_generate_content(url, payload)
         text = ""
         try:
             parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
@@ -273,6 +268,45 @@ class GoogleAIStudioClient:
             text = ""
 
         return {"message": {"content": text}, "raw": data}
+
+    def _post_generate_content(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        backoff_s = (2.0, 5.0)
+        last_exc: Optional[Exception] = None
+        for attempt in range(len(backoff_s) + 1):
+            try:
+                resp = requests.post(
+                    url,
+                    params={"key": self.api_key},
+                    json=payload,
+                    timeout=float(self.timeout),
+                )
+                if resp.status_code == 429 and attempt < len(backoff_s):
+                    logger.warning(
+                        "Gemini rate limited (429); retrying in %.0fs (attempt %d/%d)",
+                        backoff_s[attempt],
+                        attempt + 1,
+                        len(backoff_s),
+                    )
+                    time.sleep(backoff_s[attempt])
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except requests.HTTPError as exc:
+                last_exc = exc
+                if (
+                    exc.response is not None
+                    and exc.response.status_code == 429
+                    and attempt < len(backoff_s)
+                ):
+                    time.sleep(backoff_s[attempt])
+                    continue
+                raise RuntimeError(redact_secrets(str(exc))) from exc
+            except Exception as exc:
+                last_exc = exc
+                raise
+        if last_exc:
+            raise RuntimeError(redact_secrets(str(last_exc))) from last_exc
+        raise RuntimeError("Gemini request failed")
 
     def generate_with_image(
         self,
@@ -306,15 +340,7 @@ class GoogleAIStudioClient:
         }
 
         url = f"{self.base_url}/v1beta/models/{selected_model}:generateContent"
-        resp = requests.post(
-            url,
-            params={"key": self.api_key},
-            json=payload,
-            timeout=float(self.timeout),
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
+        data = self._post_generate_content(url, payload)
         try:
             parts = data.get("candidates", [])[0].get("content", {}).get("parts", [])
             return "\n".join(

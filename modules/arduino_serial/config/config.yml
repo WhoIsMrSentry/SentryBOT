@@ -11,6 +11,8 @@ esp_send_path: "/send"
 esp_health_path: "/healthz"
 esp_timeout_sec: 2.5
 esp_connect_timeout_sec: 1.5
+esp_pause_after_failures: 5   # stop HTTP spam when ESP is offline
+esp_pause_sec: 120
 
 # Legacy serial fallback config (used only when transport=serial)
 port: /dev/serial0

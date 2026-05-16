@@ -118,7 +118,10 @@ def main() -> None:
             logger.warning("Second interrupt — forcing exit now")
             _force_exit()
             return
+        print(f"\nShutdown signal ({signum}); stopping...", file=sys.stderr, flush=True)
         logger.info("Shutdown signal received (%s); stopping services...", signum)
+        sys.stdout.flush()
+        sys.stderr.flush()
         server.should_exit = True
         _stop_started_services(app)
         if force_timer is not None:
