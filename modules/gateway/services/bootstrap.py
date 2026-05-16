@@ -529,6 +529,8 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
         picam_frame_rate=int(ccfg.get("picamera2", {}).get("frame_rate", 30)),
         picam_af_mode=int(ccfg.get("picamera2", {}).get("af_mode", 2)),
         flip=str(ccfg.get("flip", "none")),
+        opencv_max_open_attempts=int(ccfg.get("opencv", {}).get("max_open_attempts", 5)),
+        opencv_retry_interval_s=float(ccfg.get("opencv", {}).get("retry_interval_s", 1.0)),
     )
     publisher = FramePublisher()
     capture = CameraCapture(cap_cfg, publisher)

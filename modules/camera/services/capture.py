@@ -51,6 +51,8 @@ class CaptureConfig:
     picam_frame_rate: int
     picam_af_mode: int
     flip: str
+    opencv_max_open_attempts: int = 5
+    opencv_retry_interval_s: float = 1.0
 
 
 class FramePublisher:
@@ -75,6 +77,11 @@ class CameraCapture:
         self._thread: Optional[threading.Thread] = None
         self._cap: Optional[Any] = None
         self._picam: Optional["Picamera2"] = None
+        self._gave_up = False
+
+    @property
+    def gave_up(self) -> bool:
+        return self._gave_up
 
     def _opencv_api_candidates(self, src: object) -> list[Optional[int]]:
         if cv2 is None or not isinstance(src, int):
@@ -193,6 +200,8 @@ class CameraCapture:
         def loop() -> None:
             q = self.cfg.jpeg_quality
             open_fail_count = 0
+            max_attempts = max(1, int(self.cfg.opencv_max_open_attempts))
+            retry_s = max(0.2, float(self.cfg.opencv_retry_interval_s))
             nonlocal cap, api_name
             while not self._stop.is_set():
                 if cap is None or not cap.isOpened():
@@ -200,13 +209,23 @@ class CameraCapture:
                     self._cap = cap
                     if cap is None:
                         open_fail_count += 1
-                        if open_fail_count == 1 or (open_fail_count % 10) == 0:
+                        if open_fail_count >= max_attempts:
+                            if not self._gave_up:
+                                self._gave_up = True
+                                logger.warning(
+                                    "OpenCV camera unavailable after %d attempts (source=%r); stopping retries",
+                                    max_attempts,
+                                    src,
+                                )
+                            break
+                        if open_fail_count == 1 or open_fail_count == max_attempts:
                             logger.warning(
-                                "OpenCV camera source not ready: source=%r attempt=%d",
+                                "OpenCV camera source not ready: source=%r attempt=%d/%d",
                                 src,
                                 open_fail_count,
+                                max_attempts,
                             )
-                        time.sleep(1.0)
+                        time.sleep(retry_s)
                         continue
 
                     open_fail_count = 0

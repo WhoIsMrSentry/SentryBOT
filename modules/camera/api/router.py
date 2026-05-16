@@ -28,9 +28,8 @@ def get_router(capture: CameraCapture, fps: int) -> APIRouter:
 
     @router.get("/healthz")
     async def healthz():
-        # simple check: snapshot availability
         data = await capture.snapshot()
-        return {"ok": bool(data)}
+        return {"ok": bool(data), "gave_up": capture.gave_up}
 
     @router.post("/start")
     async def start_camera():

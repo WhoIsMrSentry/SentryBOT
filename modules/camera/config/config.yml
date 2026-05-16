@@ -10,6 +10,8 @@ flip: none             # none | h | v | hv | 90 | 180 | 270
 opencv:
   fourcc: MJPG          # MJPG preferred on Windows webcams
   buffer_size: 1        # minimize latency
+  max_open_attempts: 5  # stop retrying when no camera attached
+  retry_interval_s: 1.0
 picamera2:
   size:
     width: 1536
