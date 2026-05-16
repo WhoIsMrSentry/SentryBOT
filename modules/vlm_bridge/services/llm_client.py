@@ -170,9 +170,7 @@ def generate_text(
     if provider in {"google", "google_ai_studio", "gemini"}:
         if bool(hint.get("google_key_ready")):
             return _generate_google_text(text, timeout=timeout)
-        endpoint = _normalize_endpoint(ollama_cfg)
-        if not endpoint.rstrip("/").endswith("/ollama/chat"):
-            return None
+        return None
 
     if httpx is None:
         return None
