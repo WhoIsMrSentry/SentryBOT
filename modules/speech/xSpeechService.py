@@ -9,10 +9,12 @@ except Exception:
     audioop = None
     # Don't fail import; we'll degrade direction/downmix functionality and log at runtime.
 from typing import Optional, Callable, Iterable
+import copy
 
 from modules.speech.config_loader import load_config
 from modules.speech.services.audio_capture import AudioCapture, get_shared_capture, release_shared_capture
 from modules.speech.services.recognizer import Recognizer, RecognitionResult
+from modules.speech.services.stt_language import resolve_stt_text_and_language
 from modules.speech.services.direction import DirectionEstimator
 from modules.speech.services.pan_tilt import PanTiltController
 from modules.arduino_serial.contract import build_set_servo_cmd, SERVO_INDEX_PAN
@@ -97,9 +99,25 @@ class SpeechService:
         self._on_result_cb: Optional[Callable[[RecognitionResult], None]] = None
         self._thread = None
         self.capture = get_shared_capture(self.cfg.get("audio", {}))
-        self.recognizer = Recognizer(self.cfg.get("recognition", {}))
         rec_cfg = self.cfg.get("recognition", {}) or {}
+        self.recognizer = Recognizer(rec_cfg)
         self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
+        self._default_language = str(rec_cfg.get("default_language") or self.source_language or "tr")
+        self._auto_language = bool(rec_cfg.get("auto_language", True))
+        self._auto_switch_model = bool(rec_cfg.get("auto_switch_model", True))
+        self._utterance_pcm = bytearray()
+        self._max_utterance_bytes = int(
+            rec_cfg.get("utterance_buffer_sec", 20) or 20
+        ) * int(rec_cfg.get("samplerate", 16000) or 16000) * 2
+        self._secondary_recognizer: Optional[Recognizer] = None
+        if self._auto_language and self._auto_switch_model:
+            en_cfg = copy.deepcopy(rec_cfg)
+            en_cfg["language"] = "en"
+            en_cfg.pop("model_path", None)
+            try:
+                self._secondary_recognizer = Recognizer(en_cfg)
+            except Exception as exc:
+                logger.warning("English Vosk model unavailable for auto STT: %s", exc)
         self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
         # Direction estimator (optional, needs stereo)
         dir_cfg = self.cfg.get("direction", {})
@@ -214,9 +232,38 @@ class SpeechService:
                 except Exception:
                     mono = _downmix_stereo_pcm(chunk, self.capture.cfg.dtype)
                 mono = _apply_gain_pcm16(mono, self._stt_input_gain)
+                self._append_utterance_pcm(mono)
                 yield mono
             else:
-                yield _apply_gain_pcm16(chunk, self._stt_input_gain)
+                mono = _apply_gain_pcm16(chunk, self._stt_input_gain)
+                self._append_utterance_pcm(mono)
+                yield mono
+
+    def _append_utterance_pcm(self, mono: bytes) -> None:
+        if not mono or not self._auto_language:
+            return
+        self._utterance_pcm.extend(mono)
+        overflow = len(self._utterance_pcm) - self._max_utterance_bytes
+        if overflow > 0:
+            del self._utterance_pcm[:overflow]
+
+    def clear_utterance_buffer(self) -> None:
+        self._utterance_pcm.clear()
+
+    def finalize_stt(self, text: str) -> tuple[str, str]:
+        """Apply language detection and optional EN Vosk re-decode."""
+        if not self._auto_language:
+            return str(text or "").strip(), self._default_language
+        pcm = bytes(self._utterance_pcm)
+        self.clear_utterance_buffer()
+        return resolve_stt_text_and_language(
+            text,
+            pcm,
+            primary=self.recognizer,
+            secondary=self._secondary_recognizer,
+            default_language=self._default_language,
+            auto_switch_model=self._auto_switch_model,
+        )
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         import threading

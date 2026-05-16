@@ -287,6 +287,10 @@ speech:
   recognition:
     source_language: tr
     language: tr
+    default_language: tr
+    auto_language: true
+    auto_switch_model: true
+    utterance_buffer_sec: 20
     model_path: null
     language_models:
       tr: models/vosk-tr

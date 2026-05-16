@@ -69,20 +69,23 @@ def get_router(service: SpeechService) -> APIRouter:
     def _cb(r):
         nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text
         text = (r.text or "").strip()
+        language = getattr(service, "source_language", "tr")
+        if r.is_final and hasattr(service, "finalize_stt"):
+            text, language = service.finalize_stt(text or last_nonempty_text)
         if text:
             last_nonempty_text = text
         last = {
             "text": text or last_nonempty_text or None,
             "final": r.is_final,
             "confidence": r.confidence,
-            "language": getattr(service, "source_language", "tr"),
+            "language": language,
             "ts": time.time(),
         }
         # STT logs should be visible even when downstream modules (e.g. ollama)
         # are offline; log both partial and final recognition results.
         if r.is_final:
             if text:
-                logger.info("STT >>> %s", text)
+                logger.info("STT >>> %s (lang=%s)", text, language)
             else:
                 logger.debug("stt final empty")
             last_partial_text = ""
@@ -94,7 +97,7 @@ def get_router(service: SpeechService) -> APIRouter:
                 last_partial_text = text
                 last_partial_ts = now
 
-        if r.is_final and r.text:
+        if r.is_final and (text or last_nonempty_text):
             threading.Thread(target=_notify_autonomy, daemon=True).start()
             if _mark_speaking(True):
                 _emit_speech_event("speech.start")
@@ -104,6 +107,8 @@ def get_router(service: SpeechService) -> APIRouter:
     async def start():
         was_listening = service.listening
         logger.info("speech start requested (was_listening=%s)", was_listening)
+        if hasattr(service, "clear_utterance_buffer"):
+            service.clear_utterance_buffer()
         service.start_background(on_result=_cb)
         logger.info("speech start handled (listening=%s)", service.listening)
         if not was_listening:
