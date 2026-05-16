@@ -69,6 +69,10 @@ class SerialTransport:
 
 
 class xArduinoSerialService:
+    _class_esp_paused_until: float = 0.0
+    _class_esp_pause_logged: bool = False
+    _class_esp_fail_streak: int = 0
+
     """NDJSON tabanlı Arduino seri haberleşme servisi.
 
     - Her satır bir JSON mesajıdır. `{ "cmd": ... }` gönderilir.
@@ -163,26 +167,31 @@ class xArduinoSerialService:
         return f"{self._esp_base_url}{p}"
 
     def _esp_is_paused(self) -> bool:
-        return time.time() < self._esp_paused_until
+        return time.time() < max(self._esp_paused_until, self._class_esp_paused_until)
 
     def _esp_note_failure(self, exc: Exception) -> None:
-        self._esp_fail_streak += 1
-        if self._esp_fail_streak < self._esp_pause_after:
+        self._class_esp_fail_streak += 1
+        if self._class_esp_fail_streak < self._esp_pause_after:
             return
-        self._esp_paused_until = time.time() + self._esp_pause_sec
-        if not self._esp_pause_logged:
+        until = time.time() + self._esp_pause_sec
+        self._esp_paused_until = until
+        xArduinoSerialService._class_esp_paused_until = until
+        if not self._class_esp_pause_logged:
             self._logger.warning(
                 "ESP bridge unreachable after %d failures (%s); pausing HTTP for %.0fs",
-                self._esp_fail_streak,
+                self._class_esp_fail_streak,
                 exc.__class__.__name__,
                 self._esp_pause_sec,
             )
-            self._esp_pause_logged = True
+            xArduinoSerialService._class_esp_pause_logged = True
 
     def _esp_note_success(self) -> None:
         self._esp_fail_streak = 0
         self._esp_paused_until = 0.0
         self._esp_pause_logged = False
+        xArduinoSerialService._class_esp_fail_streak = 0
+        xArduinoSerialService._class_esp_paused_until = 0.0
+        xArduinoSerialService._class_esp_pause_logged = False
 
     def _esp_post(self, path: str, payload: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         if requests is None:

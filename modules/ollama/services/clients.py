@@ -176,6 +176,21 @@ class LLMClientProtocol(Protocol):
 class GoogleAIStudioClient:
     """Google AI Studio (Gemini) REST istemcisi."""
 
+    _rate_limited_until: float = 0.0
+    _RATE_LIMIT_COOLDOWN_S: float = 120.0
+
+    @classmethod
+    def is_rate_limited(cls) -> bool:
+        return time.time() < cls._rate_limited_until
+
+    @classmethod
+    def rate_limit_remaining_s(cls) -> int:
+        return max(0, int(cls._rate_limited_until - time.time()))
+
+    @classmethod
+    def _arm_rate_limit(cls) -> None:
+        cls._rate_limited_until = time.time() + cls._RATE_LIMIT_COOLDOWN_S
+
     def __init__(
         self,
         api_key: str,
@@ -270,6 +285,10 @@ class GoogleAIStudioClient:
         return {"message": {"content": text}, "raw": data}
 
     def _post_generate_content(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        if self.is_rate_limited():
+            raise RuntimeError(
+                f"Gemini rate limited; retry in {self.rate_limit_remaining_s()}s"
+            )
         backoff_s = (2.0, 5.0)
         last_exc: Optional[Exception] = None
         for attempt in range(len(backoff_s) + 1):
@@ -280,26 +299,32 @@ class GoogleAIStudioClient:
                     json=payload,
                     timeout=float(self.timeout),
                 )
-                if resp.status_code == 429 and attempt < len(backoff_s):
-                    logger.warning(
-                        "Gemini rate limited (429); retrying in %.0fs (attempt %d/%d)",
-                        backoff_s[attempt],
-                        attempt + 1,
-                        len(backoff_s),
+                if resp.status_code == 429:
+                    if attempt < len(backoff_s):
+                        logger.warning(
+                            "Gemini rate limited (429); retrying in %.0fs (attempt %d/%d)",
+                            backoff_s[attempt],
+                            attempt + 1,
+                            len(backoff_s),
+                        )
+                        time.sleep(backoff_s[attempt])
+                        continue
+                    self._arm_rate_limit()
+                    raise RuntimeError(
+                        f"Gemini rate limited (429); cooldown {int(self._RATE_LIMIT_COOLDOWN_S)}s"
                     )
-                    time.sleep(backoff_s[attempt])
-                    continue
                 resp.raise_for_status()
                 return resp.json()
             except requests.HTTPError as exc:
                 last_exc = exc
-                if (
-                    exc.response is not None
-                    and exc.response.status_code == 429
-                    and attempt < len(backoff_s)
-                ):
-                    time.sleep(backoff_s[attempt])
-                    continue
+                if exc.response is not None and exc.response.status_code == 429:
+                    if attempt < len(backoff_s):
+                        time.sleep(backoff_s[attempt])
+                        continue
+                    self._arm_rate_limit()
+                    raise RuntimeError(
+                        f"Gemini rate limited (429); cooldown {int(self._RATE_LIMIT_COOLDOWN_S)}s"
+                    ) from exc
                 raise RuntimeError(redact_secrets(str(exc))) from exc
             except Exception as exc:
                 last_exc = exc

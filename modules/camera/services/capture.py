@@ -255,12 +255,19 @@ class CameraCapture:
         if cv2 is None:
             raise RuntimeError("OpenCV (cv2) is required for JPEG encoding with picamera2 backend")
         cam = Picamera2()
-        w, h = self.cfg.picam_size
-        cam.configure(cam.create_video_configuration(
-            main={"size": (w, h), "format": self.cfg.picam_format},
-            controls={"AfMode": self.cfg.picam_af_mode, "FrameRate": self.cfg.picam_frame_rate}
-        ))
-        cam.start()
+        try:
+            w, h = self.cfg.picam_size
+            cam.configure(cam.create_video_configuration(
+                main={"size": (w, h), "format": self.cfg.picam_format},
+                controls={"AfMode": self.cfg.picam_af_mode, "FrameRate": self.cfg.picam_frame_rate}
+            ))
+            cam.start()
+        except Exception:
+            try:
+                cam.close()
+            except Exception:
+                pass
+            raise
         self._picam = cam
 
         def _apply_flip(img):
