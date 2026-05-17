@@ -405,7 +405,13 @@ def _include_vlm_bridge(app: FastAPI, started: Dict[str, object]) -> None:
             logger.warning("vlm_bridge stream start skipped: %s", exc)
     # Mount router and expose processor so other modules can reference it
     try:
-        app.include_router(get_vlm_router(processor, started.get("arduino")))
+        app.include_router(
+            get_vlm_router(
+                processor,
+                started.get("arduino"),
+                gateway_base_url=str(started.get("gateway_base_url", "")),
+            )
+        )
     except Exception:
         # If router mount fails, continue in degraded mode
         pass
@@ -417,15 +423,19 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
     from modules.interactions.api.router import get_router as get_inter_router  # type: ignore
     from modules.interactions.config_loader import load_config as load_inter_cfg  # type: ignore
     from modules.interactions.services.engine import InteractionEngine  # type: ignore
-    icfg = load_inter_cfg(None, overrides=_agent_section("interactions") or None)
-    # Force interactions to talk to gateway's neopixel endpoint instead of standalone 8092
-    try:
-        port = int(cfg.get("server", {}).get("port", 8080))
-        icfg.setdefault("adapter", {})["http_base_url"] = f"http://127.0.0.1:{port}/neopixel"
-    except Exception:
-        pass
-    # If neopixel runner is already started in-process, pass it to InteractionEngine
-    eng = InteractionEngine(icfg, neo_client=started.get("neopixel"))
+    from modules.gateway.url import gateway_url, rewrite_loopback_urls  # type: ignore
+
+    base = str(started.get("gateway_base_url", "http://127.0.0.1:8080"))
+    icfg = rewrite_loopback_urls(
+        load_inter_cfg(None, overrides=_agent_section("interactions") or None),
+        base,
+    )
+    icfg.setdefault("adapter", {})["http_base_url"] = gateway_url(base, "/neopixel")
+    eng = InteractionEngine(
+        icfg,
+        neo_client=started.get("neopixel"),
+        expression_arbiter=started.get("expression_arbiter"),
+    )
     if _should_autostart_services():
         eng.start()
     else:
@@ -435,9 +445,15 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
 
 
 def _include_speak(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.gateway.url import gateway_url  # type: ignore
     from modules.speak.xSpeakService import SpeakService  # type: ignore
     from modules.speak.api.router import get_router as get_speak_router  # type: ignore
+
+    base = str(started.get("gateway_base_url", "http://127.0.0.1:8080"))
     svc = SpeakService()
+    liveliness = svc.cfg.get("liveliness", {}) if isinstance(svc.cfg.get("liveliness", {}), dict) else {}
+    liveliness["interactions_base_url"] = gateway_url(base, "/interactions")
+    svc.cfg["liveliness"] = liveliness
     started["speak"] = svc
     app.include_router(get_speak_router(svc))
     logger.info("module speak mounted")
@@ -474,14 +490,29 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
                 pass
     except Exception:
         pass
-    app.include_router(get_speech_router(svc))
+    app.include_router(get_speech_router(svc, gateway_base_url=str(started.get("gateway_base_url", ""))))
     logger.info("module speech mounted")
 
 
 def _include_wakeword(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.gateway.url import gateway_url  # type: ignore
     from modules.wakeword.xWakewordService import WakewordService  # type: ignore
     from modules.wakeword.api import get_router as get_wakeword_router  # type: ignore
+
+    from modules.wakeword.xWakewordService import WakewordActions  # type: ignore
+
+    base = str(started.get("gateway_base_url", "http://127.0.0.1:8080"))
     svc = WakewordService()
+    actions = dict(svc.cfg.get("actions", {}) or {})
+    actions.update({
+        "speech_start_url": gateway_url(base, "/speech/start"),
+        "speech_stop_url": gateway_url(base, "/speech/stop"),
+        "speak_stop_url": gateway_url(base, "/speak/stop"),
+        "agent_interrupt_url": gateway_url(base, "/agent/speech/interrupt"),
+        "speech_last_url": gateway_url(base, "/speech/last"),
+        "interactions_event_url": gateway_url(base, "/interactions/event"),
+    })
+    svc.actions = WakewordActions(actions)
     if _should_autostart_services():
         svc.start_background()
     else:
@@ -567,11 +598,10 @@ def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.animate.api.router import get_router as get_anim_router  # type: ignore
     ardu = started.get("arduino")
     anim_overrides = _agent_section("animate") or None
-    anim = (
-        xAnimateService(serial=ardu, config_overrides=anim_overrides)
-        if ardu is not None
-        else xAnimateService(config_overrides=anim_overrides)
-    )
+    if ardu is None:
+        logger.warning("animate skipped: arduino module not mounted (no duplicate serial)")
+        return
+    anim = xAnimateService(serial=ardu, config_overrides=anim_overrides)
     if _should_autostart_services() and hasattr(anim, "start"):
         try:
             anim.start()
@@ -590,8 +620,13 @@ def _include_piservo(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.piservo.services.driver import ServoConfig  # type: ignore
     from modules.piservo.services.runner import EarRunner  # type: ignore
     pcfg = _merge_with_agent_section(load_piservo_cfg(None), "piservo")
-    left = ServoConfig(**pcfg.get("left", {"gpio": 12}))
-    right = ServoConfig(**pcfg.get("right", {"gpio": 13}))
+    left_raw = dict(pcfg.get("left", {"gpio": 12}))
+    right_raw = dict(pcfg.get("right", {"gpio": 13}))
+    if started.get("arduino") is not None:
+        left_raw.pop("arduino_index", None)
+        right_raw.pop("arduino_index", None)
+    left = ServoConfig(**left_raw)
+    right = ServoConfig(**right_raw)
     ears = EarRunner(left_cfg=left, right_cfg=right)
     started["piservo"] = ears
     app.include_router(get_piservo_router(ears))
@@ -599,9 +634,17 @@ def _include_piservo(app: FastAPI, started: Dict[str, object]) -> None:
 
 
 def _include_autonomy(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.gateway.url import patch_service_endpoints  # type: ignore
     from modules.autonomy.xAutonomyService import xAutonomyService  # type: ignore
     from modules.autonomy.api.router import get_router as get_autonomy_router  # type: ignore
-    svc = xAutonomyService(config_overrides=_agent_section("autonomy") or None)
+
+    autonomy_overrides = dict(_agent_section("autonomy") or {})
+    endpoints = dict(autonomy_overrides.get("endpoints", {}) or {})
+    autonomy_overrides["endpoints"] = patch_service_endpoints(
+        endpoints,
+        str(started.get("gateway_base_url", "http://127.0.0.1:8080")),
+    )
+    svc = xAutonomyService(config_overrides=autonomy_overrides)
     if _should_autostart_services():
         svc.start()
     else:
@@ -679,7 +722,10 @@ def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:
     state_store = started.get("state_manager")
     interactions = started.get("interactions")
 
-    svc = xOledFacesService(state_store=state_store)
+    svc = xOledFacesService(
+        state_store=state_store,
+        expression_arbiter=started.get("expression_arbiter"),
+    )
 
     if interactions is not None and hasattr(interactions, "register_event_handler"):
         try:
@@ -697,9 +743,29 @@ def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:
     logger.info("module oled_faces mounted")
 
 
+def _init_gateway_base_url(started: Dict[str, object], cfg: Dict[str, Any]) -> str:
+    from modules.gateway.url import resolve_gateway_base_url  # type: ignore
+
+    base = resolve_gateway_base_url(cfg, started=started)
+    started["gateway_base_url"] = base
+    try:
+        from modules.agent_core.services.expression_arbiter import ExpressionArbiter  # type: ignore
+
+        started.setdefault("expression_arbiter", ExpressionArbiter())
+    except Exception as exc:
+        logger.warning("expression arbiter init skipped: %s", exc)
+    return base
+
+
+_CRITICAL_MODULES = frozenset(
+    {"arduino", "camera", "autonomy", "agent_core", "speech", "wakeword", "speak", "ollama"}
+)
+
+
 def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
     """Start and wire modules according to cfg.include and return started dict."""
     started: Dict[str, object] = {}
+    gateway_base = _init_gateway_base_url(started, cfg)
 
     include = cfg.get("include", {})
 
@@ -707,7 +773,8 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         try:
             fn()
         except Exception as exc:
-            logger.warning("module %s failed to mount: %s", name or fn.__name__, exc)
+            log = logger.error if name in _CRITICAL_MODULES else logger.warning
+            log("module %s failed to mount: %s", name or fn.__name__, exc)
 
     # social_db is the persistence backbone for identity, mood and rituals; mount first.
     if include.get("social_db", True):
@@ -717,6 +784,9 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         _try(lambda: _include_arduino(app, started), "arduino")
     if include.get("esp_link"):
         _try(lambda: _include_esp_link(app, started), "esp_link")
+    # Camera before VLM so HTTP healthz / MJPEG exist before stream capture starts.
+    if include.get("camera"):
+        _try(lambda: _include_camera(app, started), "camera")
     if include.get("vlm_bridge"):
         _try(lambda: _include_vlm_bridge(app, started), "vlm_bridge")
     if include.get("neopixel"):
@@ -725,16 +795,14 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         _try(lambda: _include_interactions(app, started, cfg), "interactions")
     if include.get("speak"):
         _try(lambda: _include_speak(app, started), "speak")
-    if include.get("speech"):
-        _try(lambda: _include_speech(app, started), "speech")
     if include.get("wakeword"):
         _try(lambda: _include_wakeword(app, started), "wakeword")
+    if include.get("speech"):
+        _try(lambda: _include_speech(app, started), "speech")
     if include.get("ollama"):
         _try(lambda: _include_ollama(app, started), "ollama")
     if include.get("logs"):
         _try(lambda: _include_logs(app, started), "logs")
-    if include.get("camera"):
-        _try(lambda: _include_camera(app, started), "camera")
     if include.get("animate"):
         _try(lambda: _include_animate(app, started), "animate")
     if include.get("piservo"):
@@ -819,9 +887,14 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             )
             Scheduler = __import__("modules.scheduler.services.runner", fromlist=["Scheduler"]).Scheduler
             get_router = __import__("modules.scheduler.api.router", fromlist=["get_router"]).get_router
+            gw_base = str(
+                cfg_sc.get("gateway_base_url")
+                or started.get("gateway_base_url")
+                or f"http://127.0.0.1:{int(cfg.get('server', {}).get('port', 8080))}"
+            )
             sched = Scheduler(
                 jobs=cfg_sc.get("jobs", []),
-                gateway_base_url=str(cfg_sc.get("gateway_base_url", "http://127.0.0.1:8080")),
+                gateway_base_url=gw_base,
             )
             if _should_autostart_services():
                 sched.start()
@@ -961,6 +1034,24 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             logger.info("onsensor bus -> vlm_bridge subscriber attached")
         except Exception as exc:
             logger.warning("onsensor bus attach failed: %s", exc)
+
+    interactions = started.get("interactions")
+    piservo = started.get("piservo")
+    if interactions is not None and piservo is not None and hasattr(interactions, "register_event_handler"):
+        def _piservo_on_interaction(evt: str, data: Dict[str, Any]) -> None:
+            if evt != "wakeword.detected":
+                return
+            try:
+                if hasattr(piservo, "gesture"):
+                    piservo.gesture("wakeword")
+            except Exception:
+                pass
+
+        try:
+            interactions.register_event_handler(_piservo_on_interaction)
+            logger.info("interactions wakeword -> piservo gesture bridge mounted")
+        except Exception as exc:
+            logger.warning("piservo interactions bridge mount failed: %s", exc)
 
     return started
 

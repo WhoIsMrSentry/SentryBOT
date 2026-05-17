@@ -31,7 +31,7 @@ wakeword:
     - "sentry"
   trigger_on_partial: true
   min_confidence: 0.0
-  cooldown_sec: 3.0
+  cooldown_sec: 1.2
 
 openwakeword:
   # model_paths can be a list or a map: {label: path}
@@ -56,12 +56,12 @@ openwakeword:
   verifier_path: null  # optional path to verifier joblib trained with train_verifier.py
 
 actions:
-  speech_start_url: "http://localhost:8080/speech/start"
-  speech_stop_url: "http://localhost:8080/speech/stop"
-  speak_stop_url: "http://localhost:8080/speak/stop"
-  agent_interrupt_url: "http://localhost:8080/agent/speech/interrupt"
-  speech_last_url: "http://localhost:8080/speech/last"
-  interactions_event_url: "http://localhost:8080/interactions/event"
+  speech_start_url: "@gateway/speech/start"
+  speech_stop_url: "@gateway/speech/stop"
+  speak_stop_url: "@gateway/speak/stop"
+  agent_interrupt_url: "@gateway/agent/speech/interrupt"
+  speech_last_url: "@gateway/speech/last"
+  interactions_event_url: "@gateway/interactions/event"
   listen_window_sec: 8.0
   min_listen_before_final_sec: 1.5   # ignore early finals (often the wakeword itself)
   stop_on_final: true

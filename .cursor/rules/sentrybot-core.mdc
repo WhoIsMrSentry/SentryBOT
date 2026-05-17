@@ -13,8 +13,25 @@ alwaysApply: true
 5. **Modül yapısı** — `x<Name>Service.py` + `config_loader.py` + `api/router.py`
 
 ## Agent & Skill Sistemi
-Tüm detaylı prosedürler `.sentrybot/` dizininde:
-- `.sentrybot/agents/` — 5 iş akışı yöneticisi
-- `.sentrybot/skills/` — 12 adım adım prosedür
-- `.sentrybot/context/` — Modül listesi, API haritası, mimari özet, kurallar
-- `.sentrybot/templates/` — Modül iskelet şablonları
+Tüm detaylı prosedürler ve roller `.sentrybot/` dizininde tanımlanmıştır. Bir işlem yaparken **MUTLAKA** ilgili dosyayı okumalı ve oradaki adımları uygulamalısın.
+
+### 🤖 İş Akışı Yöneticileri (Agents)
+- **Yeni Modül Oluşturma**: `.sentrybot/agents/module-creator.md`
+- **Mevcut Modül Düzenleme**: `.sentrybot/agents/module-editor.md`
+- **GitHub İşlemleri (PR, Issue, CI)**: `.sentrybot/agents/github-ops.md`
+- **Modüller Arası Etkileşim**: `.sentrybot/agents/inter-module.md`
+- **Kod İnceleme**: `.sentrybot/agents/code-reviewer.md`
+
+### 🛠️ Adım Adım Prosedürler (Skills)
+- **Modül İskeleti Oluşturma**: `.sentrybot/skills/scaffold-module.md`
+- **API Endpoint Ekleme**: `.sentrybot/skills/add-api-endpoint.md`
+- **Service Class Ekleme**: `.sentrybot/skills/add-service-class.md`
+- **Config Güncelleme**: `.sentrybot/skills/update-config.md`
+- **Test Yazma**: `.sentrybot/skills/write-tests.md`
+- **Mimari Doküman Yazma**: `.sentrybot/skills/write-architecture-doc.md`
+- **Arduino Kontrat Ekleme**: `.sentrybot/skills/arduino-contract.md`
+- **Gateway Modül Kaydı**: `.sentrybot/skills/gateway-bootstrap.md`
+- **PR Oluşturma**: `.sentrybot/skills/create-pr.md`
+- **Issue Oluşturma**: `.sentrybot/skills/create-issue.md`
+- **Modül Bağımlılık Haritası**: `.sentrybot/skills/module-dependency-map.md`
+- **Modül Hata Ayıklama (Debug)**: `.sentrybot/skills/debug-module.md`

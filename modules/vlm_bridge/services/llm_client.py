@@ -12,7 +12,13 @@ except Exception:
 
 logger = logging.getLogger("vlm_bridge.llm")
 
-_DEFAULT_CHAT_ENDPOINT = "http://localhost:8080/ollama/chat"
+def _default_chat_endpoint() -> str:
+    try:
+        from modules.gateway.url import gateway_url, resolve_gateway_base_url
+
+        return gateway_url(resolve_gateway_base_url(), "/ollama/chat")
+    except Exception:
+        return "http://127.0.0.1:8080/ollama/chat"
 _DEFAULT_GENERATE_ENDPOINT = "http://127.0.0.1:11434/api/generate"
 _CHAT_COOLDOWN_UNTIL: Dict[str, float] = {}
 
@@ -34,7 +40,7 @@ def _derive_chat_endpoint_from_base_url(raw: str) -> str:
 def _resolve_default_chat_endpoint() -> str:
     env_chat = str(os.getenv("VLM_OLLAMA_CHAT_ENDPOINT", "")).strip()
     if env_chat:
-        return _derive_chat_endpoint_from_base_url(env_chat) or _DEFAULT_CHAT_ENDPOINT
+        return _derive_chat_endpoint_from_base_url(env_chat) or _default_chat_endpoint()
 
     env_base = str(
         os.getenv("AGENT_OLLAMA_BASE_URL")
@@ -43,7 +49,7 @@ def _resolve_default_chat_endpoint() -> str:
         or ""
     ).strip()
     if env_base:
-        return _derive_chat_endpoint_from_base_url(env_base) or _DEFAULT_CHAT_ENDPOINT
+        return _derive_chat_endpoint_from_base_url(env_base) or _default_chat_endpoint()
 
     try:
         from modules.vlm_bridge.config_loader import load_config as load_vlm_config  # type: ignore
@@ -52,11 +58,11 @@ def _resolve_default_chat_endpoint() -> str:
         ollama_cfg = cfg.get("ollama", {}) if isinstance(cfg, dict) else {}
         endpoint = str(ollama_cfg.get("endpoint", "")).strip()
         if endpoint:
-            return _derive_chat_endpoint_from_base_url(endpoint) or _DEFAULT_CHAT_ENDPOINT
+            return _derive_chat_endpoint_from_base_url(endpoint) or _default_chat_endpoint()
     except Exception:
         pass
 
-    return _DEFAULT_CHAT_ENDPOINT
+    return _default_chat_endpoint()
 
 
 def _normalize_endpoint(cfg: Dict[str, Any]) -> str:
@@ -213,7 +219,7 @@ def generate_text(
                 _CHAT_COOLDOWN_UNTIL.pop(endpoint, None)
                 return out or None
 
-            chat_url = endpoint or _DEFAULT_CHAT_ENDPOINT
+            chat_url = endpoint or _default_chat_endpoint()
             if _is_in_cooldown(chat_url):
                 return None
             # Ollama router's chat_post currently reads scalar args as query params.

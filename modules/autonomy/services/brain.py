@@ -31,6 +31,8 @@ except ImportError:
 
 logger = logging.getLogger("autonomy")
 
+_PAUSED_OPERATIONAL = frozenset({"sleep", "maintenance", "paused", "off", "shutdown", "resting"})
+
 
 class AutonomyBrain(
     AnimationSupportMixin,
@@ -213,7 +215,18 @@ class AutonomyBrain(
         except Exception:
             pass
 
+    def _companion_paused(self) -> bool:
+        if bool(self.state.get("is_sleeping")):
+            return True
+        try:
+            op = self.client.get_operational_mode()
+            return str(op).strip().lower() in _PAUSED_OPERATIONAL
+        except Exception:
+            return False
+
     def _sense_speech_text(self):
+        if self._companion_paused():
+            return
         try:
             speech = self.client.get_last_speech()
             if speech and speech.get("final") and speech.get("text"):
@@ -221,6 +234,8 @@ class AutonomyBrain(
                 lang = str(speech.get("language") or self.state.get("last_speech_language") or "tr")
                 elapsed = time.time() - self.state["last_speech_time"]
                 if text != self.state["last_speech_text"] and elapsed > self._speech_min_interval_s:
+                    if self._speech_busy:
+                        return
                     self.state["last_speech_text"] = text
                     self.state["last_speech_time"] = time.time()
                     self.state["last_speech_language"] = lang
@@ -247,7 +262,7 @@ class AutonomyBrain(
         self._last_emotion_sync_ts = now
         self.state["last_emotion"] = target_emotion
         self.client.update_emotions([target_emotion])
-        self.client.push_interaction_event(f"emotion.{target_emotion}")
+        self.client.push_interaction_event(f"emotion:{target_emotion}")
         self._apply_emotion_visual_state(target_emotion)
         # Try to run a matching scene for the dominant emotion (e.g. emotion_joy)
         try:
@@ -266,6 +281,14 @@ class AutonomyBrain(
         now = time.time()
         self._ensure_timeline_day()
         self._refresh_rfid_authorization()
+
+        if self._companion_paused() and not self.state.get("is_sleeping"):
+            try:
+                op = self.client.get_operational_mode()
+                if str(op).strip().lower() in _PAUSED_OPERATIONAL:
+                    self.state["is_sleeping"] = str(op).strip().lower() == "sleep"
+            except Exception:
+                pass
 
         self._check_sleep_cycle()
         if self.state["is_sleeping"]:

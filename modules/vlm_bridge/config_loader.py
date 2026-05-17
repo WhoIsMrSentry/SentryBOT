@@ -267,4 +267,7 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
             root_google,
         )
 
-    return _enforce_policy(cfg, root_cfg)
+    cfg = _enforce_policy(cfg, root_cfg)
+    from modules.gateway.url import gateway_base_from_agent_cfg, rewrite_loopback_urls
+
+    return rewrite_loopback_urls(cfg, gateway_base_from_agent_cfg(root_cfg))

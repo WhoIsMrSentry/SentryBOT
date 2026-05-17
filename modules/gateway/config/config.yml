@@ -34,7 +34,8 @@ speech:
   listening: false
 
 security:
-  enabled: false
+  enabled: true
+  trust_loopback: true
   api_key_header: X-API-Key
   role_header: X-Role
   api_keys: []

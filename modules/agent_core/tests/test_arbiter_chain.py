@@ -5,6 +5,7 @@ arbiter snapshot."""
 from __future__ import annotations
 
 from typing import Any, Dict, List
+from unittest.mock import patch
 
 from modules.agent_core.services.action_arbiter import ActionArbiter, ActionRequest
 from modules.agent_core.services.expression_arbiter import ExpressionArbiter
@@ -35,7 +36,8 @@ def test_vision_arbiter_blocks_concurrent_vlm_tools():
     registry = _build_registry(arbiter)
 
     arbiter.acquire("external", ttl_s=10.0)
-    result = registry.execute("describe_scene", {})
+    with patch.object(registry, "_camera_input_available", return_value=True):
+        result = registry.execute("describe_scene", {})
     assert "vision arbiter busy" in result
 
 

@@ -46,7 +46,7 @@ def run_http_checks(
     try:
         import httpx  # type: ignore
     except Exception:
-        return {"ok": True, "note": "httpx not installed; skipped"}
+        return {"ok": False, "note": "httpx not installed", "failed": ["httpx"]}
 
     normalized = _normalize_checks(checks)
     out: Dict[str, Any] = {"ok": True, "failed": [], "degraded": []}
@@ -70,8 +70,21 @@ def run_http_checks(
                 resp = client.request(method, path, timeout=max(0.1, timeout_ms / 1000.0))
                 latency_ms = int((time.perf_counter() - t0) * 1000)
                 status_ok = resp.status_code == 200
+                body_ok = True
+                if path.endswith("/speak/status"):
+                    try:
+                        payload = resp.json()
+                        body_ok = bool(payload.get("ready", False))
+                    except Exception:
+                        body_ok = False
+                elif path.endswith("/speech/status"):
+                    try:
+                        payload = resp.json()
+                        body_ok = bool(payload.get("model_ready", payload.get("listening", False)))
+                    except Exception:
+                        body_ok = False
                 latency_ok = latency_ms <= latency_warn_ms
-                ok = bool(status_ok and latency_ok)
+                ok = bool(status_ok and body_ok and latency_ok)
                 out[name] = {
                     "ok": ok,
                     "critical": critical,

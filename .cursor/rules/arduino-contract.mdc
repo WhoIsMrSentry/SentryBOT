@@ -1,7 +1,6 @@
 ---
-description: "Arduino serial modülüyle çalışırken veya donanım komutu gönderen kod yazarken aktif olur."
-globs: ["modules/arduino_serial/**", "modules/autonomy/**", "modules/vlm_bridge/**", "modules/animate/**", "modules/calibration/**"]
-alwaysApply: false
+description: "Arduino seri iletişimi, donanım komutları ve contract.py kullanımı kuralları."
+alwaysApply: true
 ---
 
 # Arduino Kontrat Kuralları

@@ -169,13 +169,13 @@ class OTAService:
         res.update({"name": name, "sha": sha})
         return res
 
-    def upload_path(self, path: str) -> Dict[str, Any]:
+    def upload_path(self, path: str, signature: str | None = None) -> Dict[str, Any]:
         if not os.path.exists(path):
             return {"ok": False, "error": "file not found"}
         name, sha = self.uploader.compute_version(path)
         if self.uploader.already_uploaded(name, sha):
             return {"ok": True, "skipped": True, "name": name, "sha": sha}
-        res = self.uploader.upload(path)
+        res = self.uploader.upload(path, signature=signature)
         if res.get("ok"):
             self.uploader.mark_uploaded(name, sha)
         res.update({"name": name, "sha": sha})

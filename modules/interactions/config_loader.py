@@ -61,4 +61,10 @@ def load_config(config_path: Optional[str] = None, overrides: Optional[Dict[str,
     cfg = _merge(base, data)
     if overrides:
         cfg = _merge(cfg, overrides)
+    try:
+        from modules.gateway.url import resolve_gateway_base_url, rewrite_loopback_urls
+
+        cfg = rewrite_loopback_urls(cfg, resolve_gateway_base_url())
+    except Exception:
+        pass
     return cfg

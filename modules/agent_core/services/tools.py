@@ -19,6 +19,7 @@ class ToolRegistry:
         tool_execution_arbiter=None,
         vision_arbiter=None,
         vlm_ask_timeout_s: float = 22.0,
+        gateway_base_url: str = "",
     ):
         self.client = client
         self.memory = memory
@@ -28,6 +29,16 @@ class ToolRegistry:
         self.tool_execution_arbiter = tool_execution_arbiter
         self.vision_arbiter = vision_arbiter
         self.vlm_ask_timeout_s = float(vlm_ask_timeout_s)
+        if gateway_base_url:
+            gw = str(gateway_base_url).rstrip("/")
+        else:
+            try:
+                from modules.gateway.url import resolve_gateway_base_url
+
+                gw = resolve_gateway_base_url()
+            except Exception:
+                gw = "http://127.0.0.1:8080"
+        self._gateway_base_url = gw
         self.status_hook: Optional[Callable[[Dict[str, Any]], None]] = None
 
         self.tools: Dict[str, Callable] = {}
@@ -37,11 +48,32 @@ class ToolRegistry:
 
     # ── Vision arbitration helpers ───────────────────────────────────
     _VLM_TOOL_NAMES: frozenset = frozenset({
+        "get_vision",
         "get_visual_context",
         "describe_scene",
         "ask_vlm_about_scene",
         "focus_person",
     })
+
+    def _url(self, path: str) -> str:
+        return f"{self._gateway_base_url}/{str(path).lstrip('/')}"
+
+    def _camera_input_available(self) -> bool:
+        try:
+            import requests
+
+            resp = requests.get(self._url("camera/healthz"), timeout=0.5)
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            if not isinstance(data, dict):
+                return False
+            return bool(data.get("ok")) and not bool(data.get("gave_up", False))
+        except Exception:
+            return False
+
+    def _vision_unavailable_message(self) -> str:
+        return "Kamera görüntüsü şu an kullanılamıyor; görme araçları devre dışı."
 
     def _acquire_vision(self, tool_name: str) -> bool:
         if self.vision_arbiter is None or tool_name not in self._VLM_TOOL_NAMES:
@@ -81,6 +113,13 @@ class ToolRegistry:
                     })
                     return f"Error executing {tool_name}: resource busy"
                 acquired = True
+            if tool_name in self._VLM_TOOL_NAMES and not self._camera_input_available():
+                self._emit_status({
+                    "type": "tool_error",
+                    "tool": tool_name,
+                    "error": "camera_unavailable",
+                })
+                return self._vision_unavailable_message()
             if not self._acquire_vision(tool_name):
                 self._emit_status({
                     "type": "tool_error",
@@ -613,7 +652,7 @@ class ToolRegistry:
             return "Error: Vision client disconnected."
         try:
             import requests
-            resp = requests.get("http://127.0.0.1:8080/vlm/context/latest", timeout=2.0)
+            resp = requests.get(self._url("vlm/context/latest"), timeout=2.0)
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("available"):
@@ -630,7 +669,7 @@ class ToolRegistry:
                         parts.append(f"Hazards: {hazards}")
                     parts.append(f"Importance: {ctx.get('importance_score', 0.0)}")
                     return " | ".join(parts) if parts else "Scene is empty."
-                refresh = requests.post("http://127.0.0.1:8080/vlm/context/refresh", timeout=8.0)
+                refresh = requests.post(self._url("vlm/context/refresh"), timeout=8.0)
                 if refresh.status_code == 200:
                     rdata = refresh.json()
                     rctx = rdata.get("context") or {}
@@ -648,7 +687,7 @@ class ToolRegistry:
             return "Error: Vision client disconnected."
         try:
             import requests
-            resp = requests.get("http://127.0.0.1:8080/vlm/context/latest", timeout=2.0)
+            resp = requests.get(self._url("vlm/context/latest"), timeout=2.0)
             if resp.status_code == 200:
                 data = resp.json()
                 ctx = data.get("context", {})
@@ -665,7 +704,7 @@ class ToolRegistry:
         try:
             import requests
             resp = requests.post(
-                "http://127.0.0.1:8080/vlm/person/remember",
+                self._url("vlm/person/remember"),
                 json={"name": name, "relationship": relationship, "recognition_level": recognition_level},
                 timeout=2.0,
             )
@@ -680,7 +719,7 @@ class ToolRegistry:
         try:
             import requests
             resp = requests.post(
-                "http://127.0.0.1:8080/vlm/person/relationship",
+                self._url("vlm/person/relationship"),
                 json={"person_id": person_id, "relationship": relationship, "recognition_level": recognition_level},
                 timeout=2.0,
             )
@@ -695,7 +734,7 @@ class ToolRegistry:
         try:
             import requests
             resp = requests.post(
-                "http://127.0.0.1:8080/vlm/ask",
+                self._url("vlm/ask"),
                 json={"question": question},
                 timeout=max(2.0, float(self.vlm_ask_timeout_s)),
             )
@@ -706,7 +745,7 @@ class ToolRegistry:
         except Exception as exc:
             try:
                 import requests
-                ctx_resp = requests.get("http://127.0.0.1:8080/vlm/context/latest", timeout=2.0)
+                ctx_resp = requests.get(self._url("vlm/context/latest"), timeout=2.0)
                 if ctx_resp.status_code == 200:
                     data = ctx_resp.json()
                     if data.get("available"):
@@ -723,7 +762,7 @@ class ToolRegistry:
         try:
             import requests
             resp = requests.post(
-                "http://127.0.0.1:8080/vlm/focus/person",
+                self._url("vlm/focus/person"),
                 json={"name": name},
                 timeout=2.0,
             )
@@ -738,7 +777,7 @@ class ToolRegistry:
         try:
             import requests
             resp = requests.post(
-                "http://127.0.0.1:8080/vlm/follow/owner/start",
+                self._url("vlm/follow/owner/start"),
                 timeout=2.0,
             )
             if resp.status_code == 200:
@@ -752,7 +791,7 @@ class ToolRegistry:
         try:
             import requests
             resp = requests.post(
-                "http://127.0.0.1:8080/vlm/follow/stop",
+                self._url("vlm/follow/stop"),
                 timeout=2.0,
             )
             if resp.status_code == 200:
@@ -768,7 +807,7 @@ class ToolRegistry:
         try:
             import requests
             resp = requests.post(
-                "http://127.0.0.1:8080/agent/actions/queue",
+                self._url("agent/actions/queue"),
                 json={
                     "type": action_type,
                     "priority": priority,
@@ -788,7 +827,7 @@ class ToolRegistry:
     def get_action_status(self) -> str:
         try:
             import requests
-            resp = requests.get("http://127.0.0.1:8080/agent/actions/status", timeout=2.0)
+            resp = requests.get(self._url("agent/actions/status"), timeout=2.0)
             if resp.status_code == 200:
                 return str(resp.json())
             return f"Action status failed: HTTP {resp.status_code}"
@@ -799,7 +838,7 @@ class ToolRegistry:
         try:
             import requests
             resp = requests.post(
-                "http://127.0.0.1:8080/agent/actions/cancel",
+                self._url("agent/actions/cancel"),
                 json={"action_id": str(action_id)},
                 timeout=2.0,
             )

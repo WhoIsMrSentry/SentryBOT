@@ -224,6 +224,9 @@ class WakewordService:
         except Exception as exc:
             self._degraded_reason = str(exc)
             logger.warning("wakeword listener stopped, running degraded: %s", exc)
+            if not self._stop_event.is_set():
+                time.sleep(1.0)
+                self._ensure_listener_restarted(retries=3, delay_sec=0.35)
         finally:
             with self._lock:
                 self._listening = False
@@ -245,7 +248,6 @@ class WakewordService:
 
     def stop(self) -> None:
         self._stop_event.set()
-        self.capture.stop()
         with self._lock:
             self._listening = False
             self._active_window = False
@@ -273,8 +275,6 @@ class WakewordService:
             self._last_trigger_ts = now
             self._active_window = True
         logger.info("wakeword candidate: %s at %f (barge-in)", wakeword, now)
-        # Briefly sleep the detection thread to let the audio buffer advance
-        time.sleep(0.5)
         threading.Thread(target=self._command_window, args=(wakeword,), daemon=True).start()
 
     def _command_window(self, wakeword: str) -> None:

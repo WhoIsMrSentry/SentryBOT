@@ -1,7 +1,9 @@
 from __future__ import annotations
+import queue
+import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -53,6 +55,13 @@ class NeoRunner:
         self._preset_store_path = Path(preset_store_path).resolve() if preset_store_path else None
         self._preset_version = max(1, int(preset_version or 1))
         self._init_segments(segments or [])
+        self._animate_queue: queue.Queue = queue.Queue()
+        self._animate_worker = threading.Thread(
+            target=self._animate_worker_loop,
+            name="NeoRunnerAnimate",
+            daemon=True,
+        )
+        self._animate_worker.start()
 
     def _init_segments(self, segments: list[dict[str, Any]]) -> None:
         for item in segments:
@@ -134,11 +143,29 @@ class NeoRunner:
             return None
         return self._segments.get(str(name).strip().lower())
 
+    def _drain_animate_queue(self) -> None:
+        try:
+            while True:
+                self._animate_queue.get_nowait()
+                self._animate_queue.task_done()
+        except queue.Empty:
+            pass
+
+    def _wait_for_animations(self, timeout: float = 5.0) -> bool:
+        """Wait for all queued animations to complete. Returns True if completed, False on timeout."""
+        try:
+            self._animate_queue.join()
+            return True
+        except Exception:
+            return False
+
     # Exposed operations
     def clear(self) -> None:
+        self._drain_animate_queue()
         self.driver.clear()
 
     def fill(self, r: int, g: int, b: int) -> None:
+        self._drain_animate_queue()
         self.driver.fill(r, g, b)
 
     def fill_segment(self, name: str, r: int, g: int, b: int) -> bool:
@@ -324,6 +351,16 @@ class NeoRunner:
             if c1:
                 self.fill(*c1)
 
+    def _animate_worker_loop(self) -> None:
+        while True:
+            item = self._animate_queue.get()
+            try:
+                self._animate_sync(*item)
+            except Exception:
+                pass
+            finally:
+                self._animate_queue.task_done()
+
     def animate(
         self,
         name: str,
@@ -331,20 +368,22 @@ class NeoRunner:
         iterations: int | None = None,
         color: tuple[int, int, int] | None = None,
         segment: str | None = None,
+        *,
+        coalesce: bool = True,
     ) -> None:
-        """Non-blocking animate: schedule synchronous animation in a daemon thread."""
-        import threading
-
-        try:
-            t = threading.Thread(
-                target=self._animate_sync,
-                args=(name, emotions, iterations, color, segment),
-                daemon=True,
-            )
-            t.start()
-        except Exception:
-            # Best-effort: fallback to synchronous if thread can't be started
+        """Queue animations so only one runs at a time; drop pending when coalesce=True."""
+        payload = (name, emotions, iterations, color, segment)
+        if coalesce:
             try:
-                self._animate_sync(name, emotions, iterations, color, segment)
+                while True:
+                    self._animate_queue.get_nowait()
+                    self._animate_queue.task_done()
+            except queue.Empty:
+                pass
+        try:
+            self._animate_queue.put_nowait(payload)
+        except Exception:
+            try:
+                self._animate_sync(*payload)
             except Exception:
                 pass

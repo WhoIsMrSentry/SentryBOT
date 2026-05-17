@@ -1,7 +1,6 @@
 ---
-description: "Test yazarken veya test dosyalarıyla çalışırken aktif olur."
-globs: ["modules/**/tests/**", "**/test_*.py"]
-alwaysApply: false
+description: "Test yazma kuralları ve smoke test gereksinimleri."
+alwaysApply: true
 ---
 
 # Test Kuralları
