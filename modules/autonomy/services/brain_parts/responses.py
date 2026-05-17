@@ -178,10 +178,10 @@ class ResponseTagMixin:
 				elif isinstance(name, str) and name:
 					self.client.oled_show(name)
 			elif kind == "arduino":
-				cmd = attrs.get("cmd")
-				if isinstance(cmd, str) and cmd:
-					payload = dict(attrs)
-					self.client.arduino_send(payload)
+				logger.warning(
+					"LLM arduino tag ignored (use contract builders via tools); attrs=%s",
+					list(attrs.keys()) if isinstance(attrs, dict) else attrs,
+				)
 			elif kind in {"stand", "sit", "home", "zero_now"}:
 				self.client.robot_command(kind)
 			elif kind in {"ultra_read", "imu_read", "rfid_last"}:
