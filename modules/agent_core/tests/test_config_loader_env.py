@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import pytest
+from unittest.mock import patch
 
 from modules.agent_core.config_loader import load_config
 
 
-def test_agent_core_load_config_enforces_strict_single_model_policy(tmp_path: Path):
+def test_agent_core_load_config_enforces_strict_single_model_policy(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("AGENT_OLLAMA_BASE_URL", raising=False)
+    monkeypatch.delenv("SENTRY_GATEWAY_URL", raising=False)
     cfg_file = tmp_path / "agent.yaml"
     cfg_file.write_text(
         """
@@ -18,6 +22,9 @@ agent:
 llm:
   provider: ollama
   model: qwen3.5:9b
+gateway:
+  host: 127.0.0.1
+  port: 11434
 """.strip(),
         encoding="utf-8",
     )
@@ -35,7 +42,8 @@ llm:
     assert cfg["ollama"]["model"] == "qwen3.5:9b"
 
 
-def test_agent_core_load_config_accepts_google_provider(tmp_path: Path):
+def test_agent_core_load_config_accepts_google_provider(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("AGENT_OLLAMA_BASE_URL", raising=False)
     cfg_file = tmp_path / "agent.yaml"
     cfg_file.write_text(
         """
@@ -54,7 +62,8 @@ google_ai_studio:
     assert cfg["agent"]["model"] == "gemini-3-flash-preview"
 
 
-def test_agent_core_load_config_rejects_non_qwen3_5_9b_model(tmp_path: Path):
+def test_agent_core_load_config_rejects_non_qwen3_5_9b_model(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("AGENT_OLLAMA_BASE_URL", raising=False)
     cfg_file = tmp_path / "agent.yaml"
     cfg_file.write_text(
         """
