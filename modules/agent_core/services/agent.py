@@ -52,6 +52,19 @@ class AgentOrchestrator:
         self.config = config
         self.autonomy_client = autonomy_client
 
+        actions_cfg = config.get("actions", {}) if isinstance(config.get("actions", {}), dict) else {}
+        try:
+            from modules.gateway.url import resolve_config_url, resolve_gateway_base_url
+
+            default_gw = resolve_gateway_base_url(self.config)
+            raw_gw = str(actions_cfg.get("gateway_base_url", default_gw)).strip()
+            self._gateway_base_url = resolve_config_url(raw_gw, default_gw).rstrip("/")
+        except Exception:
+            self._gateway_base_url = str(
+                actions_cfg.get("gateway_base_url", "http://127.0.0.1:8080")
+            ).rstrip("/")
+        self._action_http_timeout_s = float(actions_cfg.get("http_timeout_s", 2.5))
+
         # LLM settings
         agent_cfg = config.get("agent", {})
         self.model = agent_cfg.get("model", "llama3.2:3b-q4_K_M")
@@ -149,21 +162,18 @@ class AgentOrchestrator:
             tool_execution_arbiter=self.tool_execution_arbiter,
             vision_arbiter=self.vision_arbiter,
             vlm_ask_timeout_s=float((config.get("tool_execution", {}) or {}).get("timeout_s", 22.0)),
+            gateway_base_url=self._gateway_base_url,
         )
 
         # Background threads
         self.sensor_loop = SensorFeedbackLoop(self.world_state, client=autonomy_client)
         self.idle_system = IdleBehaviorSystem(self, client=autonomy_client)
-        if self.autonomy_client and hasattr(self.autonomy_client, "set_speech_tracking"):
+        if self.autonomy_client and hasattr(self.autonomy_client, "set_stt_suppressed"):
             self.speech_arbiter.set_tts_state_callback(
-                lambda active: self.autonomy_client.set_speech_tracking(not bool(active))
+                lambda active: self.autonomy_client.set_stt_suppressed(bool(active))
             )
         if self.autonomy_client and hasattr(self.autonomy_client, "stop_speaking"):
             self.speech_arbiter.set_stop_playback_fn(self.autonomy_client.stop_speaking)
-        # Gateway base URL for HTTP-fronted arbiter actions (head/vision/follow).
-        actions_cfg = config.get("actions", {}) if isinstance(config.get("actions", {}), dict) else {}
-        self._gateway_base_url = str(actions_cfg.get("gateway_base_url", "http://127.0.0.1:8080")).rstrip("/")
-        self._action_http_timeout_s = float(actions_cfg.get("http_timeout_s", 2.5))
         self._register_action_handlers()
 
         self.last_run = 0.0
@@ -183,6 +193,8 @@ class AgentOrchestrator:
         default_modules = router_cfg.get("default_modules", ["autonomy", "agent_core"])
         if not isinstance(default_modules, list):
             default_modules = ["autonomy", "agent_core"]
+        if not self._camera_input_available():
+            default_modules = [m for m in default_modules if str(m).strip().lower() != "vlm_bridge"]
 
         profile_overrides = tri_cfg.get("profiles") if isinstance(tri_cfg.get("profiles"), dict) else None
         self.subagent_profiles = build_subagent_profiles(profile_overrides)
@@ -502,6 +514,21 @@ class AgentOrchestrator:
             else:
                 plan.append({"module": m, "goal": "Execute domain-specific reasoning."})
         return plan
+
+    def _camera_input_available(self) -> bool:
+        try:
+            from modules.gateway.url import gateway_url, resolve_gateway_base_url
+
+            base = resolve_gateway_base_url()
+            import requests
+
+            resp = requests.get(gateway_url(base, "/camera/healthz"), timeout=0.35)
+            if resp.status_code != 200:
+                return False
+            data = resp.json() if resp.content else {}
+            return bool((data or {}).get("ok", False))
+        except Exception:
+            return False
 
     def _resolve_ollama_base_url(self, agent_cfg: Dict[str, Any]) -> str:
         llm_cfg = self.config.get("llm", {}) or {}
