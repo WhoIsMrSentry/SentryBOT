@@ -1,7 +1,6 @@
 ---
-description: "Yeni modül oluşturma veya modül iskeleti üretme talebi geldiğinde aktif olur."
-globs: ["modules/**/x*Service.py", "modules/**/__init__.py"]
-alwaysApply: false
+description: "Yeni modül oluşturma, modül düzenleme veya modül iskeleti üretme işlemleri."
+alwaysApply: true
 ---
 
 # Modül Oluşturma / Düzenleme

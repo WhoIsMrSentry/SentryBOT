@@ -1,7 +1,6 @@
 ---
-description: "GitHub işlemleri, PR veya Issue hazırlarken aktif olur."
-globs: [".github/**"]
-alwaysApply: false
+description: "GitHub işlemleri, PR, Issue veya CI süreçleri yönetimi."
+alwaysApply: true
 ---
 
 # GitHub İşlemleri
