@@ -55,7 +55,7 @@ runtime_profile:
           enabled: true
           provider: google_ai_studio
         ollama:
-          endpoint: "http://127.0.0.1:8080/ollama/chat"
+          endpoint: "@gateway/ollama/chat"
           timeout: 12.0
       arduino_serial:
         esp_base_url: "http://10.88.255.55:8080"
@@ -83,7 +83,7 @@ runtime_profile:
           model: "qwen3-vl:8b"
           timeout_s: 18
         ollama:
-          endpoint: "http://127.0.0.1:8080/ollama/chat"
+          endpoint: "@gateway/ollama/chat"
           model: "qwen3.5:9b"
           timeout: 12.0
       arduino_serial:
@@ -99,7 +99,7 @@ ollama_service:
     default: sentry
     dir: modules/ollama/config/personalities
   actions:
-    endpoint: http://localhost:8080/autonomy/apply_actions
+    endpoint: "@gateway/autonomy/apply_actions"
     default_apply: true
     timeout: 1.5
   translation:
@@ -114,7 +114,8 @@ vlm_bridge:
     port: 8101
   vision:
     processing_mode: local
-    camera_source: "http://127.0.0.1:8080/camera/video"
+    camera_source: "@gateway/camera/video"
+    context_max_age_s: 45
     confidence_threshold: 0.5
     face_match:
       ratio_test: 0.72
@@ -163,7 +164,7 @@ vlm_bridge:
   robot:
     host: "localhost"
   ollama:
-    endpoint: "http://localhost:8080/ollama/chat"
+    endpoint: "@gateway/ollama/chat"
     model: "qwen3.5:9b"
     timeout: 12.0
     num_predict: 160
@@ -179,12 +180,12 @@ vlm_bridge:
     endpoint: "http://localhost:8083/speak/say"
   translation:
     enabled: false
-    endpoint: "http://localhost:8080/ollama/translate"
+    endpoint: "@gateway/ollama/translate"
     source_lang: auto
     target_lang: tr
     timeout: 1.5
   actions:
-    endpoint: "http://localhost:8080/autonomy/apply_actions"
+    endpoint: "@gateway/autonomy/apply_actions"
     default_apply: true
     timeout: 1.5
 
@@ -245,7 +246,7 @@ speak:
       speaker_wav: null
   liveliness:
     enabled: true
-    interactions_base_url: http://localhost:8080/interactions
+    interactions_base_url: "@gateway/interactions"
     speech_effect:
       name: PULSE
       tone_effect_map:
@@ -318,12 +319,17 @@ speech:
       slew_deg_per_s: 120.0
       energy_threshold: 1000
 
+actions:
+  gateway_base_url: "http://127.0.0.1:8080"
+  http_timeout_s: 2.5
+
 tri_layer:
   enabled: true
   router:
     max_subagents: 3
     default_modules:
-      - vlm_bridge
+      - autonomy
+      - agent_core
   subagent:
     max_steps: 4
   persona:

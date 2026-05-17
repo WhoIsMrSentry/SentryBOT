@@ -29,21 +29,21 @@ defaults:
       polar_blue: [90, 150, 255]
 
 endpoints:
-  arduino: "http://localhost:8080/arduino"
-  neopixel: "http://localhost:8080/neopixel"
-  speak: "http://localhost:8080/speak"
-  ollama: "http://localhost:8080/ollama"
-  speech: "http://localhost:8080/speech"
-  interactions: "http://localhost:8080/interactions"
-  oled_faces: "http://localhost:8080/oled_faces"
-  state_manager: "http://localhost:8080/state"
-  animate: "http://localhost:8080/animate"
-  vlm: "http://localhost:8080/vlm"
-  vision: "http://localhost:8080/vlm"
-  camera: "http://localhost:8080/camera"
-  notifier: "http://localhost:8080/notify"
-  autonomy: "http://localhost:8080/autonomy"
-  agent_core: "http://localhost:8080/agent"
+  arduino: "@gateway/arduino"
+  neopixel: "@gateway/neopixel"
+  speak: "@gateway/speak"
+  ollama: "@gateway/ollama"
+  speech: "@gateway/speech"
+  interactions: "@gateway/interactions"
+  oled_faces: "@gateway/oled_faces"
+  state_manager: "@gateway/state"
+  animate: "@gateway/animate"
+  vlm: "@gateway/vlm"
+  vision: "@gateway/vlm"
+  camera: "@gateway/camera"
+  notifier: "@gateway/notify"
+  autonomy: "@gateway/autonomy"
+  agent_core: "@gateway/agent"
 
 behaviors:
   idle:
@@ -364,6 +364,6 @@ owner:
     - "delete"
   # Note: Kharuun-specific irreversible triggers removed.
   rfid:
-    endpoint: "http://localhost:8080/arduino/rfid/authorize"
+    endpoint: "@gateway/arduino/rfid/authorize"
     grace_s: 120
     poll_interval_s: 15
