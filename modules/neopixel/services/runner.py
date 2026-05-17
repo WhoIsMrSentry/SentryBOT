@@ -151,6 +151,14 @@ class NeoRunner:
         except queue.Empty:
             pass
 
+    def _wait_for_animations(self, timeout: float = 5.0) -> bool:
+        """Wait for all queued animations to complete. Returns True if completed, False on timeout."""
+        try:
+            self._animate_queue.join()
+            return True
+        except Exception:
+            return False
+
     # Exposed operations
     def clear(self) -> None:
         self._drain_animate_queue()
