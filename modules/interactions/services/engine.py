@@ -19,8 +19,15 @@ logger = logging.getLogger("interactions.engine")
 
 
 class InteractionEngine:
-    def __init__(self, cfg: Dict[str, Any], neo_client: Any | None = None, social_db: Any | None = None):
+    def __init__(
+        self,
+        cfg: Dict[str, Any],
+        neo_client: Any | None = None,
+        social_db: Any | None = None,
+        expression_arbiter: Any | None = None,
+    ):
         self.cfg = cfg
+        self._expression_arbiter = expression_arbiter
         if social_db is None:
             try:
                 from modules.social_db import get_default as _social_default  # type: ignore
@@ -34,8 +41,9 @@ class InteractionEngine:
         provided = neo_client
         if provided is not None:
             class _LocalNeoAdapter:
-                def __init__(self, runner):
+                def __init__(self, runner, engine_ref):
                     self._runner = runner
+                    self._engine = engine_ref
 
                 def clear(self) -> None:
                     try:
@@ -71,22 +79,25 @@ class InteractionEngine:
 
                 def play_effect(self, name: str, duration_ms: int = 800, color: Optional[str | tuple[int, int, int]] = None) -> None:
                     try:
-                        # Runner.animate is non-blocking; start it and let it run
                         self._runner.animate(name)
-                        # Optionally clear after duration
-                        import threading, time
+                        import threading
+                        import time
 
-                        def _clear_after():
+                        def _restore_idle():
                             try:
                                 time.sleep(max(0.0, duration_ms / 1000.0))
+                                idle = (self._engine.defaults or {}).get("idle", {}).get("base", {})
+                                base_name = str(idle.get("name", "BREATHE"))
+                                base_color = idle.get("color")
+                                self._engine.neo.set_base(name=base_name, color=base_color)
                             except Exception:
                                 pass
 
-                        threading.Thread(target=_clear_after, daemon=True).start()
+                        threading.Thread(target=_restore_idle, daemon=True).start()
                     except Exception:
                         pass
 
-            self.neo = _LocalNeoAdapter(provided)
+            self.neo = _LocalNeoAdapter(provided, self)
         else:
             base_url = str(cfg.get("adapter", {}).get("http_base_url", "http://localhost:8092/neopixel"))
             self.neo = NeoHttpClient(base_url) if base_url else NoOpNeoClient()
@@ -161,6 +172,12 @@ class InteractionEngine:
             self._ctx.update(kwargs)
 
     def trigger_effect(self, name: str, duration_ms: int = 800, force: bool = False) -> None:
+        if self._expression_arbiter is not None:
+            try:
+                if not self._expression_arbiter.claim_lights("interactions", force=bool(force)):
+                    return
+            except Exception:
+                pass
         with self._lock:
             self._manual_effect = {
                 "name": str(name),
@@ -245,10 +262,9 @@ class InteractionEngine:
                     name = str(eff.get("name", "COMET"))
                     duration_ms = int(eff.get("duration_ms", 800))
                     event_name = self._ctx.get("event")
-                    if self._effect_allowed(event_name):
+                    if self._effect_allowed(event_name) and self._claim_lights_for_event(event_name):
                         self._active_effect_until = now + duration_ms / 1000.0
                         chosen.stamp()
-                        # play effect asynchronously to avoid blocking
                         threading.Thread(target=self.neo.play_effect, args=(name, duration_ms), daemon=True).start()
                 elif "base" in act and now >= self._active_effect_until:
                     base = act["base"] or {}
@@ -273,6 +289,15 @@ class InteractionEngine:
 
             # one-shot event is consumed
             self._ctx.pop("event", None)
+
+    def _claim_lights_for_event(self, event_name: Any, *, force: bool = False) -> bool:
+        if self._expression_arbiter is None:
+            return True
+        try:
+            source = str(event_name or "interactions.rule")
+            return bool(self._expression_arbiter.claim_lights(source, force=force))
+        except Exception:
+            return True
 
     def _effect_allowed(self, event_name: Any) -> bool:
         if not bool(self.quiet_hours_cfg.get("enabled", False)):
