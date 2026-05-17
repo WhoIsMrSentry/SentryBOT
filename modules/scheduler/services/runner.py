@@ -132,7 +132,7 @@ class Scheduler:
             except Exception:
                 body = resp.text[:500]
             return {
-                "ok": bool(resp.status_code < 500),
+                "ok": bool(200 <= resp.status_code < 300),
                 "status_code": int(resp.status_code),
                 "latency_ms": latency_ms,
                 "body": body,
