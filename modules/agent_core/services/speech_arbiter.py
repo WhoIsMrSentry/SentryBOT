@@ -160,13 +160,19 @@ class SpeechArbiter:
         self._processing.set()  # wake worker
         return item.item_id
 
-    def enqueue_progress(self, text: str, cancel_token: str = "") -> Optional[str]:
+    def enqueue_progress(
+        self,
+        text: str,
+        cancel_token: str = "",
+        language: str = "",
+    ) -> Optional[str]:
         """Convenience: enqueue a progress-level message."""
         return self.enqueue(
             text=text,
             priority=SpeechPriority.PROGRESS,
             category="progress",
             cancel_token=cancel_token,
+            language=language,
             max_age_s=8.0,
         )
 

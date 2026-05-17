@@ -22,7 +22,7 @@ tts:
       bin_path: piper
       voice: tr
       auto_language: true
-      prefer_text_language: true
+      prefer_text_language: false
       lock_session_language: true
     language_voices:
       tr: tr

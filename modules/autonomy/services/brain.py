@@ -674,7 +674,7 @@ class AutonomyBrain(
                         )
 
                     enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
-                    agent_result = self.agent.step(enriched_text)
+                    agent_result = self.agent.step(enriched_text, language=lang)
                     if agent_result and agent_result.get("text"):
                         if not self._is_active_request(request_id):
                             return
@@ -684,15 +684,9 @@ class AutonomyBrain(
                         logger.info("Agent Core handled speech with full pipeline.")
                         self.memory.add_event(f"Agent replied: {response_text}")
                         self._remember_person_chat(speaker, response_text, role="assistant")
-                        # Final response is spoken via SpeechArbiter
-                        try:
-                            from modules.speak.services.lang_detect import detect_text_language
-
-                            reply_lang = detect_text_language(response_text, default=lang)
-                        except Exception:
-                            reply_lang = lang
+                        # Final TTS uses STT session language (not per-chunk text detection).
                         self.agent.speech_arbiter.enqueue_final(
-                            response_text, language=reply_lang,
+                            response_text, language=lang,
                         )
                         return
                 except Exception as exc:
@@ -701,7 +695,9 @@ class AutonomyBrain(
             # ── FALLBACK PATH: Direct Ollama (no tool-calling) ──
             logger.info("Routing to Ollama...")
             enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
-            resp = self.client.chat(enriched_text, source_lang="auto", response_lang=None)
+            resp = self.client.chat(
+                enriched_text, source_lang=lang, response_lang=lang,
+            )
             if resp and "answer" in resp:
                 response_text = resp["answer"]
                 response_actions = resp.get("actions")
@@ -718,13 +714,7 @@ class AutonomyBrain(
                     if not self._is_active_request(request_id):
                         return
                     self._remember_person_chat(speaker, clean_text, role="assistant")
-                    try:
-                        from modules.speak.services.lang_detect import detect_text_language
-
-                        reply_lang = detect_text_language(clean_text, default=lang)
-                    except Exception:
-                        reply_lang = lang
-                    self._speak_with_mood(clean_text, language=reply_lang)
+                    self._speak_with_mood(clean_text, language=lang)
                     logger.info("Reply: %s", clean_text)
                     self.memory.add_event(f"I replied: {clean_text}")
                 else:

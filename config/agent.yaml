@@ -213,7 +213,7 @@ speak:
       bin_path: piper
       voice: tr
       auto_language: true
-      prefer_text_language: true
+      prefer_text_language: false
       lock_session_language: true
       language_voices:
         tr: tr
@@ -291,7 +291,7 @@ speech:
     default_language: tr
     auto_language: true
     auto_switch_model: true
-    dual_decode_margin: 0.6
+    dual_decode_margin: 0.35
     utterance_buffer_sec: 20
     model_path: null
     language_models:

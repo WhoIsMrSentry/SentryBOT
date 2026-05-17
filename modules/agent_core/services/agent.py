@@ -900,16 +900,19 @@ class AgentOrchestrator:
         reports: List[Dict[str, Any]],
         survival_override: Optional[str],
         active_model: str,
+        session_language: Optional[str] = None,
     ) -> str:
         # MARK: Layer-3 is the only layer that speaks as the main persona.
         # Use configurable persona system prompt when provided; otherwise use a neutral default
+        lang_rule = self._language_directive(session_language)
         if self.persona_system_prompt:
-            system_prompt = self.persona_system_prompt
+            system_prompt = f"{self.persona_system_prompt}\n\n{lang_rule}"
         else:
             system_prompt = (
                 "You are the final response layer. Combine sub-agent findings into one direct answer for the user. "
                 "Do not expose internal chain details unless the user explicitly asks. "
-                "Prioritize safety constraints when present."
+                "Prioritize safety constraints when present.\n\n"
+                f"{lang_rule}"
             )
 
         compact_reports = self._compact_subagent_reports(reports)
@@ -960,6 +963,28 @@ class AgentOrchestrator:
             )
         return compact
 
+    @staticmethod
+    def _normalize_session_language(language: Optional[str]) -> str:
+        raw = str(language or "tr").strip().lower()
+        if raw.startswith("en"):
+            return "en"
+        if raw.startswith("tr"):
+            return "tr"
+        return "tr"
+
+    @classmethod
+    def _language_directive(cls, language: Optional[str]) -> str:
+        lang = cls._normalize_session_language(language)
+        if lang == "en":
+            return (
+                "The user is speaking English. Reply ONLY in English. "
+                "Do not use Turkish words or sentences."
+            )
+        return (
+            "Kullanıcı Türkçe konuşuyor. Yalnızca Türkçe yanıt ver. "
+            "İngilizce kelime veya cümle kullanma."
+        )
+
     def _adaptive_persona_num_predict(self, user_prompt: str, report_count: int) -> int:
         """Small adaptive budget to reduce latency without clipping useful answers."""
         base = int(self.persona_num_predict)
@@ -976,6 +1001,7 @@ class AgentOrchestrator:
         self,
         user_prompt: str = "",
         progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+        language: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         One complete Agent thought cycle with staged execution.
@@ -996,8 +1022,10 @@ class AgentOrchestrator:
         self.is_busy = True
         previous_hook = self.tool_registry.status_hook
 
+        session_language = self._normalize_session_language(language)
+
         # ── Create progress token for this request lifecycle ──
-        progress_token = self.progress_manager.new_request()
+        progress_token = self.progress_manager.new_request(language=session_language)
         self._active_progress_token = progress_token
 
         # Build a unified progress callback that routes through ProgressManager
@@ -1021,7 +1049,8 @@ class AgentOrchestrator:
             survival_override = self.check_survival_drives()
             world_context = self.world_state.inject_world_state("")
 
-            full_prompt = f"{user_prompt}\n\n[World State]\n{world_context}"
+            lang_rule = self._language_directive(session_language)
+            full_prompt = f"{user_prompt}\n\n[{lang_rule}]\n\n[World State]\n{world_context}"
             if survival_override:
                 full_prompt += f"\n\n{survival_override}"
 
@@ -1088,9 +1117,14 @@ class AgentOrchestrator:
                         gemini_limited = False
 
                     if gemini_limited:
-                        final_text = (
-                            "Şu an yapay zeka kotası dolu. Bir iki dakika sonra tekrar dener misin?"
-                        )
+                        if session_language == "en":
+                            final_text = (
+                                "AI quota is exhausted right now. Can you try again in a minute or two?"
+                            )
+                        else:
+                            final_text = (
+                                "Şu an yapay zeka kotası dolu. Bir iki dakika sonra tekrar dener misin?"
+                            )
                         self._append_history("assistant", final_text)
                     else:
                         self._emit_progress(_unified_progress_cb, {"type": "persona_start"})
@@ -1099,6 +1133,7 @@ class AgentOrchestrator:
                             reports=subagent_reports,
                             survival_override=survival_override,
                             active_model=active_model,
+                            session_language=session_language,
                         )
                         self._append_history("assistant", final_text)
                 else:

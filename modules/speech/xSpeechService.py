@@ -257,7 +257,7 @@ class SpeechService:
             return str(text or "").strip(), self._default_language
         pcm = bytes(self._utterance_pcm)
         self.clear_utterance_buffer()
-        return resolve_stt_text_and_language(
+        resolved_text, resolved_lang = resolve_stt_text_and_language(
             text,
             pcm,
             primary=self.recognizer,
@@ -266,6 +266,8 @@ class SpeechService:
             auto_switch_model=self._auto_switch_model,
             dual_decode_margin=self._dual_decode_margin,
         )
+        self.source_language = resolved_lang
+        return resolved_text, resolved_lang
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         import threading
