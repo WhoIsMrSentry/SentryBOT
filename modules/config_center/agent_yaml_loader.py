@@ -56,9 +56,12 @@ def load_agent_config(explicit_path: Optional[str | os.PathLike[str]] = None) ->
         raise ValueError(f"agent.yaml must be a mapping at top-level: {cfg_path}")
 
     from modules.config_center.google_keys import inject_google_api_key
+    from modules.gateway.url import gateway_base_from_agent_cfg, rewrite_loopback_urls
 
     cfg = apply_runtime_profile(raw)
-    return inject_google_api_key(cfg)
+    cfg = inject_google_api_key(cfg)
+    base = gateway_base_from_agent_cfg(cfg)
+    return rewrite_loopback_urls(cfg, base)
 
 
 def require_dict_section(cfg: Dict[str, Any], section: str) -> Dict[str, Any]:
