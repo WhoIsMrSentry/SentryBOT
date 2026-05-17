@@ -129,6 +129,16 @@ class SpeechService:
         pt_cfg = self.cfg.get("pan_tilt", {})
         self._pan = PanTiltController(pt_cfg, sender=self._send_pan)
         self._tracking = False
+        self._stt_suppressed = False
+        self._stt_suppress_lock = Lock()
+
+    def set_stt_suppressed(self, suppressed: bool) -> None:
+        with self._stt_suppress_lock:
+            self._stt_suppressed = bool(suppressed)
+
+    def is_stt_suppressed(self) -> bool:
+        with self._stt_suppress_lock:
+            return bool(self._stt_suppressed)
 
     def start(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         """Start capturing and recognition in the same thread using a generator pipeline.
@@ -146,6 +156,8 @@ class SpeechService:
         try:
             stream: Iterable[bytes] = self.capture.stream()
             for result in self.recognizer.run(self._direction_wrapper(stream)):
+                if self.is_stt_suppressed():
+                    continue
                 cb = None
                 with self._result_lock:
                     cb = self._on_result_cb
@@ -271,22 +283,16 @@ class SpeechService:
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         import threading
+
         if on_result is not None:
             with self._result_lock:
                 self._on_result_cb = on_result
         with self._listen_lock:
-            if self._listening:
-                self._stop_event.set()
-                thread = self._thread
-            else:
-                thread = None
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=0.8)
-        self._stop_event = Event()
-        with self._listen_lock:
-            self._listening = False
+            if self._listening and self._thread is not None and self._thread.is_alive():
+                return
         t = threading.Thread(target=self.start, kwargs={"on_result": None}, daemon=True)
-        self._thread = t
+        with self._listen_lock:
+            self._thread = t
         t.start()
 
     def stop(self) -> None:
@@ -337,8 +343,9 @@ class SpeechService:
         # We use a simple requests call here, but in production consider async client or keeping a session
         try:
             import requests
-            # Use request endpoint to get ACK/error for motion commands.
-            url = "http://localhost:8080/arduino/request"
+            from modules.gateway.url import gateway_url, resolve_gateway_base_url
+
+            url = gateway_url(resolve_gateway_base_url(), "/arduino/request")
             payload = build_set_servo_cmd(SERVO_INDEX_PAN, int(angle_deg))
             requests.post(url, json=payload, params={"timeout": 0.1}, timeout=0.2)
         except Exception as e:

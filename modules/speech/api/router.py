@@ -14,22 +14,32 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("speech.api")
 
-_BARGE_IN_URLS = (
-    "http://localhost:8080/speak/stop",
-    "http://localhost:8080/agent/speech/interrupt",
-    "http://localhost:8080/speech/start",
-)
+_GATEWAY_BASE = "http://127.0.0.1:8080"
+
+
+def _gw(path: str) -> str:
+    return f"{_GATEWAY_BASE.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _barge_in_urls() -> tuple[str, ...]:
+    return (
+        _gw("/speak/stop"),
+        _gw("/agent/speech/interrupt"),
+        _gw("/speech/start"),
+    )
+
 
 def _notify_autonomy():
     try:
-        requests.post("http://localhost:8080/autonomy/interaction", timeout=0.1)
+        requests.post(_gw("/autonomy/interaction"), timeout=0.1)
     except Exception:
         pass
+
 
 def _push_interaction_event(event_type: str):
     try:
         requests.post(
-            "http://localhost:8080/interactions/event",
+            _gw("/interactions/event"),
             json={"type": event_type},
             timeout=0.1,
         )
@@ -41,7 +51,7 @@ def _emit_speech_event(name: str):
 
 
 def _barge_in_for_wakeword() -> None:
-    for url in _BARGE_IN_URLS:
+    for url in _barge_in_urls():
         try:
             requests.post(url, json={}, timeout=0.25)
         except Exception:
@@ -49,12 +59,19 @@ def _barge_in_for_wakeword() -> None:
     logger.info("Wakeword barge-in: stopped TTS and opened listening")
 
 
-def get_router(service: SpeechService) -> APIRouter:
+def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
+    global _GATEWAY_BASE
+    if gateway_base_url:
+        _GATEWAY_BASE = str(gateway_base_url).rstrip("/")
     router = APIRouter()
 
     @router.get("/speech/status")
     async def status():
-        return {"listening": service.listening}
+        return {
+            "listening": service.listening,
+            "model_ready": getattr(service, "recognizer", None) is not None,
+            "stt_suppressed": bool(getattr(service, "is_stt_suppressed", lambda: False)()),
+        }
 
     last: dict | None = {"text": None, "language": getattr(service, "source_language", "tr"), "ts": 0.0}
     last_nonempty_text = ""
@@ -86,6 +103,8 @@ def get_router(service: SpeechService) -> APIRouter:
 
     def _cb(r):
         nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text
+        if hasattr(service, "is_stt_suppressed") and service.is_stt_suppressed():
+            return
         text = (r.text or "").strip()
         language = getattr(service, "source_language", "tr")
         if r.is_final and hasattr(service, "finalize_stt"):
@@ -173,5 +192,12 @@ def get_router(service: SpeechService) -> APIRouter:
     @router.get("/speech/track/status")
     async def track_status():
         return service.track_status()
+
+    @router.post("/speech/stt/suppress")
+    async def stt_suppress(body: dict | None = None):
+        enabled = bool((body or {}).get("enabled", True))
+        if hasattr(service, "set_stt_suppressed"):
+            service.set_stt_suppressed(enabled)
+        return {"ok": True, "suppressed": enabled}
 
     return router
