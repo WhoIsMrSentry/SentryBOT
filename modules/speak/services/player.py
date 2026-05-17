@@ -2,11 +2,13 @@ from __future__ import annotations
 import io
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from typing import Dict, Optional
 from .pcm import PCM
 
 _play_lock = threading.Lock()
+_play_stop = threading.Event()
 
 try:
     import sounddevice as sd
@@ -34,6 +36,18 @@ class AudioPlayer:
             dtype=str(cfg.get("dtype", "float32")),
         )
 
+    @staticmethod
+    def stop_playback() -> None:
+        """Stop any in-progress speaker output (barge-in / wakeword)."""
+        _play_stop.set()
+        if sd is None:
+            return
+        try:
+            with _play_lock:
+                sd.stop()
+        except Exception as exc:
+            logger.debug("stop_playback: %s", exc)
+
     def _ensure_backends(self):
         if sd is None:
             raise RuntimeError("sounddevice not available. Install with 'pip install sounddevice'.")
@@ -56,11 +70,26 @@ class AudioPlayer:
             else:
                 data = np.stack([data[:, 0]] * self.cfg.channels, axis=1).astype(np.float32)
 
+        _play_stop.clear()
+        started = time.monotonic()
         with _play_lock:
-            sd.play(data, samplerate=pcm.samplerate, device=self.cfg.device, blocking=True)
-            sd.stop()
-        dur = len(data) / float(pcm.samplerate)
-        logger.info("Played audio: %.2fs @ %d Hz via %s", dur, pcm.samplerate, self.cfg.device or "default")
+            sd.play(data, samplerate=pcm.samplerate, device=self.cfg.device, blocking=False)
+            while True:
+                if _play_stop.is_set():
+                    sd.stop()
+                    break
+                try:
+                    sd.wait(timeout=0.05)
+                    sd.stop()
+                    break
+                except Exception:
+                    sd.stop()
+                    break
+        dur = max(0.0, time.monotonic() - started)
+        if _play_stop.is_set():
+            logger.info("Playback interrupted after %.2fs", dur)
+        else:
+            logger.info("Played audio: %.2fs @ %d Hz via %s", dur, pcm.samplerate, self.cfg.device or "default")
         return dur
 
     def play_wav_bytes(self, payload: bytes) -> float:

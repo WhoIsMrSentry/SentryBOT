@@ -22,12 +22,27 @@ _SENSOR_COMMANDS = {"ultra_read", "imu_read", "rfid_last"}
 
 class ServiceClient:
     def __init__(self, base_urls, config=None):
-        self.urls = base_urls
+        try:
+            from modules.gateway.url import gateway_url, resolve_gateway_base_url, rewrite_loopback_urls
+
+            base = resolve_gateway_base_url()
+            self.urls = rewrite_loopback_urls(dict(base_urls or {}), base)
+            self.urls.setdefault("agent_core", gateway_url(base, "/agent"))
+        except Exception:
+            self.urls = dict(base_urls or {})
         cfg = config or {}
         self.speech_quiet_cfg = dict(cfg.get("speech_quiet_hours", {}))
         self.offline_cfg = dict(cfg.get("offline_mode", {}))
         self.request_timeouts = dict(cfg.get("request_timeouts", {}))
         self._availability_cache = {}
+
+    def _agent_core_url(self) -> str:
+        try:
+            from modules.gateway.url import gateway_url, resolve_gateway_base_url
+
+            return str(self.urls.get("agent_core") or gateway_url(resolve_gateway_base_url(), "/agent"))
+        except Exception:
+            return str(self.urls.get("agent_core") or "http://127.0.0.1:8080/agent")
 
     def _post(self, service, endpoint, json=None, params=None, timeout_s=None):
         url = self.urls.get(service)
@@ -131,24 +146,18 @@ class ServiceClient:
         return self._post("arduino", "/send", payload)
 
     def set_neopixel(self, effect, emotions=None, color=None, duration=None):
-        payload = {"name": effect}
-        if emotions:
-            payload["emotions"] = emotions
-        if color and len(color) == 3:
-            payload["r"], payload["g"], payload["b"] = color
+        name = str(effect or "PULSE").strip().upper() or "PULSE"
+        duration_ms = 800
         if duration is not None:
-            payload["duration"] = duration
-        return self._post("neopixel", "/animate", json=payload)
+            try:
+                duration_ms = max(200, int(float(duration) * 1000))
+            except (TypeError, ValueError):
+                duration_ms = 800
+        return self.set_interaction_effect(name, duration_ms=duration_ms, force=True)
 
     def set_neopixel_segment_effect(self, segment: str, effect: str, color=None, emotions=None, iterations=None):
-        payload = {"name": effect, "segment": str(segment)}
-        if emotions:
-            payload["emotions"] = emotions
-        if color and len(color) == 3:
-            payload["r"], payload["g"], payload["b"] = color
-        if iterations is not None:
-            payload["iterations"] = int(iterations)
-        return self._post("neopixel", "/animate", payload)
+        _ = (segment, color, emotions, iterations)
+        return self.set_neopixel(effect)
 
     def fill_neopixel_segment_color(self, segment: str, r: int, g: int, b: int):
         url = self.urls.get("neopixel")
@@ -279,6 +288,35 @@ class ServiceClient:
         endpoint = "/track/start" if enabled else "/track/stop"
         return self._post("speech", endpoint)
 
+    def set_stt_suppressed(self, suppressed: bool):
+        return self._post("speech", "/stt/suppress", {"enabled": bool(suppressed)}, timeout_s=0.25)
+
+    def get_operational_mode(self) -> str:
+        data = self._get("state_manager", "/get")
+        if isinstance(data, dict):
+            return str(data.get("operational", "idle")).strip().lower() or "idle"
+        return "idle"
+
+    def stop_speaking(self):
+        return self._post("speak", "/stop", timeout_s=0.35)
+
+    def start_speech_listening(self):
+        return self._post("speech", "/start", timeout_s=0.35)
+
+    def interrupt_agent_speech(self):
+        try:
+            from modules.gateway.url import gateway_url, resolve_gateway_base_url
+
+            base = str(self.urls.get("agent_core") or gateway_url(resolve_gateway_base_url(), "/agent")).rstrip("/")
+        except Exception:
+            base = str(self.urls.get("agent_core") or "http://127.0.0.1:8080/agent").rstrip("/")
+        try:
+            resp = requests.post(f"{base}/speech/interrupt", timeout=0.35)
+            return resp.json() if resp.status_code == 200 else None
+        except Exception as exc:
+            logger.debug("interrupt_agent_speech failed: %s", exc)
+            return None
+
     def translate(self, text, source_lang: str, target_lang: str):
         params = {
             "text": str(text or ""),
@@ -325,10 +363,22 @@ class ServiceClient:
             self._availability_cache[svc] = (now, False)
             return False
 
-        endpoint = "/status" if svc == "speak" else "/healthz"
+        endpoint = "/status" if svc in ("speak", "speech") else "/healthz"
         try:
             resp = requests.get(f"{url}{endpoint}", timeout=0.6)
             ok = resp.status_code == 200
+            if ok and svc == "ollama":
+                try:
+                    payload = resp.json()
+                    ok = bool(payload.get("ok", False))
+                except Exception:
+                    ok = False
+            elif ok and svc == "speak":
+                try:
+                    payload = resp.json()
+                    ok = bool(payload.get("ready", False))
+                except Exception:
+                    ok = False
         except Exception:
             ok = False
         self._availability_cache[svc] = (now, ok)
@@ -418,7 +468,7 @@ class ServiceClient:
         if payload is None:
             payload = {}
         # Try routing through agent core endpoint (assuming gateway exposes it at /agent)
-        url = self.urls.get("agent_core") or "http://127.0.0.1:8080/agent"
+        url = self._agent_core_url()
         try:
             resp = requests.post(f"{url}/actions/queue", json={
                 "type": action_type,
@@ -434,7 +484,7 @@ class ServiceClient:
     def emit_agent_event(self, event_type: str, payload: dict | None = None):
         if payload is None:
             payload = {}
-        url = self.urls.get("agent_core") or "http://127.0.0.1:8080/agent"
+        url = self._agent_core_url()
         try:
             resp = requests.post(
                 f"{url}/events",

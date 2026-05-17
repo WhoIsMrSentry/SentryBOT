@@ -47,22 +47,26 @@ def test_progress_ack_before_tool_messages():
     spoken = []
 
     class _SpeechStub:
-        def enqueue_progress(self, text, cancel_token=""):
+        def enqueue_progress(self, text, cancel_token="", language=""):
             spoken.append((text, cancel_token))
 
         def cancel_by_token(self, _token):
             return 0
 
     pm = ProgressManager(speech_arbiter=_SpeechStub())
-    token = pm.new_request()
+    token = pm.new_request(language="tr")
     pm.emit_ack(token, custom_text="Tamam, bakıyorum.")
-    pm.emit_tool_start(token, "get_visual_context")
-    pm.emit_tool_done(token, "get_visual_context")
+    pm.emit_tool_done(token, "get_visual_context", "No visual context available yet.")
+    pm.emit_tool_done(
+        token,
+        "get_visual_context",
+        "Scene: lab | People: Emir | Importance: 0.8",
+    )
 
     assert spoken
     assert spoken[0][0] == "Tamam, bakıyorum."
-    assert any("Çevreyi inceliyorum, kameradan son görüntüyü alıyorum." in s[0] for s in spoken)
-    assert any("Görüntüyü aldım, şimdi kişileri kontrol ediyorum." in s[0] for s in spoken)
+    assert not any("kameradan" in s[0].lower() for s in spoken)
+    assert any("Görüntüyü aldım" in s[0] for s in spoken)
 
 
 def test_final_cancels_stale_progress():
@@ -71,7 +75,7 @@ def test_final_cancels_stale_progress():
     cancelled = {"count": 0}
 
     class _SpeechStub:
-        def enqueue_progress(self, text, cancel_token=""):
+        def enqueue_progress(self, text, cancel_token="", language=""):
             return "queued"
 
         def cancel_by_token(self, _token):
@@ -79,8 +83,8 @@ def test_final_cancels_stale_progress():
             return 1
 
     pm = ProgressManager(speech_arbiter=_SpeechStub())
-    token = pm.new_request()
-    pm.emit_tool_start(token, "get_vision")
+    token = pm.new_request(language="tr")
+    pm.emit_tool_done(token, "get_vision", "Vision results unavailable.")
     pm.emit_final(token)
 
     assert cancelled["count"] >= 1

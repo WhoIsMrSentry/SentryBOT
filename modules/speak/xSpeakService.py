@@ -133,21 +133,23 @@ class SpeakService:
             },
         )
         effect_cfg = self._liveliness_cfg.get("speech_effect", {}) or {}
-        effect_name = self._resolve_effect_name_for_tone(tone)
-        duration_ms = self._estimate_effect_duration_ms(text, tone)
         force = bool(effect_cfg.get("force", False))
-        self._post_interactions(
-            "/effect",
-            {"name": effect_name, "duration_ms": duration_ms, "force": force},
-        )
-        self._emit_speech_rhythm_beats(text, force=force)
-        emph_map = effect_cfg.get("emphasis_effect_map", {}) if isinstance(effect_cfg.get("emphasis_effect_map", {}), dict) else {}
-        if exclamations > 0:
-            name = str(emph_map.get("exclamation", "COMET"))
-            self._post_interactions("/effect", {"name": name, "duration_ms": 260, "force": force})
-        if questions > 0:
-            name = str(emph_map.get("question", "TWINKLE"))
-            self._post_interactions("/effect", {"name": name, "duration_ms": 240, "force": force})
+        if not bool(self._liveliness_cfg.get("event_driven_effects", False)):
+            effect_name = self._resolve_effect_name_for_tone(tone)
+            duration_ms = self._estimate_effect_duration_ms(text, tone)
+            self._post_interactions(
+                "/effect",
+                {"name": effect_name, "duration_ms": duration_ms, "force": force},
+            )
+        if bool(effect_cfg.get("stack_emphasis_effects", False)):
+            self._emit_speech_rhythm_beats(text, force=force)
+            emph_map = effect_cfg.get("emphasis_effect_map", {}) if isinstance(effect_cfg.get("emphasis_effect_map", {}), dict) else {}
+            if exclamations > 0:
+                name = str(emph_map.get("exclamation", "COMET"))
+                self._post_interactions("/effect", {"name": name, "duration_ms": 260, "force": force})
+            if questions > 0:
+                name = str(emph_map.get("question", "TWINKLE"))
+                self._post_interactions("/effect", {"name": name, "duration_ms": 240, "force": force})
 
     def _emit_speech_rhythm_beats(self, text: str, force: bool = False) -> None:
         effect_cfg = self._liveliness_cfg.get("speech_effect", {}) or {}
@@ -211,6 +213,17 @@ class SpeakService:
             return
         self._post_interactions("/event", {"type": "speech.end", "data": {"duration_sec": duration_sec}})
 
+    def stop_speaking(self) -> dict:
+        """Interrupt current TTS playback (wakeword barge-in)."""
+        try:
+            from modules.speak.services.tts import cancel_synthesis
+
+            cancel_synthesis()
+        except Exception:
+            pass
+        self.player.stop_playback()
+        return {"ok": True, "stopped": True}
+
     def speak(
         self,
         text: str,
@@ -233,6 +246,12 @@ class SpeakService:
         if language:
             overrides["language"] = language
         self._emit_speech_liveliness_start(text, tone_dict)
+        try:
+            from modules.speak.services.tts import clear_synthesis_cancel
+
+            clear_synthesis_cancel()
+        except Exception:
+            pass
         wav = self.tts.synthesize(text, overrides=overrides or None)
         dur = self.player.play_blocking(wav)
         self._emit_speech_liveliness_end(dur)

@@ -5,15 +5,23 @@ import logging
 import requests
 from modules.arduino_serial.contract import build_track_cmd
 
+_GATEWAY_BASE = "http://127.0.0.1:8080"
+
+
+def _gw(path: str) -> str:
+    return f"{_GATEWAY_BASE.rstrip('/')}/{path.lstrip('/')}"
+
+
 def _notify_autonomy():
     try:
-        requests.post("http://localhost:8080/autonomy/interaction", timeout=0.1)
+        requests.post(_gw("/autonomy/interaction"), timeout=0.1)
     except Exception:
         pass
 
+
 def _request_arduino(payload: dict, timeout: float = 1.0) -> dict:
     resp = requests.post(
-        "http://127.0.0.1:8080/arduino/request",
+        _gw("/arduino/request"),
         json=payload,
         params={"timeout": float(timeout)},
         timeout=max(0.2, float(timeout) + 0.2),
@@ -26,7 +34,14 @@ def _request_arduino(payload: dict, timeout: float = 1.0) -> dict:
     return data
 
 
-def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
+def get_router(
+    processor: Any,
+    ardu: Optional[Any] = None,
+    gateway_base_url: str = "",
+) -> APIRouter:
+    global _GATEWAY_BASE
+    if gateway_base_url:
+        _GATEWAY_BASE = str(gateway_base_url).rstrip("/")
     r = APIRouter(
         prefix="/vlm",
         tags=["vlm"],
@@ -316,6 +331,8 @@ def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
         """Return the latest cached VisionFrameContext if available."""
         if not processor:
             raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not processor.is_camera_input_available():
+            return {"available": False, "context": None, "reason": "camera_unavailable"}
         ctx = processor.get_latest_visual_context()
         if ctx is None:
             return {"available": False, "context": None, "reason": "No context cached yet"}
@@ -326,6 +343,8 @@ def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
         """Trigger a fresh VLM analysis of the current camera frame."""
         if not processor:
             raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not processor.is_camera_input_available():
+            return {"ok": False, "context_available": False, "context": None, "reason": "camera_unavailable"}
 
         if hasattr(processor, "refresh_visual_context"):
             ctx = processor.refresh_visual_context()
@@ -342,7 +361,9 @@ def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
         question = body.get("question", "").strip()
         if not question:
             raise HTTPException(status_code=400, detail="question required")
-        
+        if not processor.is_camera_input_available():
+            return {"ok": False, "answer": "Kamera görüntüsü şu an kullanılamıyor.", "reason": "camera_unavailable"}
+
         # Try to get current frame first
         frame = None
         with processor._frame_lock:
@@ -363,11 +384,7 @@ def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
                 pass
         
         if frame is None:
-            # Fallback to cached context
-            ctx = processor.get_latest_visual_context()
-            if ctx:
-                return {"ok": True, "answer": ctx.get("persona_interpretation", ctx.get("summary", "Görüntü işlenemedi."))}
-            return {"ok": False, "answer": "Kamera görüntüsü alınamadı."}
+            return {"ok": False, "answer": "Kamera görüntüsü alınamadı.", "reason": "no_frame"}
         
         # Call VLM if available
         if processor.vlm_client:
@@ -380,13 +397,7 @@ def get_router(processor: Any, ardu: Optional[Any] = None) -> APIRouter:
             except Exception:
                 pass
         
-        # Fallback: context interpretation
-        ctx = processor.get_latest_visual_context()
-        if ctx:
-            summary = ctx.get("persona_interpretation", ctx.get("summary", "Cevap alınamadı."))
-            return {"ok": True, "answer": f"Görüntü işleme gecikti; elimdeki son görüntüye göre {summary}"}
-        
-        return {"ok": False, "answer": "VLM sistemi şu an kullanılamıyor."}
+        return {"ok": False, "answer": "VLM sistemi şu an kullanılamıyor.", "reason": "vlm_unavailable"}
 
     @r.post("/person/remember", tags=["vision"], summary="Remember/store person with relationship")
     def remember_person(body: dict):

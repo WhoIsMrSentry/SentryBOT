@@ -21,8 +21,12 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
         try:
             for name in started.keys():
                 path = None
-                if name in ("arduino", "esp_link", "neopixel", "piservo", "telemetry", "diagnostics", "state_manager", "scheduler", "notifier", "calibration", "config_center", "hardware"):
-                    path = f"/{name}/healthz" if name not in ("telemetry", "diagnostics") else f"/{name}/healthz"
+                if name == "notifier":
+                    path = "/notify/healthz"
+                elif name == "state_manager":
+                    path = "/state/healthz"
+                elif name in ("arduino", "esp_link", "neopixel", "piservo", "telemetry", "diagnostics", "scheduler", "calibration", "config_center", "hardware"):
+                    path = f"/{name}/healthz"
                 elif name == "camera":
                     path = "/camera/healthz"
                 elif name in ("speak", "speech", "wakeword"):

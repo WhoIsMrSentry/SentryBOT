@@ -13,9 +13,15 @@ from .api.router import get_router
 
 
 class xOledFacesService:
-    def __init__(self, state_store: Any = None, config_overrides: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        state_store: Any = None,
+        config_overrides: Optional[Dict[str, Any]] = None,
+        expression_arbiter: Any = None,
+    ):
         self.cfg = load_config(overrides=config_overrides)
         self.state_store = state_store
+        self._expression_arbiter = expression_arbiter
         self.mapper = FaceMapper(self.cfg)
         self.display = PiSsd1306Driver(self.cfg.get("display") if isinstance(self.cfg.get("display"), dict) else {})
 
@@ -145,6 +151,12 @@ class xOledFacesService:
     def _apply(self, action: OledAction, priority: int = 50, force: bool = False) -> bool:
         if not bool(self.cfg.get("enabled", True)):
             return False
+        if self._expression_arbiter is not None:
+            try:
+                if not self._expression_arbiter.claim_oled("oled_faces", force=bool(force)):
+                    return False
+            except Exception:
+                pass
         now = time.time()
         mode = action.mode.strip().lower()
         name = action.name.strip().lower()

@@ -22,11 +22,13 @@ _SINGLE_CAPTURE_INSTANCE: Optional["AudioCapture"] = None
 _INSTANCE_LOCK = threading.Lock()
 
 def get_shared_capture(cfg: Dict) -> "AudioCapture":
-    """Returns a globally shared AudioCapture instance regardless of config keys to ensure no contention."""
+    """Shared mic for wakeword + speech. Later callers may upgrade device/rate if unset."""
     global _SINGLE_CAPTURE_INSTANCE
     with _INSTANCE_LOCK:
         if _SINGLE_CAPTURE_INSTANCE is None:
             _SINGLE_CAPTURE_INSTANCE = AudioCapture(cfg)
+        else:
+            _SINGLE_CAPTURE_INSTANCE.merge_config(cfg)
         return _SINGLE_CAPTURE_INSTANCE
 
 def release_shared_capture(inst: "AudioCapture") -> None:
@@ -58,6 +60,21 @@ class AudioCapture:
         self._stopped = False
         self._alsa_thread = None
         self._pcm = None
+
+    def merge_config(self, cfg: Dict) -> None:
+        """Apply non-default audio fields from a later module (e.g. wakeword plughw)."""
+        if not isinstance(cfg, dict):
+            return
+        audio = cfg.get("audio", cfg)
+        if not isinstance(audio, dict):
+            return
+        dev = audio.get("device")
+        if dev is not None and str(dev).strip():
+            self.cfg.device = dev
+        if audio.get("samplerate") is not None:
+            self.cfg.samplerate = int(audio.get("samplerate", self.cfg.samplerate))
+        if audio.get("channels") is not None:
+            self.cfg.channels = int(audio.get("channels", self.cfg.channels))
 
     def _callback(self, indata, frames, time, status):
         if status:

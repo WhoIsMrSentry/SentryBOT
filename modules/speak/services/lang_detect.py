@@ -80,11 +80,13 @@ def resolve_speak_language(
     prefer_text: bool = True,
 ) -> str:
     """Pick language for Piper voice: spoken text wins over STT hint by default."""
-    detected = detect_text_language(text, default=default)
-    if not explicit or not str(explicit).strip():
-        return detected
     explicit_norm = normalize_lang(explicit, fallback=default)
-    if not prefer_text or explicit_norm == detected:
+    if not explicit or not str(explicit).strip():
+        return detect_text_language(text, default=default)
+    if not prefer_text:
+        return explicit_norm
+    detected = detect_text_language(text, default=default)
+    if explicit_norm == detected:
         return detected
     return detected
 

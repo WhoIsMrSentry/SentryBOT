@@ -27,6 +27,7 @@ class _FakeSpeakService(SpeakService):
         self.player = _DummyPlayer()
         self._liveliness_cfg = {
             "enabled": True,
+            "event_driven_effects": False,
             "interactions_base_url": "http://localhost:8080/interactions",
             "speech_effect": {
                 "name": "PULSE",
@@ -58,6 +59,7 @@ class _FakeSpeakService(SpeakService):
                 "max_duration_ms": 7000,
                 "chars_per_second": 16,
                 "force": False,
+                "stack_emphasis_effects": True,
             },
         }
         self.calls = []

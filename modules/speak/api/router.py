@@ -43,7 +43,16 @@ def get_router(service: SpeakService) -> APIRouter:
 
     @router.get("/speak/status")
     async def status():
-        return {"ready": True}
+        return {"ready": getattr(service, "tts", None) is not None}
+
+    @router.post("/speak/stop")
+    async def stop():
+        """Stop in-progress TTS playback immediately."""
+        try:
+            return await asyncio.to_thread(service.stop_speaking)
+        except Exception as e:
+            logger.exception("/speak/stop failed")
+            return {"ok": False, "error": repr(e)}
 
     @router.post("/speak/say")
     async def say(payload: dict):
@@ -97,7 +106,14 @@ def get_router(service: SpeakService) -> APIRouter:
 
         async def _run():
             try:
+                from modules.speak.services.player import _play_stop
+
                 for idx, chunk in enumerate(chunks, start=1):
+                    if _play_stop.is_set():
+                        job = stream_jobs.get(job_id)
+                        if job is not None:
+                            job["status"] = "interrupted"
+                        return
                     await asyncio.to_thread(
                         service.speak,
                         chunk,

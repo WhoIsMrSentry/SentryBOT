@@ -14,6 +14,8 @@ import random
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from .tool_progress import plan_goal_should_speak, subagent_module_should_speak, tool_result_succeeded
+
 logger = logging.getLogger("agent.progress")
 
 
@@ -43,6 +45,13 @@ _ACK_TEMPLATES_TR = [
     "Bir saniye, üzerinde çalışıyorum.",
 ]
 
+_ACK_TEMPLATES_EN = [
+    "Okay, let me check.",
+    "Got it, working on that.",
+    "One moment, I'm on it.",
+    "Sure, give me a second.",
+]
+
 _TOOL_START_TEMPLATES_TR: Dict[str, str] = {
     "get_vision": "Kameradan görüntü alıyorum.",
     "get_visual_context": "Çevreyi inceliyorum, kameradan son görüntüyü alıyorum.",
@@ -69,6 +78,32 @@ _VLM_PROCESSING_TEMPLATES_TR = [
     "Sahneyi yorumluyorum.",
 ]
 
+_TOOL_START_TEMPLATES_EN: Dict[str, str] = {
+    "get_vision": "Capturing an image from the camera.",
+    "get_visual_context": "Looking around and checking the latest view.",
+    "get_sensor_data": "Reading sensor data.",
+    "search_memory": "Searching my memory.",
+    "move_head": "Turning my head.",
+    "set_lights": "Adjusting the lights.",
+    "focus_person": "Focusing on the person.",
+    "ask_vlm_about_scene": "Analyzing the scene.",
+    "describe_scene": "Describing what I see.",
+    "remember_person": "Saving this person to memory.",
+}
+
+_TOOL_DONE_TEMPLATES_EN: Dict[str, str] = {
+    "get_vision": "Image captured.",
+    "get_visual_context": "Got the view, checking people now.",
+    "get_sensor_data": "Sensor data received.",
+    "search_memory": "Memory search complete.",
+    "ask_vlm_about_scene": "Scene analysis complete.",
+}
+
+_VLM_PROCESSING_TEMPLATES_EN = [
+    "Processing the image, one moment.",
+    "Analyzing the scene.",
+]
+
 
 class ProgressManager:
     """Manages staged execution progress with TTS forwarding.
@@ -93,6 +128,7 @@ class ProgressManager:
         self._speech_arbiter = speech_arbiter
         self._speak_fn = speak_fn
         self._active_tokens: Dict[str, float] = {}  # token -> created_at
+        self._token_languages: Dict[str, str] = {}  # token -> session language (tr|en)
         self._last_progress_text: Dict[str, str] = {}  # token -> last spoken text
         self._latest_event: Dict[str, Any] = {}
         # Optional arbiter references injected after construction.
@@ -152,12 +188,23 @@ class ProgressManager:
     def set_speech_arbiter(self, arbiter: Any) -> None:
         self._speech_arbiter = arbiter
 
-    def new_request(self) -> str:
+    def new_request(self, language: str = "tr") -> str:
         """Create a new cancel token for a request lifecycle."""
         import uuid
         token = uuid.uuid4().hex[:10]
         self._active_tokens[token] = time.time()
+        lang = str(language or "tr").strip().lower()
+        if lang.startswith("en"):
+            lang = "en"
+        elif lang.startswith("tr"):
+            lang = "tr"
+        else:
+            lang = "tr"
+        self._token_languages[token] = lang
         return token
+
+    def _lang_for(self, token: str) -> str:
+        return self._token_languages.get(token, "tr")
 
     def is_active(self, token: str) -> bool:
         return token in self._active_tokens
@@ -165,7 +212,12 @@ class ProgressManager:
     # ── Stage 1: Immediate Ack ────────────────────────────────────────
     def emit_ack(self, token: str, custom_text: str = "") -> None:
         """Emit an immediate acknowledgement (template-based, no LLM)."""
-        text = custom_text or random.choice(_ACK_TEMPLATES_TR)
+        if custom_text:
+            text = custom_text
+        elif self._lang_for(token) == "en":
+            text = random.choice(_ACK_TEMPLATES_EN)
+        else:
+            text = random.choice(_ACK_TEMPLATES_TR)
         self._speak_progress(token, text, event_type="ack")
 
     # ── Stage 2: Plan Summary ────────────────────────────────────────
@@ -177,38 +229,54 @@ class ProgressManager:
         parts = []
         for step in plan[:3]:
             goal = step.get("goal", "")
-            if goal:
+            if goal and plan_goal_should_speak(goal):
                 parts.append(goal)
         if parts:
-            summary = "Planım: " + ", ".join(parts[:2]) + "."
+            if self._lang_for(token) == "en":
+                summary = "My plan: " + ", ".join(parts[:2]) + "."
+            else:
+                summary = "Planım: " + ", ".join(parts[:2]) + "."
             self._speak_progress(token, summary, event_type="plan")
 
     # ── Stage 3: Tool Progress ───────────────────────────────────────
     def emit_tool_start(self, token: str, tool_name: str) -> None:
-        text = _TOOL_START_TEMPLATES_TR.get(tool_name, f"{tool_name} aracını çağırıyorum.")
-        self._speak_progress(token, text, event_type="tool_start")
+        # Do not speak before execution — static lines must match real tool outcomes.
+        logger.debug("tool_start %s (no TTS until success)", tool_name)
 
-    def emit_tool_done(self, token: str, tool_name: str) -> None:
-        text = _TOOL_DONE_TEMPLATES_TR.get(tool_name)
+    def emit_tool_done(self, token: str, tool_name: str, result: str = "") -> None:
+        if not tool_result_succeeded(tool_name, result):
+            logger.debug("tool_done %s skipped TTS (no usable result)", tool_name)
+            return
+        templates = _TOOL_DONE_TEMPLATES_EN if self._lang_for(token) == "en" else _TOOL_DONE_TEMPLATES_TR
+        text = templates.get(tool_name)
         if text:
             self._speak_progress(token, text, event_type="tool_done")
 
     def emit_tool_error(self, token: str, tool_name: str, error: str = "") -> None:
-        text = f"{tool_name} çalışırken bir sorun oldu."
+        if self._lang_for(token) == "en":
+            text = f"There was a problem while running {tool_name}."
+        else:
+            text = f"{tool_name} çalışırken bir sorun oldu."
         self._speak_progress(token, text, event_type="tool_error")
 
     def emit_vlm_processing(self, token: str) -> None:
-        text = random.choice(_VLM_PROCESSING_TEMPLATES_TR)
+        templates = _VLM_PROCESSING_TEMPLATES_EN if self._lang_for(token) == "en" else _VLM_PROCESSING_TEMPLATES_TR
+        text = random.choice(templates)
         self._speak_progress(token, text, event_type="vlm_processing")
 
     def emit_vision_capture(self, token: str) -> None:
-        self._speak_progress(token, "Görüntüyü aldım, şimdi işliyorum.", event_type="vision_capture_done")
+        if self._lang_for(token) == "en":
+            text = "Image captured, processing now."
+        else:
+            text = "Görüntüyü aldım, şimdi işliyorum."
+        self._speak_progress(token, text, event_type="vision_capture_done")
 
     # ── Stage 4: Final ───────────────────────────────────────────────
     def emit_final(self, token: str) -> None:
         """Mark request as final – cancel all stale progress messages."""
         self._cancel_stale(token)
         self._active_tokens.pop(token, None)
+        self._token_languages.pop(token, None)
         self._last_progress_text.pop(token, None)
 
     def cancel_stale(self, token: str = "") -> None:
@@ -235,15 +303,10 @@ class ProgressManager:
             if text:
                 self._speak_progress(token, text, event_type="status")
 
-        elif event_type == "tool_start":
-            tool = str(event.get("tool", "")).strip()
-            if tool and token:
-                self.emit_tool_start(token, tool)
-
         elif event_type == "tool_done":
             tool = str(event.get("tool", "")).strip()
             if tool and token:
-                self.emit_tool_done(token, tool)
+                self.emit_tool_done(token, tool, str(event.get("result", "")))
 
         elif event_type == "tool_error":
             tool = str(event.get("tool", "")).strip()
@@ -258,15 +321,23 @@ class ProgressManager:
 
         elif event_type == "subagent_start":
             module = str(event.get("module", "")).strip()
-            if module and token:
-                self._speak_progress(token, f"{module} modülünü çalıştırıyorum.", "subagent_start")
+            if module and token and subagent_module_should_speak(module):
+                if self._lang_for(token) == "en":
+                    msg = f"Running the {module} module."
+                else:
+                    msg = f"{module} modülünü çalıştırıyorum."
+                self._speak_progress(token, msg, "subagent_start")
 
         elif event_type == "subagent_done":
             pass  # silent
 
         elif event_type == "persona_start":
             if token:
-                self._speak_progress(token, "Sonuçları birleştirip yanıt hazırlıyorum.", "persona_start")
+                if self._lang_for(token) == "en":
+                    msg = "Putting the answer together."
+                else:
+                    msg = "Sonuçları birleştirip yanıt hazırlıyorum."
+                self._speak_progress(token, msg, "persona_start")
 
     # ── Internal ──────────────────────────────────────────────────────
     def _speak_progress(self, token: str, text: str, event_type: str = "progress") -> None:
@@ -282,7 +353,9 @@ class ProgressManager:
 
         # Route to SpeechArbiter if available
         if self._speech_arbiter is not None and hasattr(self._speech_arbiter, "enqueue_progress"):
-            self._speech_arbiter.enqueue_progress(text, cancel_token=token)
+            self._speech_arbiter.enqueue_progress(
+                text, cancel_token=token, language=self._lang_for(token),
+            )
             return
 
         # Fallback: direct speak_fn

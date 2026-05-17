@@ -130,6 +130,13 @@ class VisionProcessor:
     """
 
     def __init__(self, config: Dict[str, Any]):
+        try:
+            from modules.gateway.url import resolve_gateway_base_url, rewrite_loopback_urls
+
+            self._gateway_base = resolve_gateway_base_url(config)
+            config = rewrite_loopback_urls(config, self._gateway_base)
+        except Exception:
+            self._gateway_base = "http://127.0.0.1:8080"
         self.config = config
         vision_cfg = config.get("vision", {}) if isinstance(config, dict) else {}
 
@@ -137,6 +144,7 @@ class VisionProcessor:
         self.camera_source = vision_cfg.get("camera_source", 0)
         self._max_camera_wait_attempts = max(1, int(vision_cfg.get("max_camera_wait_attempts", 5)))
         self._camera_gave_up = False
+        self._context_max_age_s = max(5.0, float(vision_cfg.get("context_max_age_s", 45.0)))
         self.conf_threshold = float(vision_cfg.get("confidence_threshold", 0.5))
 
         raw_modes = vision_cfg.get("modes", {}) if isinstance(vision_cfg.get("modes", {}), dict) else {}
@@ -520,10 +528,28 @@ class VisionProcessor:
     # -----------------------------------------------------------------
     # Streaming lifecycle
     # -----------------------------------------------------------------
+    def is_camera_input_available(self) -> bool:
+        """True when local vision can read a live camera frame (not gave up / healthz dead)."""
+        if str(self.processing_mode).strip().lower() != "local":
+            return True
+        if self._is_http_camera_source():
+            ready = self._http_camera_ready()
+            if ready and self._camera_gave_up:
+                self._camera_gave_up = False
+            return ready and not self._camera_gave_up
+        if self._camera_gave_up:
+            return False
+        with self._frame_lock:
+            if self._latest_raw_frame is not None:
+                return True
+        thread = self._capture_thread
+        return thread is not None and thread.is_alive()
+
     def start_stream_processing(self) -> None:
         if self.processing_mode != "local":
             logger.debug("start_stream_processing() ignored in remote mode")
             return
+        self._camera_gave_up = False
         if self._capture_thread and self._capture_thread.is_alive():
             return
 
@@ -595,11 +621,16 @@ class VisionProcessor:
                         if not self._camera_gave_up:
                             self._camera_gave_up = True
                             logger.warning(
-                                "Camera source unavailable after %d attempts (%s); stopping capture retries",
+                                "Camera source unavailable after %d attempts (%s); pausing capture retries",
                                 self._max_camera_wait_attempts,
                                 self.camera_source,
                             )
-                        break
+                        time.sleep(3.0)
+                        if self._http_camera_ready():
+                            open_fail_count = 0
+                            self._camera_gave_up = False
+                            logger.info("Camera source recovered: %s", self.camera_source)
+                        continue
                     if open_fail_count == 1 or open_fail_count == self._max_camera_wait_attempts:
                         logger.info(
                             "Camera source not ready yet: %s (attempt=%d/%d), waiting...",
@@ -617,11 +648,13 @@ class VisionProcessor:
                         if not self._camera_gave_up:
                             self._camera_gave_up = True
                             logger.warning(
-                                "Could not open camera source after %d attempts: %s; stopping retries",
+                                "Could not open camera source after %d attempts: %s; pausing retries",
                                 self._max_camera_wait_attempts,
                                 self.camera_source,
                             )
-                        break
+                        time.sleep(3.0)
+                        open_fail_count = 0
+                        continue
                     if open_fail_count == 1 or open_fail_count == self._max_camera_wait_attempts:
                         logger.warning(
                             "Could not open camera source: %s (attempt=%d/%d), retrying...",
@@ -934,8 +967,10 @@ class VisionProcessor:
                 logger.debug("track callback failed: %s", exc)
 
         try:
+            from modules.gateway.url import gateway_url
+
             requests.post(
-                "http://localhost:8080/vlm/track",
+                gateway_url(self._gateway_base, "/vlm/track"),
                 params={"head_pan": float(pan), "head_tilt": float(tilt), "drive": int(drive)},
                 timeout=0.25,
             )
@@ -1290,6 +1325,8 @@ class VisionProcessor:
         """Return the latest cached visual context (if available)."""
         if self.visual_context_cache is None:
             return None
+        if self.visual_context_cache.age_s > self._context_max_age_s:
+            return None
         ctx = self.visual_context_cache.get_latest()
         if ctx is None:
             fallback = self._build_context_from_results(self.latest_results)
@@ -1506,8 +1543,10 @@ class VisionProcessor:
 
     def _emit_emotion(self, emotion: str) -> None:
         try:
+            from modules.gateway.url import gateway_url
+
             requests.post(
-                "http://localhost:8080/interactions/event",
+                gateway_url(self._gateway_base, "/interactions/event"),
                 json={"type": f"autonomy.{emotion}"},
                 timeout=0.5,
             )

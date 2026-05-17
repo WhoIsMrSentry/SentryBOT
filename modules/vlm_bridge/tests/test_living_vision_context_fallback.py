@@ -11,6 +11,8 @@ def test_timeout_returns_cached_visual_context_fallback():
     proc._frame_lock = threading.Lock()
     proc._latest_raw_frame = None
     proc.vlm_client = None
+    proc._context_max_age_s = 45.0
+    proc.remote_mm_enabled = False
 
     # bind methods from class
     ctx = VisionProcessor.refresh_visual_context(proc, question="ne görüyorsun?")
@@ -26,6 +28,7 @@ def test_agent_core_get_visual_context_returns_latest_context():
     proc._frame_lock = threading.Lock()
     proc._latest_raw_frame = None
     proc.vlm_client = None
+    proc._context_max_age_s = 45.0
 
     VisionProcessor.update_visual_context(
         proc,

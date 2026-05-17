@@ -99,8 +99,19 @@ def resolve_stt_text_and_language(
 
     tr_score = _transcript_score(tr_text, "tr")
     en_score = _transcript_score(en_text, "en")
+    en_words = re.findall(r"[a-zA-Z']+", en_text.lower())
+    en_stop_hits = sum(1 for w in en_words if w in _EN_STOPWORDS)
+    tr_chars_in_primary = sum(1 for ch in tr_text if ch in _TR_CHARS)
 
-    if en_score > tr_score + dual_decode_margin:
+    pick_en = en_score > tr_score + dual_decode_margin
+    # TR primary often hallucinates Turkish on English audio; prefer EN when vosk-en is coherent.
+    if not pick_en and en_stop_hits >= 2 and en_score >= tr_score - 0.15:
+        if tr_chars_in_primary == 0 or en_score >= tr_score:
+            pick_en = True
+    if not pick_en and en_stop_hits >= 1 and tr_chars_in_primary >= 2 and en_score > tr_score:
+        pick_en = True
+
+    if pick_en:
         lang = _detect_language(en_text, default=default_language)
         logger.info(
             "STT picked vosk-en (tr_score=%.2f en_score=%.2f tr=%r en=%r)",
@@ -109,10 +120,10 @@ def resolve_stt_text_and_language(
             tr_text[:48],
             en_text[:48],
         )
-        return en_text, lang if lang == "en" else "en"
+        return en_text, "en" if lang != "tr" else lang
 
     lang = _detect_language(tr_text, default=default_language)
     if tr_score >= en_score:
         return tr_text, lang
     lang = _detect_language(en_text, default=default_language)
-    return en_text, lang
+    return en_text, "en" if lang != "tr" else lang

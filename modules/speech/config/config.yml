@@ -18,7 +18,7 @@ recognition:
   default_language: tr
   auto_language: true          # detect tr/en from transcript; report in /speech/last
   auto_switch_model: true      # dual-decode utterance with vosk-en and pick best transcript
-  dual_decode_margin: 0.6      # EN wins when en_score > tr_score + margin
+  dual_decode_margin: 0.35     # EN wins when en_score > tr_score + margin
   utterance_buffer_sec: 20
   model_path: null             # explicit path overrides language mapping
   # Optional per-language mapping to override defaults

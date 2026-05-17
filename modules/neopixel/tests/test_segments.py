@@ -46,6 +46,7 @@ def test_animate_segment_falls_back_to_segment_fill():
     runner = NeoRunner(NeoDriverConfig(num_leds=6), segments=[{"name": "jewel", "start": 0, "count": 2}])
     runner.driver = _FakeDriver(6)
     runner.animate("PULSE", color=(10, 20, 30), segment="jewel")
+    runner._wait_for_animations()
     assert runner.driver.buf[0] == (10, 20, 30)
     assert runner.driver.buf[1] == (10, 20, 30)
     assert runner.driver.buf[2:] == [(0, 0, 0)] * 4

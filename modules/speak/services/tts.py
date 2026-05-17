@@ -15,6 +15,16 @@ import requests
 
 logger = logging.getLogger("speak.tts")
 
+_synth_cancel = threading.Event()
+
+
+def cancel_synthesis() -> None:
+    _synth_cancel.set()
+
+
+def clear_synthesis_cancel() -> None:
+    _synth_cancel.clear()
+
 
 @dataclass
 class TTSConfig:
@@ -165,13 +175,28 @@ class _PiperModel:
 
             last_error = ""
             for cmd in cmd_variants:
-                proc = subprocess.run(
+                if _synth_cancel.is_set():
+                    raise RuntimeError("synthesis cancelled")
+                proc = subprocess.Popen(
                     cmd,
-                    input=(stdin_text + "\n").encode("utf-8"),
+                    stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                 )
-                stderr_txt = proc.stderr.decode("utf-8", "ignore").strip()
+                try:
+                    stdout_b, stderr_b = proc.communicate(
+                        input=(stdin_text + "\n").encode("utf-8"),
+                        timeout=120.0,
+                    )
+                except Exception:
+                    proc.kill()
+                    proc.communicate(timeout=1.0)
+                    if _synth_cancel.is_set():
+                        raise RuntimeError("synthesis cancelled")
+                    raise
+                if _synth_cancel.is_set():
+                    raise RuntimeError("synthesis cancelled")
+                stderr_txt = stderr_b.decode("utf-8", "ignore").strip()
 
                 if proc.returncode == 0:
                     try:
@@ -181,9 +206,9 @@ class _PiperModel:
                     except Exception as exc:
                         last_error = f"wav read failed: {exc}"
 
-                    if proc.stdout:
+                    if stdout_b:
                         try:
-                            return _wav_bytes_to_pcm(proc.stdout)
+                            return _wav_bytes_to_pcm(stdout_b)
                         except Exception as exc:
                             last_error = f"stdout wav parse failed: {exc}"
                     else:

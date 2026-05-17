@@ -2,6 +2,7 @@
 from __future__ import annotations
 import inspect
 import logging
+import os
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from .config_loader import load_config
@@ -26,13 +27,25 @@ def _listify(value: object) -> list[str]:
     return [text] if text else []
 
 
+def _client_is_loopback(request) -> bool:
+    try:
+        host = str(getattr(request.client, "host", "") or "").strip().lower()
+    except Exception:
+        return False
+    return host in {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
 def _build_security_policy(cfg: dict) -> dict:
     sec = cfg.get("security", {}) if isinstance(cfg.get("security", {}), dict) else {}
     api_keys = set(_listify(sec.get("api_keys", [])))
     admin_keys = set(_listify(sec.get("admin_keys", [])))
+    env_key = str(os.environ.get("SENTRY_API_KEY", "") or "").strip()
+    if env_key:
+        api_keys.add(env_key)
     valid_keys = set(api_keys) | set(admin_keys)
     return {
         "enabled": bool(sec.get("enabled", False)),
+        "trust_loopback": bool(sec.get("trust_loopback", True)),
         "api_key_header": str(sec.get("api_key_header", "X-API-Key")),
         "role_header": str(sec.get("role_header", "X-Role")),
         "exempt_prefixes": _listify(
@@ -143,6 +156,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
             # Read-only access is left open by default; write operations require key.
             if method in {"GET", "HEAD"}:
+                return await call_next(request)
+
+            if security.get("trust_loopback", True) and _client_is_loopback(request):
                 return await call_next(request)
 
             key = request.headers.get(security["api_key_header"]) or request.query_params.get("api_key")

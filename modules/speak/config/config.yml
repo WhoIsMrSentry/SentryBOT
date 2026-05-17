@@ -22,7 +22,7 @@ tts:
       bin_path: piper
       voice: tr
       auto_language: true
-      prefer_text_language: true
+      prefer_text_language: false
       lock_session_language: true
     language_voices:
       tr: tr
@@ -52,7 +52,8 @@ tts:
 
 liveliness:
   enabled: true
-  interactions_base_url: http://localhost:8080/interactions
+  event_driven_effects: true
+  interactions_base_url: "@gateway/interactions"
   speech_effect:
     name: PULSE
     tone_effect_map:
@@ -64,7 +65,7 @@ liveliness:
       exclamation: COMET
       question: TWINKLE
     rhythm:
-      enabled: true
+      enabled: false
       mode: clauses           # words | clauses
       effect: PULSE
       words_per_beat: 3
