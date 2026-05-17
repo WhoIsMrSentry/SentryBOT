@@ -15,6 +15,12 @@ def get_router(agent) -> APIRouter:
         state_str = "BUSY" if agent.is_busy else "IDLE"
         return {"ok": True, "state": state_str}
 
+    @router.post("/speech/interrupt")
+    def speech_interrupt():
+        """Stop queued/active TTS (wakeword barge-in)."""
+        cleared = agent.speech_arbiter.interrupt_all()
+        return {"ok": True, "cleared": cleared}
+
     @router.post("/step")
     def step(query: str = Body(embed=True)):
         """Tek bir agent adımı çalıştır (ReAct + Tool Calling + Safety)."""

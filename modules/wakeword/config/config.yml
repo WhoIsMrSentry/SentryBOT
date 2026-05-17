@@ -58,6 +58,8 @@ openwakeword:
 actions:
   speech_start_url: "http://localhost:8080/speech/start"
   speech_stop_url: "http://localhost:8080/speech/stop"
+  speak_stop_url: "http://localhost:8080/speak/stop"
+  agent_interrupt_url: "http://localhost:8080/agent/speech/interrupt"
   speech_last_url: "http://localhost:8080/speech/last"
   interactions_event_url: "http://localhost:8080/interactions/event"
   listen_window_sec: 8.0

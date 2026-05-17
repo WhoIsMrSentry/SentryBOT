@@ -14,6 +14,8 @@ import random
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from .tool_progress import plan_goal_should_speak, subagent_module_should_speak, tool_result_succeeded
+
 logger = logging.getLogger("agent.progress")
 
 
@@ -227,7 +229,7 @@ class ProgressManager:
         parts = []
         for step in plan[:3]:
             goal = step.get("goal", "")
-            if goal:
+            if goal and plan_goal_should_speak(goal):
                 parts.append(goal)
         if parts:
             if self._lang_for(token) == "en":
@@ -238,13 +240,13 @@ class ProgressManager:
 
     # ── Stage 3: Tool Progress ───────────────────────────────────────
     def emit_tool_start(self, token: str, tool_name: str) -> None:
-        if self._lang_for(token) == "en":
-            text = _TOOL_START_TEMPLATES_EN.get(tool_name, f"Running {tool_name}.")
-        else:
-            text = _TOOL_START_TEMPLATES_TR.get(tool_name, f"{tool_name} aracını çağırıyorum.")
-        self._speak_progress(token, text, event_type="tool_start")
+        # Do not speak before execution — static lines must match real tool outcomes.
+        logger.debug("tool_start %s (no TTS until success)", tool_name)
 
-    def emit_tool_done(self, token: str, tool_name: str) -> None:
+    def emit_tool_done(self, token: str, tool_name: str, result: str = "") -> None:
+        if not tool_result_succeeded(tool_name, result):
+            logger.debug("tool_done %s skipped TTS (no usable result)", tool_name)
+            return
         templates = _TOOL_DONE_TEMPLATES_EN if self._lang_for(token) == "en" else _TOOL_DONE_TEMPLATES_TR
         text = templates.get(tool_name)
         if text:
@@ -301,15 +303,10 @@ class ProgressManager:
             if text:
                 self._speak_progress(token, text, event_type="status")
 
-        elif event_type == "tool_start":
-            tool = str(event.get("tool", "")).strip()
-            if tool and token:
-                self.emit_tool_start(token, tool)
-
         elif event_type == "tool_done":
             tool = str(event.get("tool", "")).strip()
             if tool and token:
-                self.emit_tool_done(token, tool)
+                self.emit_tool_done(token, tool, str(event.get("result", "")))
 
         elif event_type == "tool_error":
             tool = str(event.get("tool", "")).strip()
@@ -324,7 +321,7 @@ class ProgressManager:
 
         elif event_type == "subagent_start":
             module = str(event.get("module", "")).strip()
-            if module and token:
+            if module and token and subagent_module_should_speak(module):
                 if self._lang_for(token) == "en":
                     msg = f"Running the {module} module."
                 else:

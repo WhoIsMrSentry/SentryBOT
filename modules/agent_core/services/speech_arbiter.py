@@ -86,6 +86,8 @@ class SpeechArbiter:
         # Currently speaking item (for external query)
         self._current_item: Optional[SpeechItem] = None
         self._tts_state_callback: Optional[Callable[[bool], Any]] = None
+        self._stop_playback_fn: Optional[Callable[[], Any]] = None
+        self._interrupt_flag = threading.Event()
 
     # ── Lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
@@ -108,6 +110,30 @@ class SpeechArbiter:
 
     def set_tts_state_callback(self, fn: Callable[[bool], Any]) -> None:
         self._tts_state_callback = fn
+
+    def set_stop_playback_fn(self, fn: Callable[[], Any]) -> None:
+        self._stop_playback_fn = fn
+
+    def interrupt_all(self) -> int:
+        """Cancel queued TTS and stop current speaker output (wakeword barge-in)."""
+        self._interrupt_flag.set()
+        cleared = self.clear_queue()
+        self.cancel_progress()
+        if self._stop_playback_fn is not None:
+            try:
+                self._stop_playback_fn()
+            except Exception as exc:
+                logger.debug("stop_playback_fn failed: %s", exc)
+        with self._lock:
+            self._current_item = None
+        self.tts_active.clear()
+        if self._tts_state_callback is not None:
+            try:
+                self._tts_state_callback(False)
+            except Exception:
+                pass
+        logger.info("SpeechArbiter interrupted (cleared=%d)", cleared)
+        return cleared
 
     # ── Submit ────────────────────────────────────────────────────────
     def enqueue(
@@ -288,6 +314,9 @@ class SpeechArbiter:
             return self._queue.pop(0)
 
     def _dispatch(self, item: SpeechItem) -> None:
+        if self._interrupt_flag.is_set():
+            self._interrupt_flag.clear()
+            return
         if not self._speak_fn:
             logger.debug("No speak_fn set, dropping: %s", item.text[:40])
             return
@@ -311,6 +340,8 @@ class SpeechArbiter:
             except Exception:
                 pass
         try:
+            if self._interrupt_flag.is_set():
+                return
             kwargs: Dict[str, Any] = {"text": item.text}
             if item.tone:
                 kwargs["tone"] = item.tone

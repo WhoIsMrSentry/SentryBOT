@@ -25,6 +25,7 @@ from modules.wakeword.services.wakeword_detector import WakewordDetector
 from modules.wakeword.services.openwakeword_runner import OpenWakewordRunner
 from modules.speech.services.audio_capture import AudioCapture, get_shared_capture, release_shared_capture
 from modules.speech.services.recognizer import Recognizer, RecognitionResult
+from modules.speech.services.wake_phrase import strip_wakewords
 
 try:
     from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
@@ -48,17 +49,11 @@ def _post_json(url: str, payload: dict | None = None, timeout: float = 0.2) -> N
         logger.debug("wakeword http post failed: %s", exc)
 
 
-_WAKE_PHRASES = ("hey sentrybot", "hey sentry", "sentrybot", "sentry")
-
-
 def _normalize_command_text(text: str, wakeword: str = "") -> str:
-    lowered = str(text or "").strip().lower()
-    if not lowered:
-        return ""
-    for phrase in _WAKE_PHRASES + ((wakeword or "").lower(),):
-        p = str(phrase or "").strip().lower()
-        if p:
-            lowered = lowered.replace(p, " ")
+    lowered = strip_wakewords(str(text or ""))
+    extra = str(wakeword or "").strip().lower()
+    if extra:
+        lowered = lowered.replace(extra, " ").strip()
     return " ".join(lowered.split())
 
 
@@ -106,6 +101,14 @@ class WakewordActions:
         self.min_listen_before_final_sec = float(cfg.get("min_listen_before_final_sec", 1.5))
         self.stop_on_final = bool(cfg.get("stop_on_final", True))
         self.poll_interval_ms = int(cfg.get("poll_interval_ms", 200))
+        self.speak_stop_url = str(cfg.get("speak_stop_url", "http://localhost:8080/speak/stop"))
+        self.agent_interrupt_url = str(
+            cfg.get("agent_interrupt_url", "http://localhost:8080/agent/speech/interrupt")
+        )
+
+    def interrupt_robot_speech(self) -> None:
+        _post_json(self.speak_stop_url)
+        _post_json(self.agent_interrupt_url)
 
     def start_speech(self) -> None:
         _post_json(self.speech_start_url)
@@ -194,9 +197,6 @@ class WakewordService:
                 for label in self._openwakeword.run(stream):
                     if self._stop_event.is_set():
                         break
-                    with self._lock:
-                        if self._active_window:
-                            continue
                     logger.info("openwakeword detected: %s", label)
                     self._on_wakeword(label)
             else:
@@ -265,15 +265,14 @@ class WakewordService:
             self._on_wakeword(match)
 
     def _on_wakeword(self, wakeword: str) -> None:
+        self.actions.interrupt_robot_speech()
         now = _now()
         with self._lock:
-            if self._active_window:
-                return
             if now - self._last_trigger_ts < self.detector.cfg.cooldown_sec:
                 return
             self._last_trigger_ts = now
             self._active_window = True
-        logger.info("wakeword candidate: %s at %f", wakeword, now)
+        logger.info("wakeword candidate: %s at %f (barge-in)", wakeword, now)
         # Briefly sleep the detection thread to let the audio buffer advance
         time.sleep(0.5)
         threading.Thread(target=self._command_window, args=(wakeword,), daemon=True).start()

@@ -45,6 +45,15 @@ def get_router(service: SpeakService) -> APIRouter:
     async def status():
         return {"ready": True}
 
+    @router.post("/speak/stop")
+    async def stop():
+        """Stop in-progress TTS playback immediately."""
+        try:
+            return await asyncio.to_thread(service.stop_speaking)
+        except Exception as e:
+            logger.exception("/speak/stop failed")
+            return {"ok": False, "error": repr(e)}
+
     @router.post("/speak/say")
     async def say(payload: dict):
         text = str(payload.get("text", "")).strip()

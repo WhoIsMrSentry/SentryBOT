@@ -158,6 +158,8 @@ class AgentOrchestrator:
             self.speech_arbiter.set_tts_state_callback(
                 lambda active: self.autonomy_client.set_speech_tracking(not bool(active))
             )
+        if self.autonomy_client and hasattr(self.autonomy_client, "stop_speaking"):
+            self.speech_arbiter.set_stop_playback_fn(self.autonomy_client.stop_speaking)
         # Gateway base URL for HTTP-fronted arbiter actions (head/vision/follow).
         actions_cfg = config.get("actions", {}) if isinstance(config.get("actions", {}), dict) else {}
         self._gateway_base_url = str(actions_cfg.get("gateway_base_url", "http://127.0.0.1:8080")).rstrip("/")

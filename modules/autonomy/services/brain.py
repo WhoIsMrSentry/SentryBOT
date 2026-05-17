@@ -595,8 +595,25 @@ class AutonomyBrain(
         self.mood.modify("energy", 2)
         self.memory.add_event(f"Heard sound at angle {angle}")
 
+    def _barge_in_stop_speaking(self) -> None:
+        """Stop robot TTS so the user can speak (wakeword barge-in)."""
+        try:
+            if self.agent and hasattr(self.agent, "speech_arbiter"):
+                self.agent.speech_arbiter.interrupt_all()
+            else:
+                self.client.stop_speaking()
+                self.client.interrupt_agent_speech()
+        except Exception as exc:
+            logger.debug("barge-in stop failed: %s", exc)
+
     def _react_to_speech(self, text, source_lang: str | None = None):
         """React to heard text."""
+        from modules.speech.services.wake_phrase import contains_wakeword, strip_wakewords
+
+        low = str(text or "").lower()
+        if contains_wakeword(low):
+            self._barge_in_stop_speaking()
+
         request_id = uuid.uuid4().hex[:10]
         with self._speech_req_lock:
             self._active_speech_req_id = request_id
@@ -608,15 +625,15 @@ class AutonomyBrain(
         self.memory.add_event(f"User said: {text}")
         self._log_conversation(text)
         lang = str(source_lang or self.state.get("last_speech_language") or "tr")
-        low = str(text or "").lower()
-        wake_only = any(k in low for k in ["hey sentry", "hey sentrybot", "sentry", "sentrybot"])
+        wake_only = len(strip_wakewords(low).split()) < 1 and contains_wakeword(low)
         if wake_only:
             self._run_scene("wakeword_reaction", context={"text": text})
-            stripped = low
-            for phrase in ("hey sentrybot", "hey sentry", "sentrybot", "sentry"):
-                stripped = stripped.replace(phrase, " ")
-            if len(stripped.split()) < 1:
-                logger.info("Wakeword-only utterance; skipping LLM until a command is spoken.")
+            if len(strip_wakewords(low).split()) < 1:
+                logger.info("Wakeword-only utterance; listening for command.")
+                try:
+                    self.client.start_speech_listening()
+                except Exception:
+                    pass
                 return
         speaker = self._guess_active_person()
         if speaker:

@@ -7,10 +7,18 @@ import time
 from threading import Timer, Lock
 from typing import TYPE_CHECKING
 
+from modules.speech.services.wake_phrase import contains_wakeword, strip_wakewords
+
 if TYPE_CHECKING:
     from modules.speech.xSpeechService import SpeechService
 
 logger = logging.getLogger("speech.api")
+
+_BARGE_IN_URLS = (
+    "http://localhost:8080/speak/stop",
+    "http://localhost:8080/agent/speech/interrupt",
+    "http://localhost:8080/speech/start",
+)
 
 def _notify_autonomy():
     try:
@@ -30,6 +38,16 @@ def _push_interaction_event(event_type: str):
 
 def _emit_speech_event(name: str):
     threading.Thread(target=_push_interaction_event, args=(name,), daemon=True).start()
+
+
+def _barge_in_for_wakeword() -> None:
+    for url in _BARGE_IN_URLS:
+        try:
+            requests.post(url, json={}, timeout=0.25)
+        except Exception:
+            pass
+    logger.info("Wakeword barge-in: stopped TTS and opened listening")
+
 
 def get_router(service: SpeechService) -> APIRouter:
     router = APIRouter()
@@ -74,6 +92,10 @@ def get_router(service: SpeechService) -> APIRouter:
             text, language = service.finalize_stt(text or last_nonempty_text)
         if text:
             last_nonempty_text = text
+        if text and contains_wakeword(text):
+            remainder = strip_wakewords(text)
+            if r.is_final or len(remainder.split()) < 2:
+                threading.Thread(target=_barge_in_for_wakeword, daemon=True).start()
         last = {
             "text": text or last_nonempty_text or None,
             "final": r.is_final,

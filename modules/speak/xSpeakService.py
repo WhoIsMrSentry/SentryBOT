@@ -211,6 +211,11 @@ class SpeakService:
             return
         self._post_interactions("/event", {"type": "speech.end", "data": {"duration_sec": duration_sec}})
 
+    def stop_speaking(self) -> dict:
+        """Interrupt current TTS playback (wakeword barge-in)."""
+        self.player.stop_playback()
+        return {"ok": True, "stopped": True}
+
     def speak(
         self,
         text: str,

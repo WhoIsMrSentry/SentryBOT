@@ -90,10 +90,14 @@ class ToolRegistry:
                 return f"Error executing {tool_name}: vision arbiter busy"
             vision_held = tool_name in self._VLM_TOOL_NAMES
             logger.info(f"LLM called tool: {tool_name}({kwargs})")
-            self._emit_status({"type": "tool_start", "tool": tool_name, "args": kwargs})
             result = self.tools[tool_name](**kwargs)
-            self._emit_status({"type": "tool_done", "tool": tool_name})
-            return json.dumps(result) if isinstance(result, (dict, list)) else str(result)
+            result_str = json.dumps(result) if isinstance(result, (dict, list)) else str(result)
+            self._emit_status({
+                "type": "tool_done",
+                "tool": tool_name,
+                "result": result_str,
+            })
+            return result_str
         except Exception as e:
             logger.error(f"Tool {tool_name} failed: {e}")
             self._emit_status({"type": "tool_error", "tool": tool_name, "error": str(e)})

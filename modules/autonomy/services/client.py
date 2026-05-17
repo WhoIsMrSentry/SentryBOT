@@ -279,6 +279,21 @@ class ServiceClient:
         endpoint = "/track/start" if enabled else "/track/stop"
         return self._post("speech", endpoint)
 
+    def stop_speaking(self):
+        return self._post("speak", "/stop", timeout_s=0.35)
+
+    def start_speech_listening(self):
+        return self._post("speech", "/start", timeout_s=0.35)
+
+    def interrupt_agent_speech(self):
+        base = str(self.urls.get("agent_core") or "http://127.0.0.1:8080/agent").rstrip("/")
+        try:
+            resp = requests.post(f"{base}/speech/interrupt", timeout=0.35)
+            return resp.json() if resp.status_code == 200 else None
+        except Exception as exc:
+            logger.debug("interrupt_agent_speech failed: %s", exc)
+            return None
+
     def translate(self, text, source_lang: str, target_lang: str):
         params = {
             "text": str(text or ""),
