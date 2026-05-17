@@ -1,10 +1,4 @@
 import threading
-from unittest.mock import MagicMock, patch
-
-# Mock cv2 and numpy before importing VisionProcessor
-import sys
-sys.modules['cv2'] = MagicMock()
-sys.modules['numpy'] = MagicMock()
 
 from modules.vlm_bridge.services.processor import VisionProcessor
 from modules.vlm_bridge.services.visual_context import VisualContextCache
