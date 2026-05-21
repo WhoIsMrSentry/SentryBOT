@@ -68,19 +68,21 @@ def _prompt_audio_device() -> None:
         idx = int(choice)
         device_name = devices[idx]['name']
         
-        cfg_path = os.path.join(ROOT, "modules", "speak", "config", "config.yml")
+        cfg_path = os.path.join(ROOT, "config", "agent.yaml")
         if os.path.exists(cfg_path):
             with open(cfg_path, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
             
-            if "audio_out" not in cfg:
-                cfg["audio_out"] = {}
-            cfg["audio_out"]["device"] = device_name
+            if "speak" not in cfg:
+                cfg["speak"] = {}
+            if "audio_out" not in cfg["speak"]:
+                cfg["speak"]["audio_out"] = {}
+            cfg["speak"]["audio_out"]["device"] = device_name
             
             with open(cfg_path, "w", encoding="utf-8") as f:
                 yaml.dump(cfg, f, allow_unicode=True, sort_keys=False)
             
-            logger.info("Audio output device set to: %s", device_name)
+            logger.info("Audio output device set to: %s in config/agent.yaml", device_name)
     except Exception as e:
         logger.warning("Audio device selection failed/skipped: %s", e)
 
