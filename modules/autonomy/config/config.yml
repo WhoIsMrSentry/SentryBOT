@@ -65,7 +65,7 @@ behaviors:
     sound_reaction: true
   sleep:
     enabled: true
-    start_hour: 23
+    start_hour: 2
     end_hour: 7
     wake_up_action: "stretch"
 

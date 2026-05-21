@@ -224,65 +224,106 @@ class SpeakService:
         self.player.stop_playback()
         return {"ok": True, "stopped": True}
 
+    # ── Meta-reasoning line starters to filter from TTS ──────────────
+    _THINK_STARTERS = (
+        "draft", "selection", "alternative", "let's ", "let me ",
+        "actually", "wait,", "wait ", "must be", "check ",
+        "checking", "final choice", "constraint", "role:",
+        "internal state", "happiness is", "boredom is", "energy is",
+        "time is", "happiness:", "energy:", "boredom:",
+        "last interaction:", "time:", "feeling:", "note:",
+        "option", "hmm", "analysis:", "sub-agent", "sub_agent",
+        "battery", "voltage", "temperature:", "sensor",
+        "i need to", "i should", "i'll ", "i will ",
+        "thinking", "reasoning", "approach:", "ldr:", "rssi:",
+        "cpu:", "memory:", "disk:", "uptime:", "current:",
+    )
+
+    _TELEMETRY_LABELS = frozenset({
+        "battery", "voltage", "current", "temperature",
+        "humidity", "distance", "ldr", "rssi", "status",
+        "cpu", "memory", "disk", "uptime", "level",
+    })
+
     def _clean_text_for_speech(self, text: str) -> str:
+        """Remove LLM chain-of-thought, telemetry and formatting before TTS."""
         if not text or not text.strip():
             return ""
 
-        # Split into paragraphs by double newlines or blank lines
-        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
-        if not paragraphs:
+        raw = str(text).strip()
+
+        # Fast path: single-line, no reasoning markers
+        if "\n" not in raw and not raw.startswith(("*", "-", ">", "#")):
+            return raw.replace("*", "").strip()
+
+        lines = raw.splitlines()
+        clean_lines: list[str] = []
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            low = stripped.lower()
+
+            # ── Bullet points / list items ──
+            if re.match(r'^[\*\-\•\·\>\#]\s', stripped):
+                continue
+            # Indented bullets
+            if line != line.lstrip() and re.match(r'^\s+[\*\-\•]', line):
+                continue
+
+            # ── Meta-reasoning starters ──
+            if low.startswith(self._THINK_STARTERS):
+                continue
+
+            # ── Lines with word counts: (N words) ──
+            if re.search(r'\(\d+\s+words?\)', stripped):
+                continue
+
+            # ── Full-line evaluation in parens: (Strong, reflects...) ──
+            if re.match(r'^\(.*\)\.?$', stripped):
+                continue
+
+            # ── Fully-quoted draft lines ──
+            trimmed = stripped.rstrip(".").rstrip()
+            if len(trimmed) > 2 and trimmed[0] == '"' and trimmed[-1] == '"':
+                continue
+            if len(trimmed) > 2 and trimmed[0] == "'" and trimmed[-1] == "'":
+                continue
+
+            # ── Telemetry label: value lines ──
+            colon_match = re.match(r'^([A-Za-z][A-Za-z_ ]{0,25}):\s*(.*)$', stripped)
+            if colon_match:
+                label = colon_match.group(1).strip().lower()
+                value = colon_match.group(2).strip()
+                if label in self._TELEMETRY_LABELS:
+                    continue
+                # Short numeric values are likely telemetry
+                if len(value) < 15 and re.match(r'^[\d\.]+', value):
+                    continue
+
+            clean_lines.append(stripped)
+
+        # Fallback: take the last non-bullet, non-empty line
+        if not clean_lines:
+            for line in reversed(lines):
+                s = line.strip()
+                if s and not re.match(r'^[\*\-\>\#\•]', s):
+                    s = s.strip('"').strip("'").replace("*", "")
+                    s = re.sub(r'\(\d+\s+words?\)', '', s).strip()
+                    if s and len(s) > 3:
+                        clean_lines = [s]
+                        break
+
+        if not clean_lines:
             return ""
 
-        remaining_paragraphs = []
-        for p in paragraphs:
-            p_clean = p.strip()
-            if not p_clean:
-                continue
-            
-            # Check if it is a thought/planning paragraph
-            # Bullet points starting with *, -, >, or #
-            if p_clean.startswith(("*", "-", ">", "#")):
-                if len(paragraphs) > 1:
-                    continue
-            
-            # Meta-thinking starters
-            low = p_clean.lower()
-            meta_starters = (
-                "draft", "selection", "alternative", "let's go with", "actually", 
-                "wait", "let's try", "must be", "happiness is", "boredom is", 
-                "energy is", "time is", "let's refine"
-            )
-            if low.startswith(meta_starters):
-                if len(paragraphs) > 1:
-                    continue
-                    
-            remaining_paragraphs.append(p)
-
-        # Fallback if everything got filtered
-        if not remaining_paragraphs:
-            remaining_paragraphs = [paragraphs[-1]]
-
-        # Deduplicate matching paragraphs (e.g. quoted drafts followed by final text)
-        unique_paragraphs = []
-        for idx, p in enumerate(remaining_paragraphs):
-            p_clean = p.strip().strip('"').strip("'").strip()
-            duplicate_later = False
-            for later_p in remaining_paragraphs[idx+1:]:
-                if later_p.strip().strip('"').strip("'").strip() == p_clean:
-                    duplicate_later = True
-                    break
-            if not duplicate_later:
-                unique_paragraphs.append(p)
-
-        final_text = "\n\n".join(unique_paragraphs)
-
-        # Remove all asterisks
-        final_text = final_text.replace("*", "")
-
-        # Clean multiple spaces
-        final_text = re.sub(r" +", " ", final_text).strip()
-
-        return final_text
+        # Remove asterisks and collapse whitespace
+        result = " ".join(clean_lines)
+        result = result.replace("*", "")
+        result = re.sub(r" +", " ", result).strip()
+        return result
 
     def speak(
         self,
