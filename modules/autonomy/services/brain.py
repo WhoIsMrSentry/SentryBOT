@@ -22,6 +22,11 @@ from .brain_parts.timeline import TimelineMixin
 from .brain_parts.vision import VisionMixin
 from .brain_parts.vocal import VocalMixin
 
+try:
+    from modules.speak.services.lang_detect import detect_text_language
+except ImportError:
+    detect_text_language = None
+
 # Agent Core integration
 try:
     from modules.agent_core.services.agent import AgentOrchestrator  # type: ignore
@@ -754,7 +759,10 @@ class AutonomyBrain(
                     if not self._is_active_request(request_id):
                         return
                     self._remember_person_chat(speaker, clean_text, role="assistant")
-                    self._speak_with_mood(clean_text, language=lang)
+                    final_lang = lang
+                    if detect_text_language:
+                        final_lang = detect_text_language(clean_text, default=lang)
+                    self._speak_with_mood(clean_text, language=final_lang)
                     logger.info("Reply: %s", clean_text)
                     self.memory.add_event(f"I replied: {clean_text}")
                 else:
