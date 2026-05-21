@@ -12,9 +12,6 @@ audio:
   frame_ms: 30
 
 recognition:
-  # STT Engine: "vosk" (offline, fast) or "google_online" (cloud, highly accurate)
-  engine: "google_online"
-  
   # You can set either language or model_path. If model_path is missing, language will be used to auto-pick a model.
   source_language: tr          # legacy fallback when auto_language is off
   language: tr                 # primary Vosk model (tr)
