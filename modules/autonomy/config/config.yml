@@ -338,6 +338,23 @@ scenes:
       - { type: head, pan: 90, tilt: 100 }
       - { type: event, name: "scene.emotion_sad.end" }
 
+  emotion_angry:
+    steps:
+      - { type: event, name: "scene.emotion_angry.start" }
+      - { type: preset, name: "emotion_angry" }
+      - { type: head, pan: 90, tilt: 105 }
+      - { type: effect, name: "SOLID", color: "#FF0000" }
+      - { type: event, name: "scene.emotion_angry.end" }
+
+  emotion_furious:
+    steps:
+      - { type: event, name: "scene.emotion_furious.start" }
+      - { type: preset, name: "emotion_furious" }
+      - { type: head, pan: 90, tilt: 110 }
+      - { type: effect_burst, name: "PULSE", duration_ms: 120, count: 4, interval_ms: 60 }
+      - { type: effect, name: "SOLID", color: "#FF0000" }
+      - { type: event, name: "scene.emotion_furious.end" }
+
 owner:
   enabled: true
   name: "WhoIsMrSentry"

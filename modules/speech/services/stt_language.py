@@ -66,49 +66,59 @@ def resolve_stt_text_and_language(
     *,
     primary: Recognizer,
     secondary: Optional[Recognizer],
+    primary_lang: str = "tr",
+    secondary_lang: str = "en",
     default_language: str = "tr",
     auto_switch_model: bool = True,
     dual_decode_margin: float = 0.6,
 ) -> Tuple[str, str]:
     """Pick TR or EN transcript by dual-decoding utterance audio when possible."""
-    tr_text = str(text or "").strip()
-    if not tr_text and not pcm:
+    primary_text = str(text or "").strip()
+    if not primary_text and not pcm:
         return "", default_language
 
     if not auto_switch_model or secondary is None:
-        lang = _detect_language(tr_text, default=default_language) if tr_text else default_language
-        return tr_text, lang
+        lang = _detect_language(primary_text, default=default_language) if primary_text else default_language
+        return primary_text, lang
 
-    en_text = ""
+    secondary_text = ""
     if pcm:
         try:
-            en_text = str(secondary.recognize_pcm(pcm) or "").strip()
+            secondary_text = str(secondary.recognize_pcm(pcm) or "").strip()
         except FileNotFoundError:
-            logger.warning("English Vosk model missing; keeping primary transcript only")
+            logger.warning(f"{secondary_lang.upper()} Vosk model missing; keeping primary transcript only")
         except Exception as exc:
             logger.debug("secondary STT failed: %s", exc)
 
-    if not en_text:
-        lang = _detect_language(tr_text, default=default_language) if tr_text else default_language
-        return tr_text, lang
+    if not secondary_text:
+        lang = _detect_language(primary_text, default=default_language) if primary_text else default_language
+        return primary_text, lang
 
-    if not tr_text:
-        lang = _detect_language(en_text, default=default_language)
-        logger.info("STT language=%s (primary empty, vosk-en only)", lang)
-        return en_text, lang
+    if not primary_text:
+        lang = _detect_language(secondary_text, default=default_language)
+        logger.info("STT language=%s (primary empty, secondary only)", lang)
+        return secondary_text, lang
+
+    # Map the outputs to the expected tr/en variables based on the language configuration
+    if primary_lang.startswith("tr"):
+        tr_text = primary_text
+        en_text = secondary_text
+    else:
+        tr_text = secondary_text
+        en_text = primary_text
 
     tr_score = _transcript_score(tr_text, "tr")
     en_score = _transcript_score(en_text, "en")
     en_words = re.findall(r"[a-zA-Z']+", en_text.lower())
     en_stop_hits = sum(1 for w in en_words if w in _EN_STOPWORDS)
-    tr_chars_in_primary = sum(1 for ch in tr_text if ch in _TR_CHARS)
+    tr_chars_in_tr = sum(1 for ch in tr_text if ch in _TR_CHARS)
 
     pick_en = en_score > tr_score + dual_decode_margin
-    # TR primary often hallucinates Turkish on English audio; prefer EN when vosk-en is coherent.
+    # Favor English if the English model produces stop words, to prevent TR hallucination
     if not pick_en and en_stop_hits >= 2 and en_score >= tr_score - 0.15:
-        if tr_chars_in_primary == 0 or en_score >= tr_score:
+        if tr_chars_in_tr == 0 or en_score >= tr_score:
             pick_en = True
-    if not pick_en and en_stop_hits >= 1 and tr_chars_in_primary >= 2 and en_score > tr_score:
+    if not pick_en and en_stop_hits >= 1 and tr_chars_in_tr >= 2 and en_score > tr_score:
         pick_en = True
 
     if pick_en:
@@ -124,6 +134,21 @@ def resolve_stt_text_and_language(
 
     lang = _detect_language(tr_text, default=default_language)
     if tr_score >= en_score:
+        logger.info(
+            "STT picked vosk-tr (tr_score=%.2f en_score=%.2f tr=%r en=%r)",
+            tr_score,
+            en_score,
+            tr_text[:48],
+            en_text[:48],
+        )
         return tr_text, lang
+    
     lang = _detect_language(en_text, default=default_language)
+    logger.info(
+        "STT picked vosk-en (fallback) (tr_score=%.2f en_score=%.2f tr=%r en=%r)",
+        tr_score,
+        en_score,
+        tr_text[:48],
+        en_text[:48],
+    )
     return en_text, "en" if lang != "tr" else lang

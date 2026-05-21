@@ -298,7 +298,7 @@ class OpenWakewordRunner:
                     len(self._calibration_scores),
                 )
             else:
-                logger.info("openwakeword probe: best=%s score=%.4f threshold=%.4f", best_label, best_score, self._threshold)
+                logger.debug("openwakeword probe: best=%s score=%.4f threshold=%.4f", best_label, best_score, self._threshold)
         if best_label and best_score >= self._threshold:
             # optional verifier step
             if self._verifier is not None:

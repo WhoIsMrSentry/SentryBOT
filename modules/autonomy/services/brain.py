@@ -201,7 +201,7 @@ class AutonomyBrain(
         """External ping that resets boredom timer and nudges mood."""
         self.state["last_interaction"] = time.time()
         self.state["is_bored"] = False
-        if source:
+        if source and str(source).lower() != "api":
             self.state["last_speaker"] = source
         self.mood.modify("happiness", 1)
 

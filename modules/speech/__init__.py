@@ -14,7 +14,7 @@ __all__ = [
 
 def __getattr__(name: str):
     if name == "xSpeechService":
-        from . import xSpeechService as xSpeechService  # noqa: N811
+        from .xSpeechService import SpeechService as xSpeechService  # noqa: N811
 
         return xSpeechService
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
