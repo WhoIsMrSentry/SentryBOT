@@ -44,6 +44,46 @@ def _stop_started_services(app) -> None:
             break
 
 
+def _prompt_audio_device() -> None:
+    try:
+        import sounddevice as sd
+        import yaml
+        devices = sd.query_devices()
+        has_outputs = any(d['max_output_channels'] > 0 for d in devices)
+        if not has_outputs:
+            return
+
+        print("\n" + "="*50)
+        print(" SentryBOT Audio Output Selection ")
+        print("="*50)
+        for i, d in enumerate(devices):
+            if d['max_output_channels'] > 0:
+                print(f"[{i}] {d['name']}")
+        
+        print("\nPress ENTER to skip, or type the device index (e.g. for BT Speaker):")
+        choice = input("Device Index: ").strip()
+        if not choice:
+            return
+            
+        idx = int(choice)
+        device_name = devices[idx]['name']
+        
+        cfg_path = os.path.join(ROOT, "modules", "speak", "config", "config.yml")
+        if os.path.exists(cfg_path):
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            
+            if "audio_out" not in cfg:
+                cfg["audio_out"] = {}
+            cfg["audio_out"]["device"] = device_name
+            
+            with open(cfg_path, "w", encoding="utf-8") as f:
+                yaml.dump(cfg, f, allow_unicode=True, sort_keys=False)
+            
+            logger.info("Audio output device set to: %s", device_name)
+    except Exception as e:
+        logger.warning("Audio device selection failed/skipped: %s", e)
+
 def main() -> None:
     # Logları erken başlat (opsiyonel hatalarda devam et)
     try:
@@ -51,6 +91,10 @@ def main() -> None:
         init_logging()
     except Exception as exc:
         logger.debug("init_logging skipped: %s", exc)
+
+    # Robot başlatılırken çıkış cihazı sor
+    if sys.stdin.isatty():
+        _prompt_audio_device()
 
     if not os.path.isfile(_GATEWAY_SERVICE_FILE):
         raise SystemExit(

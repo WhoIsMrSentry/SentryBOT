@@ -267,13 +267,13 @@ class WakewordService:
             self._on_wakeword(match)
 
     def _on_wakeword(self, wakeword: str) -> None:
-        self.actions.interrupt_robot_speech()
         now = _now()
         with self._lock:
             if now - self._last_trigger_ts < self.detector.cfg.cooldown_sec:
                 return
             self._last_trigger_ts = now
             self._active_window = True
+        self.actions.interrupt_robot_speech()
         logger.info("wakeword candidate: %s at %f (barge-in)", wakeword, now)
         threading.Thread(target=self._command_window, args=(wakeword,), daemon=True).start()
 

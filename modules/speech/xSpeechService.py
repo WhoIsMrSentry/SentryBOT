@@ -117,6 +117,12 @@ class SpeechService:
             en_cfg.pop("model_path", None)
             try:
                 self._secondary_recognizer = Recognizer(en_cfg)
+                # Pre-warm EN Vosk model so dual-decode works on first utterance
+                try:
+                    self._secondary_recognizer._ensure_model()
+                    logger.info("English Vosk model pre-loaded for dual-decode STT")
+                except Exception as warm_exc:
+                    logger.warning("English Vosk model pre-warm failed (will lazy-load): %s", warm_exc)
             except Exception as exc:
                 logger.warning("English Vosk model unavailable for auto STT: %s", exc)
         self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
