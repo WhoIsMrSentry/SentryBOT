@@ -9,9 +9,9 @@ vision:
   max_camera_wait_attempts: 5  # stop polling gateway camera when unavailable
   confidence_threshold: 0.5
   face_match:
-    ratio_test: 0.72
-    min_good_matches: 10
-    min_score: 0.15
+    ratio_test: 0.78
+    min_good_matches: 5
+    min_score: 0.08
   follow:
     enabled: true
     track_interval_s: 0.12

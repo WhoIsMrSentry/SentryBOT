@@ -2,9 +2,9 @@ agent:
   model: "qwen3.5:9b"
   temperature: 0.15
   num_ctx: 4096
-  cooldown_s: 1.0  # LLM Rate Limit
+  cooldown_s: 0.5  # LLM Rate Limit
   request_timeout: 60
-  status_interval_s: 3.0
+  status_interval_s: 1.5
   waiting_messages:
     - "Beklemedeyim..."
     - "Islem suruyor..."
@@ -31,7 +31,7 @@ google_ai_studio:
   api_key: ""   # bos birakilirsa GOOGLE_API_KEY env kullanilir
   model: "gemini-3-flash-preview"
   base_url: "https://generativelanguage.googleapis.com"
-  request_timeout: 45
+  request_timeout: 30
 
 # Tek anahtar ile LLM + VLM + ESP URL degistir: active satirini degistir.
 runtime_profile:
@@ -118,9 +118,9 @@ vlm_bridge:
     context_max_age_s: 45
     confidence_threshold: 0.5
     face_match:
-      ratio_test: 0.72
-      min_good_matches: 10
-      min_score: 0.15
+      ratio_test: 0.78
+      min_good_matches: 5
+      min_score: 0.08
     follow:
       enabled: true
       track_interval_s: 0.12
@@ -166,7 +166,7 @@ vlm_bridge:
   ollama:
     endpoint: "@gateway/ollama/chat"
     model: "qwen3.5:9b"
-    timeout: 12.0
+    timeout: 8.0
     num_predict: 160
   llm:
     provider: "ollama"
@@ -336,7 +336,7 @@ tri_layer:
     num_predict: 384
 
 realtime_profile:
-  active: normal
+  active: fast
   profiles:
     ultra_fast:
       num_predict_chat: 96
@@ -357,7 +357,7 @@ realtime_profile:
       ollama_num_predict: 176
       speak_max_chunk_chars: 260
       vlm_ask_timeout_s: 12
-      ollama_chat_timeout_s: 32
+      ollama_chat_timeout_s: 25
     normal:
       num_predict_chat: 384
       num_predict_persona: 384
