@@ -74,17 +74,16 @@ class AudioPlayer:
         started = time.monotonic()
         with _play_lock:
             sd.play(data, samplerate=pcm.samplerate, device=self.cfg.device, blocking=False)
-            while True:
+            # Calculate duration in seconds
+            dur_sec = len(data) / pcm.samplerate
+            end_time = started + dur_sec
+            while time.monotonic() < end_time:
                 if _play_stop.is_set():
                     sd.stop()
                     break
-                try:
-                    sd.wait(timeout=0.05)
-                    sd.stop()
-                    break
-                except Exception:
-                    sd.stop()
-                    break
+                time.sleep(0.05)
+            if not _play_stop.is_set():
+                sd.stop()
         dur = max(0.0, time.monotonic() - started)
         if _play_stop.is_set():
             logger.info("Playback interrupted after %.2fs", dur)

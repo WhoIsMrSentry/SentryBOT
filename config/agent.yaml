@@ -29,7 +29,7 @@ ollama:
 
 google_ai_studio:
   api_key: ""   # bos birakilirsa GOOGLE_API_KEY env kullanilir
-  model: "gemini-3-flash-preview"
+  model: "gemma-4-31b-it"
   base_url: "https://generativelanguage.googleapis.com"
   request_timeout: 30
 
@@ -42,11 +42,11 @@ runtime_profile:
       llm:
         provider: google_ai_studio
       agent:
-        model: "gemini-3-flash-preview"
+        model: "gemma-4-31b-it"
         request_timeout: 45
       google_ai_studio:
         # api_key: profil bos birakir; ustteki google_ai_studio.api_key veya GOOGLE_API_KEY env
-        model: "gemini-3-flash-preview"
+        model: "gemma-4-31b-it"
         request_timeout: 45
       vlm_bridge:
         llm:
