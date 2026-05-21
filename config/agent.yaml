@@ -287,6 +287,7 @@ speech:
     dtype: int16
     frame_ms: 30
   recognition:
+    engine: google_online
     source_language: tr
     language: tr
     default_language: tr
