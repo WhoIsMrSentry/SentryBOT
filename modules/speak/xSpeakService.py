@@ -224,6 +224,66 @@ class SpeakService:
         self.player.stop_playback()
         return {"ok": True, "stopped": True}
 
+    def _clean_text_for_speech(self, text: str) -> str:
+        if not text or not text.strip():
+            return ""
+
+        # Split into paragraphs by double newlines or blank lines
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        if not paragraphs:
+            return ""
+
+        remaining_paragraphs = []
+        for p in paragraphs:
+            p_clean = p.strip()
+            if not p_clean:
+                continue
+            
+            # Check if it is a thought/planning paragraph
+            # Bullet points starting with *, -, >, or #
+            if p_clean.startswith(("*", "-", ">", "#")):
+                if len(paragraphs) > 1:
+                    continue
+            
+            # Meta-thinking starters
+            low = p_clean.lower()
+            meta_starters = (
+                "draft", "selection", "alternative", "let's go with", "actually", 
+                "wait", "let's try", "must be", "happiness is", "boredom is", 
+                "energy is", "time is", "let's refine"
+            )
+            if low.startswith(meta_starters):
+                if len(paragraphs) > 1:
+                    continue
+                    
+            remaining_paragraphs.append(p)
+
+        # Fallback if everything got filtered
+        if not remaining_paragraphs:
+            remaining_paragraphs = [paragraphs[-1]]
+
+        # Deduplicate matching paragraphs (e.g. quoted drafts followed by final text)
+        unique_paragraphs = []
+        for idx, p in enumerate(remaining_paragraphs):
+            p_clean = p.strip().strip('"').strip("'").strip()
+            duplicate_later = False
+            for later_p in remaining_paragraphs[idx+1:]:
+                if later_p.strip().strip('"').strip("'").strip() == p_clean:
+                    duplicate_later = True
+                    break
+            if not duplicate_later:
+                unique_paragraphs.append(p)
+
+        final_text = "\n\n".join(unique_paragraphs)
+
+        # Remove all asterisks
+        final_text = final_text.replace("*", "")
+
+        # Clean multiple spaces
+        final_text = re.sub(r" +", " ", final_text).strip()
+
+        return final_text
+
     def speak(
         self,
         text: str,
@@ -237,6 +297,12 @@ class SpeakService:
         """
         if not text or not text.strip():
             raise ValueError("text is empty")
+
+        cleaned_text = self._clean_text_for_speech(text)
+        if not cleaned_text or not cleaned_text.strip():
+            logger.info("Speech text is empty after cleaning thoughts/markdown. Skipping.")
+            return {"ok": True, "engine": engine or "default", "duration_sec": 0.0, "samplerate": 22050}
+
         tone_dict = self._coerce_tone(tone)
         overrides = dict(tone_dict or {})
         if engine:
@@ -245,14 +311,14 @@ class SpeakService:
             overrides["speaker_wav"] = speaker_wav
         if language:
             overrides["language"] = language
-        self._emit_speech_liveliness_start(text, tone_dict)
+        self._emit_speech_liveliness_start(cleaned_text, tone_dict)
         try:
             from modules.speak.services.tts import clear_synthesis_cancel
 
             clear_synthesis_cancel()
         except Exception:
             pass
-        wav = self.tts.synthesize(text, overrides=overrides or None)
+        wav = self.tts.synthesize(cleaned_text, overrides=overrides or None)
         dur = self.player.play_blocking(wav)
         self._emit_speech_liveliness_end(dur)
         used_engine = overrides.get("engine") or self.cfg.get("tts", {}).get("engine")
