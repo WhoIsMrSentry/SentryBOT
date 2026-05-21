@@ -44,8 +44,136 @@ def _stop_started_services(app) -> None:
             break
 
 
+def _prompt_bluetooth_connection() -> None:
+    try:
+        import shutil
+        import subprocess
+        import re
+        import time
+
+        if not shutil.which("bluetoothctl"):
+            return
+
+        print("\n" + "="*50)
+        print(" SentryBOT Bluetooth Quick-Connect ")
+        print("="*50)
+        print("[s] Scan & Connect to a Bluetooth Speaker/Device")
+        print("[p] View and Connect to paired Bluetooth devices")
+        print("[ENTER] Skip to Audio Output Selection")
+        
+        choice = input("\nChoice: ").strip().lower()
+        if not choice:
+            return
+
+        discovered = {}
+
+        if choice == 's':
+            print("\nPowering on Bluetooth and starting scan (6 seconds)...")
+            subprocess.run(["bluetoothctl", "power", "on"], capture_output=True, text=True)
+            
+            # Start scanning
+            scan_proc = subprocess.Popen(
+                ["bluetoothctl", "scan", "on"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            time.sleep(6)
+            
+            # Stop scanning
+            subprocess.run(["bluetoothctl", "scan", "off"], capture_output=True, text=True)
+            scan_proc.terminate()
+            try:
+                stdout_data, _ = scan_proc.communicate(timeout=2)
+                for line in stdout_data.splitlines():
+                    if "Device" in line:
+                        mac_match = re.search(r"([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})", line)
+                        if mac_match:
+                            mac = mac_match.group(1)
+                            name = "Unknown Device"
+                            if "Name:" in line:
+                                name = line.split("Name:", 1)[1].strip()
+                            elif mac in line:
+                                parts = line.split(mac, 1)
+                                if len(parts) > 1 and parts[1].strip():
+                                    name = parts[1].strip()
+                            discovered[mac] = name
+            except Exception:
+                pass
+
+        elif choice == 'p':
+            print("\nFetching paired Bluetooth devices...")
+        else:
+            return
+
+        # Add devices from "bluetoothctl devices"
+        res = subprocess.run(["bluetoothctl", "devices"], capture_output=True, text=True)
+        for line in res.stdout.splitlines():
+            match = re.match(r"^Device\s+([0-9A-Fa-f:]+)\s+(.+)$", line.strip())
+            if match:
+                mac, name = match.groups()
+                discovered[mac] = name
+
+        if choice == 'p':
+            # Filter only paired/known devices
+            paired_res = subprocess.run(["bluetoothctl", "paired-devices"], capture_output=True, text=True)
+            paired_macs = set()
+            for line in paired_res.stdout.splitlines():
+                match = re.match(r"^Device\s+([0-9A-Fa-f:]+)\s+(.+)$", line.strip())
+                if match:
+                    paired_macs.add(match.group(1))
+            # Keep only paired devices in discovered
+            discovered = {k: v for k, v in discovered.items() if k in paired_macs}
+
+        if not discovered:
+            print("No Bluetooth devices found.")
+            time.sleep(1)
+            return
+
+        device_list = list(discovered.items())
+        print("\nAvailable Bluetooth Devices:")
+        for idx, (mac, name) in enumerate(device_list):
+            print(f"[{idx}] {name} ({mac})")
+
+        print("\nEnter device index to connect (or ENTER to cancel):")
+        dev_choice = input("Index: ").strip()
+        if not dev_choice:
+            return
+
+        try:
+            dev_idx = int(dev_choice)
+            if 0 <= dev_idx < len(device_list):
+                mac, name = device_list[dev_idx]
+                print(f"\nTrusting, pairing and connecting to {name} ({mac})...")
+                
+                # Trust
+                subprocess.run(["bluetoothctl", "trust", mac], capture_output=True, text=True)
+                # Pair
+                subprocess.run(["bluetoothctl", "pair", mac], capture_output=True, text=True)
+                # Connect
+                connect_res = subprocess.run(["bluetoothctl", "connect", mac], capture_output=True, text=True)
+                
+                if connect_res.returncode == 0 or "Connection successful" in connect_res.stdout:
+                    print(f"Successfully connected to {name}!")
+                    print("Waiting 3 seconds for audio system to register the device...")
+                    time.sleep(3)
+                else:
+                    print(f"Connection output: {connect_res.stdout.strip()}")
+            else:
+                print("Invalid index.")
+        except Exception as e:
+            print(f"Connection failed: {e}")
+        
+        time.sleep(1)
+    except Exception as e:
+        logger.warning("Bluetooth connection menu failed: %s", e)
+
+
 def _prompt_audio_device() -> None:
     try:
+        # Prompt Bluetooth connection first
+        _prompt_bluetooth_connection()
+
         import sounddevice as sd
         import yaml
         devices = sd.query_devices()
