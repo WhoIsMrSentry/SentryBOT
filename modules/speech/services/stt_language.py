@@ -41,7 +41,14 @@ def _transcript_score(text: str, target_lang: str) -> float:
     detected = _detect_language(value, default="tr")
 
     if target_lang == "en":
-        score = en_hits * 0.45
+        # Cap stopword contribution to avoid unbound score inflation
+        score = min(en_hits, 4) * 0.45
+        
+        # Penalize if it's very long but mostly stopwords (gibberish hallucination)
+        stopword_density = en_hits / len(words) if words else 0
+        if len(words) > 6 and stopword_density > 0.6:
+            score -= 2.0
+            
         if detected == "en":
             score += 3.0
         if tr_chars == 0:
@@ -50,14 +57,18 @@ def _transcript_score(text: str, target_lang: str) -> float:
             score -= 2.5
         if len(words) >= 3 and tr_chars == 0:
             score += 0.8
-        return score
+        return max(0.0, score)
 
+    # TR Scoring
     score = 1.0 if detected == "tr" else 0.4
-    score += tr_chars * 0.35
+    score += tr_chars * 0.55  # Boosted TR char weight
     score += min(en_hits, 2) * 0.1
-    if detected == "en" and tr_chars == 0 and en_hits >= 3:
-        score -= 1.5
-    return score
+    
+    # Severe penalty if it detects EN, has no TR chars, and is mostly English words
+    if detected == "en" and tr_chars == 0 and en_hits >= 2:
+        score -= 2.0
+        
+    return max(0.0, score)
 
 
 def resolve_stt_text_and_language(

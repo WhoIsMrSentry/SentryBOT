@@ -100,18 +100,27 @@ class SpeechService:
         self._thread = None
         self.capture = get_shared_capture(self.cfg.get("audio", {}))
         rec_cfg = self.cfg.get("recognition", {}) or {}
-        self.recognizer = Recognizer(rec_cfg)
+        
+        self.engine = str(rec_cfg.get("engine") or "vosk").lower()
+        if self.engine == "google_online":
+            from modules.speech.services.recognizer import OnlineRecognizer
+            self.recognizer = OnlineRecognizer(rec_cfg)
+            self._auto_switch_model = False # Disable dual decode for online STT
+        else:
+            self.recognizer = Recognizer(rec_cfg)
+            self._auto_switch_model = bool(rec_cfg.get("auto_switch_model", True))
+            
         self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
         self._default_language = str(rec_cfg.get("default_language") or self.source_language or "tr")
         self._auto_language = bool(rec_cfg.get("auto_language", True))
-        self._auto_switch_model = bool(rec_cfg.get("auto_switch_model", True))
+        
         self._dual_decode_margin = float(rec_cfg.get("dual_decode_margin", 0.6))
         self._utterance_pcm = bytearray()
         self._max_utterance_bytes = int(
             rec_cfg.get("utterance_buffer_sec", 20) or 20
         ) * int(rec_cfg.get("samplerate", 16000) or 16000) * 2
         self._secondary_recognizer: Optional[Recognizer] = None
-        if self._auto_language and self._auto_switch_model:
+        if self._auto_language and self._auto_switch_model and self.engine != "google_online":
             en_cfg = copy.deepcopy(rec_cfg)
             en_cfg["language"] = "en"
             en_cfg.pop("model_path", None)
