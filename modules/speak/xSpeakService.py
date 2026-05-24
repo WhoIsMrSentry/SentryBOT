@@ -224,6 +224,107 @@ class SpeakService:
         self.player.stop_playback()
         return {"ok": True, "stopped": True}
 
+    # ── Meta-reasoning line starters to filter from TTS ──────────────
+    _THINK_STARTERS = (
+        "draft", "selection", "alternative", "let's ", "let me ",
+        "actually", "wait,", "wait ", "must be", "check ",
+        "checking", "final choice", "constraint", "role:",
+        "internal state", "happiness is", "boredom is", "energy is",
+        "time is", "happiness:", "energy:", "boredom:",
+        "last interaction:", "time:", "feeling:", "note:",
+        "option", "hmm", "analysis:", "sub-agent", "sub_agent",
+        "battery", "voltage", "temperature:", "sensor",
+        "i need to", "i should", "i'll ", "i will ",
+        "thinking", "reasoning", "approach:", "ldr:", "rssi:",
+        "cpu:", "memory:", "disk:", "uptime:", "current:",
+    )
+
+    _TELEMETRY_LABELS = frozenset({
+        "battery", "voltage", "current", "temperature",
+        "humidity", "distance", "ldr", "rssi", "status",
+        "cpu", "memory", "disk", "uptime", "level",
+    })
+
+    def _clean_text_for_speech(self, text: str) -> str:
+        """Remove LLM chain-of-thought, telemetry and formatting before TTS."""
+        if not text or not text.strip():
+            return ""
+
+        raw = str(text).strip()
+
+        # Fast path: single-line, no reasoning markers
+        if "\n" not in raw and not raw.startswith(("*", "-", ">", "#")):
+            return raw.replace("*", "").strip()
+
+        lines = raw.splitlines()
+        clean_lines: list[str] = []
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            low = stripped.lower()
+
+            # ── Bullet points / list items ──
+            if re.match(r'^[\*\-\•\·\>\#]\s', stripped):
+                continue
+            # Indented bullets
+            if line != line.lstrip() and re.match(r'^\s+[\*\-\•]', line):
+                continue
+
+            # ── Meta-reasoning starters ──
+            if low.startswith(self._THINK_STARTERS):
+                continue
+
+            # ── Lines with word counts: (N words) ──
+            if re.search(r'\(\d+\s+words?\)', stripped):
+                continue
+
+            # ── Full-line evaluation in parens: (Strong, reflects...) ──
+            if re.match(r'^\(.*\)\.?$', stripped):
+                continue
+
+            # ── Fully-quoted draft lines ──
+            trimmed = stripped.rstrip(".").rstrip()
+            if len(trimmed) > 2 and trimmed[0] == '"' and trimmed[-1] == '"':
+                continue
+            if len(trimmed) > 2 and trimmed[0] == "'" and trimmed[-1] == "'":
+                continue
+
+            # ── Telemetry label: value lines ──
+            colon_match = re.match(r'^([A-Za-z][A-Za-z_ ]{0,25}):\s*(.*)$', stripped)
+            if colon_match:
+                label = colon_match.group(1).strip().lower()
+                value = colon_match.group(2).strip()
+                if label in self._TELEMETRY_LABELS:
+                    continue
+                # Short numeric values are likely telemetry
+                if len(value) < 15 and re.match(r'^[\d\.]+', value):
+                    continue
+
+            clean_lines.append(stripped)
+
+        # Fallback: take the last non-bullet, non-empty line
+        if not clean_lines:
+            for line in reversed(lines):
+                s = line.strip()
+                if s and not re.match(r'^[\*\-\>\#\•]', s):
+                    s = s.strip('"').strip("'").replace("*", "")
+                    s = re.sub(r'\(\d+\s+words?\)', '', s).strip()
+                    if s and len(s) > 3:
+                        clean_lines = [s]
+                        break
+
+        if not clean_lines:
+            return ""
+
+        # Remove asterisks and collapse whitespace
+        result = " ".join(clean_lines)
+        result = result.replace("*", "")
+        result = re.sub(r" +", " ", result).strip()
+        return result
+
     def speak(
         self,
         text: str,
@@ -237,6 +338,12 @@ class SpeakService:
         """
         if not text or not text.strip():
             raise ValueError("text is empty")
+
+        cleaned_text = self._clean_text_for_speech(text)
+        if not cleaned_text or not cleaned_text.strip():
+            logger.info("Speech text is empty after cleaning thoughts/markdown. Skipping.")
+            return {"ok": True, "engine": engine or "default", "duration_sec": 0.0, "samplerate": 22050}
+
         tone_dict = self._coerce_tone(tone)
         overrides = dict(tone_dict or {})
         if engine:
@@ -245,14 +352,14 @@ class SpeakService:
             overrides["speaker_wav"] = speaker_wav
         if language:
             overrides["language"] = language
-        self._emit_speech_liveliness_start(text, tone_dict)
+        self._emit_speech_liveliness_start(cleaned_text, tone_dict)
         try:
             from modules.speak.services.tts import clear_synthesis_cancel
 
             clear_synthesis_cancel()
         except Exception:
             pass
-        wav = self.tts.synthesize(text, overrides=overrides or None)
+        wav = self.tts.synthesize(cleaned_text, overrides=overrides or None)
         dur = self.player.play_blocking(wav)
         self._emit_speech_liveliness_end(dur)
         used_engine = overrides.get("engine") or self.cfg.get("tts", {}).get("engine")

@@ -13,9 +13,9 @@ audio:
 
 recognition:
   # You can set either language or model_path. If model_path is missing, language will be used to auto-pick a model.
-  source_language: tr          # legacy fallback when auto_language is off
-  language: tr                 # primary Vosk model (tr)
-  default_language: tr
+  source_language: en          # legacy fallback when auto_language is off
+  language: en                 # primary Vosk model (en)
+  default_language: en
   auto_language: true          # detect tr/en from transcript; report in /speech/last
   auto_switch_model: true      # dual-decode utterance with vosk-en and pick best transcript
   dual_decode_margin: 0.35     # EN wins when en_score > tr_score + margin

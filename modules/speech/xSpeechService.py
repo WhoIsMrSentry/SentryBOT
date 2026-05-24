@@ -112,13 +112,20 @@ class SpeechService:
         ) * int(rec_cfg.get("samplerate", 16000) or 16000) * 2
         self._secondary_recognizer: Optional[Recognizer] = None
         if self._auto_language and self._auto_switch_model:
-            en_cfg = copy.deepcopy(rec_cfg)
-            en_cfg["language"] = "en"
-            en_cfg.pop("model_path", None)
+            alt_cfg = copy.deepcopy(rec_cfg)
+            alt_lang = "tr" if self.source_language.startswith("en") else "en"
+            alt_cfg["language"] = alt_lang
+            alt_cfg.pop("model_path", None)
             try:
-                self._secondary_recognizer = Recognizer(en_cfg)
+                self._secondary_recognizer = Recognizer(alt_cfg)
+                # Pre-warm secondary Vosk model so dual-decode works on first utterance
+                try:
+                    self._secondary_recognizer._ensure_model()
+                    logger.info(f"{alt_lang.upper()} Vosk model pre-loaded for dual-decode STT")
+                except Exception as warm_exc:
+                    logger.warning(f"{alt_lang.upper()} Vosk model pre-warm failed (will lazy-load): {warm_exc}")
             except Exception as exc:
-                logger.warning("English Vosk model unavailable for auto STT: %s", exc)
+                logger.warning(f"{alt_lang.upper()} Vosk model unavailable for auto STT: {exc}")
         self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
         # Direction estimator (optional, needs stereo)
         dir_cfg = self.cfg.get("direction", {})
@@ -274,6 +281,8 @@ class SpeechService:
             pcm,
             primary=self.recognizer,
             secondary=self._secondary_recognizer,
+            primary_lang=self.recognizer.cfg.language if hasattr(self.recognizer, 'cfg') and getattr(self.recognizer.cfg, 'language', None) else "tr",
+            secondary_lang=self._secondary_recognizer.cfg.language if self._secondary_recognizer and hasattr(self._secondary_recognizer, 'cfg') and getattr(self._secondary_recognizer.cfg, 'language', None) else "en",
             default_language=self._default_language,
             auto_switch_model=self._auto_switch_model,
             dual_decode_margin=self._dual_decode_margin,

@@ -276,9 +276,9 @@ class GoogleAIStudioClient:
     ) -> Dict[str, Any]:
         selected_model = str(model or self.model).strip() or self.model
         # Guard against accidental persona-name override (e.g. "sentry").
-        if model and not selected_model.lower().startswith("gemini"):
+        if model and not (selected_model.lower().startswith("gemini") or selected_model.lower().startswith("gemma")):
             logger.warning(
-                "Ignoring non-Gemini model override for Google provider: %s",
+                "Ignoring non-Gemini/non-Gemma model override for Google provider: %s",
                 selected_model,
             )
             selected_model = self.model
@@ -382,7 +382,7 @@ class GoogleAIStudioClient:
     ) -> str:
         """Multimodal generateContent (text + inline image)."""
         selected_model = str(model or self.model).strip() or self.model
-        if model and not selected_model.lower().startswith("gemini"):
+        if model and not (selected_model.lower().startswith("gemini") or selected_model.lower().startswith("gemma")):
             selected_model = self.model
 
         generation_config: Dict[str, Any] = {"temperature": 0.3}

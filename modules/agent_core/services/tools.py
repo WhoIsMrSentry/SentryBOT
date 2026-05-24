@@ -587,6 +587,7 @@ class ToolRegistry:
     def set_emotion(self, emotion: str) -> str:
         if not self.client: return "Error: Hardware client disconnected."
         self.client.update_emotions([emotion])
+        self.client.push_interaction_event(f"scene.emotion_{emotion}")
         return f"Internal emotion set to: {emotion}"
 
     def interaction_event(self, event: str) -> str:

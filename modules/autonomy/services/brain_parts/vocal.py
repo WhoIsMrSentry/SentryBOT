@@ -5,6 +5,11 @@ import datetime
 import logging
 import time
 
+try:
+    from modules.speak.services.lang_detect import detect_text_language
+except ImportError:
+    detect_text_language = None
+
 logger = logging.getLogger("autonomy.vocal")
 
 
@@ -54,6 +59,8 @@ class VocalMixin:
     def _speak_with_mood(self, text: str, emotion: str | None = None, language: str | None = None) -> None:
         if not text:
             return
+        if not language and detect_text_language:
+            language = detect_text_language(text, default="tr")
         tone = self._tone_profile(emotion)
         try:
             self.client.queue_action("speak", priority=50, ttl_ms=10000, payload={
