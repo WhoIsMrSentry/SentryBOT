@@ -3,10 +3,10 @@ import time
 
 try:
     from .driver import Servo, ServoConfig
-    from .ears import EMOTION_POSES, gesture_sound, gesture_wakeword
+    from .ears import EMOTION_POSES, gesture_sound, gesture_wakeword, pose_for_emotion
 except Exception:
     from driver import Servo, ServoConfig  # type: ignore
-    from ears import EMOTION_POSES, gesture_sound, gesture_wakeword  # type: ignore
+    from ears import EMOTION_POSES, gesture_sound, gesture_wakeword, pose_for_emotion  # type: ignore
 
 
 class EarRunner:
@@ -21,7 +21,7 @@ class EarRunner:
         self.right.set_angle(right)
 
     def emotion(self, name: str) -> None:
-        pose = EMOTION_POSES.get(name.lower(), EMOTION_POSES.get("neutral", None))
+        pose = pose_for_emotion(name)
         if not pose:
             return
         self.set_angles(pose.left, pose.right)

@@ -1,0 +1,52 @@
+# SentryBOT — Canonical Emotion Vocabulary
+#
+# Single source of truth that unifies the three historical emotion vocabularies
+# (autonomy mood ~6, oled_faces events ~13, neopixel palettes ~23).
+#
+# Every subsystem resolves its incoming label to a canonical key, then reads the
+# render hints below. This keeps eyes (OLED), LEDs (NeoPixel), ears (PiServo),
+# head body-language and TTS tone aligned for one emotion.
+
+# canonical -> alias labels that should map onto it
+aliases:
+  neutral:    [calm, idle, default, normal]
+  joy:        [happy, happiness, glad, cheerful, amusement, optimism]
+  sadness:    [sad, unhappy, down, grief, disappointment, remorse]
+  curiosity:  [curious, interested, intrigued, realization]
+  tired:      [sleepy, drowsy, fatigued, exhausted]
+  fear:       [scared, afraid, frightened, nervousness, nervous]
+  anger:      [angry, mad, annoyance, annoyed]
+  furious:    [rage, enraged, livid]
+  surprise:   [surprised, shocked, astonished]
+  excitement: [excited, thrilled, energetic]
+  love:       [affection, adoration, admiration, desire, gratitude]
+  disgust:    [disgusted, repulsed, disapproval]
+  confusion:  [confused, disoriented, puzzled, uncertain]
+  worried:    [worry, anxious, concerned]
+  bored:      [boredom, dull, listless]
+
+# Per-canonical render hints consumed across modules.
+#   oled    -> bitmap/animation name in oled_faces catalog
+#   palette -> neopixel emotion palette file (modules/neopixel/emotions/<palette>.yml)
+#   effect  -> neopixel animation effect
+#   ears    -> piservo emotion pose key
+#   tone    -> speak TTS tone preset
+#   rgb     -> direct fallback color when a palette is unavailable
+render:
+  neutral:    { oled: normal,     palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [40, 60, 80] }
+  joy:        { oled: happy,      palette: joy,          effect: RAINBOW_CYCLE,  ears: joy,       tone: joy,      rgb: [0, 200, 60] }
+  sadness:    { oled: sad,        palette: sadness,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [40, 80, 160] }
+  curiosity:  { oled: focused,    palette: curiosity,    effect: COMET,          ears: curiosity, tone: neutral,  rgb: [0, 180, 200] }
+  tired:      { oled: sleepy,     palette: neutral,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [80, 40, 120] }
+  fear:       { oled: scared,     palette: fear,         effect: PULSE,          ears: fear,      tone: sadness,  rgb: [200, 0, 120] }
+  anger:      { oled: angry,      palette: anger,        effect: PULSE,          ears: anger,     tone: excited,  rgb: [220, 40, 0] }
+  furious:    { oled: furious,    palette: anger,        effect: METEOR,         ears: anger,     tone: excited,  rgb: [255, 0, 0] }
+  surprise:   { oled: surprised,  palette: surprise,     effect: TWINKLE,        ears: surprise,  tone: excited,  rgb: [255, 200, 0] }
+  excitement: { oled: excited,    palette: excitement,   effect: RAINBOW_CYCLE,  ears: surprise,  tone: excited,  rgb: [255, 120, 0] }
+  love:       { oled: happy,      palette: love,         effect: PULSE,          ears: joy,       tone: joy,      rgb: [255, 40, 100] }
+  disgust:    { oled: worried,    palette: disgust,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [120, 160, 0] }
+  confusion:  { oled: disoriented,palette: confusion,    effect: TWINKLE,        ears: curiosity, tone: neutral,  rgb: [160, 0, 200] }
+  worried:    { oled: worried,    palette: nervousness,  effect: BREATHE,        ears: fear,      tone: sadness,  rgb: [180, 100, 0] }
+  bored:      { oled: bored,      palette: neutral,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [60, 60, 60] }
+
+default_canonical: neutral

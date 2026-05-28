@@ -106,9 +106,22 @@ class PiSsd1306Driver:
         if bmp is None and key != "normal":
             bmp = self._load_bitmap("normal")
         if bmp is None:
-            return False
+            # No committed bitmap asset: keep the eyes expressive by drawing a
+            # procedural face for this expression directly into the buffer.
+            return self._render_procedural_face(key)
         with self._lock:
             self._buffer[:] = bmp
+            self.flush()
+        return True
+
+    def _render_procedural_face(self, name: str) -> bool:
+        try:
+            from .procedural_face import draw_face
+        except Exception:
+            from procedural_face import draw_face  # type: ignore
+        with self._lock:
+            self.clear()
+            draw_face(name, self.width, self.height, lambda x, y: self.set_pixel(x, y, 1))
             self.flush()
         return True
 

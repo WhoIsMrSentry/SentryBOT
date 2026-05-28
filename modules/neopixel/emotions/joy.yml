@@ -1,0 +1,21 @@
+colors:
+- name: COLOR_SPRING_GREEN
+  r: 0
+  g: 230
+  b: 118
+- name: COLOR_GOLDEN
+  r: 255
+  g: 214
+  b: 10
+- name: COLOR_SUNNY
+  r: 255
+  g: 179
+  b: 0
+- name: COLOR_LIME
+  r: 156
+  g: 255
+  b: 86
+- name: COLOR_AQUA_JOY
+  r: 64
+  g: 224
+  b: 208

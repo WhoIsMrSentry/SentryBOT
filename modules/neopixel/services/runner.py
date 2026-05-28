@@ -38,6 +38,38 @@ except Exception:
     from effects import wheel  # type: ignore
 
 
+class _SegmentView:
+    """Adapter that exposes a driver sub-range as if it were a full strip.
+
+    Lets the existing whole-strip animation functions run on a single
+    segment without modifying them: index ``i`` is remapped to
+    ``start + i`` and out-of-range writes are ignored.
+    """
+
+    def __init__(self, driver: Any, start: int, end: int) -> None:
+        self._driver = driver
+        self._start = start
+        self._end = end
+        self.num_leds = max(0, end - start)
+
+    def set(self, idx: int, r: int, g: int, b: int) -> None:
+        if 0 <= idx < self.num_leds:
+            self._driver.set(self._start + idx, r, g, b)
+
+    def show(self) -> None:
+        self._driver.show()
+
+    def clear(self) -> None:
+        for i in range(self._start, self._end):
+            self._driver.set(i, 0, 0, 0)
+        self._driver.show()
+
+    def fill(self, r: int, g: int, b: int) -> None:
+        for i in range(self._start, self._end):
+            self._driver.set(i, r, g, b)
+        self._driver.show()
+
+
 class NeoRunner:
     def __init__(
         self,
@@ -288,61 +320,20 @@ class NeoRunner:
         cols = self._colors_from_emotions(emotions)
         c1 = color if color is not None else (cols[0] if cols else None)
 
-        # Segment target currently supports deterministic color output.
+        # Segment target: run the *actual* animation scoped to the segment's
+        # LED range (falling back to a solid fill for that segment only).
         if segment:
-            if c1 is None:
-                c1 = (255, 255, 255)
-            if self.fill_segment(segment, *c1):
+            bounds = self._segment_bounds(segment)
+            if bounds is not None:
+                start, end = bounds
+                view = _SegmentView(self.driver, start, end)
+                if not self._run_named_animation(name, view, cols, c1, iterations):
+                    fill = c1 if c1 is not None else (255, 255, 255)
+                    view.fill(*fill)
                 return
+            # Unknown segment name: degrade to whole-strip behaviour below.
 
-        name = name.upper()
-        c2 = cols[1] if len(cols) > 1 else None
-        # Map names to functions
-        if name == "RAINBOW":
-            anim_rainbow(self.driver, c1, iterations or 1)
-        elif name == "RAINBOW_CYCLE":
-            rainbow_cycle(self.driver, c1, iterations or 1)
-        elif name == "SPINNER":
-            anim_spinner(self.driver, c1 or (255, 0, 0), iterations or 1)
-        elif name == "BREATHE":
-            anim_breathe(self.driver, c1 or (255, 0, 0), iterations or 1)
-        elif name == "METEOR":
-            meteor_rain(self.driver, c1 or (255, 255, 255))
-        elif name == "FIRE":
-            fire_flicker(self.driver, c1 or (255, 165, 0))
-        elif name == "COMET":
-            anim_comet(self.driver, c1 or (0, 255, 255))
-        elif name == "WAVE":
-            anim_wave(self.driver, c1)
-        elif name == "PULSE":
-            anim_pulse(self.driver, c1 or (255, 0, 127))
-        elif name == "TWINKLE":
-            anim_twinkle(self.driver, c1 or (255, 255, 255))
-        elif name == "COLOR_WIPE":
-            color_wipe(self.driver, c1 or (255, 0, 0))
-        elif name == "RANDOM_BLINK":
-            random_blink(self.driver, c1)
-        elif name == "THEATER_CHASE":
-            anim_theater_chase(self.driver, c1 or (127, 127, 127))
-        elif name == "SNOW":
-            anim_snow(self.driver, c1 or (255, 255, 255))
-        elif name == "ALTERNATING":
-            alternating_colors(self.driver, c1 or (255, 0, 0), c2 or (0, 0, 255))
-        elif name == "GRADIENT":
-            gradient_fade(self.driver, 5, c1)
-        elif name == "BOUNCING_BALL":
-            bouncing_ball(self.driver, c1 or (255, 0, 0))
-        elif name == "RUNNING_LIGHTS":
-            running_lights(self.driver, c1 or (255, 0, 0))
-        elif name == "STACKED_BARS":
-            stacked_bars(self.driver, 50, c1)
-        elif name == "MULTI_GRADIENT":
-            if cols:
-                multi_color_gradient(self.driver, cols, iterations or 5)
-        elif name == "MULTI_WAVE":
-            if cols:
-                multi_color_wave(self.driver, cols, iterations or 5)
-        else:
+        if not self._run_named_animation(name, self.driver, cols, c1, iterations):
             # Unknown animation name: try backend-native animation first.
             r, g, b = c1 if c1 else (255, 255, 255)
             if self.driver.animate(name_lower, r, g, b, iterations or 0, 50):
@@ -350,6 +341,69 @@ class NeoRunner:
             # last-resort fallback simple fill
             if c1:
                 self.fill(*c1)
+
+    def _run_named_animation(
+        self,
+        name: str,
+        driver: Any,
+        cols: list[tuple[int, int, int]],
+        c1: tuple[int, int, int] | None,
+        iterations: int | None,
+    ) -> bool:
+        """Dispatch a named animation onto ``driver`` (full strip or segment view).
+
+        Returns ``False`` when the name is not a known software animation.
+        """
+        name = name.upper()
+        c2 = cols[1] if len(cols) > 1 else None
+        # Map names to functions
+        if name == "RAINBOW":
+            anim_rainbow(driver, c1, iterations or 1)
+        elif name == "RAINBOW_CYCLE":
+            rainbow_cycle(driver, c1, iterations or 1)
+        elif name == "SPINNER":
+            anim_spinner(driver, c1 or (255, 0, 0), iterations or 1)
+        elif name == "BREATHE":
+            anim_breathe(driver, c1 or (255, 0, 0), iterations or 1)
+        elif name == "METEOR":
+            meteor_rain(driver, c1 or (255, 255, 255))
+        elif name == "FIRE":
+            fire_flicker(driver, c1 or (255, 165, 0))
+        elif name == "COMET":
+            anim_comet(driver, c1 or (0, 255, 255))
+        elif name == "WAVE":
+            anim_wave(driver, c1)
+        elif name == "PULSE":
+            anim_pulse(driver, c1 or (255, 0, 127))
+        elif name == "TWINKLE":
+            anim_twinkle(driver, c1 or (255, 255, 255))
+        elif name == "COLOR_WIPE":
+            color_wipe(driver, c1 or (255, 0, 0))
+        elif name == "RANDOM_BLINK":
+            random_blink(driver, c1)
+        elif name == "THEATER_CHASE":
+            anim_theater_chase(driver, c1 or (127, 127, 127))
+        elif name == "SNOW":
+            anim_snow(driver, c1 or (255, 255, 255))
+        elif name == "ALTERNATING":
+            alternating_colors(driver, c1 or (255, 0, 0), c2 or (0, 0, 255))
+        elif name == "GRADIENT":
+            gradient_fade(driver, 5, c1)
+        elif name == "BOUNCING_BALL":
+            bouncing_ball(driver, c1 or (255, 0, 0))
+        elif name == "RUNNING_LIGHTS":
+            running_lights(driver, c1 or (255, 0, 0))
+        elif name == "STACKED_BARS":
+            stacked_bars(driver, 50, c1)
+        elif name == "MULTI_GRADIENT":
+            if cols:
+                multi_color_gradient(driver, cols, iterations or 5)
+        elif name == "MULTI_WAVE":
+            if cols:
+                multi_color_wave(driver, cols, iterations or 5)
+        else:
+            return False
+        return True
 
     def _animate_worker_loop(self) -> None:
         while True:
