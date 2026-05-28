@@ -75,12 +75,21 @@ except Exception:
     VisionSampler = None  # type: ignore
 
 try:
-    from .vision_event_bus import VisionEventBus, EVENT_HAZARD_DETECTED, EVENT_NEW_PERSON, EVENT_OWNER_SEEN
+    from .vision_event_bus import (
+        VisionEventBus,
+        EVENT_HAZARD_DETECTED,
+        EVENT_NEW_PERSON,
+        EVENT_OWNER_SEEN,
+        EVENT_SCENE_CHANGED,
+        EVENT_VLM_RESULT_READY,
+    )
 except Exception:
     VisionEventBus = None  # type: ignore
     EVENT_HAZARD_DETECTED = "hazard_detected"
     EVENT_NEW_PERSON = "new_person"
     EVENT_OWNER_SEEN = "owner_seen"
+    EVENT_SCENE_CHANGED = "scene_changed"
+    EVENT_VLM_RESULT_READY = "vlm_result_ready"
 
 try:
     from .head_control_arbiter import HeadControlArbiter, HeadCommand
@@ -708,6 +717,10 @@ class VisionProcessor:
                     parsed_results = list(parsed_results) + extras
             self.latest_results = parsed_results
 
+            # Continuous "living vision": let the sampler decide when to refresh
+            # the richer VLM scene context (idle cadence + scene-change driven).
+            self._maybe_sample_vlm(parsed_results)
+
             # Follow aktifken VLM sahne aksiyonu / tehlike anonsu bastirilir,
             # odak yuz kilidi ve takip akisinda kalir.
             self._handle_person_interactions(parsed_results)
@@ -724,6 +737,60 @@ class VisionProcessor:
                     self._latest_annotated_frame = buf.tobytes()
 
             time.sleep(0.05)
+
+    # -----------------------------------------------------------------
+    # Living-vision sampling
+    # -----------------------------------------------------------------
+    @staticmethod
+    def _scene_signature(parsed_results: List[Dict[str, Any]]) -> frozenset:
+        sig = set()
+        for r in parsed_results or []:
+            if isinstance(r, dict):
+                sig.add((str(r.get("label", "")), str(r.get("name", ""))))
+        return frozenset(sig)
+
+    def _scene_change_score(self, parsed_results: List[Dict[str, Any]]) -> float:
+        sig = self._scene_signature(parsed_results)
+        prev = getattr(self, "_last_scene_signature", None)
+        self._last_scene_signature = sig
+        if prev is None:
+            return 0.0
+        union = prev | sig
+        if not union:
+            return 0.0
+        churn = prev ^ sig
+        return len(churn) / len(union)
+
+    def _maybe_sample_vlm(self, parsed_results: List[Dict[str, Any]]) -> None:
+        sampler = getattr(self, "vision_sampler", None)
+        if sampler is None:
+            return
+        if getattr(self, "_vlm_refresh_inflight", False):
+            return
+        score = self._scene_change_score(parsed_results)
+        try:
+            should = sampler.should_call_vlm(
+                scene_change_score=score,
+                follow_mode_active=bool(getattr(self, "_follow_active", False)),
+            )
+        except Exception:
+            return
+        if not should:
+            return
+        sampler.record_call()
+        self._vlm_refresh_inflight = True
+        threading.Thread(target=self._background_context_refresh, daemon=True).start()
+
+    def _background_context_refresh(self) -> None:
+        try:
+            context = self.refresh_visual_context()
+            if context is not None and self.event_bus is not None:
+                self.event_bus.publish(EVENT_SCENE_CHANGED, {"context": context})
+                self.event_bus.publish(EVENT_VLM_RESULT_READY, {"context": context})
+        except Exception:
+            pass
+        finally:
+            self._vlm_refresh_inflight = False
 
     # -----------------------------------------------------------------
     # Core analysis
