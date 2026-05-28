@@ -35,6 +35,7 @@
 | 27 | `esp_link` | — | Etkileşim | ESP32 köprü iletişimi (mDNS web remote) | Dolaylı | — |
 | 28 | `social_db` | — | Veri | SQLite kişi hafızası, ilişki/tanıma seviyeleri | Hayır | — |
 | 29 | `admin_ui` | — | Etkileşim | Web yönetim paneli (statik dosyalar) | Hayır | gateway |
+| 30 | `common` | — | Paylaşılan | Kanonik duygu sözlüğü (eyes/LEDs/ears/tone tek taksonomi) | Hayır | — |
 
 ## Mimari Katmanlar
 
