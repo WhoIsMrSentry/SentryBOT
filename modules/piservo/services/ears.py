@@ -21,6 +21,27 @@ EMOTION_POSES: Dict[str, EarPose] = {
 }
 
 
+def pose_for_emotion(name: str) -> EarPose:
+    """Resolve an arbitrary emotion label to an ear pose.
+
+    Accepts canonical autonomy moods or any alias (happy/sleepy/angry) by
+    routing through the shared emotion vocabulary, then falling back to a
+    direct table lookup and finally to the neutral pose.
+    """
+    key = str(name or "").strip().lower()
+    if key in EMOTION_POSES:
+        return EMOTION_POSES[key]
+    try:
+        from modules.common.emotion_vocab import get_vocab  # lazy optional dep
+
+        ears_key = get_vocab().render(key).ears
+        if ears_key in EMOTION_POSES:
+            return EMOTION_POSES[ears_key]
+    except Exception:
+        pass
+    return EMOTION_POSES["neutral"]
+
+
 def gesture_wakeword() -> Tuple[float, float]:
     # quick raise both then relax
     return (60, 60)
