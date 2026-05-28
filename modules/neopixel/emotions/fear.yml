@@ -1,0 +1,21 @@
+colors:
+- name: COLOR_MAGENTA_ALERT
+  r: 200
+  g: 0
+  b: 120
+- name: COLOR_VIOLET
+  r: 138
+  g: 43
+  b: 226
+- name: COLOR_PALE_GHOST
+  r: 180
+  g: 180
+  b: 255
+- name: COLOR_DEEP_INDIGO
+  r: 75
+  g: 0
+  b: 130
+- name: COLOR_COLD_CYAN
+  r: 0
+  g: 150
+  b: 200
