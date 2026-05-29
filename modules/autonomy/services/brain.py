@@ -5,12 +5,14 @@ import random
 import datetime
 import json
 import uuid
-from typing import List
+from typing import List, Optional
 
 from .client import ServiceClient
 from .idle_behaviors import IdleBehaviorPlanner
 from .mood import MoodManager
 from .memory import ShortTermMemory
+from .affective_appraisal import AffectiveAppraisal
+from .expression_director import ExpressionDirector
 from .companion_rituals import CompanionRituals
 from .proactive_planner import ProactivePlanner
 from .relationship_memory import RelationshipMemory
@@ -55,7 +57,9 @@ class AutonomyBrain(
 
         # Components
         self.mood = MoodManager(config)
+        self.appraisal = AffectiveAppraisal(config)
         self.client = ServiceClient(config.get("endpoints", {}), config=config)
+        self.expression = ExpressionDirector(self.client)
         self.idle_planner = IdleBehaviorPlanner(config)
         self.memory = ShortTermMemory(max_items=20)
         companion_cfg = config.get("companion", {}) if isinstance(config.get("companion", {}), dict) else {}
@@ -281,6 +285,55 @@ class AutonomyBrain(
                     pass
         except Exception:
             logger.debug("Failed to run emotion scene %s", scene_name, exc_info=True)
+
+    def express(self, emotion: str, *, say: Optional[str] = None, language: Optional[str] = None) -> str:
+        """Deliberately express an emotion across all modalities at once.
+
+        Use for reactive, intentional expressions (greetings, reactions). Passive
+        mood-driven visuals continue to flow through ``_sync_emotion``.
+        """
+        head = None
+        try:
+            profile = self.mood.get_body_language_profile() or {}
+            pan = int(self.state.get("current_pan", 90)) + int(profile.get("pan_delta", 0))
+            tilt = int(self.state.get("current_tilt", 90))
+            head = (max(0, min(180, pan)), max(0, min(180, tilt)))
+        except Exception:
+            head = None
+        return self.expression.express(emotion, say=say, language=language, move_head=head)
+
+    def appraise_event(self, event: str, intensity: float = 1.0, *, emit: bool = True) -> Optional[str]:
+        """Apply a causal emotion event to mood and announce it.
+
+        Returns the matched event name (or ``None`` if the event is unknown).
+        """
+        matched = self.appraisal.apply(self.mood, event, intensity)
+        if not matched:
+            return None
+        try:
+            self.memory.add_event(f"Felt a reaction to: {matched}")
+        except Exception:
+            pass
+        if emit:
+            try:
+                self.client.push_interaction_event(f"appraisal:{matched}")
+            except Exception:
+                pass
+        return matched
+
+    @staticmethod
+    def _sentiment_event_for_text(text: str) -> Optional[str]:
+        """Very lightweight keyword sentiment -> appraisal event mapping."""
+        low = str(text or "").lower()
+        if not low:
+            return None
+        rude = ("aptal", "salak", "gerizekal", "kapa cen", "sus ", "stupid", "shut up", "idiot")
+        praise = ("aferin", "harikasin", "cok iyi", "tesekkur", "sevimlisin", "seviyorum", "good job", "well done", "thank you", "i love you")
+        if any(tok in low for tok in rude):
+            return "user_rude"
+        if any(tok in low for tok in praise):
+            return "user_praise"
+        return None
 
     def _think(self):
         now = time.time()
@@ -582,26 +635,34 @@ class AutonomyBrain(
     def _visual_lock_active(self) -> bool:
         return time.time() < float(self._visual_lock_until)
 
+    # Emotions that warrant a longer visual hold (high-arousal states).
+    _STRONG_VISUAL_EMOTIONS = {"fear", "furious", "anger", "surprise"}
+
     def _apply_emotion_visual_state(self, emotion: str) -> None:
         e = str(emotion or "neutral").strip().lower()
-        mapping = {
-            "joy": {"effect": "RAINBOW_CYCLE", "oled": "happy", "color": [255, 190, 80], "strong": False},
-            "curiosity": {"effect": "COMET", "oled": "focused", "color": [60, 190, 255], "strong": False},
-            "sadness": {"effect": "PULSE", "oled": "sad", "color": [60, 90, 180], "strong": False},
-            "tired": {"effect": "BREATHE", "oled": "sleepy", "color": [80, 70, 120], "strong": False},
-            "fear": {"effect": "PULSE", "oled": "scared", "color": [255, 40, 40], "strong": True},
-            "neutral": {"effect": "BREATHE", "oled": "normal", "color": [120, 120, 140], "strong": False},
-        }
-        spec = mapping.get(e, mapping["neutral"])
-        lock_s = self._visual_lock_strong_s if spec.get("strong") else self._visual_lock_default_s
-        self._visual_lock_until = max(self._visual_lock_until, time.time() + max(0.2, float(lock_s)))
-        self._visual_lock_reason = f"emotion:{e}"
+        # Resolve eyes + LED effect + colour from the single canonical vocabulary
+        # so every emotion (incl. anger/furious/surprise) gets coherent visuals.
         try:
-            self.client.set_neopixel(str(spec.get("effect", "BREATHE")), emotions=[e], color=spec.get("color"))
+            from modules.common.emotion_vocab import emotion_render
+
+            render = emotion_render(e)
+            canon = render.canonical
+            effect = render.effect
+            oled = render.oled
+            color = list(render.rgb)
+        except Exception:
+            canon, effect, oled, color = "neutral", "BREATHE", "normal", [120, 120, 140]
+
+        strong = canon in self._STRONG_VISUAL_EMOTIONS
+        lock_s = self._visual_lock_strong_s if strong else self._visual_lock_default_s
+        self._visual_lock_until = max(self._visual_lock_until, time.time() + max(0.2, float(lock_s)))
+        self._visual_lock_reason = f"emotion:{canon}"
+        try:
+            self.client.set_neopixel(effect, emotions=[canon], color=color)
         except Exception:
             pass
         try:
-            self.client.oled_show(str(spec.get("oled", "normal")))
+            self.client.oled_show(oled)
         except Exception:
             pass
 
@@ -650,6 +711,9 @@ class AutonomyBrain(
         logger.info("Heard: %s", text)
         self.state["last_interaction"] = time.time()
         self.mood.modify("happiness", 5)
+        sentiment_event = self._sentiment_event_for_text(text)
+        if sentiment_event:
+            self.appraise_event(sentiment_event)
         self.memory.add_event(f"User said: {text}")
         self._log_conversation(text)
         lang = str(source_lang or self.state.get("last_speech_language") or "tr")
@@ -769,7 +833,8 @@ class AutonomyBrain(
                     logger.info("LLM response only triggered physical actions.")
         except Exception as exc:
             logger.error("Failed to generate reply: %s", exc)
-            self.mood.modify("fear", 15)
+            # A failed reply both scares and frustrates the robot (causal appraisal).
+            self.appraise_event("command_failed", emit=False)
             self.client.push_interaction_event("error", {"source": "ollama", "reason": "chat_failed"})
             self._apply_emotion_visual_state("fear")
         finally:

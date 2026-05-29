@@ -95,6 +95,18 @@ THINK → Duygu bozunması, sıkılma kontrolü, uyku saati kontrolü
 ACT   → LLM yanıtını parse et, donanım HTTP çağrıları yap
 ```
 
+### Duygusal Model (Affective Model)
+
+- **Mood eksenleri:** happiness, energy, curiosity, fear, **anger** (öfke ekseni
+  `anger>45 → anger`, `anger>75 → furious` baskın duygularını üretir).
+- **Affective appraisal** (`services/affective_appraisal.py` + `config/appraisal.yml`):
+  semantik olayları (`user_rude`, `owner_returned`, `command_failed`…) mood
+  deltalarına çevirir → duygular zamansal bozunmadan değil **nedenden** doğar.
+- **Tek duygu sözlüğü:** tüm görsel/işitsel çıktılar `modules/common` kanonik
+  duygu vocab'ından çözülür (eyes/LEDs/ears/tone aynı taksonomi).
+- **Expression Director** (`services/expression_director.py`): tek çağrıda
+  gözler + LED + kulaklar + kafa + ses tonunu eşgüdümlü tetikler (`brain.express`).
+
 ## Güvenlik ve Dayanıklılık
 
 - **Owner kontrolü:** VLM + RFID ile sahip doğrulaması
