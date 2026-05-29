@@ -5,12 +5,13 @@ import random
 import datetime
 import json
 import uuid
-from typing import List
+from typing import List, Optional
 
 from .client import ServiceClient
 from .idle_behaviors import IdleBehaviorPlanner
 from .mood import MoodManager
 from .memory import ShortTermMemory
+from .affective_appraisal import AffectiveAppraisal
 from .companion_rituals import CompanionRituals
 from .proactive_planner import ProactivePlanner
 from .relationship_memory import RelationshipMemory
@@ -55,6 +56,7 @@ class AutonomyBrain(
 
         # Components
         self.mood = MoodManager(config)
+        self.appraisal = AffectiveAppraisal(config)
         self.client = ServiceClient(config.get("endpoints", {}), config=config)
         self.idle_planner = IdleBehaviorPlanner(config)
         self.memory = ShortTermMemory(max_items=20)
@@ -281,6 +283,39 @@ class AutonomyBrain(
                     pass
         except Exception:
             logger.debug("Failed to run emotion scene %s", scene_name, exc_info=True)
+
+    def appraise_event(self, event: str, intensity: float = 1.0, *, emit: bool = True) -> Optional[str]:
+        """Apply a causal emotion event to mood and announce it.
+
+        Returns the matched event name (or ``None`` if the event is unknown).
+        """
+        matched = self.appraisal.apply(self.mood, event, intensity)
+        if not matched:
+            return None
+        try:
+            self.memory.add_event(f"Felt a reaction to: {matched}")
+        except Exception:
+            pass
+        if emit:
+            try:
+                self.client.push_interaction_event(f"appraisal:{matched}")
+            except Exception:
+                pass
+        return matched
+
+    @staticmethod
+    def _sentiment_event_for_text(text: str) -> Optional[str]:
+        """Very lightweight keyword sentiment -> appraisal event mapping."""
+        low = str(text or "").lower()
+        if not low:
+            return None
+        rude = ("aptal", "salak", "gerizekal", "kapa cen", "sus ", "stupid", "shut up", "idiot")
+        praise = ("aferin", "harikasin", "cok iyi", "tesekkur", "sevimlisin", "good job", "well done", "thank you", "i love you")
+        if any(tok in low for tok in rude):
+            return "user_rude"
+        if any(tok in low for tok in praise):
+            return "user_praise"
+        return None
 
     def _think(self):
         now = time.time()
@@ -650,6 +685,9 @@ class AutonomyBrain(
         logger.info("Heard: %s", text)
         self.state["last_interaction"] = time.time()
         self.mood.modify("happiness", 5)
+        sentiment_event = self._sentiment_event_for_text(text)
+        if sentiment_event:
+            self.appraise_event(sentiment_event)
         self.memory.add_event(f"User said: {text}")
         self._log_conversation(text)
         lang = str(source_lang or self.state.get("last_speech_language") or "tr")
@@ -769,7 +807,8 @@ class AutonomyBrain(
                     logger.info("LLM response only triggered physical actions.")
         except Exception as exc:
             logger.error("Failed to generate reply: %s", exc)
-            self.mood.modify("fear", 15)
+            # A failed reply both scares and frustrates the robot (causal appraisal).
+            self.appraise_event("command_failed", emit=False)
             self.client.push_interaction_event("error", {"source": "ollama", "reason": "chat_failed"})
             self._apply_emotion_visual_state("fear")
         finally:
