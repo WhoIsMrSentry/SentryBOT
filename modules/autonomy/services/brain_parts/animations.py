@@ -29,6 +29,33 @@ class AnimationSupportMixin:
         if isinstance(evt, str) and evt and random.random() < 0.18:
             self.client.push_interaction_event(evt)
 
+        # Layer subtle eye + ear life on top of head motion for richer liveliness.
+        if random.random() < 0.25:
+            self._perform_eye_saccade()
+        if random.random() < 0.2:
+            self._perform_ear_micromovement()
+
+    def _perform_eye_saccade(self) -> None:
+        """Briefly dart the eyes to a random gaze direction."""
+        gaze = random.choice(["look_left", "look_right", "look_up", "look_down"])
+        try:
+            self.client.oled_show(gaze)
+        except Exception:
+            pass
+
+    def _perform_ear_micromovement(self) -> None:
+        """Nudge the ears toward the current mood pose for ambient liveliness."""
+        dominant = "neutral"
+        if hasattr(self, "mood") and hasattr(self.mood, "get_dominant_emotion"):
+            try:
+                dominant = self.mood.get_dominant_emotion() or "neutral"
+            except Exception:
+                dominant = "neutral"
+        try:
+            self.client.push_interaction_event(f"emotion:{dominant}")
+        except Exception:
+            pass
+
     def _trigger_animation(self, name: str, speed: float = 1.0, loop: bool = False) -> bool:
         resp = self.client.run_animation(name, speed=speed, loop=loop)
         return bool(resp and resp.get("ok"))
