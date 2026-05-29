@@ -12,6 +12,7 @@ from .idle_behaviors import IdleBehaviorPlanner
 from .mood import MoodManager
 from .memory import ShortTermMemory
 from .affective_appraisal import AffectiveAppraisal
+from .expression_director import ExpressionDirector
 from .companion_rituals import CompanionRituals
 from .proactive_planner import ProactivePlanner
 from .relationship_memory import RelationshipMemory
@@ -58,6 +59,7 @@ class AutonomyBrain(
         self.mood = MoodManager(config)
         self.appraisal = AffectiveAppraisal(config)
         self.client = ServiceClient(config.get("endpoints", {}), config=config)
+        self.expression = ExpressionDirector(self.client)
         self.idle_planner = IdleBehaviorPlanner(config)
         self.memory = ShortTermMemory(max_items=20)
         companion_cfg = config.get("companion", {}) if isinstance(config.get("companion", {}), dict) else {}
@@ -283,6 +285,22 @@ class AutonomyBrain(
                     pass
         except Exception:
             logger.debug("Failed to run emotion scene %s", scene_name, exc_info=True)
+
+    def express(self, emotion: str, *, say: Optional[str] = None, language: Optional[str] = None) -> str:
+        """Deliberately express an emotion across all modalities at once.
+
+        Use for reactive, intentional expressions (greetings, reactions). Passive
+        mood-driven visuals continue to flow through ``_sync_emotion``.
+        """
+        head = None
+        try:
+            profile = self.mood.get_body_language_profile() or {}
+            pan = int(self.state.get("current_pan", 90)) + int(profile.get("pan_delta", 0))
+            tilt = int(self.state.get("current_tilt", 90))
+            head = (max(0, min(180, pan)), max(0, min(180, tilt)))
+        except Exception:
+            head = None
+        return self.expression.express(emotion, say=say, language=language, move_head=head)
 
     def appraise_event(self, event: str, intensity: float = 1.0, *, emit: bool = True) -> Optional[str]:
         """Apply a causal emotion event to mood and announce it.
