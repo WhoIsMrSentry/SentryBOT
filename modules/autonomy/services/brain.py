@@ -310,7 +310,7 @@ class AutonomyBrain(
         if not low:
             return None
         rude = ("aptal", "salak", "gerizekal", "kapa cen", "sus ", "stupid", "shut up", "idiot")
-        praise = ("aferin", "harikasin", "cok iyi", "tesekkur", "sevimlisin", "good job", "well done", "thank you", "i love you")
+        praise = ("aferin", "harikasin", "cok iyi", "tesekkur", "sevimlisin", "seviyorum", "good job", "well done", "thank you", "i love you")
         if any(tok in low for tok in rude):
             return "user_rude"
         if any(tok in low for tok in praise):
