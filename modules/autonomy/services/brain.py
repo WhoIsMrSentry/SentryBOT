@@ -617,26 +617,34 @@ class AutonomyBrain(
     def _visual_lock_active(self) -> bool:
         return time.time() < float(self._visual_lock_until)
 
+    # Emotions that warrant a longer visual hold (high-arousal states).
+    _STRONG_VISUAL_EMOTIONS = {"fear", "furious", "anger", "surprise"}
+
     def _apply_emotion_visual_state(self, emotion: str) -> None:
         e = str(emotion or "neutral").strip().lower()
-        mapping = {
-            "joy": {"effect": "RAINBOW_CYCLE", "oled": "happy", "color": [255, 190, 80], "strong": False},
-            "curiosity": {"effect": "COMET", "oled": "focused", "color": [60, 190, 255], "strong": False},
-            "sadness": {"effect": "PULSE", "oled": "sad", "color": [60, 90, 180], "strong": False},
-            "tired": {"effect": "BREATHE", "oled": "sleepy", "color": [80, 70, 120], "strong": False},
-            "fear": {"effect": "PULSE", "oled": "scared", "color": [255, 40, 40], "strong": True},
-            "neutral": {"effect": "BREATHE", "oled": "normal", "color": [120, 120, 140], "strong": False},
-        }
-        spec = mapping.get(e, mapping["neutral"])
-        lock_s = self._visual_lock_strong_s if spec.get("strong") else self._visual_lock_default_s
-        self._visual_lock_until = max(self._visual_lock_until, time.time() + max(0.2, float(lock_s)))
-        self._visual_lock_reason = f"emotion:{e}"
+        # Resolve eyes + LED effect + colour from the single canonical vocabulary
+        # so every emotion (incl. anger/furious/surprise) gets coherent visuals.
         try:
-            self.client.set_neopixel(str(spec.get("effect", "BREATHE")), emotions=[e], color=spec.get("color"))
+            from modules.common.emotion_vocab import emotion_render
+
+            render = emotion_render(e)
+            canon = render.canonical
+            effect = render.effect
+            oled = render.oled
+            color = list(render.rgb)
+        except Exception:
+            canon, effect, oled, color = "neutral", "BREATHE", "normal", [120, 120, 140]
+
+        strong = canon in self._STRONG_VISUAL_EMOTIONS
+        lock_s = self._visual_lock_strong_s if strong else self._visual_lock_default_s
+        self._visual_lock_until = max(self._visual_lock_until, time.time() + max(0.2, float(lock_s)))
+        self._visual_lock_reason = f"emotion:{canon}"
+        try:
+            self.client.set_neopixel(effect, emotions=[canon], color=color)
         except Exception:
             pass
         try:
-            self.client.oled_show(str(spec.get("oled", "normal")))
+            self.client.oled_show(oled)
         except Exception:
             pass
 
