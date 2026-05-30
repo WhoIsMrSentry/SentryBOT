@@ -877,7 +877,19 @@ class AutonomyBrain(
             hints.append(f"likes={','.join([str(x) for x in likes[:3]])}")
         if topics:
             hints.append(f"topics={','.join([str(x) for x in topics[:3]])}")
-        if top_memory:
+        # Context-aware recall: surface the past snippet most relevant to what the
+        # user is saying *now* (not just the highest-salience memory).
+        recalled = ""
+        try:
+            from .recall import most_relevant
+
+            candidates = self.relationship_memory.recall_candidates(spk)
+            recalled = most_relevant(raw, candidates) or ""
+        except Exception:
+            recalled = ""
+        if recalled:
+            hints.append(f"recall={recalled[:90]}")
+        elif top_memory:
             hints.append(f"memory={top_memory[:90]}")
         if not hints:
             return raw

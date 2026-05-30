@@ -136,6 +136,7 @@ class AgentOrchestrator:
         # Subsystems
         self.world_state = WorldState()
         self.memory = EpisodicMemory()
+        self.memory_consolidator = self._build_memory_consolidator()
         self.slam = TopologicalMap()
         self.safety_filter = ActionSafetyFilter(config)
         self.tool_execution_arbiter = ToolExecutionArbiter()
@@ -225,6 +226,34 @@ class AgentOrchestrator:
             self.apply_realtime_profile(active_profile)
 
         self.last_routed_subagents: List[str] = []
+
+    def _build_memory_consolidator(self):
+        """Wire the consolidator to episodic memory and (if present) social_db.
+
+        This is the bridge that lets durable facts mined from dialogue land in
+        both the episodic store and the speaker's social record.
+        """
+        from .memory_consolidator import MemoryConsolidator
+
+        social_db = None
+        try:
+            from modules.social_db import get_default as _social_default  # type: ignore
+
+            social_db = _social_default()
+        except Exception:
+            social_db = None
+        return MemoryConsolidator(memory=self.memory, social_db=social_db)
+
+    def _current_speaker(self):
+        """Best-effort identity of who is currently talking (or None)."""
+        try:
+            state = getattr(self.world_state, "state", {}) or {}
+            speaker = state.get("speaker") or state.get("current_person")
+            if speaker and str(speaker).strip().lower() not in {"unknown", "none"}:
+                return str(speaker).strip()
+        except Exception:
+            pass
+        return None
 
     def _register_action_handlers(self) -> None:
         """Bind ActionArbiter actions to concrete side effects.
@@ -1175,8 +1204,12 @@ class AgentOrchestrator:
             # ── Stage 4: Final — cancel stale progress, deliver response ──
             self.progress_manager.emit_final(progress_token)
 
-            # 4. Save to episodic long-term memory
+            # 4. Save to episodic long-term memory + consolidate durable facts
             self.memory.remember("dialogue", f"User: {user_prompt} | Bot: {final_text}")
+            try:
+                self.memory_consolidator.consolidate(user_prompt, speaker=self._current_speaker())
+            except Exception:
+                logger.debug("memory consolidation failed", exc_info=True)
 
             # 5. Return dict matching AutonomyBrain expectations (but empty plan/actions)
             return {
