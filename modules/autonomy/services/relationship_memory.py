@@ -167,6 +167,36 @@ class RelationshipMemory:
                 return str(item.get("text", "")).strip()
         return ""
 
+    def recall_candidates(self, name: str, limit: int = 12) -> List[str]:
+        """Return past snippets (moments + recent user lines) for relevance recall."""
+        out: List[str] = []
+        rec = self.get(name) or {}
+        if self._social_db is not None:
+            pid = str(rec.get("id") or "") if rec else ""
+            if pid:
+                try:
+                    for m in self._social_db.moments.top_for_person(pid, limit=limit):
+                        txt = str((m or {}).get("text", "")).strip()
+                        if txt:
+                            out.append(txt)
+                except Exception:
+                    pass
+        else:
+            moments = rec.get("moments", []) if isinstance(rec.get("moments", []), list) else []
+            for m in moments:
+                txt = str((m or {}).get("text", "")).strip()
+                if txt:
+                    out.append(txt)
+        hist = rec.get("chat_history", []) if isinstance(rec.get("chat_history", []), list) else []
+        for item in reversed(hist):
+            if isinstance(item, dict) and str(item.get("role", "")).strip().lower() == "user":
+                txt = str(item.get("text", "")).strip()
+                if txt and txt not in out:
+                    out.append(txt)
+            if len(out) >= limit:
+                break
+        return out[:limit]
+
     def social_profile(self, name: str) -> Dict[str, Any]:
         if self._social_db is not None:
             rec = self.get(name) or {}
