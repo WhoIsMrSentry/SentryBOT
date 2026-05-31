@@ -1191,6 +1191,10 @@ class VisionProcessor:
         self.latest_results = normalized
         self._evaluate_alerts(normalized)
         self._handle_person_interactions(normalized)
+        # Remote mode has no local inference loop, so drive continuous perception
+        # (living-vision sampling) here too — otherwise the default `remote`
+        # processing mode would never refresh scene context on its own.
+        self._maybe_sample_vlm(normalized)
         if self.blind_mode_enabled and normalized:
             self._handle_blind_mode(normalized)
         if normalized and self.mode_flags.get("semantic_scene", True):

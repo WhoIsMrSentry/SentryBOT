@@ -107,3 +107,26 @@ def test_hazard_signal_respects_distance_threshold():
     assert proc._hazard_signal([{"label": "knife", "distance_m": 0.5}]) is True
     assert proc._hazard_signal([{"label": "knife", "distance_m": 2.0}]) is False
     assert proc._hazard_signal([{"label": "cup", "distance_m": 0.1}]) is False
+
+
+def test_remote_ingest_drives_living_vision_sampling():
+    proc = _bare_processor()
+    proc.processing_mode = "remote"
+    proc.mode_flags = {}
+    proc.blind_mode_enabled = False
+    proc.config = {}
+    sampled = {"calls": []}
+    proc._maybe_sample_vlm = lambda results: sampled["calls"].append(results)  # type: ignore
+    proc._evaluate_alerts = lambda r: None  # type: ignore
+    proc._handle_person_interactions = lambda r: None  # type: ignore
+
+    class _Dispatcher:
+        def emit_scene(self, *a, **k):
+            pass
+
+    proc.action_dispatcher = _Dispatcher()
+    proc.semantic = object()
+
+    proc.ingest_remote_results([{"label": "person", "name": "Z", "confidence": 0.8}])
+    assert len(sampled["calls"]) == 1
+    assert sampled["calls"][0][0]["label"] == "person"
