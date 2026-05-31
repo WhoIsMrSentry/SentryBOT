@@ -1046,6 +1046,7 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             "sound.detected": "sound",
             "vision.focus": "sound",
             "vision.person": "sound",
+            "environment.scene_changed": "sound",
         }
 
         def _piservo_on_interaction(evt: str, data: Dict[str, Any]) -> None:

@@ -197,3 +197,9 @@ rules:
     action: { effect: { name: COMET, duration_ms: 600 } }
     priority: low
     cooldown_ms: 1200
+
+  - id: environment_scene_changed
+    when: { event: environment.scene_changed }
+    action: { effect: { name: COMET, duration_ms: 700 } }
+    priority: low
+    cooldown_ms: 4000
