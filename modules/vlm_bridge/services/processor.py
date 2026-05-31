@@ -1503,14 +1503,14 @@ class VisionProcessor:
                     "raw_vlm_observation": str(vlm_result.get("raw_text", "")),
                     "persona_interpretation": str(vlm_result.get("summary", "")),
                 }
-                self.update_visual_context(context)
+                self.update_visual_context(context, is_user_question=bool(question))
                 latest = self.get_latest_visual_context()
                 if latest is not None:
                     return latest
 
         fallback = self._build_context_from_results(self.latest_results)
         if fallback is not None:
-            self.update_visual_context(fallback)
+            self.update_visual_context(fallback, is_user_question=bool(question))
             return self.get_latest_visual_context()
         return None
 
@@ -1553,8 +1553,19 @@ class VisionProcessor:
             "persona_interpretation": summary,
         }
 
-    def update_visual_context(self, context: Optional[Dict[str, Any]]) -> None:
-        """Update the cached visual context (typically called by VLM after processing)."""
+    def update_visual_context(
+        self,
+        context: Optional[Dict[str, Any]],
+        *,
+        is_user_question: bool = False,
+        is_scene_change: bool = True,
+    ) -> None:
+        """Update the cached visual context (typically called by VLM after processing).
+
+        Importance is (re)derived from the scene content via ``compute_importance``
+        instead of trusting the caller's hardcoded guess, so hazards/owner/novelty
+        actually drive how loudly the robot reacts.
+        """
         if self.visual_context_cache is None or context is None:
             return
         try:
@@ -1563,7 +1574,7 @@ class VisionProcessor:
                 self.visual_context_cache.set_context(context)
             else:
                 # Direct assignment if it's a VisualContextCache
-                from .visual_context import VisionFrameContext, PersonContext
+                from .visual_context import VisionFrameContext, PersonContext, compute_importance
                 vfc = VisionFrameContext(
                     timestamp=context.get("timestamp", ""),
                     summary=context.get("summary", ""),
@@ -1576,6 +1587,18 @@ class VisionProcessor:
                     raw_vlm_observation=context.get("raw_vlm_observation", ""),
                     persona_interpretation=context.get("persona_interpretation", ""),
                 )
+                prev_id = getattr(self.visual_context_cache, "previous_scene_id", "")
+                derived = compute_importance(
+                    vfc,
+                    is_user_question=is_user_question,
+                    is_scene_change=is_scene_change,
+                    is_follow_active=bool(getattr(self, "_follow_active", False)),
+                    previous_scene_id=prev_id,
+                )
+                # Keep the stronger of caller-supplied vs derived so an explicit
+                # high-priority refresh (e.g. user question) is never down-graded.
+                vfc.importance_score = max(float(context.get("importance_score", 0.0) or 0.0), derived)
+                context["importance_score"] = vfc.importance_score
                 self.visual_context_cache.update(vfc)
         except Exception as exc:
             logger.debug("Failed to update visual context: %s", exc)
