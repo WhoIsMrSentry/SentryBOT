@@ -761,6 +761,44 @@ class VisionProcessor:
         churn = prev ^ sig
         return len(churn) / len(union)
 
+    def _person_signals(self, parsed_results: List[Dict[str, Any]]) -> Tuple[bool, bool]:
+        """Derive (owner_seen, new_person) from the current detections."""
+        owner_seen = False
+        new_person = False
+        seen = getattr(self, "_seen_person_names", set())
+        current: set = set()
+        for r in parsed_results or []:
+            if not isinstance(r, dict):
+                continue
+            name = str(r.get("name") or "").strip()
+            if not name or name.lower() == "unknown":
+                continue
+            current.add(name)
+            rel = str(r.get("relationship") or "").lower()
+            level = r.get("recognition_level")
+            if rel in {"owner", "family"} or (isinstance(level, (int, float)) and level >= 5):
+                owner_seen = True
+            if name not in seen:
+                new_person = True
+        # Bound the memory so a long session doesn't accumulate stale names.
+        self._seen_person_names = (seen | current) if len(seen) < 64 else set(current)
+        return owner_seen, new_person
+
+    def _hazard_signal(self, parsed_results: List[Dict[str, Any]]) -> bool:
+        """Lightweight proximity-hazard check mirroring alert thresholds."""
+        alerts_cfg = getattr(self, "config", {}).get("vision", {}).get("alerts", {})
+        if not alerts_cfg or not getattr(self, "mode_flags", {}).get("hazards", True):
+            return False
+        classes = {str(c) for c in alerts_cfg.get("classes", [])}
+        dist_thr = float(alerts_cfg.get("distance_threshold_m", 1.0))
+        for r in parsed_results or []:
+            if not isinstance(r, dict):
+                continue
+            dist = r.get("distance_m")
+            if str(r.get("label") or "") in classes and isinstance(dist, (int, float)) and float(dist) <= dist_thr:
+                return True
+        return False
+
     def _maybe_sample_vlm(self, parsed_results: List[Dict[str, Any]]) -> None:
         sampler = getattr(self, "vision_sampler", None)
         if sampler is None:
@@ -768,10 +806,20 @@ class VisionProcessor:
         if getattr(self, "_vlm_refresh_inflight", False):
             return
         score = self._scene_change_score(parsed_results)
+        owner_seen, new_person = self._person_signals(parsed_results)
+        hazard = self._hazard_signal(parsed_results)
+        # Treat a large scene churn spike as sudden motion in the field of view.
+        sudden_motion = score >= max(getattr(self, "_sudden_motion_threshold", 0.7), sampler.scene_change_threshold + 0.25)
+        is_bored = bool(getattr(self, "_is_bored", False))
         try:
             should = sampler.should_call_vlm(
                 scene_change_score=score,
                 follow_mode_active=bool(getattr(self, "_follow_active", False)),
+                owner_seen=owner_seen,
+                new_person=new_person,
+                hazard_detected=hazard,
+                sudden_motion=sudden_motion,
+                is_bored=is_bored,
             )
         except Exception:
             return
