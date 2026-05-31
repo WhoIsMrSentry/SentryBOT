@@ -26,6 +26,7 @@ class VisionMixin:
                 ctx_data = ctx_resp.get("context", {})
                 importance = float(ctx_data.get("importance_score", 0.0))
                 self.state["last_visual_importance"] = importance
+                self._track_scene_context(ctx_data, importance)
                 if importance > 0.6:
                     self.mood.modify("curiosity", int(importance * 20))
                     self.mood.modify("energy", 10)
@@ -52,6 +53,47 @@ class VisionMixin:
         self._current_people = {
             name: ts for name, ts in self._current_people.items() if now - ts <= decay_window
         }
+
+    @staticmethod
+    def _scene_tokens(summary: str) -> set:
+        return {t for t in str(summary or "").lower().split() if len(t) > 2}
+
+    def _track_scene_context(self, ctx_data: Dict[str, Any], importance: float) -> None:
+        """Detect meaningful scene changes and remember the current surroundings.
+
+        Keeps a short-lived snapshot of the environment in ``self.state`` so the
+        proactive layer can comment on what's around, and emits an
+        ``environment.scene_changed`` interaction event on novelty so other
+        modules (ears/LED/agent) can react.
+        """
+        summary = str(ctx_data.get("summary", "") or "").strip()
+        if not summary:
+            return
+        prev = str(self.state.get("last_scene_summary", "") or "")
+        prev_tokens = self._scene_tokens(prev)
+        cur_tokens = self._scene_tokens(summary)
+        novelty = 1.0
+        if prev_tokens:
+            union = prev_tokens | cur_tokens
+            novelty = (len(prev_tokens ^ cur_tokens) / len(union)) if union else 0.0
+
+        self.state["scene_summary"] = summary
+        self.state["scene_importance"] = importance
+
+        threshold = float(self._vision_cfg.get("scene_novelty_threshold", 0.5))
+        if novelty >= threshold and summary != prev:
+            self.state["last_scene_summary"] = summary
+            self.state["scene_changed_at"] = time.time()
+            self.state["scene_unspoken"] = True  # proactive layer may narrate it
+            try:
+                self.client.push_interaction_event(
+                    "environment.scene_changed",
+                    {"summary": summary[:160], "importance": round(importance, 2)},
+                )
+            except Exception:
+                pass
+            if importance >= 0.5:
+                self.mood.modify("curiosity", 6)
 
     def _handle_vision_result(self, result: Dict[str, Any]) -> None:
         name = result.get("name") or result.get("label")
