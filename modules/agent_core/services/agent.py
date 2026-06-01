@@ -266,11 +266,17 @@ class AgentOrchestrator:
             text = str(req.payload.get("text", "")).strip()
             if not text:
                 return {"ok": False, "reason": "missing_text"}
+            # Forward the emotional tone so prosody survives the queue hop;
+            # previously it was dropped here, flattening every utterance.
+            tone = req.payload.get("tone")
+            if not isinstance(tone, (dict, str)) or tone == "":
+                tone = None
             self.speech_arbiter.enqueue(
                 text=text,
                 priority=max(1, min(100, int(req.priority))),
                 category="final" if req.priority >= 60 else "progress",
                 language=str(req.payload.get("language", "") or ""),
+                tone=tone,
             )
             return {"ok": True}
 
