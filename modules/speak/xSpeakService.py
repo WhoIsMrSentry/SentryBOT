@@ -68,6 +68,28 @@ class SpeakService:
         logger.warning("unsupported tone type %s, ignoring", type(tone).__name__)
         return None
 
+    @staticmethod
+    def _tone_to_piper(tone: Optional[dict]) -> Optional[dict]:
+        """Translate a rate/volume tone into Piper prosody knobs.
+
+        Piper ignores pyttsx3-style ``rate``/``volume``; the only way emotion
+        actually colours Piper audio is via ``length_scale`` (pace) and
+        ``noise_w`` (expressiveness/variability). Baseline rate is 170.
+        """
+        if not isinstance(tone, dict):
+            return None
+        rate = tone.get("rate")
+        if not isinstance(rate, (int, float)) or rate <= 0:
+            return None
+        # Faster speech -> shorter length_scale. Clamp to a natural range.
+        length_scale = max(0.6, min(1.6, 170.0 / float(rate)))
+        # Livelier (faster) speech gets a touch more variability.
+        noise_w = max(0.4, min(1.1, 0.8 * (float(rate) / 170.0)))
+        return {
+            "length_scale": round(length_scale, 3),
+            "noise_w": round(noise_w, 3),
+        }
+
     def _post_interactions(self, endpoint: str, payload: dict) -> None:
         if requests is None:
             return
@@ -352,6 +374,12 @@ class SpeakService:
             overrides["speaker_wav"] = speaker_wav
         if language:
             overrides["language"] = language
+        # Shape Piper audio from the emotion tone (rate/volume don't reach Piper).
+        active_engine = str(engine or self.cfg.get("tts", {}).get("engine", "")).strip().lower()
+        if active_engine == "piper":
+            piper_prosody = self._tone_to_piper(tone_dict)
+            if piper_prosody:
+                overrides["piper"] = {**overrides.get("piper", {}), **piper_prosody}
         self._emit_speech_liveliness_start(cleaned_text, tone_dict)
         try:
             from modules.speak.services.tts import clear_synthesis_cancel
