@@ -71,14 +71,44 @@ class VocalMixin:
         except Exception as exc:  # pragma: no cover - best effort speech
             logger.debug("Failed to queue speech action: %s", exc)
 
+    # Per-canonical-emotion prosody. Resolution goes through the shared emotion
+    # vocabulary so aliases ("happy"->joy, "scared"->fear, "angry"->anger) all
+    # collapse to the same voice as eyes/LEDs/ears.
+    _EMOTION_TONES = {
+        "joy": {"rate": 190, "volume": 1.0},
+        "love": {"rate": 185, "volume": 0.95},
+        "excitement": {"rate": 205, "volume": 1.0},
+        "surprise": {"rate": 200, "volume": 1.0},
+        "curiosity": {"rate": 185, "volume": 0.9},
+        "sadness": {"rate": 150, "volume": 0.75},
+        "worried": {"rate": 165, "volume": 0.8},
+        "tired": {"rate": 140, "volume": 0.65},
+        "bored": {"rate": 150, "volume": 0.7},
+        "fear": {"rate": 200, "volume": 0.9},
+        "anger": {"rate": 195, "volume": 1.0},
+        "furious": {"rate": 205, "volume": 1.0},
+        "confusion": {"rate": 165, "volume": 0.85},
+        "disgust": {"rate": 165, "volume": 0.85},
+        "neutral": {"rate": 170, "volume": 0.85},
+    }
+    # Fallback by canonical TTS tone name when a specific emotion isn't mapped.
+    _TONE_NAME_PROFILES = {
+        "joy": {"rate": 190, "volume": 1.0},
+        "excited": {"rate": 200, "volume": 1.0},
+        "sadness": {"rate": 150, "volume": 0.75},
+        "neutral": {"rate": 170, "volume": 0.85},
+    }
+
     def _tone_profile(self, emotion: str | None = None) -> dict:
         emotion = emotion or self.state.get("last_emotion") or self.mood.get_dominant_emotion() or "neutral"
-        profiles = {
-            "joy": {"rate": 190, "volume": 1.0},
-            "sadness": {"rate": 150, "volume": 0.75},
-            "curiosity": {"rate": 185, "volume": 0.9},
-            "tired": {"rate": 140, "volume": 0.65},
-            "fear": {"rate": 200, "volume": 0.9},
-            "neutral": {"rate": 170, "volume": 0.85},
-        }
-        return profiles.get(emotion, profiles["neutral"])
+        try:
+            from modules.common.emotion_vocab import get_vocab
+
+            vocab = get_vocab()
+            canon = vocab.canonical(emotion)
+            if canon in self._EMOTION_TONES:
+                return dict(self._EMOTION_TONES[canon])
+            tone_name = vocab.render(emotion).tone
+            return dict(self._TONE_NAME_PROFILES.get(tone_name, self._TONE_NAME_PROFILES["neutral"]))
+        except Exception:
+            return dict(self._EMOTION_TONES.get(str(emotion).lower(), self._EMOTION_TONES["neutral"]))
