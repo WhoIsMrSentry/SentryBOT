@@ -90,5 +90,11 @@ naturalness:
   min_chars: 12              # skip very short replies (e.g. "Evet.")
   fillers:
     default: ["Şey,", "Yani,", "Hmm,"]
+    joy: ["Aa,", "Hey,", "Bak,"]
+    excitement: ["Vay,", "Aa,", "Hey,"]
+    curiosity: ["Hmm,", "Bak,", "Şey,"]
+    sadness: ["Eh,", "Şey...", "Hmm,"]
+    tired: ["Of,", "Hmm,", "Şey,"]
+    anger: ["Bak,", "Yani,"]
 
 # note: external compressed audio decoding removed; /speak/play expects base64 WAV

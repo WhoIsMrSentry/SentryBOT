@@ -72,11 +72,34 @@ class SpeakService:
         logger.warning("unsupported tone type %s, ignoring", type(tone).__name__)
         return None
 
+    @staticmethod
+    def _pool_key_for_tone(tone: Any) -> str:
+        """Pick a filler-pool key from a tone (string emotion or rate/volume dict)."""
+        if isinstance(tone, str) and tone.strip():
+            try:
+                from modules.common.emotion_vocab import get_vocab
+
+                return get_vocab().canonical(tone)
+            except Exception:
+                return tone.strip().lower()
+        if isinstance(tone, dict):
+            rate = tone.get("rate")
+            if isinstance(rate, (int, float)):
+                if rate >= 195:
+                    return "excitement"
+                if rate <= 150:
+                    return "sadness"
+        return "default"
+
     def _filler_pool(self, tone: Any) -> list:
         cfg = getattr(self, "_naturalness_cfg", {}) or {}
         pools = cfg.get("fillers", {}) if isinstance(cfg, dict) else {}
         if not isinstance(pools, dict):
             return []
+        key = self._pool_key_for_tone(tone)
+        pool = pools.get(key)
+        if isinstance(pool, list) and pool:
+            return list(pool)
         return list(pools.get("default", []) or [])
 
     def _enrich_text_for_speech(self, text: str, tone: Any = None, rng=None) -> str:
