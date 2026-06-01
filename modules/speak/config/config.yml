@@ -83,4 +83,12 @@ liveliness:
     chars_per_second: 16
     force: false
 
+# Natural speech: light disfluency/filler injection so replies sound less robotic.
+naturalness:
+  enabled: true
+  filler_probability: 0.22   # chance to prepend a filler to an utterance
+  min_chars: 12              # skip very short replies (e.g. "Evet.")
+  fillers:
+    default: ["Şey,", "Yani,", "Hmm,"]
+
 # note: external compressed audio decoding removed; /speak/play expects base64 WAV

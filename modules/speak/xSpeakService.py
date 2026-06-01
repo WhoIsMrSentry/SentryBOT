@@ -44,10 +44,14 @@ class SpeakService:
     """Metni sese dönüştürüp MAX98357A üzerinden çalar."""
 
     def __init__(self, config_path: Optional[str] = None):
+        import random
+
         self.cfg = load_config(config_path)
         self.tts = TextToSpeech(self.cfg.get("tts", {}))
         self.player = AudioPlayer(self.cfg.get("audio_out", {}))
         self._liveliness_cfg = self.cfg.get("liveliness", {}) or {}
+        self._naturalness_cfg = self.cfg.get("naturalness", {}) or {}
+        self._rng = random.Random()
 
     @staticmethod
     def _coerce_tone(tone: Any) -> Optional[dict]:
@@ -67,6 +71,39 @@ class SpeakService:
             return None
         logger.warning("unsupported tone type %s, ignoring", type(tone).__name__)
         return None
+
+    def _filler_pool(self, tone: Any) -> list:
+        cfg = getattr(self, "_naturalness_cfg", {}) or {}
+        pools = cfg.get("fillers", {}) if isinstance(cfg, dict) else {}
+        if not isinstance(pools, dict):
+            return []
+        return list(pools.get("default", []) or [])
+
+    def _enrich_text_for_speech(self, text: str, tone: Any = None, rng=None) -> str:
+        """Optionally prepend a natural filler so speech sounds less scripted.
+
+        Runs *after* :meth:`_clean_text_for_speech`, so fillers like "Hmm,"
+        are not stripped as meta-reasoning. Best-effort and probabilistic.
+        """
+        cfg = getattr(self, "_naturalness_cfg", {})
+        cfg = cfg if isinstance(cfg, dict) else {}
+        if not cfg.get("enabled", False):
+            return text
+        body = (text or "").strip()
+        if len(body) < int(cfg.get("min_chars", 12)):
+            return text
+        # Don't stack fillers if the line already opens with one.
+        first_word = re.match(r"^[^\W\d_]+", body, re.UNICODE)
+        if first_word and first_word.group(0).lower() in {"hmm", "şey", "sey", "yani", "eh", "of", "aa"}:
+            return text
+        pool = self._filler_pool(tone)
+        if not pool:
+            return text
+        roll = (rng or self._rng).random()
+        if roll >= float(cfg.get("filler_probability", 0.2)):
+            return text
+        filler = (rng or self._rng).choice(pool)
+        return f"{filler} {body}"
 
     @staticmethod
     def _tone_to_piper(tone: Optional[dict]) -> Optional[dict]:
@@ -366,6 +403,7 @@ class SpeakService:
             logger.info("Speech text is empty after cleaning thoughts/markdown. Skipping.")
             return {"ok": True, "engine": engine or "default", "duration_sec": 0.0, "samplerate": 22050}
 
+        cleaned_text = self._enrich_text_for_speech(cleaned_text, tone=tone)
         tone_dict = self._coerce_tone(tone)
         overrides = dict(tone_dict or {})
         if engine:
