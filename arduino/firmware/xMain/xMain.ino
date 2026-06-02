@@ -523,4 +523,6 @@ void loop(){
   }
   // periodic maintenance for neopixel request retries/acks
   neopixelTick();
+  // subtle idle breathing / micro-motion when enabled by the bridge
+  livelinessTick();
 }
