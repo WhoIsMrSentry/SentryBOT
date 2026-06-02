@@ -21,6 +21,7 @@ from .contract import (
     build_laser_cmd,
     build_pid_enable_cmd,
     build_policy_cmd,
+    build_liveliness_cmd,
     build_set_pose_cmd,
     build_set_servo_cmd,
     build_simple_cmd,
@@ -498,6 +499,29 @@ class xArduinoSerialService:
 
     def drive(self, value: int) -> Dict[str, Any]:
         return self.request(build_drive_cmd(value=value))
+
+    # -------- liveliness (idle breathing / micro-motion) --------
+    def liveliness_start(
+        self,
+        mode: str = "breathe",
+        amplitude_deg: Optional[float] = None,
+        period_ms: Optional[int] = None,
+        pan_center: Optional[float] = None,
+        tilt_center: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        return self.request(
+            build_liveliness_cmd(
+                True,
+                mode=mode,
+                amplitude_deg=amplitude_deg,
+                period_ms=period_ms,
+                pan_center=pan_center,
+                tilt_center=tilt_center,
+            )
+        )
+
+    def liveliness_stop(self) -> Dict[str, Any]:
+        return self.request(build_liveliness_cmd(False))
 
     # -------- laser controls --------
     def laser_on(self, which: int) -> Dict[str, Any]:
