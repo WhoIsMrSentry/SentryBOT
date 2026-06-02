@@ -133,6 +133,18 @@ ACT   → LLM yanıtını parse et, donanım HTTP çağrıları yap
 - **Doğal barge-in:** `BargeInController` robot konuşurken kullanıcının anlamlı
   konuşmasıyla (sadece wakeword değil) sözü kesmesine izin verir.
 
+### Firmware Canlılık Köprüsü (Firmware Liveliness Bridge)
+
+- **Kontrat komutu:** `arduino_serial/contract.py` `build_liveliness_cmd` +
+  `validate_liveliness_cmd` (elle payload YOK) → `/arduino/request` ile gönderilir.
+- **Firmware-native hareket:** Mega `xCommands.h` `liveliness` komutunu işler,
+  `livelinessTick()` ana döngüde kafa servolarında yumuşak sinüs nefes/mikro-
+  hareket üretir (Pi köprüsü kısa süre dursa bile canlı kalır).
+- **Mood→hareket:** autonomy `LivelinessScheduler` baskın duygu+enerjiden
+  genlik/tempo/mod üretir (excited=büyük/hızlı, tired=küçük/yavaş, anger=micro).
+- **Akıllı gönderim:** brain `_liveliness_tick` yalnızca parametre değişince ya da
+  `refresh_interval_s` geçince yollar; konuşma/takip/uyku sırasında bastırılır.
+
 ## Güvenlik ve Dayanıklılık
 
 - **Owner kontrolü:** VLM + RFID ile sahip doğrulaması

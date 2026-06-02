@@ -16,6 +16,7 @@ from .expression_director import ExpressionDirector
 from .companion_rituals import CompanionRituals
 from .proactive_planner import ProactivePlanner
 from .barge_in import BargeInController
+from .liveliness import LivelinessScheduler
 from .relationship_memory import RelationshipMemory
 from .brain_parts.animations import AnimationSupportMixin
 from .brain_parts.owner_guard import OwnerGuardMixin
@@ -73,6 +74,7 @@ class AutonomyBrain(
         )
         self.proactive_planner = ProactivePlanner(companion_cfg.get("proactive", {}) if isinstance(companion_cfg.get("proactive", {}), dict) else {})
         self.barge_in = BargeInController(config.get("barge_in", {}) if isinstance(config.get("barge_in", {}), dict) else {})
+        self.liveliness = LivelinessScheduler(config.get("liveliness", {}) if isinstance(config.get("liveliness", {}), dict) else {})
         self._vision_cfg = config.get("vision_hooks", {})
         self.owner_cfg = config.get("owner", {})
 
@@ -358,6 +360,7 @@ class AutonomyBrain(
 
         self.mood.update()
         self._sync_emotion()
+        self._liveliness_tick(now)
 
         if random.random() < 0.4:
             self._perform_micro_movement()

@@ -35,6 +35,48 @@ class AnimationSupportMixin:
         if random.random() < 0.2:
             self._perform_ear_micromovement()
 
+    def _liveliness_tick(self, now: float) -> None:
+        """Push mood-shaped idle motion down to firmware-native liveliness.
+
+        Best-effort and rate-limited by the scheduler; suppressed while the robot
+        is talking, following a target, or asleep so it never fights deliberate
+        motion.
+        """
+        sched = getattr(self, "liveliness", None)
+        if sched is None or not getattr(sched, "enabled", False):
+            return
+        if getattr(self, "_speech_busy", False):
+            return
+        if self.state.get("follow_active") or self.state.get("is_sleeping"):
+            return
+        energy = 50.0
+        dominant = "neutral"
+        try:
+            energy = float(self.mood["energy"])
+        except Exception:
+            pass
+        try:
+            dominant = self.mood.get_dominant_emotion() or "neutral"
+        except Exception:
+            pass
+        params = sched.plan(energy=energy, dominant_emotion=dominant)
+        if not sched.due(now, params):
+            return
+        pan = int(self.state.get("current_pan", 90))
+        tilt = int(self.state.get("current_tilt", 90))
+        try:
+            self.client.set_liveliness(
+                True,
+                mode=params["mode"],
+                amplitude_deg=params["amplitude_deg"],
+                period_ms=params["period_ms"],
+                pan_center=pan,
+                tilt_center=tilt,
+            )
+            sched.mark_sent(now, params)
+        except Exception:
+            pass
+
     def _perform_eye_saccade(self) -> None:
         """Briefly dart the eyes to a random gaze direction."""
         gaze = random.choice(["look_left", "look_right", "look_up", "look_down"])
