@@ -41,9 +41,36 @@ class LivelinessScheduler:
         amp = _clamp(amp, 0.0, self.max_amplitude_deg)
         return {"mode": mode, "amplitude_deg": round(amp, 1), "period_ms": int(period)}
 
+    # Per-canonical-emotion shaping: (amplitude_mul, period_mul, mode).
+    # period_mul < 1 => faster motion. Resolved through the shared vocab so
+    # aliases map consistently with eyes/LEDs/voice.
+    _EMOTION_SHAPE = {
+        "excitement": (1.6, 0.6, "micro"),
+        "joy": (1.3, 0.8, "breathe"),
+        "surprise": (1.5, 0.55, "micro"),
+        "curiosity": (1.2, 0.75, "micro"),
+        "love": (1.1, 0.9, "breathe"),
+        "fear": (1.4, 0.45, "micro"),
+        "anger": (1.5, 0.5, "micro"),
+        "furious": (1.7, 0.4, "micro"),
+        "sadness": (0.6, 1.4, "breathe"),
+        "worried": (0.9, 0.7, "micro"),
+        "tired": (0.5, 1.6, "breathe"),
+        "bored": (0.7, 1.3, "breathe"),
+        "neutral": (1.0, 1.0, "breathe"),
+    }
+
     def _modulate(self, emotion: str, amp: float, period: float, mode: str):
-        """Hook for emotion-specific shaping (extended in a later change)."""
-        return amp, period, mode
+        """Shape amplitude/tempo/mode by the dominant emotion."""
+        try:
+            from modules.common.emotion_vocab import get_vocab
+
+            canon = get_vocab().canonical(emotion)
+        except Exception:
+            canon = str(emotion or "neutral").strip().lower()
+        amp_mul, period_mul, shaped_mode = self._EMOTION_SHAPE.get(canon, (1.0, 1.0, mode))
+        period = _clamp(period * period_mul, 800.0, 12000.0)
+        return amp * amp_mul, period, shaped_mode
 
     @staticmethod
     def _params_differ(a: Optional[Dict[str, Any]], b: Optional[Dict[str, Any]]) -> bool:
