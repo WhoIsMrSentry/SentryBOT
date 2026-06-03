@@ -820,7 +820,7 @@ class AutonomyBrain(
                         )
 
                     enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
-                    agent_result = self.agent.step(enriched_text, language=lang)
+                    agent_result = self.agent.step(enriched_text, language=lang, speaker=speaker)
                     if agent_result and agent_result.get("text"):
                         if not self._is_active_request(request_id):
                             return
