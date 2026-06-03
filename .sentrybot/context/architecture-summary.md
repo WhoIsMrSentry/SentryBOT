@@ -145,6 +145,19 @@ ACT   → LLM yanıtını parse et, donanım HTTP çağrıları yap
 - **Akıllı gönderim:** brain `_liveliness_tick` yalnızca parametre değişince ya da
   `refresh_interval_s` geçince yollar; konuşma/takip/uyku sırasında bastırılır.
 
+### Öğrenme ve Adaptasyon (Learning & Adaptation)
+
+- **Tek çıkarım kaynağı:** `PreferenceLearner` fact + tercih regex'lerini
+  `MemoryConsolidator` ve `RelationshipMemory` arasında paylaşır.
+- **Konuşmacı köprüsü:** autonomy `agent.step(..., speaker=)` → `WorldState.speaker`
+  → consolidator facts'i doğru kişinin `social_db` kaydına yansıtır.
+- **Geri bildirim döngüsü:** `InteractionFeedbackLearner` övgü/kaba sözü
+  `trust_score` + moment salience'e çevirir; enrichment `trust=high/low` ipucu verir.
+- **Agent aracı:** `search_social_memory` kişi bazlı tercih/moment/trust sorgular
+  (epizodik `search_memory`'ye ek).
+- **Proaktif adaptasyon:** `ProactivePlanner` düşük trust'ta callback atlar,
+  yüksek trust'ta daha sıcak tercih hatırlatması kullanır.
+
 ## Güvenlik ve Dayanıklılık
 
 - **Owner kontrolü:** VLM + RFID ile sahip doğrulaması
