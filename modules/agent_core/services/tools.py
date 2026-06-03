@@ -308,6 +308,22 @@ class ToolRegistry:
             }
         })
 
+        self._register(self.search_social_memory, {
+            "type": "function",
+            "function": {
+                "name": "search_social_memory",
+                "description": "Search a person's social memory: preferences, moments, and trust relationship.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "description": "Person's name"},
+                        "query": {"type": "string", "description": "Optional relevance filter"},
+                    },
+                    "required": ["name"],
+                },
+            },
+        })
+
         self._register(self.get_vision, {
             "type": "function",
             "function": {
@@ -600,6 +616,42 @@ class ToolRegistry:
         if not res:
             return "No matching memories found."
         return str(res)
+
+    def search_social_memory(self, name: str, query: str = "") -> str:
+        try:
+            from modules.social_db import get_default as _social_default
+
+            db = _social_default()
+        except Exception:
+            return "Social memory unavailable."
+        if db is None:
+            return "Social memory unavailable."
+        rec = db.persons.get_by_name(str(name or "").strip())
+        if not rec:
+            return f"No social record for {name}."
+        pid = rec["id"]
+        grouped = db.relationships.list_grouped(pid)
+        moments = db.moments.top_for_person(pid, limit=10)
+        snippets = [str(m.get("text", "")).strip() for m in moments if str(m.get("text", "")).strip()]
+        q = str(query or "").strip()
+        if q and snippets:
+            try:
+                from .semantic_index import rank
+
+                ranked = rank(q, snippets, top_k=3)
+                snippets = [snippets[idx] for idx, _ in ranked if idx < len(snippets)]
+            except Exception:
+                pass
+        parts: List[str] = []
+        trust = float(rec.get("trust_score", 0.0) or 0.0)
+        parts.append(f"trust_score={trust:.2f}")
+        for key in ("likes", "dislikes", "topics"):
+            vals = grouped.get(key, []) if isinstance(grouped.get(key, []), list) else []
+            if vals:
+                parts.append(f"{key}: {', '.join(str(v) for v in vals[:6])}")
+        if snippets:
+            parts.append("moments: " + " | ".join(snippets[:3]))
+        return "\n".join(parts) if parts else "No social memories found."
 
     def get_vision(self) -> str:
         if not self.client: return "Error: Vision client disconnected."
