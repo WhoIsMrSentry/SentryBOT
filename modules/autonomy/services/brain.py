@@ -17,6 +17,7 @@ from .companion_rituals import CompanionRituals
 from .proactive_planner import ProactivePlanner
 from .barge_in import BargeInController
 from .liveliness import LivelinessScheduler
+from .interaction_feedback import InteractionFeedbackLearner
 from .relationship_memory import RelationshipMemory
 from .brain_parts.animations import AnimationSupportMixin
 from .brain_parts.owner_guard import OwnerGuardMixin
@@ -73,6 +74,8 @@ class AutonomyBrain(
             companion_cfg.get("rituals", {}) if isinstance(companion_cfg.get("rituals", {}), dict) else {}
         )
         self.proactive_planner = ProactivePlanner(companion_cfg.get("proactive", {}) if isinstance(companion_cfg.get("proactive", {}), dict) else {})
+        learning_cfg = companion_cfg.get("learning", {}) if isinstance(companion_cfg.get("learning", {}), dict) else {}
+        self.feedback_learner = InteractionFeedbackLearner(learning_cfg.get("feedback", learning_cfg))
         self.barge_in = BargeInController(config.get("barge_in", {}) if isinstance(config.get("barge_in", {}), dict) else {})
         self.liveliness = LivelinessScheduler(config.get("liveliness", {}) if isinstance(config.get("liveliness", {}), dict) else {})
         self._vision_cfg = config.get("vision_hooks", {})
@@ -769,6 +772,8 @@ class AutonomyBrain(
             self.state["last_speaker"] = speaker
             self._note_person_seen(speaker, emotion=str(self.state.get("last_emotion") or ""))
             self._remember_person_chat(speaker, text, role="user")
+            if sentiment_event:
+                self._apply_interaction_feedback(sentiment_event, speaker, text)
 
         self.client.push_interaction_event("autonomy.excited")
 
@@ -820,7 +825,7 @@ class AutonomyBrain(
                         )
 
                     enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
-                    agent_result = self.agent.step(enriched_text, language=lang)
+                    agent_result = self.agent.step(enriched_text, language=lang, speaker=speaker)
                     if agent_result and agent_result.get("text"):
                         if not self._is_active_request(request_id):
                             return
@@ -883,6 +888,12 @@ class AutonomyBrain(
         with self._speech_req_lock:
             return self._active_speech_req_id == request_id
 
+    def _apply_interaction_feedback(self, event: str, speaker: str, text: str) -> None:
+        try:
+            self.feedback_learner.apply(event, speaker, text=text)
+        except Exception:
+            pass
+
     def _remember_person_chat(self, speaker: str | None, text: str, role: str) -> None:
         person = str(speaker or "").strip()
         if not person or person.lower() == "unknown" or not text:
@@ -910,6 +921,11 @@ class AutonomyBrain(
         topics = profile.get("topics", []) if isinstance(profile.get("topics", []), list) else []
         top_memory = str(profile.get("top_memory", "")).strip()
         hints = []
+        trust = float(profile.get("trust_score", 0.0) or 0.0)
+        if trust >= 0.7:
+            hints.append("trust=high")
+        elif trust <= 0.3:
+            hints.append("trust=low")
         if likes:
             hints.append(f"likes={','.join([str(x) for x in likes[:3]])}")
         if topics:

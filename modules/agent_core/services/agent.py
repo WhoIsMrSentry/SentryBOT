@@ -1066,6 +1066,7 @@ class AgentOrchestrator:
         user_prompt: str = "",
         progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
         language: Optional[str] = None,
+        speaker: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """
         One complete Agent thought cycle with staged execution.
@@ -1085,6 +1086,14 @@ class AgentOrchestrator:
 
         self.is_busy = True
         previous_hook = self.tool_registry.status_hook
+
+        # Bridge active speaker into world state so consolidation and tools
+        # can attribute facts to the right person during this turn.
+        if speaker and str(speaker).strip().lower() not in {"unknown", "none", ""}:
+            try:
+                self.world_state.update_state({"speaker": str(speaker).strip()})
+            except Exception:
+                pass
 
         session_language = self._normalize_session_language(language)
 
