@@ -10,52 +10,33 @@ bridging the previously disconnected episodic and social memory silos.
 from __future__ import annotations
 
 import logging
-import re
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("agent.memory_consolidator")
 
-# (compiled pattern, fact template). Group 1 is the captured value.
-_NAME = r"[A-Za-zÇĞİıÖŞÜçğöşü][A-Za-zÇĞİıÖŞÜçğöşü\-]{1,30}"
-
-_PATTERNS = [
-    (re.compile(r"\bben(?:im)?\s+ad[ıi]m\s+(" + _NAME + r")", re.IGNORECASE), "user name is {0}"),
-    (re.compile(r"\bismim\s+(" + _NAME + r")", re.IGNORECASE), "user name is {0}"),
-    (re.compile(r"\bmy name is\s+(" + _NAME + r")", re.IGNORECASE), "user name is {0}"),
-    (re.compile(r"\bi am\s+(" + _NAME + r")(?:\s|$|[.!,])", re.IGNORECASE), "user name is {0}"),
-    (re.compile(r"\b(?:k[öo]pe[ğg]im|kedim)(?:in ad[ıi])?\s+(" + _NAME + r")", re.IGNORECASE), "user has a pet named {0}"),
-    (re.compile(r"\bmy (?:dog|cat)(?:'s name)? is\s+(" + _NAME + r")", re.IGNORECASE), "user has a pet named {0}"),
-    (re.compile(r"\b(?:işim|meslegim|mesle[ğg]im)\s+(" + _NAME + r")", re.IGNORECASE), "user works as {0}"),
-    (re.compile(r"\bi work as (?:a |an )?(" + _NAME + r")", re.IGNORECASE), "user works as {0}"),
-    (re.compile(r"\b(" + _NAME + r")['’]?(?:de|da|te|ta)\s+(?:oturuyorum|yas[ıi]yorum)", re.IGNORECASE), "user lives in {0}"),
-    (re.compile(r"\bi live in\s+(" + _NAME + r")", re.IGNORECASE), "user lives in {0}"),
-]
-
 
 class MemoryConsolidator:
-    def __init__(self, memory: Any = None, social_db: Any = None) -> None:
+    def __init__(self, memory: Any = None, social_db: Any = None, learner: Any = None) -> None:
         self.memory = memory
         self.social_db = social_db
+        self._learner = learner
+
+    def _get_learner(self):
+        if self._learner is not None:
+            return self._learner
+        try:
+            from modules.autonomy.services.preference_learner import PreferenceLearner
+
+            self._learner = PreferenceLearner()
+        except Exception:
+            self._learner = None
+        return self._learner
 
     def extract_facts(self, text: str) -> List[str]:
-        raw = str(text or "")
-        # only mine the user's side of a "User: ... | Bot: ..." line if present
-        if "|" in raw:
-            raw = raw.split("|", 1)[0]
-        raw = re.sub(r"(?i)^\s*user\s*:\s*", "", raw).strip()
-        if not raw:
-            return []
-
-        facts: List[str] = []
-        for pattern, template in _PATTERNS:
-            match = pattern.search(raw)
-            if match:
-                value = match.group(1).strip()
-                if value and len(value) > 1:
-                    fact = template.format(value)
-                    if fact not in facts:
-                        facts.append(fact)
-        return facts
+        learner = self._get_learner()
+        if learner is not None:
+            return learner.extract_facts(text)
+        return []
 
     def consolidate(self, text: str, speaker: Optional[str] = None) -> List[str]:
         facts = self.extract_facts(text)
@@ -80,9 +61,13 @@ class MemoryConsolidator:
             return
         try:
             person = self.social_db.persons.upsert(name=speaker)
-            person_id = getattr(person, "person_id", None) or (person.get("person_id") if isinstance(person, dict) else None)
+            person_id = None
+            if isinstance(person, dict):
+                person_id = person.get("id") or person.get("person_id")
+            else:
+                person_id = getattr(person, "id", None) or getattr(person, "person_id", None)
             if person_id and hasattr(self.social_db, "moments"):
-                self.social_db.moments.add_or_boost(person_id, fact)
+                self.social_db.moments.add_or_boost(person_id, fact, salience=0.75)
         except Exception:
             logger.debug("failed to mirror fact into social_db", exc_info=True)
 

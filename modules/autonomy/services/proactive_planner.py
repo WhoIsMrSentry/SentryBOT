@@ -139,6 +139,10 @@ class ProactivePlanner:
     def _callback_line(self, social_profile: Dict[str, Any], speaker: str, owner_present: bool) -> str:
         if not social_profile:
             return ""
+        trust = float(social_profile.get("trust_score", 0.5) or 0.5)
+        min_trust = float(self.cfg.get("callback_min_trust", 0.2))
+        if trust < min_trust:
+            return ""
         last_user_utt = str(social_profile.get("last_user_utterance", "")).strip()
         likes = social_profile.get("likes", []) if isinstance(social_profile.get("likes", []), list) else []
         topics = social_profile.get("topics", []) if isinstance(social_profile.get("topics", []), list) else []
@@ -146,6 +150,8 @@ class ProactivePlanner:
         if likes:
             pick = str(likes[-1]).strip()
             if pick:
+                if trust >= 0.7 and owner_present:
+                    return f"{name}, {pick} sevdigini soylemistin; seninle konusmak guzel."
                 if owner_present:
                     return f"{name}, {pick} sevdigini soylemistin; istersen onunla ilgili konusalim."
                 return f"{name}, {pick} konusunu acmak ister misin?"

@@ -32,6 +32,7 @@ class RelationshipMemory:
             except Exception:
                 social_db = None
         self._social_db = social_db
+        self._learner = None
         self._people: Dict[str, Dict[str, Any]] = {}
         if self.enabled and self._social_db is None:
             self._load()
@@ -197,6 +198,17 @@ class RelationshipMemory:
                 break
         return out[:limit]
 
+    def _get_learner(self):
+        if self._learner is not None:
+            return self._learner
+        try:
+            from .preference_learner import PreferenceLearner
+
+            self._learner = PreferenceLearner()
+        except Exception:
+            self._learner = None
+        return self._learner
+
     def social_profile(self, name: str) -> Dict[str, Any]:
         if self._social_db is not None:
             rec = self.get(name) or {}
@@ -219,6 +231,7 @@ class RelationshipMemory:
                 "name": (rec.get("display_name") if rec else None) or name,
                 "is_owner": bool(rec.get("is_owner", False)),
                 "seen_count": int(rec.get("seen_count", 0) or 0),
+                "trust_score": float(rec.get("trust_score", 0.0) or 0.0),
                 "likes": likes[:5],
                 "dislikes": dislikes[:5],
                 "topics": topics[:6],
@@ -240,6 +253,7 @@ class RelationshipMemory:
             "name": rec.get("name", name),
             "is_owner": bool(rec.get("is_owner", False)),
             "seen_count": int(rec.get("seen_count", 0) or 0),
+            "trust_score": float(rec.get("trust_score", 0.0) or 0.0),
             "likes": likes[:5],
             "dislikes": dislikes[:5],
             "topics": topics[:6],
@@ -299,54 +313,39 @@ class RelationshipMemory:
         """
         if not person_id:
             return
-        low = str(text or "").strip().lower()
-        if not low:
+        learner = self._get_learner()
+        if learner is None:
             return
-
-        patterns_like = [
-            r"\b(?:seviyorum|hoslaniyorum|bayiliyorum)\s+([a-z0-9_\-\s]{2,40})",
-            r"\b(?:i like|i love)\s+([a-z0-9_\-\s]{2,40})",
-            r"\b(?:favorim|favorite)\s+([a-z0-9_\-\s]{2,40})",
-        ]
-        patterns_dislike = [
-            r"\b(?:sevmiyorum|nefret ediyorum)\s+([a-z0-9_\-\s]{2,40})",
-            r"\b(?:i hate|i dislike)\s+([a-z0-9_\-\s]{2,40})",
-        ]
-
+        prefs = learner.extract_preferences(text)
         existing = self._social_db.relationships.list_grouped(person_id)
         likes = existing.get("likes", [])
         dislikes = existing.get("dislikes", [])
         topics = existing.get("topics", [])
         changed = {"likes": False, "dislikes": False, "topics": False}
 
-        for pat in patterns_like:
-            for m in re.findall(pat, low):
-                val = str(m).strip(" .,!?:;")
-                if 2 <= len(val) <= 40 and val not in likes:
-                    likes.append(val)
-                    changed["likes"] = True
-                    self._social_db.moments.add_or_boost(
-                        person_id=person_id, text=f"likes:{val}", salience=0.6
-                    )
+        for val in prefs.get("likes", []):
+            if val not in likes:
+                likes.append(val)
+                changed["likes"] = True
+                self._social_db.moments.add_or_boost(
+                    person_id=person_id, text=f"likes:{val}", salience=0.6
+                )
 
-        for pat in patterns_dislike:
-            for m in re.findall(pat, low):
-                val = str(m).strip(" .,!?:;")
-                if 2 <= len(val) <= 40 and val not in dislikes:
-                    dislikes.append(val)
-                    changed["dislikes"] = True
-                    self._social_db.moments.add_or_boost(
-                        person_id=person_id, text=f"dislikes:{val}", salience=0.65
-                    )
+        for val in prefs.get("dislikes", []):
+            if val not in dislikes:
+                dislikes.append(val)
+                changed["dislikes"] = True
+                self._social_db.moments.add_or_boost(
+                    person_id=person_id, text=f"dislikes:{val}", salience=0.65
+                )
 
-        if "?" in low:
-            for token in ["muzik", "film", "oyun", "okul", "is", "hava", "spor", "robot", "yazilim", "ai"]:
-                if token in low and token not in topics:
-                    topics.append(token)
-                    changed["topics"] = True
-                    self._social_db.moments.add_or_boost(
-                        person_id=person_id, text=f"topic:{token}", salience=0.45
-                    )
+        for token in prefs.get("topics", []):
+            if token not in topics:
+                topics.append(token)
+                changed["topics"] = True
+                self._social_db.moments.add_or_boost(
+                    person_id=person_id, text=f"topic:{token}", salience=0.45
+                )
 
         if changed["likes"]:
             self._social_db.relationships.set(person_id, "likes", ",".join(likes[-12:]))
@@ -360,39 +359,25 @@ class RelationshipMemory:
         likes = prefs.setdefault("likes", [])
         dislikes = prefs.setdefault("dislikes", [])
         topics = prefs.setdefault("topics", [])
-        low = str(text or "").strip().lower()
-        if not low:
+        learner = self._get_learner()
+        if learner is None:
             return
+        prefs = learner.extract_preferences(text)
 
-        patterns_like = [
-            r"\b(?:seviyorum|hoslaniyorum|bayiliyorum)\s+([a-z0-9_\-\s]{2,40})",
-            r"\b(?:i like|i love)\s+([a-z0-9_\-\s]{2,40})",
-            r"\b(?:favorim|favorite)\s+([a-z0-9_\-\s]{2,40})",
-        ]
-        patterns_dislike = [
-            r"\b(?:sevmiyorum|nefret ediyorum)\s+([a-z0-9_\-\s]{2,40})",
-            r"\b(?:i hate|i dislike)\s+([a-z0-9_\-\s]{2,40})",
-        ]
+        for val in prefs.get("likes", []):
+            if val not in likes:
+                likes.append(val)
+                self._add_moment(rec, text=f"likes:{val}", salience=0.6)
 
-        for pat in patterns_like:
-            for m in re.findall(pat, low):
-                val = str(m).strip(" .,!?:;")
-                if 2 <= len(val) <= 40 and val not in likes:
-                    likes.append(val)
-                    self._add_moment(rec, text=f"likes:{val}", salience=0.6)
+        for val in prefs.get("dislikes", []):
+            if val not in dislikes:
+                dislikes.append(val)
+                self._add_moment(rec, text=f"dislikes:{val}", salience=0.65)
 
-        for pat in patterns_dislike:
-            for m in re.findall(pat, low):
-                val = str(m).strip(" .,!?:;")
-                if 2 <= len(val) <= 40 and val not in dislikes:
-                    dislikes.append(val)
-                    self._add_moment(rec, text=f"dislikes:{val}", salience=0.65)
-
-        if "?" in low:
-            for token in ["muzik", "film", "oyun", "okul", "is", "hava", "spor", "robot", "yazilim", "ai"]:
-                if token in low and token not in topics:
-                    topics.append(token)
-                    self._add_moment(rec, text=f"topic:{token}", salience=0.45)
+        for token in prefs.get("topics", []):
+            if token not in topics:
+                topics.append(token)
+                self._add_moment(rec, text=f"topic:{token}", salience=0.45)
 
         if len(likes) > 12:
             del likes[:-12]

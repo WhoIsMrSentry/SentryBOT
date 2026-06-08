@@ -39,3 +39,17 @@ def test_no_facts_is_noop():
     c = MemoryConsolidator(memory=mem)
     assert c.consolidate("User: hava bugun nasil | Bot: guzel") == []
     assert mem.stored == []
+
+
+def test_consolidate_mirrors_fact_to_social_db(tmp_path):
+    from modules.social_db.db import SocialDB
+
+    db = SocialDB(path=tmp_path / "social.sqlite3", wal=False)
+    mem = _FakeMemory()
+    c = MemoryConsolidator(memory=mem, social_db=db)
+    facts = c.consolidate("benim adim Emir", speaker="Emir")
+    assert facts == ["user name is Emir"]
+    rec = db.persons.get_by_name("Emir")
+    assert rec is not None
+    moments = db.moments.top_for_person(rec["id"], limit=5)
+    assert any("user name is Emir" in str(m.get("text", "")) for m in moments)

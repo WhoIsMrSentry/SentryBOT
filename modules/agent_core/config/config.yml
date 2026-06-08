@@ -74,6 +74,9 @@ idle:
 
 memory:
   db_name: "memory.db"         # data/ klasörü altında oluşturulur
+  consolidation:
+    enabled: true              # mine durable facts from dialogue after each turn
+    fact_importance: 8         # episodic importance for consolidated facts
 
 slam:
   map_file: "map.json"         # data/ klasörü altında oluşturulur
