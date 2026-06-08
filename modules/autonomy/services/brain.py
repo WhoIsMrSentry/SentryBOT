@@ -420,6 +420,11 @@ class AutonomyBrain(
         speaker = str(self.state.get("last_speaker") or "")
         owner_present = bool(self._owner_seen_recently()) if hasattr(self, "_owner_seen_recently") else False
         social_profile = self.relationship_memory.social_profile(speaker) if speaker else {}
+        scene_ctx = {
+            "summary": str(self.state.get("scene_summary", "") or ""),
+            "importance": float(self.state.get("scene_importance", 0.0) or 0.0),
+            "unspoken": bool(self.state.get("scene_unspoken", False)),
+        }
         plan = self.proactive_planner.propose(
             now_ts=now,
             idle_s=idle_s,
@@ -427,12 +432,15 @@ class AutonomyBrain(
             last_speaker=speaker,
             owner_present=owner_present,
             social_profile=social_profile,
+            scene=scene_ctx,
         )
         if not plan:
             return
         text = str(plan.get("text", "")).strip()
         if not text:
             return
+        if plan.get("scene_consumed"):
+            self.state["scene_unspoken"] = False
         emotion = str(plan.get("emotion", "curiosity")).strip()
         event = str(plan.get("event", "companion.proactive")).strip()
         self.client.push_interaction_event(event, {"text": text, "emotion": emotion})

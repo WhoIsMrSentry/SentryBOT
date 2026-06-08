@@ -761,6 +761,44 @@ class VisionProcessor:
         churn = prev ^ sig
         return len(churn) / len(union)
 
+    def _person_signals(self, parsed_results: List[Dict[str, Any]]) -> Tuple[bool, bool]:
+        """Derive (owner_seen, new_person) from the current detections."""
+        owner_seen = False
+        new_person = False
+        seen = getattr(self, "_seen_person_names", set())
+        current: set = set()
+        for r in parsed_results or []:
+            if not isinstance(r, dict):
+                continue
+            name = str(r.get("name") or "").strip()
+            if not name or name.lower() == "unknown":
+                continue
+            current.add(name)
+            rel = str(r.get("relationship") or "").lower()
+            level = r.get("recognition_level")
+            if rel in {"owner", "family"} or (isinstance(level, (int, float)) and level >= 5):
+                owner_seen = True
+            if name not in seen:
+                new_person = True
+        # Bound the memory so a long session doesn't accumulate stale names.
+        self._seen_person_names = (seen | current) if len(seen) < 64 else set(current)
+        return owner_seen, new_person
+
+    def _hazard_signal(self, parsed_results: List[Dict[str, Any]]) -> bool:
+        """Lightweight proximity-hazard check mirroring alert thresholds."""
+        alerts_cfg = getattr(self, "config", {}).get("vision", {}).get("alerts", {})
+        if not alerts_cfg or not getattr(self, "mode_flags", {}).get("hazards", True):
+            return False
+        classes = {str(c) for c in alerts_cfg.get("classes", [])}
+        dist_thr = float(alerts_cfg.get("distance_threshold_m", 1.0))
+        for r in parsed_results or []:
+            if not isinstance(r, dict):
+                continue
+            dist = r.get("distance_m")
+            if str(r.get("label") or "") in classes and isinstance(dist, (int, float)) and float(dist) <= dist_thr:
+                return True
+        return False
+
     def _maybe_sample_vlm(self, parsed_results: List[Dict[str, Any]]) -> None:
         sampler = getattr(self, "vision_sampler", None)
         if sampler is None:
@@ -768,10 +806,20 @@ class VisionProcessor:
         if getattr(self, "_vlm_refresh_inflight", False):
             return
         score = self._scene_change_score(parsed_results)
+        owner_seen, new_person = self._person_signals(parsed_results)
+        hazard = self._hazard_signal(parsed_results)
+        # Treat a large scene churn spike as sudden motion in the field of view.
+        sudden_motion = score >= max(getattr(self, "_sudden_motion_threshold", 0.7), sampler.scene_change_threshold + 0.25)
+        is_bored = bool(getattr(self, "_is_bored", False))
         try:
             should = sampler.should_call_vlm(
                 scene_change_score=score,
                 follow_mode_active=bool(getattr(self, "_follow_active", False)),
+                owner_seen=owner_seen,
+                new_person=new_person,
+                hazard_detected=hazard,
+                sudden_motion=sudden_motion,
+                is_bored=is_bored,
             )
         except Exception:
             return
@@ -1143,6 +1191,10 @@ class VisionProcessor:
         self.latest_results = normalized
         self._evaluate_alerts(normalized)
         self._handle_person_interactions(normalized)
+        # Remote mode has no local inference loop, so drive continuous perception
+        # (living-vision sampling) here too — otherwise the default `remote`
+        # processing mode would never refresh scene context on its own.
+        self._maybe_sample_vlm(normalized)
         if self.blind_mode_enabled and normalized:
             self._handle_blind_mode(normalized)
         if normalized and self.mode_flags.get("semantic_scene", True):
@@ -1455,14 +1507,14 @@ class VisionProcessor:
                     "raw_vlm_observation": str(vlm_result.get("raw_text", "")),
                     "persona_interpretation": str(vlm_result.get("summary", "")),
                 }
-                self.update_visual_context(context)
+                self.update_visual_context(context, is_user_question=bool(question))
                 latest = self.get_latest_visual_context()
                 if latest is not None:
                     return latest
 
         fallback = self._build_context_from_results(self.latest_results)
         if fallback is not None:
-            self.update_visual_context(fallback)
+            self.update_visual_context(fallback, is_user_question=bool(question))
             return self.get_latest_visual_context()
         return None
 
@@ -1505,8 +1557,19 @@ class VisionProcessor:
             "persona_interpretation": summary,
         }
 
-    def update_visual_context(self, context: Optional[Dict[str, Any]]) -> None:
-        """Update the cached visual context (typically called by VLM after processing)."""
+    def update_visual_context(
+        self,
+        context: Optional[Dict[str, Any]],
+        *,
+        is_user_question: bool = False,
+        is_scene_change: bool = True,
+    ) -> None:
+        """Update the cached visual context (typically called by VLM after processing).
+
+        Importance is (re)derived from the scene content via ``compute_importance``
+        instead of trusting the caller's hardcoded guess, so hazards/owner/novelty
+        actually drive how loudly the robot reacts.
+        """
         if self.visual_context_cache is None or context is None:
             return
         try:
@@ -1515,7 +1578,7 @@ class VisionProcessor:
                 self.visual_context_cache.set_context(context)
             else:
                 # Direct assignment if it's a VisualContextCache
-                from .visual_context import VisionFrameContext, PersonContext
+                from .visual_context import VisionFrameContext, PersonContext, compute_importance
                 vfc = VisionFrameContext(
                     timestamp=context.get("timestamp", ""),
                     summary=context.get("summary", ""),
@@ -1528,6 +1591,18 @@ class VisionProcessor:
                     raw_vlm_observation=context.get("raw_vlm_observation", ""),
                     persona_interpretation=context.get("persona_interpretation", ""),
                 )
+                prev_id = getattr(self.visual_context_cache, "previous_scene_id", "")
+                derived = compute_importance(
+                    vfc,
+                    is_user_question=is_user_question,
+                    is_scene_change=is_scene_change,
+                    is_follow_active=bool(getattr(self, "_follow_active", False)),
+                    previous_scene_id=prev_id,
+                )
+                # Keep the stronger of caller-supplied vs derived so an explicit
+                # high-priority refresh (e.g. user question) is never down-graded.
+                vfc.importance_score = max(float(context.get("importance_score", 0.0) or 0.0), derived)
+                context["importance_score"] = vfc.importance_score
                 self.visual_context_cache.update(vfc)
         except Exception as exc:
             logger.debug("Failed to update visual context: %s", exc)

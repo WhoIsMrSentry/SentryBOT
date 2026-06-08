@@ -107,6 +107,20 @@ ACT   → LLM yanıtını parse et, donanım HTTP çağrıları yap
 - **Expression Director** (`services/expression_director.py`): tek çağrıda
   gözler + LED + kulaklar + kafa + ses tonunu eşgüdümlü tetikler (`brain.express`).
 
+### Sürekli Çevre Algısı (Continuous Perception)
+
+- **Living-vision sampling:** `vlm_bridge` inference döngüsü ve uzak ingest yolu
+  `VisionSampler`'a owner/yeni-kişi/tehlike/ani-hareket/sıkılma sinyallerini
+  besler → sahne bağlamı koşullu olarak arkaplanda yenilenir.
+- **İçerik-temelli önem:** `compute_importance` cache'e bağlı; tehlike/owner/
+  yenilik gerçek `importance_score` üretir (hardcode değil).
+- **WorldState environment:** sahne özeti/nesneler/tehlikeler/kişiler agent_core
+  `WorldState`'e işlenir ve LLM bağlamına enjekte edilir (`inject_world_state`).
+- **Sahne yeniliği:** autonomy `_track_scene_context` token-farkıyla yeniliği
+  ölçer, `environment.scene_changed` etkileşim olayı yayar (kulak/LED tepkisi).
+- **Proaktif betimleme:** `ProactivePlanner` boştayken yeni/önemli sahneyi
+  doğal dille anlatır (`companion.scene_comment`).
+
 ## Güvenlik ve Dayanıklılık
 
 - **Owner kontrolü:** VLM + RFID ile sahip doğrulaması
