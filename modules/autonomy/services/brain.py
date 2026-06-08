@@ -15,6 +15,7 @@ from .affective_appraisal import AffectiveAppraisal
 from .expression_director import ExpressionDirector
 from .companion_rituals import CompanionRituals
 from .proactive_planner import ProactivePlanner
+from .barge_in import BargeInController
 from .relationship_memory import RelationshipMemory
 from .brain_parts.animations import AnimationSupportMixin
 from .brain_parts.owner_guard import OwnerGuardMixin
@@ -71,6 +72,7 @@ class AutonomyBrain(
             companion_cfg.get("rituals", {}) if isinstance(companion_cfg.get("rituals", {}), dict) else {}
         )
         self.proactive_planner = ProactivePlanner(companion_cfg.get("proactive", {}) if isinstance(companion_cfg.get("proactive", {}), dict) else {})
+        self.barge_in = BargeInController(config.get("barge_in", {}) if isinstance(config.get("barge_in", {}), dict) else {})
         self._vision_cfg = config.get("vision_hooks", {})
         self.owner_cfg = config.get("owner", {})
 
@@ -703,12 +705,36 @@ class AutonomyBrain(
         except Exception as exc:
             logger.debug("barge-in stop failed: %s", exc)
 
+    def _robot_is_speaking(self) -> bool:
+        """Best-effort check of whether TTS audio is currently playing."""
+        try:
+            if self.agent and hasattr(self.agent, "speech_arbiter"):
+                return bool(self.agent.speech_arbiter.is_speaking())
+        except Exception:
+            pass
+        try:
+            status = self.client.get_speak_status()
+            if isinstance(status, dict):
+                return bool(status.get("speaking") or status.get("busy"))
+        except Exception:
+            pass
+        return False
+
     def _react_to_speech(self, text, source_lang: str | None = None):
         """React to heard text."""
         from modules.speech.services.wake_phrase import contains_wakeword, strip_wakewords
 
         low = str(text or "").lower()
-        if contains_wakeword(low):
+        has_wake = contains_wakeword(low)
+        # Natural barge-in: any meaningful utterance (not only a wakeword) cuts
+        # off the robot if it's mid-sentence, like a real conversation.
+        if self.barge_in.should_interrupt(
+            robot_speaking=self._robot_is_speaking(),
+            user_text=text,
+            has_wakeword=has_wake,
+        ):
+            self._barge_in_stop_speaking()
+        elif has_wake:
             self._barge_in_stop_speaking()
 
         request_id = uuid.uuid4().hex[:10]

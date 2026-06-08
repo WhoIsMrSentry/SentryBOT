@@ -121,6 +121,18 @@ ACT   → LLM yanıtını parse et, donanım HTTP çağrıları yap
 - **Proaktif betimleme:** `ProactivePlanner` boştayken yeni/önemli sahneyi
   doğal dille anlatır (`companion.scene_comment`).
 
+### Doğal Konuşma (Natural Speech)
+
+- **Duygulu prosodi:** `speak` tonu artık Piper sesini de şekillendirir
+  (`_tone_to_piper` → `length_scale`/`noise_w`); ton `agent_core` kuyruğundan
+  TTS'e kadar korunur (`_handle_speak` tone forward).
+- **Tek ton kaynağı:** autonomy `_tone_profile` kanonik duygu vocab'ından
+  çözülür → ses/göz/LED/kulak aynı duygu taksonomisini paylaşır.
+- **Disfluency/filler:** `SpeakService._enrich_text_for_speech` olasılıkla ve
+  duygu-havuzuna göre doğal dolgu ekler ("Şey,", "Hmm,", "Aa,").
+- **Doğal barge-in:** `BargeInController` robot konuşurken kullanıcının anlamlı
+  konuşmasıyla (sadece wakeword değil) sözü kesmesine izin verir.
+
 ## Güvenlik ve Dayanıklılık
 
 - **Owner kontrolü:** VLM + RFID ile sahip doğrulaması
