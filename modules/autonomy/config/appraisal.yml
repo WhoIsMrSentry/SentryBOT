@@ -1,0 +1,29 @@
+# Affective appraisal rules: map a semantic event to mood-axis deltas.
+#
+# Axes: happiness, energy, curiosity, fear, anger (0-100).
+# Deltas are scaled by an optional per-call intensity factor.
+#
+# This gives the robot *causal* emotion ("the user was rude -> anger") instead
+# of pure time-based decay, so its feelings react to what actually happens.
+
+rules:
+  owner_returned:   { happiness: 22, anger: -12, fear: -10 }
+  owner_left:       { happiness: -8, curiosity: 4 }
+  greeted:          { happiness: 7 }
+  user_praise:      { happiness: 18, anger: -10 }
+  user_thanks:      { happiness: 12 }
+  user_rude:        { anger: 32, happiness: -12 }
+  user_insult:      { anger: 45, happiness: -18, fear: 6 }
+  command_failed:   { anger: 12, fear: 6 }
+  command_ok:       { happiness: 6, anger: -4 }
+  owner_lockout:    { anger: 20, fear: 15, happiness: -10 }
+  petted:           { happiness: 16, anger: -16, fear: -8 }
+  loud_noise:       { fear: 22, anger: 5, energy: 6 }
+  new_person:       { curiosity: 12, energy: 4 }
+  scene_change:     { curiosity: 8 }
+  darkness:         { fear: 8, energy: -6 }
+  alone_too_long:   { happiness: -10, curiosity: 6 }
+  played_with:      { happiness: 20, energy: 8, anger: -10 }
+  rested:           { energy: 30, fear: -10 }
+
+# Decay multipliers are handled by MoodManager; this file only defines events.
