@@ -40,9 +40,33 @@ def _parse_color(value) -> ColorEntry:
     raise ValueError(f"Unsupported color format: {value!r}")
 
 
+def _resolve_palette_name(emotion: str) -> Optional[str]:
+    """Map an arbitrary emotion label onto a palette file name via the shared vocab.
+
+    Lets callers pass canonical autonomy moods (``joy``/``tired``) or any alias
+    (``happy``/``sleepy``) and still land on a real palette file.
+    """
+    try:
+        from modules.common.emotion_vocab import get_vocab  # lazy: optional dep
+
+        return get_vocab().render(emotion).palette
+    except Exception:
+        return None
+
+
 @dataclass
 class EmotionPalette:
     entries_by_emotion: Dict[str, List[ColorEntry]]
+
+    def _lookup(self, emotion: str) -> Optional[List[ColorEntry]]:
+        key = (emotion or "").lower()
+        lst = self.entries_by_emotion.get(key)
+        if lst:
+            return lst
+        palette_name = _resolve_palette_name(key)
+        if palette_name and palette_name != key:
+            return self.entries_by_emotion.get(palette_name)
+        return None
 
     def random_color(self, emotion: str) -> Color:
         # Backward compatible simple color picker
@@ -50,13 +74,13 @@ class EmotionPalette:
         return ent.color
 
     def random_entry(self, emotion: str) -> ColorEntry:
-        lst = self.entries_by_emotion.get(emotion.lower())
+        lst = self._lookup(emotion)
         if lst:
             return random.choice(lst)
         return ColorEntry("fallback", (255, 255, 255))
 
     def get_by_name(self, emotion: str, name: str) -> Optional[ColorEntry]:
-        lst = self.entries_by_emotion.get(emotion.lower())
+        lst = self._lookup(emotion)
         if not lst:
             return None
         name = name.lower()

@@ -31,6 +31,7 @@ class ProactivePlanner:
         last_speaker: str,
         owner_present: bool,
         social_profile: Optional[Dict[str, Any]] = None,
+        scene: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         if not self.enabled:
             return None
@@ -46,6 +47,20 @@ class ProactivePlanner:
 
         mood = str(dominant_emotion or "neutral").strip().lower()
         speaker = str(last_speaker or "").strip()
+
+        # Prefer narrating a fresh, unspoken scene the robot just perceived —
+        # this is what makes it feel like it's actually *watching* the room.
+        scene_line = self._scene_line(scene or {})
+        if scene_line:
+            self._last_ts = now_ts
+            self._events.append(now_ts)
+            return {
+                "text": scene_line,
+                "emotion": "curiosity",
+                "event": "companion.scene_comment",
+                "scene_consumed": True,
+            }
+
         line = self._pick_line(
             mood=mood,
             speaker=speaker,
@@ -61,6 +76,24 @@ class ProactivePlanner:
             "emotion": "curiosity" if mood in {"neutral", "tired"} else mood,
             "event": "companion.proactive",
         }
+
+    def _scene_line(self, scene: Dict[str, Any]) -> str:
+        """Build an ambient comment about the currently perceived scene."""
+        if not scene or not scene.get("unspoken"):
+            return ""
+        summary = str(scene.get("summary", "") or "").strip()
+        if len(summary) < 6:
+            return ""
+        importance = float(scene.get("importance", 0.0) or 0.0)
+        if importance < float(self.cfg.get("scene_comment_min_importance", 0.45)):
+            return ""
+        snippet = summary[:120].rstrip()
+        templates = [
+            f"Etrafima bakiyordum da, {snippet.lower()}.",
+            f"Su an {snippet.lower()} gibi gorunuyor.",
+            f"Sunu fark ettim: {snippet.lower()}.",
+        ]
+        return self._rng.choice(templates)
 
     def _pick_line(self, mood: str, speaker: str, owner_present: bool, social_profile: Dict[str, Any]) -> str:
         if self.enable_callback_lines:
@@ -106,6 +139,10 @@ class ProactivePlanner:
     def _callback_line(self, social_profile: Dict[str, Any], speaker: str, owner_present: bool) -> str:
         if not social_profile:
             return ""
+        trust = float(social_profile.get("trust_score", 0.5) or 0.5)
+        min_trust = float(self.cfg.get("callback_min_trust", 0.2))
+        if trust < min_trust:
+            return ""
         last_user_utt = str(social_profile.get("last_user_utterance", "")).strip()
         likes = social_profile.get("likes", []) if isinstance(social_profile.get("likes", []), list) else []
         topics = social_profile.get("topics", []) if isinstance(social_profile.get("topics", []), list) else []
@@ -113,6 +150,8 @@ class ProactivePlanner:
         if likes:
             pick = str(likes[-1]).strip()
             if pick:
+                if trust >= 0.7 and owner_present:
+                    return f"{name}, {pick} sevdigini soylemistin; seninle konusmak guzel."
                 if owner_present:
                     return f"{name}, {pick} sevdigini soylemistin; istersen onunla ilgili konusalim."
                 return f"{name}, {pick} konusunu acmak ister misin?"

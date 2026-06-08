@@ -3,7 +3,6 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any
 import os
-import re
 
 logger = logging.getLogger("agent.memory")
 
@@ -72,10 +71,11 @@ class EpisodicMemory:
                 conn.close()
             
     def search_memory(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """
-        Retrieves matching memory logs. 
-        In a full RAG system, this would be semantic search (FAISS/Chroma).
-        For now, we use SQL LIKE matching.
+        """Retrieve matching memory logs.
+
+        Fast path: SQL ``LIKE`` for exact substring hits. When that is sparse we
+        fall back to TF-IDF cosine semantic ranking over recent episodes, which
+        recalls relevant memories even without a literal keyword match.
         """
         conn = self._get_conn()
         try:
@@ -116,10 +116,6 @@ class EpisodicMemory:
         out.extend(self._semantic_rank(query=query, rows=semantic_rows, limit=limit, seen=seen))
         return out[:limit]
 
-    @staticmethod
-    def _tokenize(text: str) -> set[str]:
-        return {t for t in re.findall(r"[a-zA-Z0-9_]+", str(text).lower()) if len(t) > 1}
-
     def _semantic_rank(
         self,
         query: str,
@@ -127,44 +123,46 @@ class EpisodicMemory:
         limit: int,
         seen: set[tuple[str, str, str]],
     ) -> List[Dict[str, Any]]:
-        q_tokens = self._tokenize(query)
-        if not rows or not q_tokens:
+        from .semantic_index import rank as _tfidf_rank
+
+        if not rows or not str(query).strip():
             return []
 
-        scored: List[tuple[float, Dict[str, Any]]] = []
-        total = max(1, len(rows))
-        for idx, row in enumerate(rows):
+        # Build candidate docs (most-recent first), skipping already-returned rows.
+        candidates: List[tuple[str, str, str, Any]] = []
+        for row in rows:
             try:
                 ts, ev_type, content, importance = row
             except Exception:
                 continue
-
             key = (str(ts), str(ev_type), str(content))
             if key in seen:
                 continue
+            candidates.append((str(ts), str(ev_type), str(content), importance))
 
-            c_tokens = self._tokenize(str(content))
-            if not c_tokens:
-                continue
-            overlap = len(q_tokens & c_tokens)
-            if overlap == 0:
-                continue
+        if not candidates:
+            return []
 
-            lexical = overlap / max(1, len(q_tokens | c_tokens))
-            recency = (total - idx) / total
+        docs = [c[2] for c in candidates]
+        ranked = _tfidf_rank(query, docs, top_k=len(docs))
+        total = max(1, len(candidates))
+
+        scored: List[tuple[float, Dict[str, Any]]] = []
+        for doc_idx, similarity in ranked:
+            ts, ev_type, content, importance = candidates[doc_idx]
+            recency = (total - doc_idx) / total  # candidates are recent-first
             try:
                 imp = max(0.0, min(1.0, float(importance) / 10.0))
             except Exception:
                 imp = 0.0
-
-            score = (0.7 * lexical) + (0.2 * recency) + (0.1 * imp)
+            score = (0.7 * similarity) + (0.2 * recency) + (0.1 * imp)
             scored.append(
                 (
                     score,
                     {
-                        "time": str(ts),
-                        "type": str(ev_type),
-                        "content": str(content),
+                        "time": ts,
+                        "type": ev_type,
+                        "content": content,
                         "score": round(score, 4),
                     },
                 )

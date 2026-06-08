@@ -44,10 +44,14 @@ class SpeakService:
     """Metni sese dönüştürüp MAX98357A üzerinden çalar."""
 
     def __init__(self, config_path: Optional[str] = None):
+        import random
+
         self.cfg = load_config(config_path)
         self.tts = TextToSpeech(self.cfg.get("tts", {}))
         self.player = AudioPlayer(self.cfg.get("audio_out", {}))
         self._liveliness_cfg = self.cfg.get("liveliness", {}) or {}
+        self._naturalness_cfg = self.cfg.get("naturalness", {}) or {}
+        self._rng = random.Random()
 
     @staticmethod
     def _coerce_tone(tone: Any) -> Optional[dict]:
@@ -67,6 +71,84 @@ class SpeakService:
             return None
         logger.warning("unsupported tone type %s, ignoring", type(tone).__name__)
         return None
+
+    @staticmethod
+    def _pool_key_for_tone(tone: Any) -> str:
+        """Pick a filler-pool key from a tone (string emotion or rate/volume dict)."""
+        if isinstance(tone, str) and tone.strip():
+            try:
+                from modules.common.emotion_vocab import get_vocab
+
+                return get_vocab().canonical(tone)
+            except Exception:
+                return tone.strip().lower()
+        if isinstance(tone, dict):
+            rate = tone.get("rate")
+            if isinstance(rate, (int, float)):
+                if rate >= 195:
+                    return "excitement"
+                if rate <= 150:
+                    return "sadness"
+        return "default"
+
+    def _filler_pool(self, tone: Any) -> list:
+        cfg = getattr(self, "_naturalness_cfg", {}) or {}
+        pools = cfg.get("fillers", {}) if isinstance(cfg, dict) else {}
+        if not isinstance(pools, dict):
+            return []
+        key = self._pool_key_for_tone(tone)
+        pool = pools.get(key)
+        if isinstance(pool, list) and pool:
+            return list(pool)
+        return list(pools.get("default", []) or [])
+
+    def _enrich_text_for_speech(self, text: str, tone: Any = None, rng=None) -> str:
+        """Optionally prepend a natural filler so speech sounds less scripted.
+
+        Runs *after* :meth:`_clean_text_for_speech`, so fillers like "Hmm,"
+        are not stripped as meta-reasoning. Best-effort and probabilistic.
+        """
+        cfg = getattr(self, "_naturalness_cfg", {})
+        cfg = cfg if isinstance(cfg, dict) else {}
+        if not cfg.get("enabled", False):
+            return text
+        body = (text or "").strip()
+        if len(body) < int(cfg.get("min_chars", 12)):
+            return text
+        # Don't stack fillers if the line already opens with one.
+        first_word = re.match(r"^[^\W\d_]+", body, re.UNICODE)
+        if first_word and first_word.group(0).lower() in {"hmm", "şey", "sey", "yani", "eh", "of", "aa"}:
+            return text
+        pool = self._filler_pool(tone)
+        if not pool:
+            return text
+        roll = (rng or self._rng).random()
+        if roll >= float(cfg.get("filler_probability", 0.2)):
+            return text
+        filler = (rng or self._rng).choice(pool)
+        return f"{filler} {body}"
+
+    @staticmethod
+    def _tone_to_piper(tone: Optional[dict]) -> Optional[dict]:
+        """Translate a rate/volume tone into Piper prosody knobs.
+
+        Piper ignores pyttsx3-style ``rate``/``volume``; the only way emotion
+        actually colours Piper audio is via ``length_scale`` (pace) and
+        ``noise_w`` (expressiveness/variability). Baseline rate is 170.
+        """
+        if not isinstance(tone, dict):
+            return None
+        rate = tone.get("rate")
+        if not isinstance(rate, (int, float)) or rate <= 0:
+            return None
+        # Faster speech -> shorter length_scale. Clamp to a natural range.
+        length_scale = max(0.6, min(1.6, 170.0 / float(rate)))
+        # Livelier (faster) speech gets a touch more variability.
+        noise_w = max(0.4, min(1.1, 0.8 * (float(rate) / 170.0)))
+        return {
+            "length_scale": round(length_scale, 3),
+            "noise_w": round(noise_w, 3),
+        }
 
     def _post_interactions(self, endpoint: str, payload: dict) -> None:
         if requests is None:
@@ -344,6 +426,7 @@ class SpeakService:
             logger.info("Speech text is empty after cleaning thoughts/markdown. Skipping.")
             return {"ok": True, "engine": engine or "default", "duration_sec": 0.0, "samplerate": 22050}
 
+        cleaned_text = self._enrich_text_for_speech(cleaned_text, tone=tone)
         tone_dict = self._coerce_tone(tone)
         overrides = dict(tone_dict or {})
         if engine:
@@ -352,6 +435,12 @@ class SpeakService:
             overrides["speaker_wav"] = speaker_wav
         if language:
             overrides["language"] = language
+        # Shape Piper audio from the emotion tone (rate/volume don't reach Piper).
+        active_engine = str(engine or self.cfg.get("tts", {}).get("engine", "")).strip().lower()
+        if active_engine == "piper":
+            piper_prosody = self._tone_to_piper(tone_dict)
+            if piper_prosody:
+                overrides["piper"] = {**overrides.get("piper", {}), **piper_prosody}
         self._emit_speech_liveliness_start(cleaned_text, tone_dict)
         try:
             from modules.speak.services.tts import clear_synthesis_cancel

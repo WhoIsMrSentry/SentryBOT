@@ -9,6 +9,7 @@ from modules.arduino_serial.contract import (
     build_buzzer_cmd,
     build_laser_cmd,
     build_lcd_cmd,
+    build_liveliness_cmd,
     build_set_servo_cmd,
     build_simple_cmd,
     build_sound_play_cmd,
@@ -90,6 +91,19 @@ class ServiceClient:
         pan_resp = self._arduino_request(build_set_servo_cmd(SERVO_INDEX_PAN, int(pan)))
         tilt_resp = self._arduino_request(build_set_servo_cmd(SERVO_INDEX_TILT, int(tilt)))
         return {"ok": bool((pan_resp or {}).get("ok", False)) and bool((tilt_resp or {}).get("ok", False)), "pan": pan_resp, "tilt": tilt_resp}
+
+    def set_liveliness(self, enable: bool, mode: str = "breathe", amplitude_deg=None, period_ms=None, pan_center=None, tilt_center=None):
+        """Enable/disable firmware-native idle liveliness (breathing/micro-motion)."""
+        return self._arduino_request(
+            build_liveliness_cmd(
+                bool(enable),
+                mode=mode,
+                amplitude_deg=amplitude_deg,
+                period_ms=period_ms,
+                pan_center=pan_center,
+                tilt_center=tilt_center,
+            )
+        )
 
     def set_laser(self, on: bool, id: int = 1, both: bool = False):
         return self._arduino_request(build_laser_cmd(on=on, id_=id, both=both))

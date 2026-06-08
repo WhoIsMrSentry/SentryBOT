@@ -5,14 +5,19 @@ import random
 import datetime
 import json
 import uuid
-from typing import List
+from typing import List, Optional
 
 from .client import ServiceClient
 from .idle_behaviors import IdleBehaviorPlanner
 from .mood import MoodManager
 from .memory import ShortTermMemory
+from .affective_appraisal import AffectiveAppraisal
+from .expression_director import ExpressionDirector
 from .companion_rituals import CompanionRituals
 from .proactive_planner import ProactivePlanner
+from .barge_in import BargeInController
+from .liveliness import LivelinessScheduler
+from .interaction_feedback import InteractionFeedbackLearner
 from .relationship_memory import RelationshipMemory
 from .brain_parts.animations import AnimationSupportMixin
 from .brain_parts.owner_guard import OwnerGuardMixin
@@ -55,7 +60,9 @@ class AutonomyBrain(
 
         # Components
         self.mood = MoodManager(config)
+        self.appraisal = AffectiveAppraisal(config)
         self.client = ServiceClient(config.get("endpoints", {}), config=config)
+        self.expression = ExpressionDirector(self.client)
         self.idle_planner = IdleBehaviorPlanner(config)
         self.memory = ShortTermMemory(max_items=20)
         companion_cfg = config.get("companion", {}) if isinstance(config.get("companion", {}), dict) else {}
@@ -67,6 +74,10 @@ class AutonomyBrain(
             companion_cfg.get("rituals", {}) if isinstance(companion_cfg.get("rituals", {}), dict) else {}
         )
         self.proactive_planner = ProactivePlanner(companion_cfg.get("proactive", {}) if isinstance(companion_cfg.get("proactive", {}), dict) else {})
+        learning_cfg = companion_cfg.get("learning", {}) if isinstance(companion_cfg.get("learning", {}), dict) else {}
+        self.feedback_learner = InteractionFeedbackLearner(learning_cfg.get("feedback", learning_cfg))
+        self.barge_in = BargeInController(config.get("barge_in", {}) if isinstance(config.get("barge_in", {}), dict) else {})
+        self.liveliness = LivelinessScheduler(config.get("liveliness", {}) if isinstance(config.get("liveliness", {}), dict) else {})
         self._vision_cfg = config.get("vision_hooks", {})
         self.owner_cfg = config.get("owner", {})
 
@@ -282,6 +293,55 @@ class AutonomyBrain(
         except Exception:
             logger.debug("Failed to run emotion scene %s", scene_name, exc_info=True)
 
+    def express(self, emotion: str, *, say: Optional[str] = None, language: Optional[str] = None) -> str:
+        """Deliberately express an emotion across all modalities at once.
+
+        Use for reactive, intentional expressions (greetings, reactions). Passive
+        mood-driven visuals continue to flow through ``_sync_emotion``.
+        """
+        head = None
+        try:
+            profile = self.mood.get_body_language_profile() or {}
+            pan = int(self.state.get("current_pan", 90)) + int(profile.get("pan_delta", 0))
+            tilt = int(self.state.get("current_tilt", 90))
+            head = (max(0, min(180, pan)), max(0, min(180, tilt)))
+        except Exception:
+            head = None
+        return self.expression.express(emotion, say=say, language=language, move_head=head)
+
+    def appraise_event(self, event: str, intensity: float = 1.0, *, emit: bool = True) -> Optional[str]:
+        """Apply a causal emotion event to mood and announce it.
+
+        Returns the matched event name (or ``None`` if the event is unknown).
+        """
+        matched = self.appraisal.apply(self.mood, event, intensity)
+        if not matched:
+            return None
+        try:
+            self.memory.add_event(f"Felt a reaction to: {matched}")
+        except Exception:
+            pass
+        if emit:
+            try:
+                self.client.push_interaction_event(f"appraisal:{matched}")
+            except Exception:
+                pass
+        return matched
+
+    @staticmethod
+    def _sentiment_event_for_text(text: str) -> Optional[str]:
+        """Very lightweight keyword sentiment -> appraisal event mapping."""
+        low = str(text or "").lower()
+        if not low:
+            return None
+        rude = ("aptal", "salak", "gerizekal", "kapa cen", "sus ", "stupid", "shut up", "idiot")
+        praise = ("aferin", "harikasin", "cok iyi", "tesekkur", "sevimlisin", "seviyorum", "good job", "well done", "thank you", "i love you")
+        if any(tok in low for tok in rude):
+            return "user_rude"
+        if any(tok in low for tok in praise):
+            return "user_praise"
+        return None
+
     def _think(self):
         now = time.time()
         self._ensure_timeline_day()
@@ -303,6 +363,7 @@ class AutonomyBrain(
 
         self.mood.update()
         self._sync_emotion()
+        self._liveliness_tick(now)
 
         if random.random() < 0.4:
             self._perform_micro_movement()
@@ -367,6 +428,11 @@ class AutonomyBrain(
         speaker = str(self.state.get("last_speaker") or "")
         owner_present = bool(self._owner_seen_recently()) if hasattr(self, "_owner_seen_recently") else False
         social_profile = self.relationship_memory.social_profile(speaker) if speaker else {}
+        scene_ctx = {
+            "summary": str(self.state.get("scene_summary", "") or ""),
+            "importance": float(self.state.get("scene_importance", 0.0) or 0.0),
+            "unspoken": bool(self.state.get("scene_unspoken", False)),
+        }
         plan = self.proactive_planner.propose(
             now_ts=now,
             idle_s=idle_s,
@@ -374,12 +440,15 @@ class AutonomyBrain(
             last_speaker=speaker,
             owner_present=owner_present,
             social_profile=social_profile,
+            scene=scene_ctx,
         )
         if not plan:
             return
         text = str(plan.get("text", "")).strip()
         if not text:
             return
+        if plan.get("scene_consumed"):
+            self.state["scene_unspoken"] = False
         emotion = str(plan.get("emotion", "curiosity")).strip()
         event = str(plan.get("event", "companion.proactive")).strip()
         self.client.push_interaction_event(event, {"text": text, "emotion": emotion})
@@ -582,26 +651,34 @@ class AutonomyBrain(
     def _visual_lock_active(self) -> bool:
         return time.time() < float(self._visual_lock_until)
 
+    # Emotions that warrant a longer visual hold (high-arousal states).
+    _STRONG_VISUAL_EMOTIONS = {"fear", "furious", "anger", "surprise"}
+
     def _apply_emotion_visual_state(self, emotion: str) -> None:
         e = str(emotion or "neutral").strip().lower()
-        mapping = {
-            "joy": {"effect": "RAINBOW_CYCLE", "oled": "happy", "color": [255, 190, 80], "strong": False},
-            "curiosity": {"effect": "COMET", "oled": "focused", "color": [60, 190, 255], "strong": False},
-            "sadness": {"effect": "PULSE", "oled": "sad", "color": [60, 90, 180], "strong": False},
-            "tired": {"effect": "BREATHE", "oled": "sleepy", "color": [80, 70, 120], "strong": False},
-            "fear": {"effect": "PULSE", "oled": "scared", "color": [255, 40, 40], "strong": True},
-            "neutral": {"effect": "BREATHE", "oled": "normal", "color": [120, 120, 140], "strong": False},
-        }
-        spec = mapping.get(e, mapping["neutral"])
-        lock_s = self._visual_lock_strong_s if spec.get("strong") else self._visual_lock_default_s
-        self._visual_lock_until = max(self._visual_lock_until, time.time() + max(0.2, float(lock_s)))
-        self._visual_lock_reason = f"emotion:{e}"
+        # Resolve eyes + LED effect + colour from the single canonical vocabulary
+        # so every emotion (incl. anger/furious/surprise) gets coherent visuals.
         try:
-            self.client.set_neopixel(str(spec.get("effect", "BREATHE")), emotions=[e], color=spec.get("color"))
+            from modules.common.emotion_vocab import emotion_render
+
+            render = emotion_render(e)
+            canon = render.canonical
+            effect = render.effect
+            oled = render.oled
+            color = list(render.rgb)
+        except Exception:
+            canon, effect, oled, color = "neutral", "BREATHE", "normal", [120, 120, 140]
+
+        strong = canon in self._STRONG_VISUAL_EMOTIONS
+        lock_s = self._visual_lock_strong_s if strong else self._visual_lock_default_s
+        self._visual_lock_until = max(self._visual_lock_until, time.time() + max(0.2, float(lock_s)))
+        self._visual_lock_reason = f"emotion:{canon}"
+        try:
+            self.client.set_neopixel(effect, emotions=[canon], color=color)
         except Exception:
             pass
         try:
-            self.client.oled_show(str(spec.get("oled", "normal")))
+            self.client.oled_show(oled)
         except Exception:
             pass
 
@@ -634,12 +711,36 @@ class AutonomyBrain(
         except Exception as exc:
             logger.debug("barge-in stop failed: %s", exc)
 
+    def _robot_is_speaking(self) -> bool:
+        """Best-effort check of whether TTS audio is currently playing."""
+        try:
+            if self.agent and hasattr(self.agent, "speech_arbiter"):
+                return bool(self.agent.speech_arbiter.is_speaking())
+        except Exception:
+            pass
+        try:
+            status = self.client.get_speak_status()
+            if isinstance(status, dict):
+                return bool(status.get("speaking") or status.get("busy"))
+        except Exception:
+            pass
+        return False
+
     def _react_to_speech(self, text, source_lang: str | None = None):
         """React to heard text."""
         from modules.speech.services.wake_phrase import contains_wakeword, strip_wakewords
 
         low = str(text or "").lower()
-        if contains_wakeword(low):
+        has_wake = contains_wakeword(low)
+        # Natural barge-in: any meaningful utterance (not only a wakeword) cuts
+        # off the robot if it's mid-sentence, like a real conversation.
+        if self.barge_in.should_interrupt(
+            robot_speaking=self._robot_is_speaking(),
+            user_text=text,
+            has_wakeword=has_wake,
+        ):
+            self._barge_in_stop_speaking()
+        elif has_wake:
             self._barge_in_stop_speaking()
 
         request_id = uuid.uuid4().hex[:10]
@@ -650,6 +751,9 @@ class AutonomyBrain(
         logger.info("Heard: %s", text)
         self.state["last_interaction"] = time.time()
         self.mood.modify("happiness", 5)
+        sentiment_event = self._sentiment_event_for_text(text)
+        if sentiment_event:
+            self.appraise_event(sentiment_event)
         self.memory.add_event(f"User said: {text}")
         self._log_conversation(text)
         lang = str(source_lang or self.state.get("last_speech_language") or "tr")
@@ -668,6 +772,8 @@ class AutonomyBrain(
             self.state["last_speaker"] = speaker
             self._note_person_seen(speaker, emotion=str(self.state.get("last_emotion") or ""))
             self._remember_person_chat(speaker, text, role="user")
+            if sentiment_event:
+                self._apply_interaction_feedback(sentiment_event, speaker, text)
 
         self.client.push_interaction_event("autonomy.excited")
 
@@ -719,7 +825,7 @@ class AutonomyBrain(
                         )
 
                     enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
-                    agent_result = self.agent.step(enriched_text, language=lang)
+                    agent_result = self.agent.step(enriched_text, language=lang, speaker=speaker)
                     if agent_result and agent_result.get("text"):
                         if not self._is_active_request(request_id):
                             return
@@ -769,7 +875,8 @@ class AutonomyBrain(
                     logger.info("LLM response only triggered physical actions.")
         except Exception as exc:
             logger.error("Failed to generate reply: %s", exc)
-            self.mood.modify("fear", 15)
+            # A failed reply both scares and frustrates the robot (causal appraisal).
+            self.appraise_event("command_failed", emit=False)
             self.client.push_interaction_event("error", {"source": "ollama", "reason": "chat_failed"})
             self._apply_emotion_visual_state("fear")
         finally:
@@ -780,6 +887,12 @@ class AutonomyBrain(
     def _is_active_request(self, request_id: str) -> bool:
         with self._speech_req_lock:
             return self._active_speech_req_id == request_id
+
+    def _apply_interaction_feedback(self, event: str, speaker: str, text: str) -> None:
+        try:
+            self.feedback_learner.apply(event, speaker, text=text)
+        except Exception:
+            pass
 
     def _remember_person_chat(self, speaker: str | None, text: str, role: str) -> None:
         person = str(speaker or "").strip()
@@ -808,11 +921,28 @@ class AutonomyBrain(
         topics = profile.get("topics", []) if isinstance(profile.get("topics", []), list) else []
         top_memory = str(profile.get("top_memory", "")).strip()
         hints = []
+        trust = float(profile.get("trust_score", 0.0) or 0.0)
+        if trust >= 0.7:
+            hints.append("trust=high")
+        elif trust <= 0.3:
+            hints.append("trust=low")
         if likes:
             hints.append(f"likes={','.join([str(x) for x in likes[:3]])}")
         if topics:
             hints.append(f"topics={','.join([str(x) for x in topics[:3]])}")
-        if top_memory:
+        # Context-aware recall: surface the past snippet most relevant to what the
+        # user is saying *now* (not just the highest-salience memory).
+        recalled = ""
+        try:
+            from .recall import most_relevant
+
+            candidates = self.relationship_memory.recall_candidates(spk)
+            recalled = most_relevant(raw, candidates) or ""
+        except Exception:
+            recalled = ""
+        if recalled:
+            hints.append(f"recall={recalled[:90]}")
+        elif top_memory:
             hints.append(f"memory={top_memory[:90]}")
         if not hints:
             return raw

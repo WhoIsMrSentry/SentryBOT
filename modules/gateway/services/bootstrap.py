@@ -1038,18 +1038,32 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
     interactions = started.get("interactions")
     piservo = started.get("piservo")
     if interactions is not None and piservo is not None and hasattr(interactions, "register_event_handler"):
+        # Map interaction events onto expressive ear motion. Emotion events keep
+        # the ears in sync with eyes/LEDs; sound/vision events add reactive
+        # gestures; wakeword keeps its dedicated perk-up gesture.
+        _ear_gesture_events = {
+            "wakeword.detected": "wakeword",
+            "sound.detected": "sound",
+            "vision.focus": "sound",
+            "vision.person": "sound",
+            "environment.scene_changed": "sound",
+        }
+
         def _piservo_on_interaction(evt: str, data: Dict[str, Any]) -> None:
-            if evt != "wakeword.detected":
-                return
+            key = str(evt or "").strip().lower()
             try:
-                if hasattr(piservo, "gesture"):
-                    piservo.gesture("wakeword")
+                if key.startswith("emotion:") and hasattr(piservo, "emotion"):
+                    piservo.emotion(key.split(":", 1)[1])
+                    return
+                gesture = _ear_gesture_events.get(key)
+                if gesture and hasattr(piservo, "gesture"):
+                    piservo.gesture(gesture)
             except Exception:
                 pass
 
         try:
             interactions.register_event_handler(_piservo_on_interaction)
-            logger.info("interactions wakeword -> piservo gesture bridge mounted")
+            logger.info("interactions -> piservo ear expression bridge mounted")
         except Exception as exc:
             logger.warning("piservo interactions bridge mount failed: %s", exc)
 

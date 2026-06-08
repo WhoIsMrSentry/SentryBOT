@@ -84,6 +84,14 @@ class SensorFeedbackLoop:
                     except Exception:
                         pass
 
+                    # ── Continuous environment perception (VLM scene cache) ──
+                    try:
+                        ctx = self.client.get_visual_context()
+                        if isinstance(ctx, dict) and ctx.get("available") and ctx.get("context"):
+                            self.world_state.update_scene(ctx)
+                    except Exception:
+                        pass
+
                 # Apply all updates atomically
                 if updates:
                     self.world_state.update_state(updates)

@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+try:  # keep oled_faces importable even if the shared helper is unavailable
+    from modules.common.emotion_vocab import get_vocab as _get_emotion_vocab
+except Exception:  # pragma: no cover - defensive fallback
+    _get_emotion_vocab = None
+
 
 @dataclass(frozen=True)
 class OledAction:
@@ -43,9 +48,25 @@ class FaceMapper:
         if not emotions:
             return OledAction(mode="bitmap", name=self.idle_bitmap)
         key = str(emotions[0]).strip().lower()
+        # 1) Honour an explicit event_map override if present for this label.
         mapped = self.event_map.get(f"emotion:{key}")
         if isinstance(mapped, dict):
             return OledAction(mode=str(mapped.get("mode", "bitmap")), name=str(mapped.get("name", self.fallback_unknown)))
+        # 2) Resolve through the canonical vocabulary so divergent labels
+        #    (joy/happy, tired/sleepy, anger/angry) land on a real bitmap.
+        if _get_emotion_vocab is not None:
+            try:
+                render = _get_emotion_vocab().render(key)
+                canon_override = self.event_map.get(f"emotion:{render.canonical}")
+                if isinstance(canon_override, dict):
+                    return OledAction(
+                        mode=str(canon_override.get("mode", "bitmap")),
+                        name=str(canon_override.get("name", render.oled)),
+                    )
+                if render.oled in self.catalog_bitmaps:
+                    return OledAction(mode="bitmap", name=render.oled)
+            except Exception:
+                pass
         return OledAction(mode="bitmap", name=self.fallback_unknown)
 
     def from_interaction_event(self, event_type: str) -> OledAction:

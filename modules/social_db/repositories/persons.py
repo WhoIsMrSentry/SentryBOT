@@ -163,6 +163,22 @@ class PersonsRepo:
         )
         return [self._row_to_dict(r) for r in rows]
 
+    def adjust_trust(
+        self,
+        person_id: str,
+        delta: float,
+        *,
+        min_score: float = 0.0,
+        max_score: float = 1.0,
+    ) -> float:
+        """Nudge trust_score by delta and return the clamped new value."""
+        rec = self.get_by_id(person_id)
+        if not rec:
+            return 0.0
+        new_score = max(min_score, min(max_score, float(rec.get("trust_score", 0.0)) + float(delta)))
+        updated = self.upsert(name=rec.get("display_name") or rec.get("canonical_name") or "Unknown", trust_score=new_score)
+        return float(updated.get("trust_score", new_score))
+
     def delete(self, person_id: str) -> bool:
         with self.db.transaction() as conn:
             cur = conn.execute("DELETE FROM persons WHERE id = ?", (person_id,))

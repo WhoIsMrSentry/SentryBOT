@@ -42,14 +42,27 @@ def test_fill_segment_applies_only_target_range():
     assert runner.driver.buf[3:] == [(0, 0, 0)] * 7
 
 
-def test_animate_segment_falls_back_to_segment_fill():
+def test_animate_unknown_effect_on_segment_falls_back_to_segment_fill():
     runner = NeoRunner(NeoDriverConfig(num_leds=6), segments=[{"name": "jewel", "start": 0, "count": 2}])
     runner.driver = _FakeDriver(6)
-    runner.animate("PULSE", color=(10, 20, 30), segment="jewel")
+    runner.animate("NO_SUCH_EFFECT", color=(10, 20, 30), segment="jewel")
     runner._wait_for_animations()
     assert runner.driver.buf[0] == (10, 20, 30)
     assert runner.driver.buf[1] == (10, 20, 30)
     assert runner.driver.buf[2:] == [(0, 0, 0)] * 4
+
+
+def test_animate_known_effect_runs_scoped_to_segment():
+    # A real animation must run on the segment range only, leaving the rest dark.
+    runner = NeoRunner(NeoDriverConfig(num_leds=6), segments=[{"name": "jewel", "start": 0, "count": 2}])
+    runner.driver = _FakeDriver(6)
+    runner.animate("PULSE", color=(200, 100, 50), segment="jewel")
+    runner._wait_for_animations()
+    # Segment LEDs were driven by the effect (non-zero), neighbours untouched.
+    assert runner.driver.buf[0] != (0, 0, 0)
+    assert runner.driver.buf[1] != (0, 0, 0)
+    assert runner.driver.buf[2:] == [(0, 0, 0)] * 4
+    assert runner.driver.shows > 0
 
 
 def test_apply_preset_sets_segment_colors():

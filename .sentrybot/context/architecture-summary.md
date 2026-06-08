@@ -95,6 +95,69 @@ THINK → Duygu bozunması, sıkılma kontrolü, uyku saati kontrolü
 ACT   → LLM yanıtını parse et, donanım HTTP çağrıları yap
 ```
 
+### Duygusal Model (Affective Model)
+
+- **Mood eksenleri:** happiness, energy, curiosity, fear, **anger** (öfke ekseni
+  `anger>45 → anger`, `anger>75 → furious` baskın duygularını üretir).
+- **Affective appraisal** (`services/affective_appraisal.py` + `config/appraisal.yml`):
+  semantik olayları (`user_rude`, `owner_returned`, `command_failed`…) mood
+  deltalarına çevirir → duygular zamansal bozunmadan değil **nedenden** doğar.
+- **Tek duygu sözlüğü:** tüm görsel/işitsel çıktılar `modules/common` kanonik
+  duygu vocab'ından çözülür (eyes/LEDs/ears/tone aynı taksonomi).
+- **Expression Director** (`services/expression_director.py`): tek çağrıda
+  gözler + LED + kulaklar + kafa + ses tonunu eşgüdümlü tetikler (`brain.express`).
+
+### Sürekli Çevre Algısı (Continuous Perception)
+
+- **Living-vision sampling:** `vlm_bridge` inference döngüsü ve uzak ingest yolu
+  `VisionSampler`'a owner/yeni-kişi/tehlike/ani-hareket/sıkılma sinyallerini
+  besler → sahne bağlamı koşullu olarak arkaplanda yenilenir.
+- **İçerik-temelli önem:** `compute_importance` cache'e bağlı; tehlike/owner/
+  yenilik gerçek `importance_score` üretir (hardcode değil).
+- **WorldState environment:** sahne özeti/nesneler/tehlikeler/kişiler agent_core
+  `WorldState`'e işlenir ve LLM bağlamına enjekte edilir (`inject_world_state`).
+- **Sahne yeniliği:** autonomy `_track_scene_context` token-farkıyla yeniliği
+  ölçer, `environment.scene_changed` etkileşim olayı yayar (kulak/LED tepkisi).
+- **Proaktif betimleme:** `ProactivePlanner` boştayken yeni/önemli sahneyi
+  doğal dille anlatır (`companion.scene_comment`).
+
+### Doğal Konuşma (Natural Speech)
+
+- **Duygulu prosodi:** `speak` tonu artık Piper sesini de şekillendirir
+  (`_tone_to_piper` → `length_scale`/`noise_w`); ton `agent_core` kuyruğundan
+  TTS'e kadar korunur (`_handle_speak` tone forward).
+- **Tek ton kaynağı:** autonomy `_tone_profile` kanonik duygu vocab'ından
+  çözülür → ses/göz/LED/kulak aynı duygu taksonomisini paylaşır.
+- **Disfluency/filler:** `SpeakService._enrich_text_for_speech` olasılıkla ve
+  duygu-havuzuna göre doğal dolgu ekler ("Şey,", "Hmm,", "Aa,").
+- **Doğal barge-in:** `BargeInController` robot konuşurken kullanıcının anlamlı
+  konuşmasıyla (sadece wakeword değil) sözü kesmesine izin verir.
+
+### Firmware Canlılık Köprüsü (Firmware Liveliness Bridge)
+
+- **Kontrat komutu:** `arduino_serial/contract.py` `build_liveliness_cmd` +
+  `validate_liveliness_cmd` (elle payload YOK) → `/arduino/request` ile gönderilir.
+- **Firmware-native hareket:** Mega `xCommands.h` `liveliness` komutunu işler,
+  `livelinessTick()` ana döngüde kafa servolarında yumuşak sinüs nefes/mikro-
+  hareket üretir (Pi köprüsü kısa süre dursa bile canlı kalır).
+- **Mood→hareket:** autonomy `LivelinessScheduler` baskın duygu+enerjiden
+  genlik/tempo/mod üretir (excited=büyük/hızlı, tired=küçük/yavaş, anger=micro).
+- **Akıllı gönderim:** brain `_liveliness_tick` yalnızca parametre değişince ya da
+  `refresh_interval_s` geçince yollar; konuşma/takip/uyku sırasında bastırılır.
+
+### Öğrenme ve Adaptasyon (Learning & Adaptation)
+
+- **Tek çıkarım kaynağı:** `PreferenceLearner` fact + tercih regex'lerini
+  `MemoryConsolidator` ve `RelationshipMemory` arasında paylaşır.
+- **Konuşmacı köprüsü:** autonomy `agent.step(..., speaker=)` → `WorldState.speaker`
+  → consolidator facts'i doğru kişinin `social_db` kaydına yansıtır.
+- **Geri bildirim döngüsü:** `InteractionFeedbackLearner` övgü/kaba sözü
+  `trust_score` + moment salience'e çevirir; enrichment `trust=high/low` ipucu verir.
+- **Agent aracı:** `search_social_memory` kişi bazlı tercih/moment/trust sorgular
+  (epizodik `search_memory`'ye ek).
+- **Proaktif adaptasyon:** `ProactivePlanner` düşük trust'ta callback atlar,
+  yüksek trust'ta daha sıcak tercih hatırlatması kullanır.
+
 ## Güvenlik ve Dayanıklılık
 
 - **Owner kontrolü:** VLM + RFID ile sahip doğrulaması

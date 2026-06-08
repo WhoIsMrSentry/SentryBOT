@@ -96,6 +96,23 @@ speech_quiet_hours:
   max_chars: 120
   prefix: ""
 
+# Natural barge-in: let the user cut off the robot by speaking, not only via
+# wakeword. A wakeword always interrupts; free speech needs `min_words`.
+barge_in:
+  enabled: true
+  min_words: 2
+  cooldown_s: 1.5
+
+# Firmware-native idle liveliness (breathing / micro-motion on the head servos).
+# The brain shapes amplitude/tempo from mood and only resends on change or every
+# refresh_interval_s, so the serial link stays quiet.
+liveliness:
+  enabled: true
+  amplitude_deg: 4.0        # base breathing amplitude (degrees)
+  max_amplitude_deg: 12.0   # hard cap after emotion shaping
+  period_ms: 4500           # base breathing period
+  refresh_interval_s: 20.0  # resend keepalive even if params unchanged
+
 offline_mode:
   enabled: true
   availability_ttl_s: 5
@@ -170,9 +187,24 @@ companion:
     max_per_hour: 4
     owner_only: false
     enable_callback_lines: true
+    callback_min_trust: 0.2    # skip preference callbacks when trust is very low
     policy:
       owner_style: "warm"
       guest_style: "respectful"
+  # Companion learning loop: extract prefs/facts, reinforce trust from praise/rude.
+  learning:
+    enabled: true
+    feedback:
+      enabled: true
+      trust_min: 0.0
+      trust_max: 1.0
+      deltas:
+        user_praise:
+          trust: 0.08
+          salience: 0.5
+        user_rude:
+          trust: -0.12
+          salience: 0.55
 
 vision_hooks:
   enabled: true
