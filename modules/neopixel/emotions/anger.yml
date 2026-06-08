@@ -1,0 +1,21 @@
+colors:
+- name: COLOR_CRIMSON
+  r: 220
+  g: 20
+  b: 30
+- name: COLOR_FLAME
+  r: 255
+  g: 60
+  b: 0
+- name: COLOR_BLOOD_RED
+  r: 180
+  g: 0
+  b: 0
+- name: COLOR_EMBER
+  r: 255
+  g: 90
+  b: 20
+- name: COLOR_DARK_RED
+  r: 120
+  g: 0
+  b: 0
