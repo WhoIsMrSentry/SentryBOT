@@ -8,6 +8,11 @@ SERVO_COUNT = 4
 SERVO_MIN_DEG = 0.0
 SERVO_MAX_DEG = 180.0
 
+# Firmware liveliness (idle breathing / micro-motion) bounds.
+LIVELINESS_MODES = ("breathe", "idle", "micro")
+LIVELINESS_AMPLITUDE_MAX_DEG = 30.0
+LIVELINESS_PERIOD_MIN_MS = 200
+
 
 def build_set_servo_cmd(index: int, deg: float) -> Dict[str, Any]:
     return {"cmd": "set_servo", "index": int(index), "deg": float(deg)}
@@ -91,6 +96,35 @@ def build_track_cmd(
 
 def build_drive_cmd(value: Any) -> Dict[str, Any]:
     return {"cmd": "drive", "value": value}
+
+
+def build_liveliness_cmd(
+    enable: bool,
+    mode: str = "breathe",
+    amplitude_deg: Optional[float] = None,
+    period_ms: Optional[int] = None,
+    pan_center: Optional[float] = None,
+    tilt_center: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Idle liveliness on the head servos (firmware-native subtle motion).
+
+    ``enable=False`` stops the motion and re-centres; other fields are only
+    meaningful when enabling. Keeping this in the contract (instead of streaming
+    raw set_servo waves from the Pi) lets the firmware own a smooth, jitter-free
+    breathing loop even if the bridge stalls.
+    """
+    payload: Dict[str, Any] = {"cmd": "liveliness", "enable": bool(enable)}
+    if mode is not None:
+        payload["mode"] = str(mode)
+    if amplitude_deg is not None:
+        payload["amplitude_deg"] = float(amplitude_deg)
+    if period_ms is not None:
+        payload["period_ms"] = int(period_ms)
+    if pan_center is not None:
+        payload["pan_center"] = float(pan_center)
+    if tilt_center is not None:
+        payload["tilt_center"] = float(tilt_center)
+    return payload
 
 
 def build_laser_cmd(on: bool, id_: Optional[int] = None, both: Optional[bool] = None) -> Dict[str, Any]:
@@ -204,6 +238,32 @@ def _validate_stepper_id(payload: Dict[str, Any]) -> Optional[str]:
         return "'id' must be an integer"
     if sid not in (0, 1):
         return "'id' must be 0 or 1"
+    return None
+
+
+def validate_liveliness_cmd(payload: Dict[str, Any]) -> Optional[str]:
+    if payload.get("cmd") != "liveliness":
+        return None
+    if "enable" not in payload or not _is_bool(payload.get("enable")):
+        return "liveliness requires boolean 'enable'"
+    # Disabling needs no further parameters.
+    if not payload.get("enable"):
+        return None
+    if "mode" in payload and payload.get("mode") not in LIVELINESS_MODES:
+        return f"liveliness 'mode' must be one of {LIVELINESS_MODES}"
+    if "amplitude_deg" in payload:
+        amp = _as_float(payload.get("amplitude_deg"))
+        if amp is None or amp < 0 or amp > LIVELINESS_AMPLITUDE_MAX_DEG:
+            return f"liveliness 'amplitude_deg' must be in [0,{int(LIVELINESS_AMPLITUDE_MAX_DEG)}]"
+    if "period_ms" in payload:
+        period = _as_int(payload.get("period_ms"))
+        if period is None or period < LIVELINESS_PERIOD_MIN_MS:
+            return f"liveliness 'period_ms' must be >= {LIVELINESS_PERIOD_MIN_MS}"
+    for key in ("pan_center", "tilt_center"):
+        if key in payload:
+            val = _as_float(payload.get(key))
+            if val is None or val < SERVO_MIN_DEG or val > SERVO_MAX_DEG:
+                return f"liveliness '{key}' must be in [{int(SERVO_MIN_DEG)},{int(SERVO_MAX_DEG)}]"
     return None
 
 
@@ -368,6 +428,9 @@ def validate_arduino_payload(payload: Dict[str, Any]) -> Optional[str]:
         if _as_float(payload.get("value")) is None:
             return "drive requires numeric 'value'"
         return None
+
+    if cmd == "liveliness":
+        return validate_liveliness_cmd(payload)
 
     if cmd == "encoder_calibrate":
         if "duration_ms" in payload:

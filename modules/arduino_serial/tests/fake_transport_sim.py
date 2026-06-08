@@ -48,6 +48,8 @@ class FakeTransportSim:
                 reply = {"ok": True, "msg": "hb"}
             elif cmd == "telemetry_start":
                 reply = {"ok": True}
+            elif cmd == "liveliness":
+                reply = {"ok": True, "cmd": "liveliness", "enable": bool(obj.get("enable"))}
 
             if reply is not None:
                 # schedule immediate insertion into read queue

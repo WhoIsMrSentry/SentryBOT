@@ -69,6 +69,31 @@ static inline bool isIrKeyStr(const String &k){
   return k == "UP" || k == "DOWN" || k == "LEFT" || k == "RIGHT" || k == "OK";
 }
 
+// ── Idle liveliness (firmware-native breathing / micro-motion) ───────────
+// Owned here; driven by livelinessTick() from the main loop. Keeps subtle
+// head motion alive even if the Pi bridge briefly stalls.
+static bool          g_livOn       = false;
+static float         g_livAmp      = 4.0f;    // degrees
+static float         g_livPanC     = 90.0f;   // pan center
+static float         g_livTiltC    = 90.0f;   // tilt center
+static unsigned long g_livPeriodMs = 4500;    // full cycle period
+static bool          g_livMicro    = false;   // micro mode adds a faster pan flutter
+
+static inline void livelinessTick(){
+  if (!g_livOn) return;
+  unsigned long period = g_livPeriodMs < 200 ? 200 : g_livPeriodMs;
+  float phase = (float)(millis() % period) / (float)period;  // 0..1
+  float s = sinf(phase * 6.2831853f);                        // breathing on tilt
+  float tilt = g_livTiltC + g_livAmp * s;
+  float pan = g_livPanC;
+  if (g_livMicro){
+    // faster, smaller pan flutter layered on top
+    float s2 = sinf(phase * 6.2831853f * 3.0f);
+    pan = g_livPanC + (g_livAmp * 0.5f) * s2;
+  }
+  robot.head(tilt, pan);  // robot.head expects (tilt, pan)
+}
+
 static inline void handleJson(const String &line){
   // Trim and check for bare IR key (no JSON structure)
   String trimmed = line;
@@ -709,6 +734,26 @@ static inline void handleJson(const String &line){
     robot.setSkateGains(skp,ski,skd);
     robot.setSkateSpeedLimit(smax);
     Protocol::sendOk("tuned");
+    return;
+  }
+
+  if (line.indexOf("\"cmd\":\"liveliness\"")>=0){
+    // {"cmd":"liveliness","enable":bool,"mode":"breathe|idle|micro",
+    //  "amplitude_deg":f,"period_ms":n,"pan_center":f,"tilt_center":f}
+    bool enable = line.indexOf("\"enable\":true")>=0;
+    if (!enable){
+      g_livOn = false;
+      robot.head(g_livTiltC, g_livPanC);  // re-centre
+      Protocol::sendOk("liveliness_off");
+      return;
+    }
+    int p=line.indexOf("\"amplitude_deg\":"); if(p>=0) g_livAmp=line.substring(p+16).toFloat();
+    p=line.indexOf("\"period_ms\":");        if(p>=0) g_livPeriodMs=(unsigned long)line.substring(p+12).toInt();
+    p=line.indexOf("\"pan_center\":");        if(p>=0) g_livPanC=line.substring(p+13).toFloat();
+    p=line.indexOf("\"tilt_center\":");       if(p>=0) g_livTiltC=line.substring(p+14).toFloat();
+    g_livMicro = (line.indexOf("\"mode\":\"micro\"")>=0);
+    g_livOn = true;
+    Protocol::sendOk("liveliness_on");
     return;
   }
 
