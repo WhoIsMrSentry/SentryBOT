@@ -51,7 +51,7 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             role="Behavior specialist",
             goal="Decide autonomous behavior policy.",
             allowed_tools=("search_memory", "interaction_event", "set_emotion", "get_sensor_data"),
-            keywords=("autonomy", "idle", "bored", "follow", "behavior"),
+            keywords=("autonomy", "idle", "bored", "follow", "behavior", "sinirlen", "mutlu", "duygu", "ifade", "companion"),
         ),
         "calibration": SubAgentProfile(
             module="calibration",
@@ -100,7 +100,7 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             role="Interaction specialist",
             goal="Trigger high-level interaction events.",
             allowed_tools=("interaction_event", "set_lights", "oled_face", "set_emotion"),
-            keywords=("interaction", "react", "event", "scene", "expression"),
+            keywords=("interaction", "react", "event", "scene", "expression", "sinirlen", "mutlu", "duygu", "ifade"),
         ),
         "logwrapper": SubAgentProfile(
             module="logwrapper",
@@ -315,6 +315,28 @@ class TriLayerRouter:
             scores["diagnostics"] = scores.get("diagnostics", 0.0) + 1.2
         if q_tokens & {"schedule", "timer", "later", "remind", "periodic"} and "scheduler" in self.profiles:
             scores["scheduler"] = scores.get("scheduler", 0.0) + 1.1
+
+        emotion_tokens = {
+            "sinirlen", "sinirli", "kizgin", "kızgın", "mutlu", "uzgun", "üzgün", "kork",
+            "emotion", "duygu", "ifade", "yuz", "yüz", "face", "angry", "happy", "sad",
+            "excited", "bored", "furious", "scared", "love", "worried", "confused",
+            "led", "light", "lights", "neopixel", "renk", "color", "oled", "eyes",
+        }
+        emotion_phrases = (
+            "mutlu ol", "sinirli ol", "kizgin ol", "kızgın ol", "uzgun ol", "üzgün ol",
+            "kirmizi yan", "kırmızı yan", "yuzunu degistir", "yüzünü değiştir",
+        )
+        if q_tokens & emotion_tokens or any(p in text for p in emotion_phrases):
+            if "interactions" in self.profiles:
+                scores["interactions"] = scores.get("interactions", 0.0) + 2.8
+            if "autonomy" in self.profiles:
+                scores["autonomy"] = scores.get("autonomy", 0.0) + 2.4
+            if "neopixel" in self.profiles:
+                scores["neopixel"] = scores.get("neopixel", 0.0) + 1.8
+            if "oled_faces" in self.profiles:
+                scores["oled_faces"] = scores.get("oled_faces", 0.0) + 1.6
+            if "speak" in self.profiles:
+                scores["speak"] = scores.get("speak", 0.0) + 1.0
 
         if not scores:
             return list(self.default_modules[: self.max_subagents])
