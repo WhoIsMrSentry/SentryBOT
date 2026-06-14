@@ -153,13 +153,15 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         service.start_background(on_result=_cb)
         logger.info("speech start handled (listening=%s)", service.listening)
         if not was_listening:
-            _emit_speech_event("speech.start")
+            _emit_speech_event("speech.listen.start")
         return {"ok": True, "listening": service.listening}
 
     @router.post("/speech/stop")
     async def stop():
         service.stop()
-        _emit_speech_event("speech.end")
+        _emit_speech_event("speech.listen.end")
+        if _mark_speaking(False):
+            _emit_speech_event("speech.end")
         return {"ok": True, "listening": service.listening}
 
     @router.get("/speech/last")
