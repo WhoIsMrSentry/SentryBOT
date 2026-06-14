@@ -16,7 +16,7 @@ def test_tool_result_succeeded_rejects_unavailable_vision() -> None:
 
 
 def test_tool_result_succeeded_accepts_real_vision_payload() -> None:
-    assert tool_result_succeeded("get_vision", "Camera sees: person, chair")
+    assert tool_result_succeeded("get_vision", "Vision: person, chair")
     assert tool_result_succeeded("get_visual_context", "Scene: kitchen | People: Ali")
 
 
@@ -48,5 +48,5 @@ def test_progress_speaks_tool_done_after_success() -> None:
 
     pm = ProgressManager(speech_arbiter=_SpeechStub())
     token = pm.new_request(language="tr")
-    pm.emit_tool_done(token, "get_vision", "Camera sees: table")
+    pm.emit_tool_done(token, "get_vision", "Vision: table")
     assert spoken == ["Görüntüyü aldım."]
