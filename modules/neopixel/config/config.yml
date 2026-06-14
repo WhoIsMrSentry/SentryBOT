@@ -66,6 +66,36 @@ presets:
   emotion_sad:
     jewel: { effect: "PULSE", color: "#6666FF" }
     stick: { color: "#102030" }
+  emotion_sadness:
+    jewel: { effect: "PULSE", color: "#2850A0" }
+    stick: { color: "#102030" }
+  emotion_angry:
+    jewel: { effect: "PULSE", color: "#DC2800" }
+    stick: { effect: "METEOR", color: "#400000" }
+  emotion_furious:
+    jewel: { effect: "METEOR", color: "#FF0000" }
+    stick: { effect: "PULSE", color: "#600000" }
+  emotion_love:
+    jewel: { effect: "PULSE", color: "#FF2864" }
+    stick: { color: "#401020" }
+  emotion_surprise:
+    jewel: { effect: "TWINKLE", color: "#FFC800" }
+    stick: { color: "#302000" }
+  emotion_bored:
+    jewel: { effect: "BREATHE", color: "#3C3C3C" }
+    stick: { color: "#101010" }
+  emotion_excitement:
+    jewel: { effect: "RAINBOW_CYCLE", color: "#FF7800" }
+    stick: { effect: "COMET", color: "#FF4400" }
+  emotion_worried:
+    jewel: { effect: "BREATHE", color: "#B46400" }
+    stick: { color: "#201408" }
+  emotion_confusion:
+    jewel: { effect: "TWINKLE", color: "#A000C8" }
+    stick: { color: "#180820" }
+  emotion_neutral:
+    jewel: { effect: "BREATHE", color: "#283C50" }
+    stick: { color: "#101820" }
   # Temporary owner visual preset
   temp_owner:
     jewel: { effect: "TWINKLE", color: "#FFE07A" }
