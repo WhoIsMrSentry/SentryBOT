@@ -1,11 +1,11 @@
 # OLED Faces Module
 
-Bu modül, robotun canlılık/duygu/durum sinyallerini Raspberry Pi üzerinde doğrudan I2C SSD1306 OLED ekrana yüz ifadelerine dönüştürür.
+Robot durum/olay sinyallerini Raspberry Pi SSD1306 OLED ekranda **Pip tarzı prosedürel animasyonlu gözlere** dönüştürür.
 
 ## Kaynaklar
 - Durum: `state_manager` (`operational`, `emotions`)
 - Olaylar: `interactions` event akışı
-- Varlıklar: `assets/bitmaps/*.bin` ve `assets/animations/*.json`
+- Yüz motoru: `services/eyes/` (moods, gestures, activities — esp-bridge-mcp-robot Pip motoru)
 
 ## API
 - `GET /oled_faces/healthz`
@@ -14,6 +14,5 @@ Bu modül, robotun canlılık/duygu/durum sinyallerini Raspberry Pi üzerinde do
 - `POST /oled_faces/event` (`type`, opsiyonel `data`)
 
 ## Not
-- OLED sürüşü Pi tarafındadır (`display` ayarları: `modules/oled_faces/config/config.yml`).
-- Arduino firmware'de `cmd: "oled"` komutu artık kullanılmaz.
-- Arduino tarafındaki String azaltma optimizasyonları OLED yolunu etkilemez; `oled_faces` API sözleşmesi sabittir.
+- OLED sürüşü Pi I2C üzerinden (`display` ayarları: `config/config.yml`).
+- Eski Irisoled bitmap/JSON varlıkları kaldırıldı; legacy isimler `services/legacy_map.py` ile Pip motoruna yönlendirilir.

@@ -1,9 +1,0 @@
-{
-    "frames":  [
-                   "alert",
-                   "focused",
-                   "warning",
-                   "alert"
-               ],
-    "delay_ms":  130
-}

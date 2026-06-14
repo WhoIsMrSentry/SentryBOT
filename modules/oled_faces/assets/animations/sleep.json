@@ -1,9 +1,0 @@
-{
-    "frames":  [
-                   "sleepy",
-                   "blink_down",
-                   "blink",
-                   "sleepy"
-               ],
-    "delay_ms":  240
-}
