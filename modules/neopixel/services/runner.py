@@ -174,9 +174,14 @@ class NeoRunner:
         if not name:
             return None
         key = str(name).strip().lower()
-        aliases = {"jewel": "head", "stick": "body"}
-        key = aliases.get(key, key)
-        return self._segments.get(key)
+        bounds = self._segments.get(key)
+        if bounds is not None:
+            return bounds
+        aliases = {"jewel": "head", "stick": "body", "head": "jewel", "body": "stick"}
+        alt = aliases.get(key)
+        if alt:
+            return self._segments.get(alt)
+        return None
 
     def _drain_animate_queue(self) -> None:
         try:
