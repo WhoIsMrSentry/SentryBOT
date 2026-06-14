@@ -60,20 +60,22 @@ class ToolRegistry:
 
     def _camera_input_available(self) -> bool:
         try:
-            import requests
+            from modules.common.vision_availability import camera_live_available
 
-            resp = requests.get(self._url("camera/healthz"), timeout=0.5)
-            if resp.status_code != 200:
-                return False
-            data = resp.json()
-            if not isinstance(data, dict):
-                return False
-            return bool(data.get("ok")) and not bool(data.get("gave_up", False))
+            return camera_live_available(self._gateway_base_url, timeout_s=0.5)
+        except Exception:
+            return False
+
+    def _vision_input_available(self) -> bool:
+        try:
+            from modules.common.vision_availability import vision_input_available
+
+            return vision_input_available(self._gateway_base_url, timeout_s=0.6)
         except Exception:
             return False
 
     def _vision_unavailable_message(self) -> str:
-        return "Kamera görüntüsü şu an kullanılamıyor; görme araçları devre dışı."
+        return "Görüş verisi şu an kullanılamıyor (kamera veya uzak VLM cache yok); görme araçları devre dışı."
 
     def _acquire_vision(self, tool_name: str) -> bool:
         if self.vision_arbiter is None or tool_name not in self._VLM_TOOL_NAMES:
@@ -113,7 +115,7 @@ class ToolRegistry:
                     })
                     return f"Error executing {tool_name}: resource busy"
                 acquired = True
-            if tool_name in self._VLM_TOOL_NAMES and not self._camera_input_available():
+            if tool_name in self._VLM_TOOL_NAMES and not self._vision_input_available():
                 self._emit_status({
                     "type": "tool_error",
                     "tool": tool_name,
@@ -261,14 +263,18 @@ class ToolRegistry:
             "type": "function",
             "function": {
                 "name": "set_emotion",
-                "description": "Set the robot's internal emotional state.",
+                "description": "Express a canonical emotion across OLED face, NeoPixel lights, and robot state.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "emotion": {
                             "type": "string",
-                            "enum": ["joy", "sadness", "anger", "fear", "trust", "disgust", "anticipation", "surprise", "tired", "neutral"],
-                            "description": "The dominant emotion to feel"
+                            "enum": [
+                                "neutral", "joy", "sadness", "anger", "furious", "fear",
+                                "surprise", "excitement", "love", "disgust", "confusion",
+                                "worried", "bored", "tired", "curiosity",
+                            ],
+                            "description": "Canonical emotion from the shared vocabulary",
                         }
                     },
                     "required": ["emotion"]
@@ -593,18 +599,37 @@ class ToolRegistry:
 
     def oled_face(self, expression: str) -> str:
         if not self.client: return "Error: Hardware client disconnected."
-        anim_list = ["ScanningEyes", "Winking", "scan", "blink", "emotive"]
-        if expression in anim_list:
-            resp = self.client.oled_anim(expression)
+        key = str(expression or "").strip().lower()
+        pip_activities = {
+            "listening", "thinking", "scanning", "searching", "working",
+            "processing", "connecting", "sleep", "alert",
+        }
+        legacy_anims = {"scan", "emotive", "blink", "wink", "all", "icons"}
+        if key in pip_activities or key in legacy_anims:
+            resp = self.client.oled_anim(key)
         else:
-            resp = self.client.oled_show(expression)
+            resp = self.client.oled_show(key)
         return f"OLED face updated to {expression}. Response: {resp}"
 
     def set_emotion(self, emotion: str) -> str:
-        if not self.client: return "Error: Hardware client disconnected."
-        self.client.update_emotions([emotion])
-        self.client.push_interaction_event(f"scene.emotion_{emotion}")
-        return f"Internal emotion set to: {emotion}"
+        if not self.client:
+            return "Error: Hardware client disconnected."
+        try:
+            from modules.common.emotion_vocab import emotion_render
+
+            render = emotion_render(emotion)
+            canon = render.canonical
+        except Exception:
+            canon = str(emotion or "neutral").strip().lower()
+            render = None
+        self.client.update_emotions([canon])
+        if render is not None:
+            self.client.set_neopixel(render.effect, emotions=[canon], color=list(render.rgb))
+            self.client.oled_show(render.oled)
+            self.client.push_interaction_event(f"emotion:{canon}")
+            return f"Expressed emotion: {canon}"
+        self.client.push_interaction_event(f"emotion:{canon}")
+        return f"Internal emotion set to: {canon}"
 
     def interaction_event(self, event: str) -> str:
         if not self.client: return "Error: Hardware client disconnected."
@@ -658,7 +683,7 @@ class ToolRegistry:
         results = self.client.get_latest_vision_results(limit=5)
         if not results:
             return "Vision results unavailable. Continue with text-only reasoning if needed."
-        return f"Camera sees: {results}"
+        return f"Vision: {results}"
 
     def get_sensor_data(self) -> str:
         bat = self.world_state.get_state().get("battery_percent", "unknown")

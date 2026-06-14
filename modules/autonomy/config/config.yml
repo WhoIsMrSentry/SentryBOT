@@ -3,6 +3,8 @@ defaults:
   boredom_threshold_s: 20
   mood:
     decay_rate: 0.5
+    anger_threshold: 38
+    furious_threshold: 75
     initial_happiness: 50
     initial_energy: 100
     max_happiness: 100
@@ -156,8 +158,13 @@ request_timeouts:
   ollama_warmup_s: 2.5
   speech_min_interval_s: 0.8
 
+speech_reactions:
+  excited_on_speech: false
+  excited_on_praise: true
+  excited_on_questions: false
+
 visual_state:
-  emotion_min_interval_s: 2.2
+  emotion_min_interval_s: 1.8
   default_lock_s: 2.4
   strong_lock_s: 4.8
   state_hold_s: 3.2
@@ -228,6 +235,19 @@ vision_hooks:
     far_distance_m: 3.0
     near_multiplier: 0.6
     far_multiplier: 1.3
+  empathy:
+    enabled: true
+    cooldown_s: 28
+    mirror:
+      - joy
+      - sadness
+      - fear
+      - worried
+    speak_on_mirror: true
+
+empathy:
+  enabled: true
+  cooldown_s: 28
 
 scenes:
   wakeword_reaction:
@@ -386,6 +406,66 @@ scenes:
       - { type: effect_burst, name: "PULSE", duration_ms: 120, count: 4, interval_ms: 60 }
       - { type: effect, name: "SOLID", color: "#FF0000" }
       - { type: event, name: "scene.emotion_furious.end" }
+
+  emotion_sadness:
+    steps:
+      - { type: event, name: "scene.emotion_sadness.start" }
+      - { type: preset, name: "emotion_sadness" }
+      - { type: effect, name: "PULSE", duration_ms: 600 }
+      - { type: head, pan: 90, tilt: 100 }
+      - { type: event, name: "scene.emotion_sadness.end" }
+
+  emotion_love:
+    steps:
+      - { type: event, name: "scene.emotion_love.start" }
+      - { type: preset, name: "emotion_love" }
+      - { type: effect, name: "PULSE", duration_ms: 700, color: "#FF2864" }
+      - { type: event, name: "scene.emotion_love.end" }
+
+  emotion_surprise:
+    steps:
+      - { type: event, name: "scene.emotion_surprise.start" }
+      - { type: preset, name: "emotion_surprise" }
+      - { type: effect_burst, name: "TWINKLE", duration_ms: 150, count: 3, interval_ms: 70 }
+      - { type: event, name: "scene.emotion_surprise.end" }
+
+  emotion_excitement:
+    steps:
+      - { type: event, name: "scene.emotion_excitement.start" }
+      - { type: preset, name: "emotion_excitement" }
+      - { type: effect_burst, name: "RAINBOW_CYCLE", duration_ms: 200, count: 2, interval_ms: 80 }
+      - { type: event, name: "scene.emotion_excitement.end" }
+
+  emotion_bored:
+    steps:
+      - { type: event, name: "scene.emotion_bored.start" }
+      - { type: preset, name: "emotion_bored" }
+      - { type: head, pan: 88, tilt: 95 }
+      - { type: effect, name: "BREATHE", duration_ms: 900, color: "#3C3C3C" }
+      - { type: event, name: "scene.emotion_bored.end" }
+
+  emotion_worried:
+    steps:
+      - { type: event, name: "scene.emotion_worried.start" }
+      - { type: preset, name: "emotion_worried" }
+      - { type: effect, name: "BREATHE", duration_ms: 800, color: "#B46400" }
+      - { type: head, pan: 92, tilt: 98 }
+      - { type: event, name: "scene.emotion_worried.end" }
+
+  emotion_confusion:
+    steps:
+      - { type: event, name: "scene.emotion_confusion.start" }
+      - { type: preset, name: "emotion_confusion" }
+      - { type: effect, name: "TWINKLE", duration_ms: 500, color: "#A000C8" }
+      - { type: head, pan: 85, tilt: 92 }
+      - { type: event, name: "scene.emotion_confusion.end" }
+
+  emotion_neutral:
+    steps:
+      - { type: event, name: "scene.emotion_neutral.start" }
+      - { type: preset, name: "calm_idle" }
+      - { type: effect, name: "BREATHE", duration_ms: 600, color: "#283C50" }
+      - { type: event, name: "scene.emotion_neutral.end" }
 
 owner:
   enabled: true

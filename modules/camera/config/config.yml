@@ -1,4 +1,5 @@
 # Camera module configuration (defaults)
+enabled: false          # set true when hardware is attached
 backend: auto           # auto | picamera2 | opencv | gstreamer
 source: 0               # device index or RTSP/HTTP URL for OpenCV
 resolution:

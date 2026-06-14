@@ -28,6 +28,7 @@ _FAILURE_MARKERS = (
 
 _VISION_SUCCESS_MARKERS = (
     "camera sees:",
+    "vision:",
     "scene:",
     "people:",
     "hazards:",

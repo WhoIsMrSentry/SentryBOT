@@ -30,7 +30,17 @@ def get_router(engine: InteractionEngine) -> APIRouter:
         name = str(payload.get("name", "COMET"))
         dur = int(payload.get("duration_ms", 800))
         force = bool(payload.get("force", False))
-        engine.trigger_effect(name=name, duration_ms=dur, force=force)
+        color = payload.get("color")
+        if color is None and all(k in payload for k in ("r", "g", "b")):
+            color = (int(payload.get("r", 0)), int(payload.get("g", 0)), int(payload.get("b", 0)))
+        emotions = payload.get("emotions") if isinstance(payload.get("emotions"), list) else None
+        engine.trigger_effect(
+            name=name,
+            duration_ms=dur,
+            force=force,
+            color=color,
+            emotions=emotions,
+        )
         return {"ok": True}
 
     @r.post("/base", tags=["interactions"], summary="Base")

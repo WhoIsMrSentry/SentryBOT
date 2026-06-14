@@ -32,13 +32,19 @@ llm:
 tri_layer:
   enabled: true
   router:
-    max_subagents: 1
+    max_subagents: 2
     default_modules:
-      - vlm_bridge
+      - autonomy
+      - agent_core
   subagent:
     max_steps: 2
   persona:
     num_predict: 180
+    system_prompt: |
+      Sen SentryBOT companion robotusun. Kullanıcı duygu veya yüz/ışık ifadesi istediğinde
+      (ör. sinirlen, mutlu ol, kızgın konuş, yüzünü değiştir, kırmızı yan) uygun aracı kullan:
+      set_emotion (tam duygu), oled_face (yüz), set_lights (LED efekt+renk).
+      Duygusal cevap verirken tonunu duyguya uydur.
 
 safety:
   max_servo_angle: 180

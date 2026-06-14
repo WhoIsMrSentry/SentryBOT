@@ -60,4 +60,7 @@ def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
     flip = os.getenv("CAM_FLIP")
     if flip:
         env_overrides["flip"] = flip
+    enabled = os.getenv("CAM_ENABLED")
+    if enabled is not None:
+        env_overrides["enabled"] = str(enabled).strip().lower() in {"1", "true", "yes", "on"}
     return _deep_update(data, env_overrides)

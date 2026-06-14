@@ -20,7 +20,7 @@ import requests
 
 VLM_BRIDGE_URL = "http://ROBOT_IP:8099/vlm/results"  # Degistir
 AUTH_TOKEN = "changeme"  # vlm_bridge remote.auth_token ile ayni
-CAMERA_FEED = "http://ROBOT_IP:8080/camera/video_feed"  # Gateway kamera stream
+CAMERA_FEED = "http://ROBOT_IP:8080/camera/video"  # Gateway kamera MJPEG stream
 
 
 def open_mjpeg(url: str):

@@ -102,17 +102,24 @@ class xOledFacesService:
             time.sleep(max(0.05, interval_s))
 
     def _enforce_session_activity(self) -> None:
+        now = time.time()
         if self.coordinator.listen_session_active():
             self.display.pin_activity("listening")
             want = OledAction(mode="animation", name="listening")
-            if self._last_sent != (want.mode, want.name):
-                self._apply(want, priority=80, force=True)
+            if self._last_sent == (want.mode, want.name):
+                return
+            if now < self._active_hold_until and self._active_priority > 78:
+                return
+            self._apply(want, priority=78, force=False)
             return
         if self.coordinator.speak_session_active():
             self.display.pin_activity("thinking")
             want = OledAction(mode="animation", name="thinking")
-            if self._last_sent != (want.mode, want.name):
-                self._apply(want, priority=74, force=True)
+            if self._last_sent == (want.mode, want.name):
+                return
+            if now < self._active_hold_until and self._active_priority > 74:
+                return
+            self._apply(want, priority=74, force=False)
             return
         self.display.pin_activity(None)
 

@@ -21,7 +21,7 @@ class _FakeNeo:
     def set_base(self, name, color=None, speed=None):
         return None
 
-    def play_effect(self, name, duration_ms=800, color=None):
+    def play_effect(self, name, duration_ms=800, color=None, emotions=None, **kwargs):
         self.effects.append((str(name), int(duration_ms), color))
 
 

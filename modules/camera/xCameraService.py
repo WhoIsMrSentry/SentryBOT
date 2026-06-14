@@ -1,5 +1,10 @@
 from __future__ import annotations
+
+import logging
+
 from fastapi import FastAPI
+
+logger = logging.getLogger("camera.service")
 
 # Paket içi importlar, script modunda fallback ile
 try:
@@ -14,6 +19,7 @@ except Exception:  # when run as script without package context
 try:
     # Merkezi loglama (opsiyonel). Başarısız olsa bile modül çalışsın.
     from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
+
     _init_global_logging()
 except Exception:
     pass
@@ -21,6 +27,7 @@ except Exception:
 
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
+    enabled = bool(cfg.get("enabled", False))
 
     cap_cfg = CaptureConfig(
         backend=cfg.get("backend", "auto"),
@@ -41,14 +48,22 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     publisher = FramePublisher()
     capture = CameraCapture(cap_cfg, publisher)
-    capture.start()
+    if enabled:
+        capture.start()
+    else:
+        logger.info("camera capture disabled (config enabled=false)")
 
     app = FastAPI()
-    app.include_router(get_router(capture, cap_cfg.fps_target))
+    app.include_router(get_router(capture, cap_cfg.fps_target, enabled=enabled))
     return app
 
 
 if __name__ == "__main__":
     import uvicorn
+
     cfg = load_config()
-    uvicorn.run(create_app(), host=str(cfg.get("server", {}).get("host", "0.0.0.0")), port=int(cfg.get("server", {}).get("port", 8000)))
+    uvicorn.run(
+        create_app(),
+        host=str(cfg.get("server", {}).get("host", "0.0.0.0")),
+        port=int(cfg.get("server", {}).get("port", 8000)),
+    )
