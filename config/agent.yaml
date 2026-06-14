@@ -113,7 +113,8 @@ vlm_bridge:
     host: 0.0.0.0
     port: 8101
   vision:
-    processing_mode: local
+    processing_mode: remote
+    hybrid_local_capture: false
     camera_source: "@gateway/camera/video"
     context_max_age_s: 45
     confidence_threshold: 0.5
@@ -122,7 +123,7 @@ vlm_bridge:
       min_good_matches: 5
       min_score: 0.08
     follow:
-      enabled: true
+      enabled: false
       track_interval_s: 0.12
       pan_gain_deg: 50
       tilt_gain_deg: 32
@@ -161,6 +162,12 @@ vlm_bridge:
   remote:
     auth_token: "changeme"
     accept_results: true
+  remote_multimodal:
+    enabled: false
+    endpoint: "http://192.168.1.100:8102/vision/analyze"
+    interval_s: 8.0
+    jpeg_quality: 75
+    auth_token: ""
   robot:
     host: "localhost"
   ollama:
@@ -384,3 +391,6 @@ safety:
   min_servo_angle: 0
   max_stepper_speed: 100
   laser_max_duration_s: 2.0
+
+camera:
+  enabled: false
