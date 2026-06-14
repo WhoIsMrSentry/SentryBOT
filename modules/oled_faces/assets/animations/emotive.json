@@ -1,9 +1,0 @@
-{
-    "frames":  [
-                   "happy",
-                   "surprised",
-                   "sad",
-                   "normal"
-               ],
-    "delay_ms":  180
-}
