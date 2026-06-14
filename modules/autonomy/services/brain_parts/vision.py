@@ -27,6 +27,14 @@ class VisionMixin:
                 importance = float(ctx_data.get("importance_score", 0.0))
                 self.state["last_visual_importance"] = importance
                 self._track_scene_context(ctx_data, importance)
+                for person in ctx_data.get("people", []) or []:
+                    if isinstance(person, dict) and person.get("emotion"):
+                        self._mirror_person_emotion(
+                            {
+                                "name": person.get("name", "Unknown"),
+                                "emotion": person.get("emotion"),
+                            }
+                        )
                 if importance > 0.6:
                     self.mood.modify("curiosity", int(importance * 20))
                     self.mood.modify("energy", 10)
@@ -95,6 +103,44 @@ class VisionMixin:
             if importance >= 0.5:
                 self.mood.modify("curiosity", 6)
 
+    def _mirror_person_emotion(self, result: Dict[str, Any]) -> None:
+        empathy = self._vision_cfg.get("empathy", {}) if isinstance(self._vision_cfg.get("empathy"), dict) else {}
+        if not empathy.get("enabled", True):
+            return
+        raw = str(result.get("emotion", "") or "").strip().lower()
+        if not raw:
+            return
+        try:
+            from modules.common.emotion_vocab import get_vocab
+
+            canon = get_vocab().canonical(raw)
+        except Exception:
+            canon = raw
+        allowed = {str(x).strip().lower() for x in (empathy.get("mirror") or ["joy", "sadness", "fear"])}
+        if canon not in allowed:
+            return
+        now = time.time()
+        cooldown = float(empathy.get("cooldown_s", 28))
+        if now - float(self.state.get("last_empathy_mirror_ts", 0.0)) < cooldown:
+            return
+        self.state["last_empathy_mirror_ts"] = now
+        self.state["last_emotion"] = canon
+        try:
+            self.express(canon)
+            self.client.push_interaction_event(f"vision.person_emotion_{canon}")
+        except Exception:
+            pass
+        if empathy.get("speak_on_mirror", False):
+            replies = {
+                "joy": "Mutlu görünüyorsun, ben de mutlu oldum.",
+                "sadness": "Üzgün görünüyorsun. İyi misin?",
+                "fear": "Bir şey mi korkuttu seni?",
+                "worried": "Endişeli görünüyorsun.",
+            }
+            line = replies.get(canon)
+            if line:
+                self._speak_with_mood(line, emotion=canon)
+
     def _handle_vision_result(self, result: Dict[str, Any]) -> None:
         name = result.get("name") or result.get("label")
         if not name:
@@ -122,6 +168,7 @@ class VisionMixin:
         happiness_boost = 10 if name != "Unknown" else 4
         self.mood.modify("happiness", happiness_boost)
         self.mood.modify("curiosity", 5)
+        self._mirror_person_emotion(result)
         self.client.push_interaction_event("vision.person", {"name": name})
         self._focus_on_target(result)
         should_speak = name != "Unknown" or self._vision_cfg.get("speak_on_unknown", False)
