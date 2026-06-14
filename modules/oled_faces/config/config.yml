@@ -9,11 +9,18 @@ animation_hold_s: 2.0
 bitmap_hold_s: 1.2
 emotion_hold_s: 2.5
 session_hold_s: 45.0
+listen_session_hold_s: 120.0
+speak_session_hold_s: 90.0
 event_cooldown_s: 0.8
 priority_map:
   error: 95
   warning: 90
   owner.locked: 92
+  wakeword.detected: 80
+  speech.listen.start: 80
+  speech.listen.end: 72
+  speech.start: 74
+  speech.end: 68
   autonomy.look_around: 45
   autonomy.blink: 35
   vision.focus: 55
@@ -40,12 +47,33 @@ boot:
 idle_bitmap: normal
 fallback_unknown: normal
 
+idle_ambient:
+  enabled: true
+  min_interval_s: 14
+  max_interval_s: 40
+  hold_s: 9
+  priority: 32
+  pool:
+    - { mode: bitmap, name: smoking }
+    - { mode: animation, name: thinking }
+    - { mode: bitmap, name: bored }
+    - { mode: animation, name: searching }
+    - { mode: bitmap, name: lovely }
+    - { mode: animation, name: working }
+    - { mode: bitmap, name: skeptical }
+    - { mode: gesture, name: nod }
+    - { mode: bitmap, name: dumb }
+    - { mode: animation, name: processing }
+    - { mode: bitmap, name: tired }
+    - { mode: animation, name: connecting }
+
 state_map:
   idle: { mode: bitmap, name: normal }
   boot: { mode: logo, name: logo }
-  listening: { mode: animation, name: scan }
-  thinking: { mode: bitmap, name: focused }
-  speaking: { mode: animation, name: emotive }
+  active: { mode: bitmap, name: attentive }
+  listening: { mode: animation, name: listening }
+  thinking: { mode: animation, name: thinking }
+  speaking: { mode: animation, name: thinking }
   sleeping: { mode: animation, name: sleep }
   alert: { mode: animation, name: alert }
   low_battery: { mode: bitmap, name: battery_low }
@@ -53,26 +81,28 @@ state_map:
   charged: { mode: bitmap, name: battery_full }
 
 event_map:
-  wakeword.detected: { mode: animation, name: scan }
-  speech.start: { mode: animation, name: emotive }
-  # speech.end handled by FaceCoordinator -> idle/emotion baseline (not forced neutral)
-  vision.person: { mode: bitmap, name: focused }
+  wakeword.detected: { mode: animation, name: listening }
+  speech.listen.start: { mode: animation, name: listening }
+  speech.listen.end: { mode: bitmap, name: normal }
+  speech.start: { mode: animation, name: thinking }
+  agent.thinking: { mode: animation, name: thinking }
+  vision.person: { mode: animation, name: searching }
   autonomy.calm: { mode: bitmap, name: normal }
-  autonomy.excited: { mode: bitmap, name: excited }
+  autonomy.excited: { mode: gesture, name: excited }
   autonomy.angry: { mode: bitmap, name: furious }
-  autonomy.blink: { mode: animation, name: blink }
-  autonomy.look_around: { mode: animation, name: scan }
-  autonomy.stretch: { mode: bitmap, name: look_up }
+  autonomy.blink: { mode: gesture, name: blink }
+  autonomy.look_around: { mode: animation, name: scanning }
+  autonomy.stretch: { mode: gesture, name: look_up }
   autonomy.bored: { mode: bitmap, name: bored }
-  autonomy.monologue: { mode: animation, name: emotive }
+  autonomy.monologue: { mode: animation, name: thinking }
   autonomy.sleep: { mode: animation, name: sleep }
   autonomy.wake: { mode: bitmap, name: normal }
-  autonomy.offline: { mode: bitmap, name: worried }
+  autonomy.offline: { mode: animation, name: connecting }
   vision.focus: { mode: bitmap, name: focused }
-  error: { mode: bitmap, name: warning }
+  error: { mode: gesture, name: scan_sweep }
   warning: { mode: bitmap, name: alert }
-  owner.scan: { mode: bitmap, name: look_left }
-  owner.rfid: { mode: animation, name: wink }
+  owner.scan: { mode: gesture, name: look_left }
+  owner.rfid: { mode: gesture, name: wink }
   owner.temp_granted: { mode: bitmap, name: happy }
   owner.temp_revoked: { mode: bitmap, name: worried }
   owner.locked: { mode: bitmap, name: scared }
@@ -80,7 +110,7 @@ event_map:
   emotion:sad: { mode: bitmap, name: sad }
   emotion:surprised: { mode: bitmap, name: surprised }
   emotion:sleepy: { mode: bitmap, name: sleepy }
-  emotion:confused: { mode: bitmap, name: disoriented }
+  emotion:confused: { mode: bitmap, name: confused }
   emotion:angry: { mode: bitmap, name: angry }
   emotion:furious: { mode: bitmap, name: furious }
   emotion:bored: { mode: bitmap, name: bored }
@@ -89,7 +119,10 @@ event_map:
   emotion:scared: { mode: bitmap, name: scared }
   emotion:focused: { mode: bitmap, name: focused }
   emotion:excited: { mode: bitmap, name: excited }
+  emotion:love: { mode: bitmap, name: lovely }
+  emotion:curiosity: { mode: bitmap, name: attentive }
+  emotion:tired: { mode: bitmap, name: tired }
 
 arduino_event_map:
-  rfid: { mode: animation, name: wink }
+  rfid: { mode: gesture, name: wink }
   neopixel_request: { mode: bitmap, name: mode }

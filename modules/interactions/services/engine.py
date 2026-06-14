@@ -57,29 +57,51 @@ class InteractionEngine:
                     except Exception:
                         pass
 
-                def animate(self, name: str, emotions: Optional[list[str]] = None, iterations: Optional[int] = None) -> None:
+                def animate(
+                    self,
+                    name: str,
+                    emotions: Optional[list[str]] = None,
+                    iterations: Optional[int] = None,
+                    color: Optional[str | tuple[int, int, int]] = None,
+                ) -> None:
                     try:
-                        # delegate to runner.animate (already non-blocking)
+                        rgb = self._engine._normalize_color(color)
+                        kwargs: Dict[str, Any] = {}
+                        if rgb is not None:
+                            kwargs["color"] = rgb
+                        if emotions:
+                            kwargs["emotions"] = emotions
                         if iterations is not None:
-                            self._runner.animate(name, iterations=iterations)
-                        else:
-                            self._runner.animate(name)
+                            kwargs["iterations"] = iterations
+                        self._runner.animate(name, **kwargs)
                     except Exception:
                         pass
 
                 def set_base(self, name: str, color: Optional[str | tuple[int, int, int]] = None, speed: Optional[str] = None) -> None:
                     try:
-                        if color and isinstance(color, tuple):
-                            r, g, b = color
-                            self._runner.fill(r, g, b)
+                        rgb = self._engine._normalize_color(color)
+                        if rgb is not None:
+                            self._runner.animate(name, color=rgb)
                         else:
                             self._runner.animate(name)
                     except Exception:
                         pass
 
-                def play_effect(self, name: str, duration_ms: int = 800, color: Optional[str | tuple[int, int, int]] = None) -> None:
+                def play_effect(
+                    self,
+                    name: str,
+                    duration_ms: int = 800,
+                    color: Optional[str | tuple[int, int, int]] = None,
+                    emotions: Optional[list[str]] = None,
+                ) -> None:
                     try:
-                        self._runner.animate(name)
+                        rgb = self._engine._normalize_color(color)
+                        kwargs: Dict[str, Any] = {}
+                        if rgb is not None:
+                            kwargs["color"] = rgb
+                        if emotions:
+                            kwargs["emotions"] = emotions
+                        self._runner.animate(name, **kwargs)
                         import threading
                         import time
 
@@ -171,7 +193,31 @@ class InteractionEngine:
         with self._lock:
             self._ctx.update(kwargs)
 
-    def trigger_effect(self, name: str, duration_ms: int = 800, force: bool = False) -> None:
+    @staticmethod
+    def _normalize_color(color: Any) -> Optional[tuple[int, int, int]]:
+        if isinstance(color, (list, tuple)) and len(color) >= 3:
+            try:
+                return (int(color[0]) & 255, int(color[1]) & 255, int(color[2]) & 255)
+            except (TypeError, ValueError):
+                return None
+        if isinstance(color, str):
+            s = color.strip()
+            if s.startswith("#") and len(s) >= 7:
+                try:
+                    v = int(s[1:7], 16)
+                    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+                except ValueError:
+                    return None
+        return None
+
+    def trigger_effect(
+        self,
+        name: str,
+        duration_ms: int = 800,
+        force: bool = False,
+        color: Any = None,
+        emotions: Optional[list[str]] = None,
+    ) -> None:
         if self._expression_arbiter is not None:
             try:
                 if not self._expression_arbiter.claim_lights("interactions", force=bool(force)):
@@ -183,6 +229,8 @@ class InteractionEngine:
                 "name": str(name),
                 "duration_ms": int(duration_ms),
                 "force": bool(force),
+                "color": color,
+                "emotions": emotions,
             }
 
     def get_state(self) -> Dict[str, Any]:
@@ -246,8 +294,15 @@ class InteractionEngine:
                 if bool(manual_effect.get("force")) or self._effect_allowed("manual.effect"):
                     name = str(manual_effect.get("name", "COMET"))
                     duration_ms = int(manual_effect.get("duration_ms", 800))
+                    color = manual_effect.get("color")
+                    emotions = manual_effect.get("emotions")
                     self._active_effect_until = now + duration_ms / 1000.0
-                    threading.Thread(target=self.neo.play_effect, args=(name, duration_ms), daemon=True).start()
+                    threading.Thread(
+                        target=self.neo.play_effect,
+                        args=(name, duration_ms),
+                        kwargs={"color": color, "emotions": emotions},
+                        daemon=True,
+                    ).start()
             elif manual_base and now >= self._active_effect_until:
                 name, color = manual_base
                 key = (str(name).upper(), color)
@@ -261,11 +316,18 @@ class InteractionEngine:
                     eff = act["effect"] or {}
                     name = str(eff.get("name", "COMET"))
                     duration_ms = int(eff.get("duration_ms", 800))
+                    color = eff.get("color")
+                    emotions = eff.get("emotions") if isinstance(eff.get("emotions"), list) else None
                     event_name = self._ctx.get("event")
                     if self._effect_allowed(event_name) and self._claim_lights_for_event(event_name):
                         self._active_effect_until = now + duration_ms / 1000.0
                         chosen.stamp()
-                        threading.Thread(target=self.neo.play_effect, args=(name, duration_ms), daemon=True).start()
+                        threading.Thread(
+                            target=self.neo.play_effect,
+                            args=(name, duration_ms),
+                            kwargs={"color": color, "emotions": emotions},
+                            daemon=True,
+                        ).start()
                 elif "base" in act and now >= self._active_effect_until:
                     base = act["base"] or {}
                     name = str(base.get("name", self.defaults.get("idle", {}).get("base", {}).get("name", "BREATHE")))

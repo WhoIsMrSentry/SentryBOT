@@ -3,28 +3,25 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 from .mapper import FaceMapper, OledAction
 
 
-# Operational modes that should own the face until they change.
 _DOMINANT_OPERATIONAL: Set[str] = {
     "listening", "thinking", "speaking", "sleeping", "alert",
 }
 
-# Modes where polled emotions may update the face.
 _PASSIVE_OPERATIONAL: Set[str] = {
     "idle", "boot", "active", "maintenance",
     "charging", "charged", "low_battery",
 }
 
-_SESSION_START: Dict[str, str] = {
-    "speech.start": "speaking",
-    "wakeword.detected": "listening",
-}
+_LISTEN_START = {"wakeword.detected", "speech.listen.start"}
+_LISTEN_END = {"speech.listen.end"}
 
-_SESSION_END: Set[str] = {"speech.end"}
+_SPEAK_START = {"speech.start"}
+_SPEAK_END = {"speech.end"}
 
 
 @dataclass
@@ -39,8 +36,8 @@ class FaceCoordinator:
     def __init__(self, mapper: FaceMapper, cfg: Dict[str, Any]):
         self.mapper = mapper
         self.cfg = cfg
-        self._session_kind: Optional[str] = None
-        self._session_until: float = 0.0
+        self._listen_until: float = 0.0
+        self._speak_until: float = 0.0
         self._last_resolved_mood: str = ""
         self._last_mood_apply_ts: float = 0.0
 
@@ -54,20 +51,31 @@ class FaceCoordinator:
         key = str(event_type or "").strip().lower()
         now = time.time()
 
-        if key in _SESSION_START:
-            self._session_kind = _SESSION_START[key]
-            self._session_until = now + float(self.cfg.get("session_hold_s", 45.0))
-            return FaceDecision(action=action, priority=max(priority, 72), source="event")
+        if key in _LISTEN_START:
+            self._listen_until = now + float(self.cfg.get("listen_session_hold_s", 120.0))
+            listen = self.mapper.from_interaction_event("speech.listen.start")
+            return FaceDecision(action=listen, priority=max(priority, 78), source="event")
 
-        if key in _SESSION_END:
-            self._session_kind = None
-            self._session_until = now + float(self.cfg.get("animation_hold_s", 1.4))
+        if key in _LISTEN_END:
+            self._listen_until = 0.0
+            return FaceDecision(action=baseline or self._idle_action(), priority=70, source="event")
+
+        if key in _SPEAK_START:
+            self._speak_until = now + float(self.cfg.get("speak_session_hold_s", 90.0))
+            think = self.mapper.from_interaction_event("agent.thinking")
+            return FaceDecision(action=think, priority=max(priority, 74), source="event")
+
+        if key in _SPEAK_END:
+            self._speak_until = 0.0
+            if self._listen_active(now):
+                listen = self.mapper.from_interaction_event("speech.listen.start")
+                return FaceDecision(action=listen, priority=72, source="event")
             return FaceDecision(action=baseline or self._idle_action(), priority=68, source="event")
 
         if key.startswith("emotion:"):
             label = key.split(":", 1)[1]
             mood_action = self.mapper.from_emotions([label])
-            if self._session_active(now) and self._session_kind == "speaking":
+            if self._listen_active(now) or self._speak_active(now):
                 return FaceDecision(action=mood_action, priority=priority, source="event", apply=False)
             if not self._emotion_stable(mood_action.name, now):
                 return FaceDecision(action=mood_action, priority=priority, source="event", apply=False)
@@ -78,11 +86,18 @@ class FaceCoordinator:
 
         return FaceDecision(action=action, priority=priority, source="event")
 
-    def from_state(self, operational: str, emotions: List[str], *, op_changed: bool, emo_changed: bool) -> Optional[FaceDecision]:
+    def from_state(
+        self,
+        operational: str,
+        emotions: List[str],
+        *,
+        op_changed: bool,
+        emo_changed: bool,
+    ) -> Optional[FaceDecision]:
         now = time.time()
         op = str(operational or "idle").strip().lower()
 
-        if self._session_active(now):
+        if self._listen_active(now) or self._speak_active(now):
             if op_changed and op in _DOMINANT_OPERATIONAL:
                 mapped = self.mapper.from_operational(op)
                 return FaceDecision(action=mapped, priority=58, source="state")
@@ -96,8 +111,7 @@ class FaceCoordinator:
             mapped = self.mapper.from_emotions(emotions)
             if not self._emotion_stable(mapped.name, now):
                 return None
-            pri = 60
-            return FaceDecision(action=mapped, priority=pri, source="emotion")
+            return FaceDecision(action=mapped, priority=60, source="emotion")
 
         if op_changed:
             mapped = self.mapper.from_operational(op)
@@ -105,11 +119,18 @@ class FaceCoordinator:
 
         return None
 
+    def listen_session_active(self) -> bool:
+        return self._listen_active(time.time())
+
+    def speak_session_active(self) -> bool:
+        return self._speak_active(time.time())
+
     def session_active(self) -> bool:
-        return self._session_active(time.time())
+        now = time.time()
+        return self._listen_active(now) or self._speak_active(now)
 
     def should_clear_activity(self, now: float, hold_until: float) -> bool:
-        if self._session_active(now):
+        if self._listen_active(now) or self._speak_active(now):
             return False
         return now >= hold_until
 
@@ -117,8 +138,11 @@ class FaceCoordinator:
         self._last_resolved_mood = str(mood_name or "").strip().lower()
         self._last_mood_apply_ts = time.time()
 
-    def _session_active(self, now: float) -> bool:
-        return bool(self._session_kind) and now < self._session_until
+    def _listen_active(self, now: float) -> bool:
+        return now < self._listen_until
+
+    def _speak_active(self, now: float) -> bool:
+        return now < self._speak_until
 
     def _emotion_stable(self, mood_name: str, now: float) -> bool:
         key = str(mood_name or "").strip().lower()

@@ -11,7 +11,7 @@ def test_mapper_has_full_catalog():
 def test_canonical_emotion_resolves_to_face():
     mapper = FaceMapper({})
     assert mapper.from_emotions(["joy"]).name == "happy"
-    assert mapper.from_emotions(["tired"]).name == "sleepy"
+    assert mapper.from_emotions(["tired"]).name == "tired"
     assert mapper.from_emotions(["anger"]).name == "angry"
 
 

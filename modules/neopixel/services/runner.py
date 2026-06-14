@@ -173,7 +173,10 @@ class NeoRunner:
     def _segment_bounds(self, name: str | None) -> tuple[int, int] | None:
         if not name:
             return None
-        return self._segments.get(str(name).strip().lower())
+        key = str(name).strip().lower()
+        aliases = {"jewel": "head", "stick": "body"}
+        key = aliases.get(key, key)
+        return self._segments.get(key)
 
     def _drain_animate_queue(self) -> None:
         try:

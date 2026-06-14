@@ -13,6 +13,23 @@ except Exception:  # pragma: no cover
 logger = logging.getLogger("interactions.neopixel_client")
 
 
+def _normalize_color(color: Any) -> Optional[tuple[int, int, int]]:
+    if isinstance(color, (list, tuple)) and len(color) >= 3:
+        try:
+            return (int(color[0]) & 255, int(color[1]) & 255, int(color[2]) & 255)
+        except (TypeError, ValueError):
+            return None
+    if isinstance(color, str):
+        s = color.strip()
+        if s.startswith("#") and len(s) >= 7:
+            try:
+                v = int(s[1:7], 16)
+                return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+            except ValueError:
+                return None
+    return None
+
+
 class NeoHttpClient:
     def __init__(self, base_url: str) -> None:
         self.base = base_url.rstrip("/")
@@ -35,8 +52,17 @@ class NeoHttpClient:
     def fill(self, r: int, g: int, b: int) -> None:
         self._post("/fill", params={"r_": r, "g": g, "b": b})
 
-    def animate(self, name: str, emotions: Optional[list[str]] = None, iterations: Optional[int] = None) -> None:
+    def animate(
+        self,
+        name: str,
+        emotions: Optional[list[str]] = None,
+        iterations: Optional[int] = None,
+        color: Optional[str | tuple[int, int, int]] = None,
+    ) -> None:
         payload: Dict[str, Any] = {"name": name}
+        rgb = _normalize_color(color)
+        if rgb is not None:
+            payload["r"], payload["g"], payload["b"] = rgb
         if emotions:
             payload["emotions"] = emotions
         if iterations is not None:
@@ -45,20 +71,21 @@ class NeoHttpClient:
 
     # Friendly helpers
     def set_base(self, name: str, color: Optional[str | tuple[int, int, int]] = None, speed: Optional[str] = None) -> None:
-        # Map to animate with optional emotions: if color hex provided, we cannot pass directly; fallback to simple fill
-        if name.upper() in {"BREATHE", "PULSE", "COMET", "METEOR", "RAINBOW", "RAINBOW_CYCLE", "THEATER_CHASE"}:
-            self.animate(name)
-        elif color and isinstance(color, tuple):
-            r, g, b = color
-            self.fill(r, g, b)
+        rgb = _normalize_color(color)
+        if rgb is not None:
+            self.animate(name, color=rgb)
         else:
             self.animate(name)
 
-    def play_effect(self, name: str, duration_ms: int = 800, color: Optional[str | tuple[int, int, int]] = None) -> None:
-        # Trigger an animation for a brief time, then clear to allow base to repaint next tick
+    def play_effect(
+        self,
+        name: str,
+        duration_ms: int = 800,
+        color: Optional[str | tuple[int, int, int]] = None,
+        emotions: Optional[list[str]] = None,
+    ) -> None:
         self.set_base(name, color=color)
         time.sleep(max(0.0, duration_ms / 1000.0))
-        # Do not clear harshly; let engine repaint base on next cycle
 
 
 class NoOpNeoClient:
@@ -68,11 +95,23 @@ class NoOpNeoClient:
     def fill(self, r: int, g: int, b: int) -> None:  # pragma: no cover
         pass
 
-    def animate(self, name: str, emotions: Optional[list[str]] = None, iterations: Optional[int] = None) -> None:  # pragma: no cover
+    def animate(
+        self,
+        name: str,
+        emotions: Optional[list[str]] = None,
+        iterations: Optional[int] = None,
+        color: Optional[str | tuple[int, int, int]] = None,
+    ) -> None:  # pragma: no cover
         pass
 
     def set_base(self, name: str, color: Optional[str | tuple[int, int, int]] = None, speed: Optional[str] = None) -> None:  # pragma: no cover
         pass
 
-    def play_effect(self, name: str, duration_ms: int = 800, color: Optional[str | tuple[int, int, int]] = None) -> None:  # pragma: no cover
+    def play_effect(
+        self,
+        name: str,
+        duration_ms: int = 800,
+        color: Optional[str | tuple[int, int, int]] = None,
+        emotions: Optional[list[str]] = None,
+    ) -> None:  # pragma: no cover
         pass

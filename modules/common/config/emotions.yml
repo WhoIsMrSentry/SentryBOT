@@ -37,15 +37,15 @@ render:
   joy:        { oled: happy,      palette: joy,          effect: RAINBOW_CYCLE,  ears: joy,       tone: joy,      rgb: [0, 200, 60] }
   sadness:    { oled: sad,        palette: sadness,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [40, 80, 160] }
   curiosity:  { oled: focused,    palette: curiosity,    effect: COMET,          ears: curiosity, tone: neutral,  rgb: [0, 180, 200] }
-  tired:      { oled: sleepy,     palette: neutral,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [80, 40, 120] }
+  tired:      { oled: tired,      palette: neutral,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [80, 40, 120] }
   fear:       { oled: scared,     palette: fear,         effect: PULSE,          ears: fear,      tone: sadness,  rgb: [200, 0, 120] }
   anger:      { oled: angry,      palette: anger,        effect: PULSE,          ears: anger,     tone: excited,  rgb: [220, 40, 0] }
   furious:    { oled: furious,    palette: anger,        effect: METEOR,         ears: anger,     tone: excited,  rgb: [255, 0, 0] }
   surprise:   { oled: surprised,  palette: surprise,     effect: TWINKLE,        ears: surprise,  tone: excited,  rgb: [255, 200, 0] }
   excitement: { oled: excited,    palette: excitement,   effect: RAINBOW_CYCLE,  ears: surprise,  tone: excited,  rgb: [255, 120, 0] }
-  love:       { oled: happy,      palette: love,         effect: PULSE,          ears: joy,       tone: joy,      rgb: [255, 40, 100] }
+  love:       { oled: lovely,     palette: love,         effect: PULSE,          ears: joy,       tone: joy,      rgb: [255, 40, 100] }
   disgust:    { oled: worried,    palette: disgust,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [120, 160, 0] }
-  confusion:  { oled: disoriented,palette: confusion,    effect: TWINKLE,        ears: curiosity, tone: neutral,  rgb: [160, 0, 200] }
+  confusion:  { oled: confused,   palette: confusion,    effect: TWINKLE,        ears: curiosity, tone: neutral,  rgb: [160, 0, 200] }
   worried:    { oled: worried,    palette: nervousness,  effect: BREATHE,        ears: fear,      tone: sadness,  rgb: [180, 100, 0] }
   bored:      { oled: bored,      palette: neutral,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [60, 60, 60] }
 

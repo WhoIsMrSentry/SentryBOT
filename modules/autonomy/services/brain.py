@@ -587,8 +587,8 @@ class AutonomyBrain(
         }
         oled_anim_map = {
             "blink": "blink",
-            "look_around": "scan",
-            "monologue": "emotive",
+            "look_around": "scanning",
+            "monologue": "thinking",
         }
         oled_bitmap_map = {
             "stretch": "look_up",
