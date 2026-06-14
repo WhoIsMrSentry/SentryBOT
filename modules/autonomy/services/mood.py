@@ -72,12 +72,15 @@ class MoodManager:
     def get_dominant_emotion(self):
         # Determine the dominant emotion for LEDs / eyes / body language.
         # Order encodes priority: high-arousal negative states win first.
+        mood_cfg = self.config.get("defaults", {}).get("mood", {}) if isinstance(self.config.get("defaults"), dict) else {}
+        anger_thresh = float(mood_cfg.get("anger_threshold", 45))
+        furious_thresh = float(mood_cfg.get("furious_threshold", 75))
         anger = self.state.get("anger", 0)
-        if anger > 75:
+        if anger > furious_thresh:
             return "furious"
         if self.state["fear"] > 50:
             return "fear"
-        if anger > 45:
+        if anger > anger_thresh:
             return "anger"
         if self.state["happiness"] > 70:
             return "joy"

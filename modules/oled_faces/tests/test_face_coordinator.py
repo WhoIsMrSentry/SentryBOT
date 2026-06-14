@@ -59,6 +59,14 @@ def test_listen_session_blocks_activity_clear():
     assert c.should_clear_activity(time.time(), 0.0) is False
 
 
+def test_anger_emotion_applies_during_listen_session():
+    c = _coord()
+    c.on_event("speech.listen.start", OledAction("animation", "listening"), 80)
+    d = c.on_event("emotion:anger", OledAction("bitmap", "angry"), 65)
+    assert d.apply is True
+    assert d.action.name == "angry"
+
+
 def test_speech_end_uses_baseline_not_forced_normal():
     c = _coord()
     baseline = OledAction("bitmap", "happy")

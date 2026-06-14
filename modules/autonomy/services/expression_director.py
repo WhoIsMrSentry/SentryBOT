@@ -37,6 +37,16 @@ class ExpressionDirector:
     def __init__(self, client: Any) -> None:
         self.client = client
 
+    def _render_leds(self, canon: str, effect: str, color: list[int]) -> bool:
+        """Prefer palette emote; fall back to effect+RGB animate."""
+        if hasattr(self.client, "emote_neopixel"):
+            if _safe("emote", lambda: self.client.emote_neopixel([canon], duration=0.25)):
+                return True
+        return _safe(
+            "leds",
+            lambda: self.client.set_neopixel(effect, emotions=[canon], color=color),
+        )
+
     def express(
         self,
         emotion: str,
@@ -58,11 +68,11 @@ class ExpressionDirector:
             effect, oled, color, tone = "BREATHE", "normal", [120, 120, 140], "neutral"
 
         modalities = []
-        if _safe("leds", lambda: self.client.set_neopixel(effect, emotions=[canon], color=color)):
+        if self._render_leds(canon, effect, color):
             modalities.append("leds")
         if _safe("eyes", lambda: self.client.oled_show(oled)):
             modalities.append("eyes")
-        # interaction event drives ears (piservo bridge) + any other subscribers
+        # interaction event drives ears (piservo bridge); LEDs handled above
         if _safe("ears", lambda: self.client.push_interaction_event(f"emotion:{canon}")):
             modalities.append("ears")
         if move_head is not None:

@@ -107,11 +107,13 @@ event_map:
   owner.temp_revoked: { mode: bitmap, name: worried }
   owner.locked: { mode: bitmap, name: scared }
   emotion:happy: { mode: bitmap, name: happy }
+  emotion:joy: { mode: bitmap, name: happy }
   emotion:sad: { mode: bitmap, name: sad }
   emotion:surprised: { mode: bitmap, name: surprised }
   emotion:sleepy: { mode: bitmap, name: sleepy }
   emotion:confused: { mode: bitmap, name: confused }
   emotion:angry: { mode: bitmap, name: angry }
+  emotion:anger: { mode: bitmap, name: angry }
   emotion:furious: { mode: bitmap, name: furious }
   emotion:bored: { mode: bitmap, name: bored }
   emotion:despair: { mode: bitmap, name: despair }
