@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import time
 
+from modules.oled_faces.config_loader import load_config
 from modules.oled_faces.services.face_coordinator import FaceCoordinator
 from modules.oled_faces.services.mapper import FaceMapper, OledAction
 
 
-def _coord(cfg=None):
-    return FaceCoordinator(FaceMapper(cfg or {}), cfg or {"emotion_hold_s": 0.0, "session_hold_s": 10.0})
+def _coord(overrides=None):
+    cfg = load_config()
+    if overrides:
+        cfg.update(overrides)
+    return FaceCoordinator(FaceMapper(cfg), cfg)
 
 
 def test_emotion_event_uses_vocab_not_fallback():
@@ -23,6 +27,36 @@ def test_speech_session_blocks_emotion_during_speaking():
     c.on_event("speech.start", OledAction("animation", "emotive"), 70)
     d = c.on_event("emotion:sad", OledAction("bitmap", "sad"), 65)
     assert d.apply is False
+
+
+def test_speech_start_maps_to_thinking():
+    c = _coord()
+    d = c.on_event("speech.start", OledAction("animation", "emotive"), 70)
+    assert d.apply is True
+    assert d.action.mode == "animation"
+    assert d.action.name == "thinking"
+
+
+def test_wakeword_starts_listen_session():
+    c = _coord()
+    d = c.on_event("wakeword.detected", OledAction("animation", "scan"), 70)
+    assert d.action.name == "listening"
+    assert c.listen_session_active() is True
+
+
+def test_listen_end_returns_baseline():
+    c = _coord()
+    c.on_event("wakeword.detected", OledAction("animation", "listening"), 80)
+    baseline = OledAction("bitmap", "happy")
+    d = c.on_event("speech.listen.end", OledAction("bitmap", "normal"), 70, baseline=baseline)
+    assert d.action.name == "happy"
+    assert c.listen_session_active() is False
+
+
+def test_listen_session_blocks_activity_clear():
+    c = _coord()
+    c.on_event("speech.listen.start", OledAction("animation", "listening"), 80)
+    assert c.should_clear_activity(time.time(), 0.0) is False
 
 
 def test_speech_end_uses_baseline_not_forced_normal():
