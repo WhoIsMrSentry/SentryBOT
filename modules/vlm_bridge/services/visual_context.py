@@ -36,6 +36,7 @@ class PersonContext:
     last_seen: str = ""
     is_follow_target: bool = False
     appearance_notes: str = ""
+    emotion: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
