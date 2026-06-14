@@ -203,3 +203,6 @@ rules:
     action: { effect: { name: COMET, duration_ms: 700 } }
     priority: low
     cooldown_ms: 4000
+
+  # emotion:* and vision.person_emotion_* events drive piservo ears via gateway bridge.
+  # NeoPixel colors are set directly by autonomy express() / set_neopixel — no LED rules here.
