@@ -13,6 +13,10 @@ class _RecordingClient:
     def set_neopixel(self, effect, emotions=None, color=None, duration=None):
         self.calls.append(("leds", effect, tuple(emotions or []), tuple(color or ())))
 
+    def emote_neopixel(self, emotions, duration=0.25):
+        self.calls.append(("emote", tuple(emotions or ()), duration))
+        return {"ok": True}
+
     def oled_show(self, name):
         self.calls.append(("eyes", name))
 
@@ -35,10 +39,9 @@ def test_express_fires_all_modalities_with_canonical_label():
     canon = director.express("happy", say="merhaba", move_head=(100, 90))
     assert canon == "joy"
     kinds = client.kinds()
-    assert {"leds", "eyes", "event", "head", "voice"} <= set(kinds)
-    # LEDs and the ear-driving interaction event both use the canonical label
-    leds = next(c for c in client.calls if c[0] == "leds")
-    assert leds[2] == ("joy",)
+    assert {"emote", "eyes", "event", "head", "voice"} <= set(kinds)
+    emote = next(c for c in client.calls if c[0] == "emote")
+    assert emote[1] == ("joy",)
     assert ("event", "emotion:joy") in client.calls
     voice = next(c for c in client.calls if c[0] == "voice")
     assert voice[2] == "joy"  # TTS tone resolved from vocab
@@ -51,7 +54,7 @@ def test_express_without_speech_or_head_skips_those():
     kinds = set(client.kinds())
     assert "voice" not in kinds
     assert "head" not in kinds
-    assert {"leds", "eyes", "event"} <= kinds
+    assert {"emote", "eyes", "event"} <= kinds
 
 
 def test_failing_modality_does_not_block_others():
@@ -63,8 +66,8 @@ def test_failing_modality_does_not_block_others():
     director = ExpressionDirector(client)
     canon = director.express("surprise")
     assert canon == "surprise"
-    # eyes failed, but LEDs + ears still fired
-    assert "leds" in client.kinds()
+    # eyes failed, but emote + ears still fired
+    assert "emote" in client.kinds()
     assert ("event", "emotion:surprise") in client.calls
 
 

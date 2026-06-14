@@ -282,7 +282,7 @@ class AutonomyBrain(
         self._apply_emotion_visual_state(target_emotion)
         # Try to run a matching scene for the dominant emotion (e.g. emotion_joy)
         try:
-            scene_name = f"emotion_{target_emotion}"
+            scene_name = self._emotion_scene_name(target_emotion)
             ran = self._run_scene(scene_name, context={"emotion": target_emotion})
             if ran:
                 # emit a scene-level interaction event for other subsystems
@@ -292,6 +292,16 @@ class AutonomyBrain(
                     pass
         except Exception:
             logger.debug("Failed to run emotion scene %s", scene_name, exc_info=True)
+
+    _EMOTION_SCENE_ALIASES = {
+        "sadness": "emotion_sad",
+        "anger": "emotion_angry",
+    }
+
+    @classmethod
+    def _emotion_scene_name(cls, emotion: str) -> str:
+        key = str(emotion or "neutral").strip().lower()
+        return cls._EMOTION_SCENE_ALIASES.get(key, f"emotion_{key}")
 
     def express(self, emotion: str, *, say: Optional[str] = None, language: Optional[str] = None) -> str:
         """Deliberately express an emotion across all modalities at once.
@@ -341,6 +351,115 @@ class AutonomyBrain(
         if any(tok in low for tok in praise):
             return "user_praise"
         return None
+
+    def _maybe_emit_speech_excited(self, text: str, sentiment_event: Optional[str]) -> None:
+        """Emit autonomy.excited only when configured — not on every utterance."""
+        cfg = self.config.get("speech_reactions", {}) if isinstance(self.config.get("speech_reactions"), dict) else {}
+        if sentiment_event == "user_praise" and cfg.get("excited_on_praise", True):
+            self.client.push_interaction_event("autonomy.excited")
+            return
+        if cfg.get("excited_on_speech", False):
+            self.client.push_interaction_event("autonomy.excited")
+            return
+        if cfg.get("excited_on_questions", False):
+            low = str(text or "").lower()
+            if "?" in text or any(w in low for w in ("nedir", "nasıl", "what", "who", "how")):
+                self.client.push_interaction_event("autonomy.excited")
+
+    _EMOTION_COMMAND_PHRASES = (
+        ("anger", ("sinirlen", "sinirli ol", "kizgin ol", "kızgın ol", "ofkeli ol", "öfkeli ol", "angry ol", "sinirli")),
+        ("furious", ("cok sinirli", "çok sinirli", "delir", "cildir", "öfke", "ofke")),
+        ("joy", ("mutlu ol", "sevin", "neselen", "neşelen", "gul", "gül")),
+        ("sadness", ("uzul", "üzül", "mutsuz ol", "uzgun ol", "üzgün ol")),
+        ("fear", ("kork", "korkut", "korkma")),
+        ("surprise", ("sasir", "şaşır", "saskin", "şaşkın")),
+        ("bored", ("sikil", "sıkıl", "sikildim", "sıkıldım")),
+        ("tired", ("yorul", "uyu", "uykum var")),
+        ("love", ("beni sev", "askim ol", "aşkım ol")),
+        ("excitement", ("heyecanlan", "heyecanli ol", "heyecanlı ol")),
+        ("confusion", ("kafan karisik", "kafan karışık", "anlamadim", "anlamadım")),
+        ("worried", ("endiselen", "endişelen", "kaygilan")),
+        ("curiosity", ("merak et", "merakli ol")),
+    )
+
+    @classmethod
+    def _emotion_command_for_text(cls, text: str) -> Optional[str]:
+        low = str(text or "").lower().strip()
+        if not low:
+            return None
+        for canon, phrases in cls._EMOTION_COMMAND_PHRASES:
+            if any(p in low for p in phrases):
+                return canon
+        try:
+            from modules.common.emotion_vocab import get_vocab
+
+            vocab = get_vocab()
+            for token in low.replace(",", " ").split():
+                key = token.strip("!.?")
+                if len(key) < 4:
+                    continue
+                canon = vocab.canonical(key)
+                if canon not in {"neutral", "curiosity"}:
+                    return canon
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _emotion_command_reply(canon: str, lang: str) -> str:
+        tr_replies = {
+            "anger": "Tamam, sinirliyim! Ne istiyorsun?",
+            "furious": "Çok sinirliyim! Dikkat et!",
+            "joy": "Harika, mutluyum!",
+            "sadness": "Tamam... biraz üzgünüm.",
+            "fear": "Korkuyorum...",
+            "surprise": "Vay! Şaşırdım!",
+            "bored": "Sıkıldım galiba.",
+            "tired": "Yorgunum...",
+            "love": "Seni de seviyorum!",
+            "excitement": "Heyecanlandım!",
+            "confusion": "Kafam karıştı...",
+            "worried": "Biraz endişeliyim.",
+            "curiosity": "Merak ettim!",
+            "neutral": "Tamam.",
+        }
+        en_replies = {
+            "anger": "Fine, I'm angry! What do you want?",
+            "furious": "I'm furious! Watch out!",
+            "joy": "I'm happy!",
+            "neutral": "Okay.",
+        }
+        replies = tr_replies if str(lang or "tr").startswith("tr") else en_replies
+        return replies.get(str(canon or "neutral"), replies.get("neutral", "Okay."))
+
+    def _handle_emotion_command(self, text: str, lang: str) -> bool:
+        cmd = self._emotion_command_for_text(text)
+        if not cmd:
+            return False
+        mood_axis = {
+            "anger": "anger",
+            "furious": "anger",
+            "joy": "happiness",
+            "fear": "fear",
+            "sadness": "sadness",
+            "excitement": "happiness",
+            "love": "happiness",
+        }
+        axis = mood_axis.get(cmd)
+        if axis:
+            self.mood.modify(axis, 40)
+        reply = self._emotion_command_reply(cmd, lang)
+        canon = self.express(cmd, say=reply, language=lang)
+        self.state["last_emotion"] = canon
+        self.client.update_emotions([canon])
+        visual = self._normalize_emotion_name(canon)
+        try:
+            self._run_scene(f"emotion_{visual}", context={"emotion": canon})
+        except Exception:
+            pass
+        self.memory.add_event(f"User asked me to express: {cmd}")
+        logger.info("Emotion command handled: %s -> %s", text, canon)
+        return True
 
     def _think(self):
         now = time.time()
@@ -750,12 +869,6 @@ class AutonomyBrain(
 
         logger.info("Heard: %s", text)
         self.state["last_interaction"] = time.time()
-        self.mood.modify("happiness", 5)
-        sentiment_event = self._sentiment_event_for_text(text)
-        if sentiment_event:
-            self.appraise_event(sentiment_event)
-        self.memory.add_event(f"User said: {text}")
-        self._log_conversation(text)
         lang = str(source_lang or self.state.get("last_speech_language") or "tr")
         wake_only = len(strip_wakewords(low).split()) < 1 and contains_wakeword(low)
         if wake_only:
@@ -766,7 +879,23 @@ class AutonomyBrain(
                     self.client.start_speech_listening()
                 except Exception:
                     pass
+                with self._speech_req_lock:
+                    if self._active_speech_req_id == request_id:
+                        self._speech_busy = False
                 return
+
+        if self._handle_emotion_command(text, lang):
+            with self._speech_req_lock:
+                if self._active_speech_req_id == request_id:
+                    self._speech_busy = False
+            return
+
+        self.mood.modify("happiness", 5)
+        sentiment_event = self._sentiment_event_for_text(text)
+        if sentiment_event:
+            self.appraise_event(sentiment_event)
+        self.memory.add_event(f"User said: {text}")
+        self._log_conversation(text)
         speaker = self._guess_active_person()
         if speaker:
             self.state["last_speaker"] = speaker
@@ -775,7 +904,7 @@ class AutonomyBrain(
             if sentiment_event:
                 self._apply_interaction_feedback(sentiment_event, speaker, text)
 
-        self.client.push_interaction_event("autonomy.excited")
+        self._maybe_emit_speech_excited(text, sentiment_event)
 
         blocked_response = self._maybe_block_request(text)
         if blocked_response:
@@ -835,9 +964,11 @@ class AutonomyBrain(
                         logger.info("Agent Core handled speech with full pipeline.")
                         self.memory.add_event(f"Agent replied: {response_text}")
                         self._remember_person_chat(speaker, response_text, role="assistant")
-                        # Final TTS uses STT session language (not per-chunk text detection).
+                        tone = self._tone_profile(
+                            self.state.get("last_emotion") or self.mood.get_dominant_emotion()
+                        )
                         self.agent.speech_arbiter.enqueue_final(
-                            response_text, language=lang,
+                            response_text, language=lang, tone=tone,
                         )
                         return
                 except Exception as exc:
