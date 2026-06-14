@@ -36,7 +36,7 @@ def test_vision_arbiter_blocks_concurrent_vlm_tools():
     registry = _build_registry(arbiter)
 
     arbiter.acquire("external", ttl_s=10.0)
-    with patch.object(registry, "_camera_input_available", return_value=True):
+    with patch.object(registry, "_vision_input_available", return_value=True):
         result = registry.execute("describe_scene", {})
     assert "vision arbiter busy" in result
 
