@@ -182,6 +182,8 @@ def get_router(
         """Trigger a one-off analysis of the current view (local mode)."""
         if not processor:
             raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not processor.is_local_camera_available():
+            raise HTTPException(status_code=503, detail="camera_unavailable")
         results = processor.analyze_snapshot()
         return {"results": results}
 
@@ -190,7 +192,9 @@ def get_router(
         """Enable continuous blind mode description."""
         if not processor:
              raise HTTPException(status_code=503, detail="Vision processor not initialized")
-        
+        if not getattr(processor, "_camera_hardware_available", False):
+            raise HTTPException(status_code=503, detail="camera_disabled")
+
         processor.blind_mode_enabled = True
         processor.start_stream_processing()
         return {"status": "Blind mode started"}
@@ -331,8 +335,8 @@ def get_router(
         """Return the latest cached VisionFrameContext if available."""
         if not processor:
             raise HTTPException(status_code=503, detail="Vision processor not initialized")
-        if not processor.is_camera_input_available():
-            return {"available": False, "context": None, "reason": "camera_unavailable"}
+        if not processor.has_vision_context():
+            return {"available": False, "context": None, "reason": "no_vision_context"}
         ctx = processor.get_latest_visual_context()
         if ctx is None:
             return {"available": False, "context": None, "reason": "No context cached yet"}
@@ -343,7 +347,7 @@ def get_router(
         """Trigger a fresh VLM analysis of the current camera frame."""
         if not processor:
             raise HTTPException(status_code=503, detail="Vision processor not initialized")
-        if not processor.is_camera_input_available():
+        if not processor.is_local_camera_available():
             return {"ok": False, "context_available": False, "context": None, "reason": "camera_unavailable"}
 
         if hasattr(processor, "refresh_visual_context"):
@@ -361,7 +365,7 @@ def get_router(
         question = body.get("question", "").strip()
         if not question:
             raise HTTPException(status_code=400, detail="question required")
-        if not processor.is_camera_input_available():
+        if not processor.is_local_camera_available():
             return {"ok": False, "answer": "Kamera görüntüsü şu an kullanılamıyor.", "reason": "camera_unavailable"}
 
         # Try to get current frame first
