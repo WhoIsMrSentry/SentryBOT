@@ -20,6 +20,8 @@ _PASSIVE_OPERATIONAL: Set[str] = {
 _LISTEN_START = {"wakeword.detected", "speech.listen.start"}
 _LISTEN_END = {"speech.listen.end"}
 
+_FORCE_EMOTION_LABELS = {"anger", "angry", "furious", "fear", "scared", "surprise", "surprised"}
+
 _SPEAK_START = {"speech.start"}
 _SPEAK_END = {"speech.end"}
 
@@ -75,11 +77,13 @@ class FaceCoordinator:
         if key.startswith("emotion:"):
             label = key.split(":", 1)[1]
             mood_action = self.mapper.from_emotions([label])
-            if self._listen_active(now) or self._speak_active(now):
+            force_emotion = label in _FORCE_EMOTION_LABELS
+            if (self._listen_active(now) or self._speak_active(now)) and not force_emotion:
                 return FaceDecision(action=mood_action, priority=priority, source="event", apply=False)
-            if not self._emotion_stable(mood_action.name, now):
+            if not force_emotion and not self._emotion_stable(mood_action.name, now):
                 return FaceDecision(action=mood_action, priority=priority, source="event", apply=False)
-            return FaceDecision(action=mood_action, priority=max(priority, 62), source="event")
+            boosted = 88 if force_emotion else max(priority, 62)
+            return FaceDecision(action=mood_action, priority=boosted, source="event")
 
         if key in {"autonomy.blink", "autonomy.look_around", "autonomy.stretch"}:
             return FaceDecision(action=action, priority=min(priority, 45), source="event")
