@@ -159,6 +159,54 @@ class ServiceClient:
     def arduino_send(self, payload: dict):
         return self._post("arduino", "/send", payload)
 
+    @staticmethod
+    def _parse_rgb(color) -> tuple[int, int, int] | None:
+        if isinstance(color, (list, tuple)) and len(color) >= 3:
+            try:
+                return (int(color[0]) & 255, int(color[1]) & 255, int(color[2]) & 255)
+            except (TypeError, ValueError):
+                return None
+        if isinstance(color, str):
+            s = color.strip()
+            if s.startswith("#") and len(s) >= 7:
+                try:
+                    v = int(s[1:7], 16)
+                    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
+                except ValueError:
+                    return None
+            if "," in s:
+                parts = [p.strip() for p in s.split(",")]
+                if len(parts) >= 3:
+                    try:
+                        return (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
+                    except ValueError:
+                        return None
+        return None
+
+    def animate_neopixel(
+        self,
+        effect: str,
+        *,
+        color=None,
+        emotions=None,
+        segment: str | None = None,
+        iterations: int | None = None,
+    ):
+        url = self.urls.get("neopixel")
+        if not url:
+            return self.set_interaction_effect(str(effect), force=True, color=color, emotions=emotions)
+        payload: dict = {"name": str(effect or "PULSE").strip().upper() or "PULSE"}
+        rgb = self._parse_rgb(color)
+        if rgb is not None:
+            payload["r"], payload["g"], payload["b"] = rgb
+        if emotions:
+            payload["emotions"] = [str(x) for x in emotions if str(x).strip()]
+        if segment:
+            payload["segment"] = str(segment)
+        if iterations is not None:
+            payload["iterations"] = int(iterations)
+        return self._post("neopixel", "/animate", payload)
+
     def set_neopixel(self, effect, emotions=None, color=None, duration=None):
         name = str(effect or "PULSE").strip().upper() or "PULSE"
         duration_ms = 800
@@ -167,11 +215,47 @@ class ServiceClient:
                 duration_ms = max(200, int(float(duration) * 1000))
             except (TypeError, ValueError):
                 duration_ms = 800
-        return self.set_interaction_effect(name, duration_ms=duration_ms, force=True)
+        rgb = self._parse_rgb(color)
+        if rgb is not None and self.urls.get("neopixel"):
+            return self.animate_neopixel(name, color=rgb, emotions=emotions)
+        return self.set_interaction_effect(
+            name,
+            duration_ms=duration_ms,
+            force=True,
+            color=color,
+            emotions=emotions,
+        )
+
+    def emote_neopixel(self, emotions: list[str], duration: float = 0.25):
+        """Play palette-based emotion colors via /neopixel/emote."""
+        url = self.urls.get("neopixel")
+        if not url or not emotions:
+            return None
+        try:
+            import requests
+
+            params: dict = {"duration": float(duration)}
+            if len(emotions) == 1:
+                params["emotion"] = str(emotions[0])
+            else:
+                params["emotions"] = [str(e) for e in emotions if str(e).strip()]
+            return requests.post(f"{url}/emote", params=params, timeout=self._timeout("default_post_s"))
+        except Exception:
+            return None
 
     def set_neopixel_segment_effect(self, segment: str, effect: str, color=None, emotions=None, iterations=None):
-        _ = (segment, color, emotions, iterations)
-        return self.set_neopixel(effect)
+        name = str(effect or "PULSE").strip().upper() or "PULSE"
+        rgb = self._parse_rgb(color)
+        url = self.urls.get("neopixel")
+        if url:
+            return self.animate_neopixel(
+                name,
+                color=rgb,
+                emotions=emotions,
+                segment=str(segment or "").strip() or None,
+                iterations=iterations,
+            )
+        return self.set_neopixel(name, emotions=emotions, color=color)
 
     def fill_neopixel_segment_color(self, segment: str, r: int, g: int, b: int):
         url = self.urls.get("neopixel")
@@ -288,8 +372,26 @@ class ServiceClient:
     def push_interaction_event(self, event_type, data=None):
         return self._post("interactions", "/event", {"type": event_type, "data": data})
 
-    def set_interaction_effect(self, name: str, duration_ms: int = 800, force: bool = False):
-        payload = {"name": str(name), "duration_ms": int(duration_ms), "force": bool(force)}
+    def set_interaction_effect(
+        self,
+        name: str,
+        duration_ms: int = 800,
+        force: bool = False,
+        color=None,
+        emotions=None,
+    ):
+        payload: dict = {
+            "name": str(name),
+            "duration_ms": int(duration_ms),
+            "force": bool(force),
+        }
+        rgb = self._parse_rgb(color)
+        if rgb is not None:
+            payload["r"], payload["g"], payload["b"] = rgb
+        elif color is not None:
+            payload["color"] = color
+        if emotions:
+            payload["emotions"] = [str(x) for x in emotions if str(x).strip()]
         return self._post("interactions", "/effect", payload)
 
     def set_interaction_base(self, name: str, color=None):
