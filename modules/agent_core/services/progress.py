@@ -53,8 +53,8 @@ _ACK_TEMPLATES_EN = [
 ]
 
 _TOOL_START_TEMPLATES_TR: Dict[str, str] = {
-    "get_vision": "Kameradan görüntü alıyorum.",
-    "get_visual_context": "Çevreyi inceliyorum, kameradan son görüntüyü alıyorum.",
+    "get_vision": "Görüş verisini alıyorum.",
+    "get_visual_context": "Çevreyi inceliyorum, son görüntü önbelleğine bakıyorum.",
     "get_sensor_data": "Sensör verilerini okuyorum.",
     "search_memory": "Hafızamı tarıyorum.",
     "move_head": "Kafamı çeviriyorum.",
@@ -79,8 +79,8 @@ _VLM_PROCESSING_TEMPLATES_TR = [
 ]
 
 _TOOL_START_TEMPLATES_EN: Dict[str, str] = {
-    "get_vision": "Capturing an image from the camera.",
-    "get_visual_context": "Looking around and checking the latest view.",
+    "get_vision": "Fetching vision data.",
+    "get_visual_context": "Checking the latest vision cache.",
     "get_sensor_data": "Reading sensor data.",
     "search_memory": "Searching my memory.",
     "move_head": "Turning my head.",

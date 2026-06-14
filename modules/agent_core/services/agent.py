@@ -194,7 +194,7 @@ class AgentOrchestrator:
         default_modules = router_cfg.get("default_modules", ["autonomy", "agent_core"])
         if not isinstance(default_modules, list):
             default_modules = ["autonomy", "agent_core"]
-        if not self._camera_input_available():
+        if not self._vision_input_available():
             default_modules = [m for m in default_modules if str(m).strip().lower() != "vlm_bridge"]
 
         profile_overrides = tri_cfg.get("profiles") if isinstance(tri_cfg.get("profiles"), dict) else None
@@ -552,16 +552,19 @@ class AgentOrchestrator:
 
     def _camera_input_available(self) -> bool:
         try:
-            from modules.gateway.url import gateway_url, resolve_gateway_base_url
+            from modules.common.vision_availability import camera_live_available
+            from modules.gateway.url import resolve_gateway_base_url
 
-            base = resolve_gateway_base_url()
-            import requests
+            return camera_live_available(resolve_gateway_base_url(), timeout_s=0.35)
+        except Exception:
+            return False
 
-            resp = requests.get(gateway_url(base, "/camera/healthz"), timeout=0.35)
-            if resp.status_code != 200:
-                return False
-            data = resp.json() if resp.content else {}
-            return bool((data or {}).get("ok", False))
+    def _vision_input_available(self) -> bool:
+        try:
+            from modules.common.vision_availability import vision_input_available
+            from modules.gateway.url import resolve_gateway_base_url
+
+            return vision_input_available(resolve_gateway_base_url(), timeout_s=0.5)
         except Exception:
             return False
 
