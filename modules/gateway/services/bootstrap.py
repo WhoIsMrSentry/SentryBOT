@@ -49,6 +49,20 @@ def _merge_with_agent_section(base_cfg: Dict[str, Any], section_name: str) -> Di
         return merged
 
 
+def _camera_hardware_available(cfg: Dict[str, Any]) -> bool:
+    """True only when gateway mounts camera AND merged config has enabled=true."""
+    include = cfg.get("include", {}) if isinstance(cfg.get("include"), dict) else {}
+    if not include.get("camera"):
+        return False
+    try:
+        from modules.camera.config_loader import load_config as load_cam_cfg  # type: ignore
+
+        cam_section = _merge_with_agent_section(load_cam_cfg(None), "camera")
+        return bool(cam_section.get("enabled", False))
+    except Exception:
+        return False
+
+
 def _should_autostart_services() -> bool:
     """Disable heavy background starts unless explicitly enabled.
 
@@ -357,6 +371,8 @@ def _include_esp_link(app: FastAPI, started: Dict[str, object]) -> None:
     logger.info("module esp_link mounted")
 
 def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
+    from pathlib import Path
+
     from modules.neopixel.services.runner import NeoRunner  # type: ignore
     from modules.neopixel.services.driver import NeoDriverConfig  # type: ignore
     from modules.neopixel.config_loader import load_config as load_neo_cfg  # type: ignore
@@ -372,7 +388,15 @@ def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
         backend=str(hw.get("backend", "auto")),
         order=str(hw.get("order", "GRB")),
     )
-    runner = NeoRunner(cfg_obj)
+    preset_meta = ncfg.get("presets_meta", {}) if isinstance(ncfg.get("presets_meta", {}), dict) else {}
+    preset_store = Path(__file__).resolve().parents[2] / "neopixel" / "config" / "config.yml"
+    runner = NeoRunner(
+        cfg_obj,
+        segments=hw.get("segments", []),
+        presets=ncfg.get("presets", {}),
+        preset_store_path=str(preset_store),
+        preset_version=int(preset_meta.get("version", 1)),
+    )
     started["neopixel"] = runner
     try:
         app.include_router(get_neopixel_router(runner))
@@ -382,13 +406,16 @@ def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
     logger.info("module neopixel mounted")
 
 
-def _include_vlm_bridge(app: FastAPI, started: Dict[str, object]) -> None:
+def _include_vlm_bridge(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
     from modules.vlm_bridge.config_loader import load_config as load_vlm_cfg  # type: ignore
     from modules.vlm_bridge.services.processor import VisionProcessor  # type: ignore
     from modules.vlm_bridge.api.router import get_router as get_vlm_router  # type: ignore
 
     vcfg = load_vlm_cfg(None)
     processor = VisionProcessor(vcfg)
+    cam_hw = _camera_hardware_available(cfg)
+    if hasattr(processor, "set_camera_hardware_available"):
+        processor.set_camera_hardware_available(cam_hw)
     ardu = started.get("arduino")
     if ardu is not None and hasattr(processor, "set_track_callback") and hasattr(ardu, "track"):
         def _track_callback(head_pan: float, head_tilt: float, drive: int = 0):
@@ -398,11 +425,17 @@ def _include_vlm_bridge(app: FastAPI, started: Dict[str, object]) -> None:
                 return None
         processor.set_track_callback(_track_callback)
 
-    if _should_autostart_services() and str(vcfg.get("vision", {}).get("processing_mode", "local")).strip().lower() == "local":
-        try:
-            processor.start_stream_processing()
-        except Exception as exc:
-            logger.warning("vlm_bridge stream start skipped: %s", exc)
+    if _should_autostart_services():
+        vision_cfg = vcfg.get("vision", {}) if isinstance(vcfg.get("vision", {}), dict) else {}
+        mode = str(vision_cfg.get("processing_mode", "remote")).strip().lower()
+        hybrid = bool(vision_cfg.get("hybrid_local_capture", False))
+        if cam_hw and (mode == "local" or hybrid):
+            try:
+                processor.start_stream_processing()
+            except Exception as exc:
+                logger.warning("vlm_bridge stream start skipped: %s", exc)
+        else:
+            logger.info("vlm_bridge stream skipped (camera off or remote-only mode)")
     # Mount router and expose processor so other modules can reference it
     try:
         app.include_router(
@@ -547,6 +580,7 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.camera.services.onsensor_bus import get_default_bus  # type: ignore
     from modules.camera.api import get_router as get_cam_router  # type: ignore
     ccfg = _merge_with_agent_section(load_cam_cfg(None), "camera")
+    camera_enabled = bool(ccfg.get("enabled", False))
     cap_cfg = CaptureConfig(
         backend=ccfg.get("backend", "auto"),
         source=ccfg.get("source", 0),
@@ -565,11 +599,13 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
     )
     publisher = FramePublisher()
     capture = CameraCapture(cap_cfg, publisher)
-    if _should_autostart_services():
+    if camera_enabled and _should_autostart_services():
         capture.start()
+    elif not camera_enabled:
+        logger.info("camera capture disabled (config enabled=false)")
     else:
         logger.info("camera auto-start skipped (autostart disabled)")
-    app.include_router(get_cam_router(capture, cap_cfg.fps_target), prefix="/camera", tags=["camera"])
+    app.include_router(get_cam_router(capture, cap_cfg.fps_target, enabled=camera_enabled), prefix="/camera", tags=["camera"])
     started["camera"] = capture
     started["onsensor_bus"] = get_default_bus()
 
@@ -584,7 +620,7 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
         classes_of_interest=tuple(imx_cfg_raw.get("classes_of_interest", []) or []),
     )
     runner = Imx500Runner(imx_cfg, bus=started["onsensor_bus"], picam=getattr(capture, "_picam", None))
-    if imx_cfg.enabled and _should_autostart_services():
+    if imx_cfg.enabled and camera_enabled and _should_autostart_services():
         try:
             runner.start()
         except Exception as exc:
@@ -788,7 +824,7 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
     if include.get("camera"):
         _try(lambda: _include_camera(app, started), "camera")
     if include.get("vlm_bridge"):
-        _try(lambda: _include_vlm_bridge(app, started), "vlm_bridge")
+        _try(lambda: _include_vlm_bridge(app, started, cfg), "vlm_bridge")
     if include.get("neopixel"):
         _try(lambda: _include_neopixel(app, started), "neopixel")
     if include.get("interactions"):
