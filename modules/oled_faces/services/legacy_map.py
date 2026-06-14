@@ -89,6 +89,13 @@ def resolve_bitmap(name: str) -> FaceCommand:
     return FaceCommand(mood=mood, gesture=gesture)
 
 
+def resolve_gesture(name: str) -> FaceCommand:
+    key = str(name or "").strip().lower()
+    if key in BLINKS or key in GESTURES_FN:
+        return FaceCommand(gesture=key)
+    return FaceCommand(mood="neutral")
+
+
 def resolve_animation(name: str) -> FaceCommand:
     key = str(name or "").strip().lower()
     if key in _LEGACY_ANIMATIONS:

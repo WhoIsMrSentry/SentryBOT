@@ -10,6 +10,7 @@ from .config_loader import load_config
 from .services.mapper import FaceMapper, OledAction
 from .services.face_renderer import FaceRenderer
 from .services.face_coordinator import FaceCoordinator
+from .services.idle_ambient import IdleAmbientPlayer
 from .services.legacy_map import resolve_mood
 from .api.router import get_router
 
@@ -26,6 +27,7 @@ class xOledFacesService:
         self._expression_arbiter = expression_arbiter
         self.mapper = FaceMapper(self.cfg)
         self.coordinator = FaceCoordinator(self.mapper, self.cfg)
+        self._ambient = IdleAmbientPlayer(self.cfg)
         display_cfg = self.cfg.get("display") if isinstance(self.cfg.get("display"), dict) else {}
         self.display = FaceRenderer(display_cfg)
 
@@ -63,6 +65,8 @@ class xOledFacesService:
             "has_state_store": self.state_store is not None,
             "last_sent": self._last_sent,
             "session_active": self.coordinator.session_active(),
+            "listen_session_active": self.coordinator.listen_session_active(),
+            "speak_session_active": self.coordinator.speak_session_active(),
             "display": self.display.status(),
             "catalog": {
                 "bitmaps": self.mapper.catalog_bitmaps,
@@ -77,7 +81,8 @@ class xOledFacesService:
             return
         action = self.mapper.from_interaction_event(event_type)
         pri = self._priority_for(source="event", event_type=event_type, action=action)
-        baseline = self._baseline_from_store() if str(event_type or "").strip().lower() == "speech.end" else None
+        key = str(event_type or "").strip().lower()
+        baseline = self._baseline_from_store() if key in {"speech.end", "speech.listen.end"} else None
         decision = self.coordinator.on_event(event_type, action, pri, baseline=baseline)
         if decision.apply:
             self._apply(decision.action, priority=decision.priority)
@@ -91,8 +96,34 @@ class xOledFacesService:
         interval_s = float(self.cfg.get("poll_interval_s", 0.7))
         while not self._stop.is_set():
             self._maybe_clear_activity()
+            self._enforce_session_activity()
+            self._maybe_idle_ambient()
             self._sync_from_state_store()
             time.sleep(max(0.05, interval_s))
+
+    def _enforce_session_activity(self) -> None:
+        if self.coordinator.listen_session_active():
+            self.display.pin_activity("listening")
+            want = OledAction(mode="animation", name="listening")
+            if self._last_sent != (want.mode, want.name):
+                self._apply(want, priority=80, force=True)
+            return
+        if self.coordinator.speak_session_active():
+            self.display.pin_activity("thinking")
+            want = OledAction(mode="animation", name="thinking")
+            if self._last_sent != (want.mode, want.name):
+                self._apply(want, priority=74, force=True)
+            return
+        self.display.pin_activity(None)
+
+    def _maybe_idle_ambient(self) -> None:
+        now = time.time()
+        blocked = self.coordinator.session_active()
+        if not blocked and now < self._active_hold_until and self._active_priority > self._ambient.priority:
+            blocked = True
+        action = self._ambient.maybe_action(blocked=blocked)
+        if action is not None:
+            self._apply(action, priority=self._ambient.priority)
 
     def _maybe_clear_activity(self) -> None:
         now = time.time()
@@ -221,7 +252,10 @@ class xOledFacesService:
             self._active_priority = int(priority)
             self._last_mode = mode
             if mode == "animation":
-                self._active_hold_until = now + max(0.2, float(self.cfg.get("animation_hold_s", 1.2)))
+                hold_s = float(self.cfg.get("animation_hold_s", 1.2))
+                if self.coordinator.listen_session_active() or self.coordinator.speak_session_active():
+                    hold_s = max(hold_s, float(self.cfg.get("listen_session_hold_s", 120.0)))
+                self._active_hold_until = now + max(0.2, hold_s)
             else:
                 self._active_hold_until = now + max(0.05, float(self.cfg.get("bitmap_hold_s", 0.25)))
             if mode == "bitmap":
