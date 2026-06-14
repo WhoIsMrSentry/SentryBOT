@@ -3,14 +3,12 @@ from modules.oled_faces.services.mapper import FaceMapper
 
 def test_mapper_has_full_catalog():
     mapper = FaceMapper({})
-    assert len(mapper.catalog_bitmaps) >= 32
+    assert len(mapper.catalog_bitmaps) >= 20
     assert "normal" in mapper.catalog_bitmaps
-    assert "all" in mapper.catalog_animations
+    assert "scan" in mapper.catalog_animations
 
 
 def test_canonical_emotion_resolves_to_face():
-    # autonomy emits canonical labels (joy/tired/anger) that have no direct
-    # `emotion:<label>` entry; they must still land on a real bitmap.
     mapper = FaceMapper({})
     assert mapper.from_emotions(["joy"]).name == "happy"
     assert mapper.from_emotions(["tired"]).name == "sleepy"

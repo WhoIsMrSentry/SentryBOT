@@ -4,9 +4,11 @@ server:
 
 enabled: true
 poll_interval_s: 0.7
-min_switch_interval_s: 0.55
-animation_hold_s: 1.4
-bitmap_hold_s: 0.35
+min_switch_interval_s: 0.8
+animation_hold_s: 2.0
+bitmap_hold_s: 1.2
+emotion_hold_s: 2.5
+session_hold_s: 45.0
 event_cooldown_s: 0.8
 priority_map:
   error: 95
@@ -26,15 +28,7 @@ display:
   width: 128
   height: 64
   contrast: 143 # 0x8F
-  assets_dir: modules/oled_faces/assets
-  bitmaps_subdir: bitmaps
-  # Pre-converted to SSD1306 page-buffer layout for zero-copy transfers.
-  bitmap_format: raw_page
-  bitmap_bit_order: lsb
-  bitmap_mirror_x: false
-  bitmap_mirror_y: false
-  bitmap_invert: false
-  # Panel alignment/orientation tuning (hardware dependent).
+  fps: 24
   column_offset: 0
   seg_remap: true
   com_scan_dec: true
@@ -58,11 +52,10 @@ state_map:
   charging: { mode: bitmap, name: battery }
   charged: { mode: bitmap, name: battery_full }
 
-# interactions + inferred emotion mappings
 event_map:
   wakeword.detected: { mode: animation, name: scan }
   speech.start: { mode: animation, name: emotive }
-  speech.end: { mode: bitmap, name: normal }
+  # speech.end handled by FaceCoordinator -> idle/emotion baseline (not forced neutral)
   vision.person: { mode: bitmap, name: focused }
   autonomy.calm: { mode: bitmap, name: normal }
   autonomy.excited: { mode: bitmap, name: excited }
