@@ -10,20 +10,19 @@
 # canonical -> alias labels that should map onto it
 aliases:
   neutral:    [calm, idle, default, normal]
-  joy:        [happy, happiness, glad, cheerful, amusement, optimism]
-  sadness:    [sad, unhappy, down, grief, disappointment, remorse]
-  curiosity:  [curious, interested, intrigued, realization]
-  tired:      [sleepy, drowsy, fatigued, exhausted]
-  fear:       [scared, afraid, frightened, nervousness, nervous]
-  anger:      [angry, mad, annoyance, annoyed]
-  furious:    [rage, enraged, livid]
-  surprise:   [surprised, shocked, astonished]
-  excitement: [excited, thrilled, energetic]
-  love:       [affection, adoration, admiration, desire, gratitude]
-  disgust:    [disgusted, repulsed, disapproval]
-  confusion:  [confused, disoriented, puzzled, uncertain]
-  worried:    [worry, anxious, concerned]
-  bored:      [boredom, dull, listless]
+  anger:      [angry, mad, annoyance, annoyed, sinirlen, sinirli, kizgin, kızgın, ofkeli, öfkeli, sinirlenme]
+  furious:    [rage, enraged, livid, cok sinirli, çok sinirli, öfke, ofke]
+  surprise:   [surprised, shocked, astonished, sasir, şaşır, saskin, şaşkın]
+  excitement: [excited, thrilled, energetic, heyecanli, heyecanlı]
+  love:       [affection, adoration, admiration, desire, gratitude, sev, seviyorum, askim, aşkım]
+  confusion:  [confused, disoriented, puzzled, uncertain, kafan karisik, kafan karışık, anlamadim]
+  worried:    [worry, anxious, concerned, endiseli, endişeli, kaygili]
+  bored:      [boredom, dull, listless, sikildim, sıkıldım, sikinti]
+  joy:        [happy, happiness, glad, cheerful, amusement, optimism, mutlu, mutlu ol, sevin, neşeli, neseli]
+  sadness:    [sad, unhappy, down, grief, disappointment, remorse, uzul, üzül, mutsuz]
+  fear:       [scared, afraid, frightened, nervousness, nervous, kork, korkut, korkma]
+  tired:      [sleepy, drowsy, fatigued, exhausted, yoruldum, uyu, uykum var]
+  curiosity:  [curious, interested, intrigued, realization, merak, merakli]
 
 # Per-canonical render hints consumed across modules.
 #   oled    -> bitmap/animation name in oled_faces catalog
