@@ -12,7 +12,7 @@ include:
   speech: true
   wakeword: true
   ollama: true
-  camera: true
+  camera: false
   logs: true
   animate: true
   piservo: true

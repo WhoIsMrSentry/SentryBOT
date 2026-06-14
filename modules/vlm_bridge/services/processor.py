@@ -149,7 +149,9 @@ class VisionProcessor:
         self.config = config
         vision_cfg = config.get("vision", {}) if isinstance(config, dict) else {}
 
-        self.processing_mode = str(vision_cfg.get("processing_mode", "local")).strip().lower()
+        self.processing_mode = str(vision_cfg.get("processing_mode", "remote")).strip().lower()
+        self.hybrid_local_capture = bool(vision_cfg.get("hybrid_local_capture", False))
+        self._camera_hardware_available = False
         self.camera_source = vision_cfg.get("camera_source", 0)
         self._max_camera_wait_attempts = max(1, int(vision_cfg.get("max_camera_wait_attempts", 5)))
         self._camera_gave_up = False
@@ -450,6 +452,13 @@ class VisionProcessor:
             self.processing_mode = "remote"
             return {"ok": True, "processing_mode": self.processing_mode}
 
+        if not self._camera_hardware_available:
+            return {
+                "ok": False,
+                "error": "camera_disabled",
+                "processing_mode": self.processing_mode,
+            }
+
         # switch remote -> local
         self.processing_mode = "local"
         self.start_stream_processing()
@@ -511,6 +520,8 @@ class VisionProcessor:
         self._follow_current_bbox = None
 
         if self.processing_mode == "local":
+            if not self._camera_hardware_available:
+                return {"ok": False, "error": "camera_disabled"}
             self.start_stream_processing()
 
         status = self.follow_status()
@@ -537,10 +548,32 @@ class VisionProcessor:
     # -----------------------------------------------------------------
     # Streaming lifecycle
     # -----------------------------------------------------------------
-    def is_camera_input_available(self) -> bool:
-        """True when local vision can read a live camera frame (not gave up / healthz dead)."""
-        if str(self.processing_mode).strip().lower() != "local":
-            return True
+    def set_camera_hardware_available(self, available: bool) -> None:
+        """Set whether live camera hardware is mounted and enabled on the gateway."""
+        self._camera_hardware_available = bool(available)
+        if not self._camera_hardware_available:
+            self._camera_gave_up = False
+
+    def _needs_local_capture(self) -> bool:
+        hybrid = self.hybrid_local_capture and self.processing_mode == "remote"
+        return self.processing_mode == "local" or hybrid
+
+    def has_vision_context(self) -> bool:
+        """True when remote ingest or VLM cache has usable vision data."""
+        try:
+            ctx = self.get_latest_visual_context()
+            if ctx is not None:
+                return True
+        except Exception:
+            pass
+        return bool(self.latest_results)
+
+    def is_local_camera_available(self) -> bool:
+        """True when a live camera frame can be captured (local or hybrid mode)."""
+        if not self._camera_hardware_available:
+            return False
+        if not self._needs_local_capture():
+            return False
         if self._is_http_camera_source():
             ready = self._http_camera_ready()
             if ready and self._camera_gave_up:
@@ -554,9 +587,16 @@ class VisionProcessor:
         thread = self._capture_thread
         return thread is not None and thread.is_alive()
 
+    def is_camera_input_available(self) -> bool:
+        """Backward-compatible alias for live camera availability checks."""
+        return self.is_local_camera_available()
+
     def start_stream_processing(self) -> None:
-        if self.processing_mode != "local":
-            logger.debug("start_stream_processing() ignored in remote mode")
+        if not self._needs_local_capture():
+            logger.debug("start_stream_processing() ignored in remote-only mode")
+            return
+        if not self._camera_hardware_available:
+            logger.info("start_stream_processing skipped: camera hardware not available")
             return
         self._camera_gave_up = False
         if self._capture_thread and self._capture_thread.is_alive():
@@ -566,13 +606,27 @@ class VisionProcessor:
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
-        self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
-        self._inference_thread.start()
+        if self.processing_mode == "local":
+            self._inference_thread = threading.Thread(target=self._inference_loop, daemon=True)
+            self._inference_thread.start()
+            logger.info("Vision processing started (OpenCV face mode)")
+        else:
+            self._inference_thread = threading.Thread(target=self._hybrid_vlm_loop, daemon=True)
+            self._inference_thread.start()
+            logger.info("Vision hybrid capture started (remote infer + local frames)")
 
-        logger.info("Vision processing started (OpenCV face mode)")
+    def _hybrid_vlm_loop(self) -> None:
+        """Capture-only remote mode: periodic Living Vision refresh from local frames."""
+        interval = max(4.0, float(getattr(getattr(self, "vision_sampler", None), "min_interval_s", 5.0)))
+        while not self._stop_event.is_set():
+            try:
+                self._maybe_sample_vlm(list(self.latest_results))
+            except Exception:
+                pass
+            time.sleep(interval)
 
     def stop_stream_processing(self) -> None:
-        if self.processing_mode != "local":
+        if self.processing_mode != "local" and not self.hybrid_local_capture:
             return
         self._stop_event.set()
         if self._capture_thread:
@@ -1177,6 +1231,7 @@ class VisionProcessor:
                     "bbox": bbox,
                     "distance_m": distance,
                     "name": o.get("name", "Unknown"),
+                    "emotion": str(o.get("emotion") or o.get("face_emotion") or "").strip(),
                 }
             )
 
@@ -1539,6 +1594,7 @@ class VisionProcessor:
                         "last_seen": datetime.utcnow().isoformat(),
                         "is_follow_target": bool(item.get("tracked", False)),
                         "appearance_notes": "",
+                        "emotion": str(item.get("emotion", "") or "").strip(),
                     }
                 )
             else:

@@ -14,6 +14,7 @@ try:
 except Exception:  # relative import failed when run as script
     import os
     import sys
+
     _HERE = os.path.dirname(os.path.abspath(__file__))
     _PARENT = os.path.dirname(_HERE)
     # Yerel paket klasörü ve ebeveynini sys.path'e ekle
@@ -23,9 +24,12 @@ except Exception:  # relative import failed when run as script
     from xCameraService import create_app  # type: ignore
     from config_loader import load_config  # type: ignore
 
-app = create_app()
-
 if __name__ == "__main__":
     import uvicorn
+
     cfg = load_config()
-    uvicorn.run(app, host=str(cfg.get("server", {}).get("host", "0.0.0.0")), port=int(cfg.get("server", {}).get("port", 8000)))
+    uvicorn.run(
+        create_app(),
+        host=str(cfg.get("server", {}).get("host", "0.0.0.0")),
+        port=int(cfg.get("server", {}).get("port", 8000)),
+    )
