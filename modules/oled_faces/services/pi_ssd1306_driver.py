@@ -119,6 +119,17 @@ class PiSsd1306Driver:
             end = start + self.width
             self._data(self._buffer[start:end])
 
+    def set_brightness(self, value: int) -> None:
+        """SSD1306 contrast 0..255; used by standby and mood-driven dimming."""
+        if not self._ok or self._bus is None:
+            return
+        level = max(0, min(255, int(value)))
+        if level == self.contrast:
+            return
+        self.contrast = level
+        self._cmd(0x81)
+        self._cmd(level)
+
     def _pil_to_buffer(self, image: Any) -> None:
         img = image.convert("1")
         if img.size != (self.width, self.height):

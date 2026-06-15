@@ -11,7 +11,15 @@ from .eyes.moods import MOODS
 # Legacy bitmap labels still emitted by emotion_vocab / config.
 _MOOD_ALIASES: Dict[str, str] = {
     "normal": "neutral",
-    "excited": "happy",
+    "excited": "wired",
+    "nervous": "nervous",
+    "wired": "wired",
+    "gloomy": "gloomy",
+    "kawaii": "kawaii",
+    "cool": "cool",
+    "devil": "devil",
+    "suspicious": "suspicious",
+    "awe": "awe",
     "look_down": "neutral",
     "look_left": "neutral",
     "look_right": "neutral",
@@ -114,4 +122,4 @@ def resolve_animation(name: str) -> FaceCommand:
 
 
 def resolve_logo() -> FaceCommand:
-    return FaceCommand(mood="attentive", gesture="boot_up")
+    return FaceCommand(mood="attentive", gesture="acknowledge")

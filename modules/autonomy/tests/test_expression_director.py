@@ -86,12 +86,24 @@ class _Mini(AnimationSupportMixin):
         self.mood = _StubMood()
 
 
-def test_eye_saccade_uses_gaze_bitmaps():
+def test_eye_saccade_emits_gesture_interaction_event():
     client = _RecordingClient()
     mini = _Mini(client)
     mini._perform_eye_saccade()
-    eyes = [c for c in client.calls if c[0] == "eyes"]
-    assert eyes and eyes[0][1] in {"look_left", "look_right", "look_up", "look_down"}
+    gestures = [c for c in client.calls if c[0] == "event" and c[1].startswith("gesture:")]
+    assert gestures
+    gaze = gestures[0][1].removeprefix("gesture:")
+    assert gaze in {
+        "look_left",
+        "look_right",
+        "look_up",
+        "look_down",
+        "wink",
+        "wink_left",
+        "wink_right",
+        "blink",
+        "double_blink",
+    }
 
 
 def test_ear_micromovement_emits_emotion_event():

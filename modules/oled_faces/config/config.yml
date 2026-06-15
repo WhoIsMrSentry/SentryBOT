@@ -27,6 +27,9 @@ priority_map:
   emotion:fear: 88
   emotion:angry: 86
   emotion:furious: 90
+  gesture:smoke: 40
+  gesture:laugh: 38
+  activity:editing: 42
 
 display:
   enabled: true
@@ -35,6 +38,7 @@ display:
   width: 128
   height: 64
   contrast: 143 # 0x8F
+  brightness: 255
   fps: 24
   column_offset: 0
   seg_remap: true
@@ -49,44 +53,44 @@ fallback_unknown: normal
 
 idle_ambient:
   enabled: true
-  min_interval_s: 14
-  max_interval_s: 40
-  hold_s: 9
+  use_full_catalog: true
+  min_interval_s: 18
+  max_interval_s: 45
+  hold_s: 6
   priority: 32
-  pool:
-    - { mode: bitmap, name: smoking }
-    - { mode: animation, name: thinking }
-    - { mode: bitmap, name: bored }
-    - { mode: animation, name: searching }
-    - { mode: bitmap, name: lovely }
-    - { mode: animation, name: working }
-    - { mode: bitmap, name: skeptical }
-    - { mode: gesture, name: nod }
-    - { mode: bitmap, name: dumb }
-    - { mode: animation, name: processing }
-    - { mode: bitmap, name: tired }
-    - { mode: animation, name: connecting }
+  pool: []
 
 state_map:
   idle: { mode: bitmap, name: normal }
   boot: { mode: logo, name: logo }
   active: { mode: bitmap, name: attentive }
+  maintenance: { mode: bitmap, name: cool }
   listening: { mode: animation, name: listening }
   thinking: { mode: animation, name: thinking }
   speaking: { mode: animation, name: thinking }
   sleeping: { mode: animation, name: sleep }
   alert: { mode: animation, name: alert }
   low_battery: { mode: bitmap, name: battery_low }
-  charging: { mode: bitmap, name: battery }
+  charging: { mode: bitmap, name: standby }
   charged: { mode: bitmap, name: battery_full }
 
 event_map:
+  # --- speech / agent sessions ---
   wakeword.detected: { mode: animation, name: listening }
   speech.listen.start: { mode: animation, name: listening }
   speech.listen.end: { mode: bitmap, name: normal }
   speech.start: { mode: animation, name: thinking }
+  speech.end: { mode: bitmap, name: normal }
   agent.thinking: { mode: animation, name: thinking }
+  agent.editing: { mode: animation, name: editing }
+  agent.processing: { mode: animation, name: processing }
+  agent.connecting: { mode: animation, name: connecting }
+
+  # --- vision ---
   vision.person: { mode: animation, name: searching }
+  vision.focus: { mode: bitmap, name: focused }
+
+  # --- autonomy idle / body language ---
   autonomy.calm: { mode: bitmap, name: normal }
   autonomy.excited: { mode: gesture, name: excited }
   autonomy.angry: { mode: bitmap, name: furious }
@@ -98,32 +102,82 @@ event_map:
   autonomy.sleep: { mode: animation, name: sleep }
   autonomy.wake: { mode: bitmap, name: normal }
   autonomy.offline: { mode: animation, name: connecting }
-  vision.focus: { mode: bitmap, name: focused }
-  error: { mode: gesture, name: scan_sweep }
-  warning: { mode: bitmap, name: alert }
+  autonomy.nod: { mode: gesture, name: nod }
+  autonomy.refuse: { mode: gesture, name: refuse }
+  autonomy.laugh: { mode: gesture, name: laugh }
+  autonomy.smoke: { mode: gesture, name: smoke }
+  autonomy.shiver: { mode: gesture, name: shiver }
+  autonomy.squint: { mode: gesture, name: squint }
+  autonomy.pop: { mode: gesture, name: pop }
+  autonomy.roll: { mode: gesture, name: roll }
+  autonomy.cross_eyes: { mode: gesture, name: cross_eyes }
+
+  # --- owner / security ---
   owner.scan: { mode: gesture, name: look_left }
   owner.rfid: { mode: gesture, name: wink }
   owner.temp_granted: { mode: bitmap, name: happy }
-  owner.temp_revoked: { mode: bitmap, name: worried }
+  owner.temp_revoked: { mode: bitmap, name: nervous }
   owner.locked: { mode: bitmap, name: scared }
+
+  # --- system ---
+  error: { mode: gesture, name: scan_sweep }
+  warning: { mode: bitmap, name: alert }
+
+  # --- canonical emotions (autonomy mood / expression_director) ---
+  emotion:neutral: { mode: bitmap, name: neutral }
+  emotion:joy: { mode: bitmap, name: happy }
+  emotion:sadness: { mode: bitmap, name: sad }
+  emotion:curiosity: { mode: bitmap, name: attentive }
+  emotion:tired: { mode: bitmap, name: tired }
+  emotion:fear: { mode: bitmap, name: scared }
+  emotion:anger: { mode: bitmap, name: angry }
+  emotion:furious: { mode: bitmap, name: furious }
+  emotion:surprise: { mode: bitmap, name: surprised }
+  emotion:excitement: { mode: bitmap, name: wired }
+  emotion:love: { mode: bitmap, name: lovely }
+  emotion:disgust: { mode: bitmap, name: gloomy }
+  emotion:confusion: { mode: bitmap, name: disoriented }
+  emotion:worried: { mode: bitmap, name: nervous }
+  emotion:bored: { mode: bitmap, name: bored }
+  emotion:suspicious: { mode: bitmap, name: suspicious }
+  emotion:awe: { mode: bitmap, name: awe }
+  emotion:gloomy: { mode: bitmap, name: gloomy }
+  emotion:cool: { mode: bitmap, name: cool }
+  emotion:devil: { mode: bitmap, name: devil }
+  emotion:kawaii: { mode: bitmap, name: kawaii }
+  emotion:dead: { mode: bitmap, name: dead }
+  emotion:smoking: { mode: bitmap, name: smoking }
+  emotion:disoriented: { mode: bitmap, name: disoriented }
+  emotion:wired: { mode: bitmap, name: wired }
+  emotion:nervous: { mode: bitmap, name: nervous }
+
+  # --- legacy emotion event labels (backward compatible) ---
   emotion:happy: { mode: bitmap, name: happy }
   emotion:joy: { mode: bitmap, name: happy }
   emotion:sad: { mode: bitmap, name: sad }
   emotion:surprised: { mode: bitmap, name: surprised }
   emotion:sleepy: { mode: bitmap, name: sleepy }
-  emotion:confused: { mode: bitmap, name: confused }
+  emotion:confused: { mode: bitmap, name: disoriented }
   emotion:angry: { mode: bitmap, name: angry }
   emotion:anger: { mode: bitmap, name: angry }
   emotion:furious: { mode: bitmap, name: furious }
   emotion:bored: { mode: bitmap, name: bored }
-  emotion:despair: { mode: bitmap, name: despair }
-  emotion:worried: { mode: bitmap, name: worried }
   emotion:scared: { mode: bitmap, name: scared }
   emotion:focused: { mode: bitmap, name: focused }
-  emotion:excited: { mode: bitmap, name: excited }
+  emotion:excited: { mode: bitmap, name: wired }
   emotion:love: { mode: bitmap, name: lovely }
   emotion:curiosity: { mode: bitmap, name: attentive }
-  emotion:tired: { mode: bitmap, name: tired }
+  emotion:despair: { mode: bitmap, name: despair }
+  emotion:worried: { mode: bitmap, name: nervous }
+
+  # --- emotion scenes (autonomy config scenes) ---
+  scene.emotion_joy: { mode: bitmap, name: happy }
+  scene.emotion_curiosity: { mode: bitmap, name: attentive }
+  scene.emotion_fear: { mode: bitmap, name: scared }
+  scene.emotion_tired: { mode: bitmap, name: tired }
+  scene.emotion_sad: { mode: bitmap, name: sad }
+  scene.emotion_angry: { mode: bitmap, name: angry }
+  scene.emotion_furious: { mode: bitmap, name: furious }
 
 arduino_event_map:
   rfid: { mode: gesture, name: wink }
