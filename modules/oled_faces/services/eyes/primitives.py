@@ -11,6 +11,12 @@ def ease(cur, tgt, dt, tau):
     return tgt + (cur - tgt) * math.exp(-dt / tau)
 
 
+def smoothstep(k):
+    """Hermite ease 0..1 with flat ends; clamps out-of-range input."""
+    k = max(0.0, min(1.0, k))
+    return k * k * (3 - 2 * k)
+
+
 def rounded_rect(d, x, y, w, h, r, fill):
     """rounded_rectangle with clamped radius (thin/blinking eyes never raise)."""
     if w <= 0 or h <= 0:

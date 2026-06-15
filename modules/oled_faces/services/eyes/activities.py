@@ -7,10 +7,10 @@ import math
 from .primitives import draw_formula
 
 ACTIVITIES = ("idle", "thinking", "scanning", "searching", "working", "listening",
-              "processing", "connecting")
+              "processing", "connecting", "editing")
 # each busy activity wears a fitting face; listening just stays attentive (neutral)
 ACT_MOOD = {"thinking": "focused", "scanning": "neutral", "searching": "focused",
-            "working": "focused", "listening": "neutral",
+            "working": "focused", "listening": "neutral", "editing": "smoking",
             "processing": "focused", "connecting": "attentive"}
 
 
@@ -88,6 +88,23 @@ def _hammer(d, W, H, now):
             d.line([ax, ay - 1, ax + math.cos(a) * L, ay - 1 + math.sin(a) * L], fill=1, width=2)
 
 
+def _typing(d, W, H, now):
+    # two small chibi hands tap the keys -- "editing" (just hands, no arms)
+    base = H - 3                                          # key row the fingertips reach
+    for i, cx in enumerate((18, W - 18)):               # left & right hand, near the edges
+        tap = round((math.sin(now * 8 + i * math.pi) + 1) / 2 * 3)   # alternating peck
+        cy = base - 6 + tap                             # whole hand dips to press
+        thumb = cx + (7 if i == 0 else -7)              # thumb tucked toward the centre
+        d.ellipse([thumb - 2, cy - 3, thumb + 3, cy + 2], fill=1)    # thumb nub
+        d.rounded_rectangle([cx - 7, cy - 5, cx + 7, cy + 2], radius=3, fill=1)  # back of hand
+        for k in range(4):                              # four little fingertips on the keys
+            fx = cx - 5 + k * 4
+            d.ellipse([fx - 2, cy, fx + 2, cy + 5], fill=1)
+        for k in range(3):                              # notches between the fingers
+            nx = cx - 3 + k * 4
+            d.line([nx, cy + 1, nx, cy + 5], fill=0, width=1)
+
+
 def _arc_ring(d, W, H, now):
     # a sleek arc sweeps around a ring -- "processing / computing"
     cx, cy, rad = W // 2, H - 11, 8
@@ -108,4 +125,5 @@ def _link_dots(d, W, H, now):
 # act name -> overlay painter (activities without one just move the gaze)
 OVERLAYS = {"thinking": _think, "searching": _magnifier,
             "working": _hammer, "listening": _headphones,
-            "processing": _arc_ring, "connecting": _link_dots}
+            "processing": _arc_ring, "connecting": _link_dots,
+            "editing": _typing}

@@ -16,7 +16,7 @@ import time
 from PIL import Image, ImageDraw
 
 from .activities import ACT_MOOD, ACTIVITIES, OVERLAYS, pose
-from .gestures import BLINKS, GESTURES_FN
+from .gestures import BLINKS, GESTURE_FACE, GESTURE_FX, GESTURES_FN
 from .moods import MOODS
 from .primitives import ease, rounded_rect
 
@@ -27,8 +27,11 @@ _MASK = ({"left", "right"}, 0.24, 1, 0.5)    # blink that hides a mood's lid swa
 
 class EyeEngine:
     def __init__(self, show, *, width=128, height=64, fps=30,
-                 eye_w=36, eye_h=36, radius=12, gap=10):
+                 eye_w=36, eye_h=36, radius=12, gap=10,
+                 set_brightness=None, bright=255):        # bright = general panel brightness, max by default
         self._show = show
+        self._set_brightness, self._bright = set_brightness, bright
+        self._cur_bright = None                          # unset -> first frame pushes the general level
         self.W, self.H, self.fps = width, height, max(5, fps)
         self.eye_w, self.eye_h, self.radius, self.gap = eye_w, eye_h, radius, gap
         self.base_lx = (width - (2 * eye_w + gap)) // 2
@@ -44,6 +47,7 @@ class EyeEngine:
         self._pending = None                             # mood waiting for the layer to free
         self.look_x = self.look_y = 0.0                  # resting gaze target
         self._blink = self._gesture = self._activity = None
+        self._restore_mood = None                        # mood to return to after a face-swapping gesture
         self._next_blink = self._next_idle = 0.0
         self._stop = threading.Event()
         self._thread = None
@@ -63,6 +67,7 @@ class EyeEngine:
     def set_mood(self, mood):
         m = mood.lower() if mood and mood.lower() in MOODS else "neutral"
         with self._lock:
+            self._restore_mood = None                    # an explicit mood change cancels a pending gesture-restore
             if m == self.mood:
                 self._pending = None
             elif self._blink or self._gesture:           # busy -> apply (masked) once free
@@ -77,11 +82,16 @@ class EyeEngine:
         name = (name or "none").lower()
         now = time.monotonic()
         with self._lock:
+            if self._restore_mood is not None:           # a prior face-gesture is interrupted -> restore its mood first
+                self.mood, self._restore_mood = self._restore_mood, None
             if name in BLINKS:
                 self._begin_blink(now, BLINKS[name])
             elif name in GESTURES_FN:
                 self._blink = None
                 self._gesture = {"kind": name, "start": now, "dur": GESTURES_FN[name][0]}
+                if name in GESTURE_FACE:                  # wear another mood for the gesture, restore it when done
+                    self._restore_mood = self.mood
+                    self.mood, self._pending = GESTURE_FACE[name], None
 
     def set_activity(self, name):
         """Loop a status animation (thinking/scanning/...); 'idle' stops it. Each busy
@@ -123,6 +133,8 @@ class EyeEngine:
                 self._blink = None
             if self._gesture and now - self._gesture["start"] > self._gesture["dur"]:
                 self._gesture = None
+                if self._restore_mood is not None:        # face-swapping gesture finished -> restore the original mood
+                    self.mood, self._restore_mood = self._restore_mood, None
             free = not (self._blink or self._gesture)
             if free and self._pending:                       # masked deferred mood swap
                 self.mood, self._pending = self._pending, None
@@ -136,8 +148,17 @@ class EyeEngine:
                 self._next_idle = now + random.uniform(1.5, 5)
             mood, act, look = self.mood, self._activity, (self.look_x, self.look_y)
 
-        bw = self.eye_w + MOODS[mood].get("dw", 0)
-        bh = self.eye_h + MOODS[mood].get("dh", 0)
+        spec = MOODS[mood]
+        target = min(spec.get("bright", self._bright), self._bright)  # emote may dim, capped at the general max
+        if self._set_brightness and target != self._cur_bright:
+            try:
+                self._set_brightness(target)
+                self._cur_bright = target
+            except Exception:
+                pass                                      # BLE hiccup -- retry next frame
+
+        bw = self.eye_w + spec.get("dw", 0)
+        bh = self.eye_h + spec.get("dh", 0)
         if act:
             tx, ty, hmult = pose(act, now)
             bh *= hmult
@@ -165,9 +186,11 @@ class EyeEngine:
         dx = dy = conv = 0.0
         msw = msh = 1.0
         gbias = 0.0
+        gkind = gph = genv = None
         if g:
             ph = min(1.0, (now - g["start"]) / g["dur"])
-            ret = GESTURES_FN[g["kind"]][1](ph, math.sin(ph * math.pi))
+            gkind, gph, genv = g["kind"], ph, math.sin(ph * math.pi)
+            ret = GESTURES_FN[g["kind"]][1](ph, genv)
             dx, dy, conv, msw, msh = ret[:5]
             gbias = ret[5] if len(ret) > 5 else 0.0
 
@@ -178,7 +201,9 @@ class EyeEngine:
         d = self._draw
         d.rectangle([0, 0, self.W - 1, self.H - 1], fill=0)   # clear the reused buffer
         slot = self.base_lx + self.gx + dx                    # left eye's slot origin
-        for sx, openness, right in ((slot, ol, False), (slot + self.eye_w + self.gap, or_, True)):
+        eyes = () if spec.get("bare") else \
+            ((slot, ol, False), (slot + self.eye_w + self.gap, or_, True))  # 'bare' draws no eyes
+        for sx, openness, right in eyes:
             es = 1.0 + (bias if right else -bias)             # parallax: the near eye swells
             w = max(2.0, self.ew * msw * es)
             ho = max(2.0, self.eh * msh * es)                 # open height (before the blink)
@@ -194,4 +219,6 @@ class EyeEngine:
             spec["decor"](d, self.W, self.H, now, self.gx, self.gy)
         if act in OVERLAYS:
             OVERLAYS[act](d, self.W, self.H, now)
+        if gkind in GESTURE_FX:                           # gesture-time extras (e.g. a smoke cloud)
+            GESTURE_FX[gkind](d, self.W, self.H, gph, genv)
         return self._img
