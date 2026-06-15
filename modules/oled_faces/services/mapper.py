@@ -64,6 +64,12 @@ class FaceMapper:
         if key.startswith("emotion:"):
             label = key.split(":", 1)[1]
             return self.from_emotions([label])
+        if key.startswith("gesture:"):
+            name = key.split(":", 1)[1]
+            return OledAction(mode="gesture", name=name)
+        if key.startswith("activity:"):
+            name = key.split(":", 1)[1]
+            return OledAction(mode="animation", name=name)
         mapped = self.event_map.get(key)
         if isinstance(mapped, dict):
             return OledAction(mode=str(mapped.get("mode", "bitmap")), name=str(mapped.get("name", self.fallback_unknown)))
