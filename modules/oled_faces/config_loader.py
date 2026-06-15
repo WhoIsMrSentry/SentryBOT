@@ -5,6 +5,8 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+from .services.catalog_registry import expand_config
+
 _DEFAULT_CFG_PATH = Path(__file__).parent / "config" / "config.yml"
 
 
@@ -16,4 +18,4 @@ def load_config(path: Optional[str] = None, overrides: Optional[Dict[str, Any]] 
         cfg: Dict[str, Any] = yaml.safe_load(f) or {}
     if overrides:
         cfg.update(overrides)
-    return cfg
+    return expand_config(cfg)

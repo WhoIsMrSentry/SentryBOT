@@ -79,9 +79,11 @@ class AnimationSupportMixin:
 
     def _perform_eye_saccade(self) -> None:
         """Briefly dart the eyes to a random gaze direction."""
-        gaze = random.choice(["look_left", "look_right", "look_up", "look_down"])
+        gaze = random.choice(
+            ["look_left", "look_right", "look_up", "look_down", "wink", "wink_left", "wink_right", "blink", "double_blink"]
+        )
         try:
-            self.client.oled_show(gaze)
+            self.client.push_interaction_event(f"gesture:{gaze}")
         except Exception:
             pass
 

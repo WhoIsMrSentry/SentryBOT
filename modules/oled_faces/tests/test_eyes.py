@@ -45,3 +45,18 @@ def test_legacy_emotive_maps_to_listening_activity():
 def test_legacy_bitmap_look_left_plays_gesture():
     cmd = resolve_bitmap("look_left")
     assert cmd.gesture == "look_left"
+
+
+def test_upstream_mood_catalog_size():
+    assert len(MOODS) >= 31
+
+
+def test_smoke_gesture_exists():
+    from modules.oled_faces.services.eyes.gestures import GESTURES_FN
+    assert "smoke" in GESTURES_FN
+    assert "acknowledge" in GESTURES_FN
+
+
+def test_editing_activity_available():
+    from modules.oled_faces.services.eyes.activities import ACTIVITIES
+    assert "editing" in ACTIVITIES

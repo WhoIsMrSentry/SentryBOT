@@ -25,6 +25,8 @@ class FaceRenderer:
             width=self._driver.width,
             height=self._driver.height,
             fps=self._fps,
+            set_brightness=self._driver.set_brightness,
+            bright=int(display_cfg.get("brightness", 255)),
         )
         self._engine.start()
         return True
