@@ -7,45 +7,60 @@
 # render hints below. This keeps eyes (OLED), LEDs (NeoPixel), ears (PiServo),
 # head body-language and TTS tone aligned for one emotion.
 
-# canonical -> alias labels that should map onto it
 aliases:
   neutral:    [calm, idle, default, normal]
+  joy:        [happy, happiness, glad, cheerful, amusement, optimism, mutlu, mutlu ol, sevin, neşeli, neseli]
+  sadness:    [sad, unhappy, down, grief, disappointment, remorse, uzul, üzül, mutsuz]
+  curiosity:  [curious, interested, intrigued, realization, merak, merakli]
+  tired:      [sleepy, drowsy, fatigued, exhausted, yoruldum, uyu, uykum var]
+  fear:       [scared, afraid, frightened, nervousness, kork, korkut, korkma]
   anger:      [angry, mad, annoyance, annoyed, sinirlen, sinirli, kizgin, kızgın, ofkeli, öfkeli, sinirlenme]
   furious:    [rage, enraged, livid, cok sinirli, çok sinirli, öfke, ofke]
   surprise:   [surprised, shocked, astonished, sasir, şaşır, saskin, şaşkın]
   excitement: [excited, thrilled, energetic, heyecanli, heyecanlı]
   love:       [affection, adoration, admiration, desire, gratitude, sev, seviyorum, askim, aşkım]
+  disgust:    [disgusted, repulsed, disapproval]
   confusion:  [confused, disoriented, puzzled, uncertain, kafan karisik, kafan karışık, anlamadim]
   worried:    [worry, anxious, concerned, endiseli, endişeli, kaygili]
   bored:      [boredom, dull, listless, sikildim, sıkıldım, sikinti]
-  joy:        [happy, happiness, glad, cheerful, amusement, optimism, mutlu, mutlu ol, sevin, neşeli, neseli]
-  sadness:    [sad, unhappy, down, grief, disappointment, remorse, uzul, üzül, mutsuz]
-  fear:       [scared, afraid, frightened, nervousness, nervous, kork, korkut, korkma]
-  tired:      [sleepy, drowsy, fatigued, exhausted, yoruldum, uyu, uykum var]
-  curiosity:  [curious, interested, intrigued, realization, merak, merakli]
+  suspicious: [suspicious, doubtful, side_eye, skeptical]
+  awe:        [awe, wonder, amazed, wow]
+  gloomy:     [gloomy, melancholy, rainy, overcast]
+  cool:       [cool, chill, sunglasses]
+  devil:      [devil, mischief, evil, naughty]
+  kawaii:     [kawaii, cute, blushing, adorable]
+  dead:       [dead, ko, knocked_out, defeated]
+  smoking:    [smoking, chill_smoke, relaxed_smoke]
+  wired:      [wired, caffeinated, hyper, jittery]
+  nervous:    [nervous, sweaty, anxious_face]
+  disoriented: [dizzy, woozy, vertigo]
 
-# Per-canonical render hints consumed across modules.
-#   oled    -> bitmap/animation name in oled_faces catalog
-#   palette -> neopixel emotion palette file (modules/neopixel/emotions/<palette>.yml)
-#   effect  -> neopixel animation effect
-#   ears    -> piservo emotion pose key
-#   tone    -> speak TTS tone preset
-#   rgb     -> direct fallback color when a palette is unavailable
 render:
-  neutral:    { oled: normal,     palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [40, 60, 80] }
-  joy:        { oled: happy,      palette: joy,          effect: RAINBOW_CYCLE,  ears: joy,       tone: joy,      rgb: [0, 200, 60] }
-  sadness:    { oled: sad,        palette: sadness,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [40, 80, 160] }
-  curiosity:  { oled: focused,    palette: curiosity,    effect: COMET,          ears: curiosity, tone: neutral,  rgb: [0, 180, 200] }
-  tired:      { oled: tired,      palette: neutral,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [80, 40, 120] }
-  fear:       { oled: scared,     palette: fear,         effect: PULSE,          ears: fear,      tone: sadness,  rgb: [200, 0, 120] }
-  anger:      { oled: angry,      palette: anger,        effect: PULSE,          ears: anger,     tone: excited,  rgb: [220, 40, 0] }
-  furious:    { oled: furious,    palette: anger,        effect: METEOR,         ears: anger,     tone: excited,  rgb: [255, 0, 0] }
-  surprise:   { oled: surprised,  palette: surprise,     effect: TWINKLE,        ears: surprise,  tone: excited,  rgb: [255, 200, 0] }
-  excitement: { oled: excited,    palette: excitement,   effect: RAINBOW_CYCLE,  ears: surprise,  tone: excited,  rgb: [255, 120, 0] }
-  love:       { oled: lovely,     palette: love,         effect: PULSE,          ears: joy,       tone: joy,      rgb: [255, 40, 100] }
-  disgust:    { oled: worried,    palette: disgust,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [120, 160, 0] }
-  confusion:  { oled: confused,   palette: confusion,    effect: TWINKLE,        ears: curiosity, tone: neutral,  rgb: [160, 0, 200] }
-  worried:    { oled: worried,    palette: nervousness,  effect: BREATHE,        ears: fear,      tone: sadness,  rgb: [180, 100, 0] }
-  bored:      { oled: bored,      palette: neutral,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [60, 60, 60] }
+  neutral:     { oled: neutral,     palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [40, 60, 80] }
+  joy:         { oled: happy,       palette: joy,          effect: RAINBOW_CYCLE,  ears: joy,       tone: joy,      rgb: [0, 200, 60] }
+  sadness:     { oled: sad,         palette: sadness,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [40, 80, 160] }
+  curiosity:   { oled: attentive,   palette: curiosity,    effect: COMET,          ears: curiosity, tone: neutral,  rgb: [0, 180, 200] }
+  tired:       { oled: tired,       palette: neutral,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [80, 40, 120] }
+  fear:        { oled: scared,      palette: fear,         effect: PULSE,          ears: fear,      tone: sadness,  rgb: [200, 0, 120] }
+  anger:       { oled: angry,       palette: anger,        effect: PULSE,          ears: anger,     tone: excited,  rgb: [220, 40, 0] }
+  furious:     { oled: furious,     palette: anger,        effect: METEOR,         ears: anger,     tone: excited,  rgb: [255, 0, 0] }
+  surprise:    { oled: surprised,   palette: surprise,     effect: TWINKLE,        ears: surprise,  tone: excited,  rgb: [255, 200, 0] }
+  excitement:  { oled: wired,       palette: excitement,   effect: RAINBOW_CYCLE,  ears: surprise,  tone: excited,  rgb: [255, 120, 0] }
+  love:        { oled: lovely,      palette: love,         effect: PULSE,          ears: joy,       tone: joy,      rgb: [255, 40, 100] }
+  disgust:     { oled: gloomy,       palette: disgust,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [120, 160, 0] }
+  confusion:   { oled: disoriented,  palette: confusion,    effect: TWINKLE,        ears: curiosity, tone: neutral,  rgb: [160, 0, 200] }
+  worried:     { oled: nervous,      palette: nervousness,  effect: BREATHE,        ears: fear,      tone: sadness,  rgb: [180, 100, 0] }
+  bored:       { oled: bored,        palette: neutral,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [60, 60, 60] }
+  suspicious:  { oled: suspicious,   palette: neutral,      effect: BREATHE,        ears: curiosity, tone: neutral,  rgb: [90, 90, 70] }
+  awe:         { oled: awe,          palette: surprise,     effect: TWINKLE,        ears: surprise,  tone: excited,  rgb: [255, 220, 120] }
+  gloomy:      { oled: gloomy,        palette: sadness,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [50, 70, 110] }
+  cool:        { oled: cool,          palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [70, 90, 120] }
+  devil:       { oled: devil,         palette: anger,        effect: PULSE,          ears: anger,     tone: excited,  rgb: [200, 0, 60] }
+  kawaii:      { oled: kawaii,        palette: love,         effect: TWINKLE,        ears: joy,       tone: joy,      rgb: [255, 140, 180] }
+  dead:        { oled: dead,          palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [40, 40, 40] }
+  smoking:     { oled: smoking,       palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [80, 80, 80] }
+  wired:       { oled: wired,         palette: excitement,   effect: COMET,          ears: surprise,  tone: excited,  rgb: [255, 120, 0] }
+  nervous:     { oled: nervous,       palette: nervousness,  effect: PULSE,          ears: fear,      tone: sadness,  rgb: [200, 160, 0] }
+  disoriented: { oled: disoriented,   palette: confusion,    effect: TWINKLE,        ears: curiosity, tone: neutral,  rgb: [140, 80, 200] }
 
 default_canonical: neutral
