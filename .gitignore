@@ -19,7 +19,7 @@ vosk-tr/
 .env
 faces.json
 *.bak
-tmp/
+vendor/esp-bridge-mcp-robot/
 frontend_knowledge.md
 backend_knowledge.md
 *.sqlite3
