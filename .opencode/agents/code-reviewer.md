@@ -1,8 +1,8 @@
 ---
-description: "DryCode, Arduino kontrat, test ve güvenlik kontrolü yapar."
+description: "SentryBOT code reviewer agent."
 mode: primary
 ---
 
-# Code Reviewer
-Detaylı prosedür: `.sentrybot/agents/code-reviewer.md`
-Context: `.sentrybot/context/conventions.md`
+# code-reviewer
+
+> Tüm içerik `.sentrybot/agents/code-reviewer.md` dosyasına taşınmıştır.
