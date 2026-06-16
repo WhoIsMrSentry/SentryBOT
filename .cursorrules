@@ -1,7 +1,6 @@
-# SentryBOT — Cursor AI Kuralları
-# ⚠️ Bu dosya eski (legacy) format. Cursor, `.cursor/rules/*.mdc` dosyalarını otomatik okur.
-# Detaylı kurallar: .cursor/rules/ dizini
-# Tüm agent/skill/context: .sentrybot/ dizini
+# SentryBOT — Cursor AI Rules (legacy)
+# Asıl kurallar: .cursor/rules/*.mdc
+# Tek merkez: .sentrybot/AI_HUB.md
 
 ## Kritik Kurallar
 1. DryCode: tekrar yok, tek sorumluluk, kısa fonksiyonlar
@@ -9,29 +8,3 @@
 3. Arduino: contract.py builder zorunlu, elle payload YASAK
 4. Config: hardcode YASAK, YAML'den oku
 5. Test: her modülde tests/test_smoke.py zorunlu
-
-## Tam Kurallar → `.sentrybot/context/conventions.md`
-
-## 🤖 İş Akışı Yöneticileri (Agents)
-- **Yeni Modül Oluşturma**: `.sentrybot/agents/module-creator.md`
-- **Mevcut Modül Düzenleme**: `.sentrybot/agents/module-editor.md`
-- **GitHub İşlemleri (PR, Issue, CI)**: `.sentrybot/agents/github-ops.md`
-- **Modüller Arası Etkileşim**: `.sentrybot/agents/inter-module.md`
-- **Kod İnceleme**: `.sentrybot/agents/code-reviewer.md`
-
-## 🛠️ Adım Adım Prosedürler (Skills)
-Cursor Agent Skills (import edildi): `.cursor/skills/<skill-name>/SKILL.md` (kaynak: `.sentrybot/skills/`)
-- **Modül İskeleti Oluşturma**: `.cursor/skills/scaffold-module/SKILL.md`
-- **API Endpoint Ekleme**: `.sentrybot/skills/add-api-endpoint.md`
-- **Service Class Ekleme**: `.sentrybot/skills/add-service-class.md`
-- **Config Güncelleme**: `.sentrybot/skills/update-config.md`
-- **Test Yazma**: `.sentrybot/skills/write-tests.md`
-- **Mimari Doküman Yazma**: `.sentrybot/skills/write-architecture-doc.md`
-- **Arduino Kontrat Ekleme**: `.sentrybot/skills/arduino-contract.md`
-- **Gateway Modül Kaydı**: `.sentrybot/skills/gateway-bootstrap.md`
-- **PR Oluşturma**: `.sentrybot/skills/create-pr.md`
-- **Issue Oluşturma**: `.sentrybot/skills/create-issue.md`
-- **Modül Bağımlılık Haritası**: `.sentrybot/skills/module-dependency-map.md`
-- **Modül Hata Ayıklama (Debug)**: `.sentrybot/skills/debug-module.md`
-
-## Cursor MDC kuralları → `.cursor/rules/`
