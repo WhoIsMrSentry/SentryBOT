@@ -1,26 +1,26 @@
-source_event,neopixel_action,notes,reference
-wakeword.detected,TWINKLE;BREATHE,"TWINKLE on jewel segment; base BREATHE","modules/autonomy/config/config.yml: scenes.wakeword_reaction"
-speech.start,RAINBOW_CYCLE,"Interactions rule speech_start","modules/interactions/config/config.yml"
-speech.end,COMET,"Interactions rule speech_end","modules/interactions/config/config.yml"
-autonomy.excited,RAINBOW_CYCLE,,"modules/interactions/config/config.yml"
-autonomy.look_around,COMET or preset:curious_scan,"Idle LOOK_AROUND maps to COMET or preset","modules/autonomy/config/config.yml"
-autonomy.blink,RANDOM_BLINK,,"modules/interactions/config/config.yml"
-autonomy.stretch,WAVE,,"modules/interactions/config/config.yml"
-autonomy.bored,PULSE,,"modules/interactions/config/config.yml"
-autonomy.monologue,TWINKLE,,"modules/interactions/config/config.yml"
-vision.focus,COMET,"also triggers anim vision_focus","modules/autonomy/services/brain_parts/vision.py"
-vision.person,owner_welcome preset + COMET,"owner greeting visual","modules/autonomy/config/config.yml"
-owner.scan,owner_welcome preset,owner return visuals,"modules/autonomy/config/config.yml"
-owner.temp_granted,THEATER_CHASE or preset:temp_owner,temporary owner visual,"modules/autonomy/config/config.yml"
-owner.temp_revoked,PULSE,,"modules/interactions/config/config.yml"
-owner.locked,METEOR,,"modules/interactions/config/config.yml"
-error,METEOR,critical alert,"modules/interactions/config/config.yml"
-warning,PULSE,warning alert,"modules/interactions/config/config.yml"
-arduino_disconnected,THEATER_CHASE,magenta base,"modules/interactions/config/config.yml"
-net_burst,COMET or PULSE,network burst visual,"modules/interactions/config/config.yml"
-emotion_joy,preset:emotion_joy (RAINBOW_CYCLE + COMET),also anim look_around,"modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
-emotion_curiosity,preset:emotion_curiosity (TWINKLE),anim vision_focus,"modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
-emotion_fear,preset:emotion_fear (PULSE red),short head move,"modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
-emotion_tired,preset:emotion_tired (BREATHE dim),stretch anim + tilt,"modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
-emotion_sad,preset:emotion_sad (PULSE blue),downward tilt,"modules/autonomy/services/brain.py & modules/neopixel/config/config.yml"
-LLM/actions,dynamic (anim/effect),LLM returned actions processed by apply_llm_response,"modules/autonomy/services/brain.py"
+source_event,oled,neopixel_action,animate_servo,why,reference
+wakeword.detected,animation/listening,TWINKLE;BREATHE base,head pan/tilt,Dikkat + dinleme yüzü,modules/autonomy/config/config.yml scenes.wakeword_reaction
+speech.start,animation/thinking,PULSE,—,Konuşma başladı,modules/interactions/config/config.yml
+speech.end,bitmap/normal,COMET,—,Konuşma bitti,modules/interactions/config/config.yml
+autonomy.excited,gesture/excited,RAINBOW_CYCLE,—,Heyecan,modules/interactions/config/config.yml
+autonomy.look_around,animation/scanning,COMET,look_around,Çevre tarama,modules/autonomy/config/config.yml
+autonomy.blink,gesture/blink,RANDOM_BLINK,blink,Göz kırpma,modules/interactions/config/config.yml
+autonomy.stretch,gesture/look_up,WAVE,stretch,Esneme,modules/interactions/config/config.yml
+autonomy.bored,bitmap/bored,PULSE,—,Sıkıntı,modules/interactions/config/config.yml
+autonomy.monologue,animation/thinking,TWINKLE,—,Monolog,modules/interactions/config/config.yml
+vision.focus,bitmap/focused,COMET,vision_focus,Odaklanma,modules/autonomy/services/brain_parts/vision.py
+vision.person,animation/searching,owner_welcome+COMET,owner_scan,Kişi algılandı,modules/autonomy/config/config.yml
+owner.scan,gesture/look_left,COMET,owner_scan,Sahip tarama,modules/autonomy/config/config.yml
+owner.temp_granted,bitmap/happy,THEATER_CHASE,temp_owner,Geçici sahip,modules/interactions/config/config.yml
+owner.temp_revoked,bitmap/nervous,PULSE,—,Erişim iptal,modules/interactions/config/config.yml
+owner.locked,bitmap/scared,METEOR,—,Kilitli mod,modules/interactions/config/config.yml
+error,gesture/scan_sweep,METEOR,—,Kritik hata,modules/interactions/config/config.yml
+warning,bitmap/alert,PULSE,—,Uyarı,modules/interactions/config/config.yml
+arduino_disconnected,—,THEATER_CHASE magenta,—,Mega bağlantı koptu,modules/interactions/config/config.yml
+net_burst,—,COMET,—,Ağ patlaması,modules/interactions/config/config.yml
+emotion_joy,bitmap/happy,preset:emotion_joy,look_around,Mutluluk,modules/autonomy/config/config.yml scenes.emotion_joy
+emotion_curiosity,bitmap/attentive,preset:emotion_curiosity,vision_focus,Merak,modules/autonomy/config/config.yml scenes.emotion_curiosity
+emotion_fear,bitmap/scared,preset:emotion_fear,—,Korku,modules/autonomy/config/config.yml scenes.emotion_fear
+emotion_tired,bitmap/tired,preset:emotion_tired,stretch,Yorgunluk,modules/autonomy/config/config.yml scenes.emotion_tired
+emotion_sad,bitmap/sad,preset:emotion_sad,tilt down,Üzüntü,modules/autonomy/config/config.yml scenes.emotion_sad
+LLM/actions,dynamic,dynamic anim/effect,dynamic,LLM actions alanı,modules/autonomy/services/brain.py
