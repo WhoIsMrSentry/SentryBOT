@@ -1,0 +1,65 @@
+event,source_module,oled,neopixel,animate_servo,piservo,why,reference
+wakeword.detected,wakeword,animation/listening,TWINKLE+jewel+BREATHE base,head pan/tilt,—,Dikkat çekici LED + dinleme yüzü; kullanıcı uyandı,modules/autonomy/config/config.yml scenes.wakeword_reaction + modules/oled_faces/config/config.yml
+speech.listen.start,speech,animation/listening,—,—,—,Aktif dinleme oturumu; OLED listening animasyonu,modules/oled_faces/config/config.yml
+speech.listen.end,speech,bitmap/normal,—,—,—,Dinleme bitti; nötr yüze dön,modules/oled_faces/config/config.yml
+speech.start,interactions,animation/thinking,PULSE,—,—,Konuşma başladı; düşünüyor yüzü + nabız LED,modules/interactions/config/config.yml + modules/oled_faces/config/config.yml
+speech.end,interactions,bitmap/normal,COMET,—,—,Konuşma bitti; kuyruk efekti + nötr yüz,modules/interactions/config/config.yml
+agent.thinking,agent_core,animation/thinking,—,—,—,LLM düşünüyor; thinking activity,modules/oled_faces/config/config.yml
+agent.editing,agent_core,animation/editing,—,—,—,Kod/düzenleme modu; editing activity (Pip),modules/oled_faces/config/config.yml
+agent.processing,agent_core,animation/processing,—,—,—,Arka plan işlem; processing activity,modules/oled_faces/config/config.yml
+agent.connecting,agent_core,animation/connecting,—,—,—,Bağlantı bekleniyor; connecting activity,modules/oled_faces/config/config.yml
+autonomy.blink,autonomy,gesture/blink,RANDOM_BLINK,blink.yml,—,Doğal göz kırpma; LED blink + servo blink anim,modules/interactions/config/config.yml
+autonomy.look_around,autonomy,animation/scanning,COMET,look_around.yml,—,Çevreyi tarama; scanning yüzü + comet LED,modules/autonomy/config/config.yml
+autonomy.stretch,autonomy,gesture/look_up,WAVE,stretch.yml,—,Uyanma/esneme; yukarı bakış + wave LED,modules/interactions/config/config.yml
+autonomy.bored,autonomy,bitmap/bored,PULSE,—,—,Sıkıntı; düşük enerji yüz + yavaş pulse,modules/interactions/config/config.yml
+autonomy.monologue,autonomy,animation/thinking,TWINKLE,—,—,Kendi kendine konuşma; thinking + twinkle,modules/interactions/config/config.yml
+autonomy.excited,autonomy,gesture/excited,RAINBOW_CYCLE,—,—,Heyecan; coşkulu jest + gökkuşağı LED,modules/interactions/config/config.yml
+autonomy.angry,autonomy,bitmap/furious,BREATHE red base,—,—,Öfke; kızgın yüz + kırmızı nefes LED,modules/interactions/config/config.yml
+autonomy.sleep,autonomy,animation/sleep,BREATHE dark base,—,tilt down,Uyku modu; sleepy yüz + koyu breathe,modules/interactions/config/config.yml
+autonomy.wake,autonomy,bitmap/normal,COMET,stretch.yml,—,Uyanış; comet + stretch anim (wake_entry scene),modules/autonomy/config/config.yml scenes.wake_entry
+autonomy.nod,autonomy,gesture/nod,—,—,—,Onay baş hareketi,modules/oled_faces/config/config.yml
+autonomy.refuse,autonomy,gesture/refuse,—,—,—,Red baş hareketi,modules/oled_faces/config/config.yml
+autonomy.laugh,autonomy,gesture/laugh,—,—,—,Gülme jesti,modules/oled_faces/config/config.yml
+autonomy.smoke,autonomy,gesture/smoke,—,—,—,Robot özel smoke jesti (Pip'te yok),modules/oled_faces/config/config.yml
+autonomy.shiver,autonomy,gesture/shiver,—,—,—,Ürperti jesti,modules/oled_faces/config/config.yml
+autonomy.squint,autonomy,gesture/squint,—,—,—,Kısık bakış,modules/oled_faces/config/config.yml
+autonomy.pop,autonomy,gesture/pop,—,—,—,Şaşırma pop jesti,modules/oled_faces/config/config.yml
+autonomy.roll,autonomy,gesture/roll,—,—,—,Göz devri,modules/oled_faces/config/config.yml
+autonomy.cross_eyes,autonomy,gesture/cross_eyes,—,—,—,Şaşkın çapraz bakış,modules/oled_faces/config/config.yml
+vision.focus,autonomy,bitmap/focused,COMET,vision_focus.yml,—,Hedefe odaklanma; focused yüz + comet + pan,modules/autonomy/services/brain_parts/vision.py
+vision.person,autonomy,animation/searching,COMET+owner_welcome preset,owner_scan.yml,—,Kişi algılandı; arama yüzü + karşılama LED/servo,modules/autonomy/config/config.yml scenes.vision_greeting_*
+owner.scan,autonomy,gesture/look_left,COMET,owner_scan.yml,—,Sahip tarama; sola bak + owner_scan anim,modules/autonomy/config/config.yml scenes.owner_return
+owner.rfid,autonomy/interactions,gesture/wink,RAINBOW_CYCLE,—,—,RFID tanıma; göz kırp + rainbow,modules/oled_faces/config/config.yml arduino_event_map
+owner.temp_granted,autonomy,bitmap/happy,THEATER_CHASE,temp_owner.yml,—,Geçici sahip onayı; mutlu yüz + chase LED,modules/interactions/config/config.yml
+owner.temp_revoked,autonomy,bitmap/nervous,PULSE,—,—,Geçici erişim iptal; gergin yüz,modules/interactions/config/config.yml
+owner.locked,autonomy,bitmap/scared,METEOR,—,—,Kilitli mod; korku yüzü + meteor uyarı,modules/interactions/config/config.yml
+error,interactions,gesture/scan_sweep,METEOR,—,—,Kritik hata; alarm yüzü + meteor LED,modules/interactions/config/config.yml
+warning,interactions,bitmap/alert,PULSE,—,—,Uyarı; alert mood + pulse,modules/interactions/config/config.yml
+arduino_disconnected,interactions,—,THEATER_CHASE magenta base,—,—,Mega bağlantısı koptu; magenta chase idle,modules/interactions/config/config.yml
+net_burst,interactions,—,COMET,—,—,Ağ trafiği patlaması görsel geri bildirimi,modules/interactions/config/config.yml
+cpu_hot,interactions,—,BREATHE red,—,—,CPU aşırı ısınma; kırmızı breathe,modules/interactions/config/config.yml
+emotion:joy,autonomy,bitmap/happy,preset emotion_joy+RAINBOW_CYCLE,look_around.yml,ears up,Mutluluk; happy yüz + joy preset + etrafa bak,modules/autonomy/config/config.yml scenes.emotion_joy
+emotion:curiosity,autonomy,bitmap/attentive,preset emotion_curiosity+TWINKLE,vision_focus.yml,ears forward,Merak; attentive yüz + twinkle + odak anim,modules/autonomy/config/config.yml scenes.emotion_curiosity
+emotion:fear,autonomy,bitmap/scared,preset emotion_fear+PULSE red,—,ears back,Korku; scared yüz + kırmızı pulse,modules/autonomy/config/config.yml scenes.emotion_fear
+emotion:tired,autonomy,bitmap/tired,preset emotion_tired+BREATHE dim,stretch.yml,ears down,Yorgunluk; tired yüz + dim breathe + esneme,modules/autonomy/config/config.yml scenes.emotion_tired
+emotion:sadness,autonomy,bitmap/sad,preset emotion_sad+PULSE blue,—,tilt down,Üzüntü; sad yüz + mavi pulse,modules/autonomy/config/config.yml scenes.emotion_sad
+emotion:anger,autonomy,bitmap/angry,preset emotion_angry,—,—,Öfke; angry mood (autonomy express),modules/oled_faces/config/config.yml
+emotion:smoking,autonomy,bitmap/smoking,—,—,—,Robot özel chill/smoke mood (SentryBOT only),modules/oled_faces/services/eyes/moods.py
+scene.emotion_joy,autonomy,bitmap/happy,preset emotion_joy,look_around.yml,—,Sahne tetikleyicisi: joy paketi,modules/oled_faces/config/config.yml
+scene.emotion_curiosity,autonomy,bitmap/attentive,preset emotion_curiosity,vision_focus.yml,—,Sahne tetikleyicisi: curiosity paketi,modules/oled_faces/config/config.yml
+state:listening,state_manager,animation/listening,—,—,—,Global state listening → OLED listening,modules/oled_faces/config/config.yml state_map
+state:thinking,state_manager,animation/thinking,—,—,—,Global state thinking,modules/oled_faces/config/config.yml state_map
+state:speaking,state_manager,animation/thinking,—,—,—,Konuşma sırasında thinking yüzü (TTS aktif),modules/oled_faces/config/config.yml state_map
+state:sleeping,state_manager,animation/sleep,BREATHE dark,—,—,Uyku state; sleep animasyon,modules/oled_faces/config/config.yml state_map
+state:low_battery,state_manager,bitmap/battery_low,PULSE orange,—,—,Düşük batarya uyarısı,modules/oled_faces/config/config.yml state_map
+agent.debugging,agent_core,animation/debugging,—,—,—,Hata ayıklama yüzü (Pip),modules/oled_faces/config/config.yml
+agent.building,agent_core,animation/building,—,—,—,Derleme/inşa animasyonu,modules/oled_faces/config/config.yml
+agent.testing,agent_core,animation/testing,—,—,—,Test tüpü animasyonu,modules/oled_faces/config/config.yml
+agent.deploying,agent_core,animation/deploying,—,—,—,Deploy balina animasyonu,modules/oled_faces/config/config.yml
+agent.glitch,agent_core,animation/glitch,—,—,—,Glitch corruption (kendi kendine biter),modules/oled_faces/config/config.yml
+agent.ping_pong,agent_core,animation/ping_pong,—,—,—,BLE/sonar ping-pong,modules/oled_faces/config/config.yml
+agent.waiting,agent_core,animation/waiting,—,—,—,Terminal bekleme cursor,modules/oled_faces/config/config.yml
+agent.chill,agent_core,bitmap/chill,—,—,—,Rahat mood (Pip),modules/oled_faces/config/config.yml
+activity:debugging,manual,animation/debugging,—,—,—,Katalog event tetikleyici,GET /oled_faces/catalog
+activity:deploying,manual,animation/deploying,—,—,—,Katalog event tetikleyici,POST /oled_faces/event
+emotion:chill,manual,bitmap/chill,—,—,—,Katalog mood tetikleyici,POST /oled_faces/manual
