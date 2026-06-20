@@ -48,7 +48,13 @@ def test_legacy_bitmap_look_left_plays_gesture():
 
 
 def test_upstream_mood_catalog_size():
-    assert len(MOODS) >= 31
+    assert len(MOODS) >= 32
+
+
+def test_upstream_activities_ported():
+    from modules.oled_faces.services.eyes.activities import ACTIVITIES
+    for name in ("debugging", "building", "testing", "deploying", "glitch", "ping_pong", "waiting", "chill"):
+        assert name in ACTIVITIES or name in MOODS
 
 
 def test_smoke_gesture_exists():

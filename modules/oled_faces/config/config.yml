@@ -30,6 +30,9 @@ priority_map:
   gesture:smoke: 40
   gesture:laugh: 38
   activity:editing: 42
+  activity:glitch: 88
+  activity:debugging: 42
+  activity:deploying: 42
 
 display:
   enabled: true
@@ -85,6 +88,14 @@ event_map:
   agent.editing: { mode: animation, name: editing }
   agent.processing: { mode: animation, name: processing }
   agent.connecting: { mode: animation, name: connecting }
+  agent.debugging: { mode: animation, name: debugging }
+  agent.building: { mode: animation, name: building }
+  agent.testing: { mode: animation, name: testing }
+  agent.deploying: { mode: animation, name: deploying }
+  agent.glitch: { mode: animation, name: glitch }
+  agent.ping_pong: { mode: animation, name: ping_pong }
+  agent.waiting: { mode: animation, name: waiting }
+  agent.chill: { mode: bitmap, name: chill }
 
   # --- vision ---
   vision.person: { mode: animation, name: searching }
@@ -147,6 +158,7 @@ event_map:
   emotion:kawaii: { mode: bitmap, name: kawaii }
   emotion:dead: { mode: bitmap, name: dead }
   emotion:smoking: { mode: bitmap, name: smoking }
+  emotion:chill: { mode: bitmap, name: chill }
   emotion:disoriented: { mode: bitmap, name: disoriented }
   emotion:wired: { mode: bitmap, name: wired }
   emotion:nervous: { mode: bitmap, name: nervous }
