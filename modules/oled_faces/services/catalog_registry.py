@@ -8,7 +8,7 @@ from .eyes.gestures import BLINKS, GESTURES_FN
 from .eyes.moods import MOODS
 from .mapper import OledAction
 
-# 31 moods, 24 gestures (7 blinks + 17 moves), 8 busy activities (+ idle)
+# 32 moods, 24 gestures (7 blinks + 17 moves), 15 busy activities (+ idle)
 MOTOR_MOODS: Tuple[str, ...] = tuple(MOODS.keys())
 MOTOR_GESTURES: Tuple[str, ...] = tuple(BLINKS) + tuple(GESTURES_FN)
 MOTOR_ACTIVITIES: Tuple[str, ...] = tuple(a for a in ACTIVITIES if a != "idle")
