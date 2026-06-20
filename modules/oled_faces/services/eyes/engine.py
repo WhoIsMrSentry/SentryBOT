@@ -15,7 +15,7 @@ import time
 
 from PIL import Image, ImageDraw
 
-from .activities import ACT_MOOD, ACTIVITIES, OVERLAYS, pose
+from .activities import ACT_EXPIRY, ACT_MOOD, ACTIVITIES, OVERLAYS, pose
 from .gestures import BLINKS, GESTURE_FACE, GESTURE_FX, GESTURES_FN
 from .moods import MOODS
 from .primitives import ease, rounded_rect
@@ -47,6 +47,7 @@ class EyeEngine:
         self._pending = None                             # mood waiting for the layer to free
         self.look_x = self.look_y = 0.0                  # resting gaze target
         self._blink = self._gesture = self._activity = None
+        self._activity_start = 0.0
         self._restore_mood = None                        # mood to return to after a face-swapping gesture
         self._next_blink = self._next_idle = 0.0
         self._stop = threading.Event()
@@ -102,6 +103,7 @@ class EyeEngine:
             self.set_mood(ACT_MOOD[act])                 # takes the lock itself
         with self._lock:
             self._activity = act
+            self._activity_start = time.monotonic()
 
     # -------------------------------------------------------------- internals
     def _begin_blink(self, now, spec):
@@ -146,6 +148,9 @@ class EyeEngine:
                 self.look_x, self.look_y = (0.0, 0.0) if random.random() < 0.3 else \
                     (random.uniform(-16, 16), random.uniform(-7, 7))
                 self._next_idle = now + random.uniform(1.5, 5)
+            if self._activity and self._activity in ACT_EXPIRY:
+                if ACT_EXPIRY[self._activity](now, self._activity_start):
+                    self._activity = None
             mood, act, look = self.mood, self._activity, (self.look_x, self.look_y)
 
         spec = MOODS[mood]
