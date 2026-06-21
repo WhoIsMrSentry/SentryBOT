@@ -12,6 +12,7 @@ class FaceRenderer:
     def __init__(self, cfg: Optional[Dict[str, Any]] = None):
         display_cfg = dict(cfg or {})
         self._fps = int(display_cfg.pop("fps", 24))
+        self._brightness = int(display_cfg.pop("brightness", 255))
         self._driver = PiSsd1306Driver(display_cfg)
         self._engine: Optional[EyeEngine] = None
         self._pinned_activity: Optional[str] = None
@@ -26,7 +27,7 @@ class FaceRenderer:
             height=self._driver.height,
             fps=self._fps,
             set_brightness=self._driver.set_brightness,
-            bright=int(display_cfg.get("brightness", 255)),
+            bright=self._brightness,
         )
         self._engine.start()
         return True

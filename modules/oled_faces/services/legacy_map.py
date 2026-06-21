@@ -11,6 +11,7 @@ from .eyes.moods import MOODS
 # Legacy bitmap labels still emitted by emotion_vocab / config.
 _MOOD_ALIASES: Dict[str, str] = {
     "normal": "neutral",
+    "chill": "chill",
     "excited": "wired",
     "nervous": "nervous",
     "wired": "wired",
@@ -48,6 +49,13 @@ _LEGACY_ANIMATIONS: Dict[str, Tuple[str, str]] = {
     "blink": ("gesture", "blink"),
     "icons": ("activity", "processing"),
     "all": ("gesture", "excited"),
+    "debug": ("activity", "debugging"),
+    "deploy": ("activity", "deploying"),
+    "glitch": ("activity", "glitch"),
+    "wait": ("activity", "waiting"),
+    "build": ("activity", "building"),
+    "test": ("activity", "testing"),
+    "ping": ("activity", "ping_pong"),
 }
 
 # Gaze poses that were static bitmaps; play as one-shot gestures.

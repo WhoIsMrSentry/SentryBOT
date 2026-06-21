@@ -4,6 +4,17 @@ from __future__ import annotations
 import math
 
 _PI = math.pi
+_NOISE = (12.9898, 78.233, 37.719, 51.07, 19.33)
+
+
+def rand(*xs):
+    """Deterministic 0..1 from fixed inputs — stable across frames."""
+    return (math.sin(sum(x * k for x, k in zip(xs, _NOISE))) * 43758.5453) % 1.0
+
+
+def frame(d):
+    """Live PIL buffer behind an ImageDraw (for datamosh / compositing overlays)."""
+    return getattr(d, "image", None) or getattr(d, "_image", None)
 
 
 def ease(cur, tgt, dt, tau):

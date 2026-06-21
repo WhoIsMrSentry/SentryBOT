@@ -5,7 +5,9 @@ Robot durum/olay sinyallerini Raspberry Pi SSD1306 OLED ekranda **Pip tarzı pro
 ## Kaynaklar
 - Durum: `state_manager` (`operational`, `emotions`)
 - Olaylar: `interactions` event akışı
-- Yüz motoru: `services/eyes/` (moods, gestures, activities — [esp-bridge-mcp-robot](https://github.com/WhoIsMrSentry/esp-bridge-mcp-robot) Pip motoru, senkron: `src/modules/espbridge/eyes/`)
+- Yüz motoru: `services/eyes/` (moods, gestures, activities — [esp-bridge-mcp-robot](https://github.com/WhoIsMrSentry/esp-bridge-mcp-robot) Pip motoru, upstream: `vendor/esp-bridge-mcp-robot/src/modules/espbridge/eyes/`)
+- Birleşik ifade haritası: [`docs/robot_expression_map.md`](../../docs/robot_expression_map.md)
+- Tetikleme: `GET /oled_faces/catalog` veya `POST /oled_faces/event` (`activity:*`, `gesture:*`, `emotion:*`)
 
 ## API
 - `GET /oled_faces/healthz`

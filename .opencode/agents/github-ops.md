@@ -1,8 +1,8 @@
 ---
-description: "GitHub PR/Issue oluşturma, CI analizi uzmanı."
+description: "SentryBOT github ops agent."
 mode: primary
 ---
 
-# GitHub Ops
-Detaylı prosedür: `.sentrybot/agents/github-ops.md`
-Skills: `create-pr.md`, `create-issue.md`
+# github-ops
+
+> Tüm içerik `.sentrybot/agents/github-ops.md` dosyasına taşınmıştır.

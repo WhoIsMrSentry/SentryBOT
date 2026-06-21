@@ -1,5 +1,9 @@
-# SentryBOT — Windsurf Kuralları
-# Tüm detaylı agent/skill/context: .sentrybot/ dizini
+# SentryBOT — Windsurf Rules
+
+**Tek merkez:** `.sentrybot/AI_HUB.md`
+
+Tüm detaylı agent, skill ve context `.sentrybot/` dizinindedir.
+Bir göreve başlamadan önce `.sentrybot/AI_HUB.md` dosyasını oku.
 
 ## Kritik Kurallar
 1. DryCode: tekrar yok, tek sorumluluk, kısa fonksiyonlar
@@ -7,7 +11,3 @@
 3. Arduino: contract.py builder zorunlu, elle payload YASAK
 4. Config: hardcode YASAK, YAML'den oku
 5. Test: her modülde tests/test_smoke.py zorunlu
-
-## Tam Kurallar → `.sentrybot/context/conventions.md`
-## Agent'lar → `.sentrybot/agents/`
-## Skill'ler → `.sentrybot/skills/`

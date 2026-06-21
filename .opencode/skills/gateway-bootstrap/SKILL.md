@@ -1,14 +1,8 @@
 ---
 name: gateway-bootstrap
-description: "Yeni modülü Gateway bootstrap sistemine kaydeder. bootstrap.py, config.yml ve include sıralaması."
+description: "SentryBOT gateway bootstrap skill."
 ---
 
-# Gateway Bootstrap
+# gateway-bootstrap
 
-## Adımlar
-1. `modules/gateway/services/bootstrap.py`'ye `_include_<module>` fonksiyonu ekle
-2. `modules/gateway/config/config.yml`'ye `include.<module>: true` ekle
-3. Bootstrap sırasına uy (bağımlılıklar önce)
-
-## Tam Prosedür
-`.sentrybot/skills/gateway-bootstrap.md` dosyasını oku.
+> Tüm içerik `.sentrybot/skills/gateway-bootstrap.md` dosyasına taşınmıştır.
