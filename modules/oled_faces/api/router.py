@@ -17,6 +17,28 @@ def get_router(service: Any) -> APIRouter:
     def status() -> Dict[str, Any]:
         return service.status()
 
+    @r.get("/catalog")
+    def catalog() -> Dict[str, Any]:
+        from ..services.catalog_registry import (
+            MOTOR_ACTIVITIES,
+            MOTOR_GESTURES,
+            MOTOR_MOODS,
+            build_motor_event_map,
+        )
+        events = build_motor_event_map()
+        return {
+            "moods": list(MOTOR_MOODS),
+            "gestures": list(MOTOR_GESTURES),
+            "activities": list(MOTOR_ACTIVITIES),
+            "events": events,
+            "trigger_examples": {
+                "mood": "POST /oled_faces/event {\"type\": \"emotion:chill\"}",
+                "gesture": "POST /oled_faces/event {\"type\": \"gesture:nod\"}",
+                "activity": "POST /oled_faces/event {\"type\": \"activity:debugging\"}",
+                "manual": "POST /oled_faces/manual {\"mode\": \"animation\", \"name\": \"deploying\"}",
+            },
+        }
+
     @r.post("/manual")
     def manual(payload: Dict[str, Any]) -> Dict[str, Any]:
         mode = str(payload.get("mode", "bitmap"))

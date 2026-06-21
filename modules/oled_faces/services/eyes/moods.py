@@ -47,6 +47,7 @@ def _sleepy(d, x, y, w, h, r, ir):    _lids(d, x, y, w, h, 0.5, 0.82)       # dr
 def _despair(d, x, y, w, h, r, ir):   _lids(d, x, y, w, h, 0.42, 0.62)      # drained slit
 def _attentive(d, x, y, w, h, r, ir): _lids(d, x, y, w, h, top=0.12)        # crisp top lid -- locked on
 def _smoking(d, x, y, w, h, r, ir):   _lids(d, x, y, w, h, top=0.45)        # heavy-lidded, chilled out
+def _chill(d, x, y, w, h, r, ir):     _lids(d, x, y, w, h, top=0.45)        # mellow, at ease (no smoke decor)
 
 
 def _skeptical(d, x, y, w, h, r, ir):  # one eye narrowed+angled, the other barely lidded
@@ -186,6 +187,7 @@ def _decor_kawaii(d, W, H, now, ox=0.0, oy=0.0):  # rosy blush hatch + twinkles 
 MOODS = {
     "neutral":     {},
     "smoking":     {"dh": -4, "paint": _smoking, "decor": _decor_smoke},  # chilled, thin smoke curling up
+    "chill":       {"dh": -4, "paint": _chill},                           # mellow heavy lids, no decor
     "happy":       {"paint": _happy},
     "sad":         {"dw": -4, "dh": -6, "paint": _sad},   # small + downcast
     "angry":       {"paint": _angry},
