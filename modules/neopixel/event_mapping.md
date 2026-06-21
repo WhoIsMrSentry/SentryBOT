@@ -1,5 +1,8 @@
 # Neopixel Event → Animasyon Eşleme (Tam Liste)
 
+> **Birleşik harita (OLED + NeoPixel + servo):** [`docs/robot_expression_map.md`](../../docs/robot_expression_map.md)  
+> **CSV:** [`docs/robot_expression_map.csv`](../../docs/robot_expression_map.csv)
+
 Bu belge, repoda bulunan tetikleyici/event kaynaklarının hangi Neopixel animasyon/preset/effect çağrılarını tetiklediğini toplar. Dosya referansları workspace-relative linklerle verildi.
 
 ## Nasıl okunur
