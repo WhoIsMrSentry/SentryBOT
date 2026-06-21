@@ -1,19 +1,8 @@
 ---
 name: add-api-endpoint
-description: "Mevcut SentryBOT modülüne yeni API endpoint ekler. Router, service, config ve test güncellemelerini kapsar."
+description: "SentryBOT add api endpoint skill."
 ---
 
-# Add API Endpoint
+# add-api-endpoint
 
-Mevcut modüle yeni endpoint ekleme prosedürü.
-
-## Adımlar
-1. Mevcut `api/router.py` dosyasını incele (naming pattern)
-2. Yeni route fonksiyonu ekle
-3. Gerekirse `services/` altında service class oluştur
-4. Config'e yeni parametreler ekle (gerekirse)
-5. Test yaz
-6. Architecture doc güncelle
-
-## Tam Prosedür
-`.sentrybot/skills/add-api-endpoint.md` dosyasını oku.
+> Tüm içerik `.sentrybot/skills/add-api-endpoint.md` dosyasına taşınmıştır.

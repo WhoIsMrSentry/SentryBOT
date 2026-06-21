@@ -1,20 +1,8 @@
 ---
 name: write-tests
-description: "SentryBOT modülleri için smoke, unit, API ve mock testleri yazar. CI uyumlu test kalıpları."
+description: "SentryBOT write tests skill."
 ---
 
-# Write Tests
+# write-tests
 
-## Test Türleri
-1. **Smoke Test** (zorunlu) — import, config, service init, router
-2. **Unit Test** — tek fonksiyon/class izole test
-3. **API Test** — FastAPI TestClient ile endpoint testi
-4. **Mock** — donanım/HTTP/Arduino bağımlılıkları mock
-
-## CI Kuralları
-- Python 3.10 hedef
-- `--maxfail=1`
-- Donanım testleri `@pytest.mark.skipif` ile korunur
-
-## Tam Kalıplar
-`.sentrybot/skills/write-tests.md` dosyasını oku.
+> Tüm içerik `.sentrybot/skills/write-tests.md` dosyasına taşınmıştır.

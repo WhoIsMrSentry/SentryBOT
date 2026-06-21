@@ -20,12 +20,14 @@ Bu dizin, SentryBOT deposunda çalışan **tüm AI kodlama asistanları** için 
 .sentrybot/
 ├── README.md                    ← Bu dosya
 ├── agents/                      # İş akışı yöneticileri
+│   └── sub/                     # Modül bazlı sub-agent dosyaları
 │   ├── module-creator.md        # 🏗️ Yeni modül oluşturma
 │   ├── module-editor.md         # ✏️ Mevcut modül düzenleme
 │   ├── github-ops.md            # 🐙 GitHub işlemleri (PR/Issue/CI)
 │   ├── inter-module.md          # 🔗 Modüller arası etkileşim
 │   └── code-reviewer.md         # 🔍 Kod inceleme
 ├── skills/                      # Adım adım prosedürler
+│   └── modules/                 # Modül bazlı skill dosyaları
 │   ├── scaffold-module.md       # Modül iskeleti oluşturma
 │   ├── add-api-endpoint.md      # API endpoint ekleme
 │   ├── add-service-class.md     # Service class ekleme
@@ -43,6 +45,9 @@ Bu dizin, SentryBOT deposunda çalışan **tüm AI kodlama asistanları** için 
 │   ├── api-surface.md           # Tüm HTTP endpoint'ler
 │   ├── architecture-summary.md  # Mimari özet
 │   └── conventions.md           # Kod kuralları
+├── obsidian/                    # Obsidian bilgi kasası notları
+│   └── modules/                 # Modül bazlı bilgi notları
+├── tools/                       # AI varlık üretici scriptleri
 └── templates/                   # İskelet şablonları
     └── module/                  # Modül dosya şablonları
         ├── __init__.py.tmpl
@@ -83,3 +88,17 @@ Bu dosyalar depoyla birlikte güncel tutulmalıdır:
 - Yeni modül eklendiğinde → `context/module-registry.md` güncellenir
 - Yeni endpoint eklendiğinde → `context/api-surface.md` güncellenir
 - Kural değiştiğinde → `context/conventions.md` güncellenir
+
+
+## Modül Bazlı AI Varlıkları (Yeni)
+
+Aşağıdaki içerikler otomatik üretilir:
+- `.sentrybot/skills/modules/*.md`
+- `.sentrybot/agents/sub/*.md`
+- `.sentrybot/obsidian/modules/*.md`
+
+Üretmek/güncellemek için:
+
+```bash
+python3 .sentrybot/tools/generate_module_ai_assets.py
+```

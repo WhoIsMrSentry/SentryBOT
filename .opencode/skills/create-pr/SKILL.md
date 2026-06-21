@@ -1,17 +1,8 @@
 ---
 name: create-pr
-description: "SentryBOT PR standartlarına uygun Pull Request hazırlar. Branch adlandırma, şablon doldurma, label atama."
+description: "SentryBOT create pr skill."
 ---
 
-# Create PR
+# create-pr
 
-## Branch Formatı
-- `feat/<modül>-<açıklama>` — Yeni özellik
-- `fix/<modül>-<açıklama>` — Hata düzeltme
-- `refactor/<modül>-<açıklama>` — Refactor
-
-## PR Şablonu
-`.github/pull_request_template.md` kontrol listesini doldur.
-
-## Tam Prosedür
-`.sentrybot/skills/create-pr.md` dosyasını oku.
+> Tüm içerik `.sentrybot/skills/create-pr.md` dosyasına taşınmıştır.

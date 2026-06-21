@@ -1,8 +1,8 @@
 ---
-description: "Modüller arası HTTP/Arduino/State/Event bağlantılarını yönetir."
+description: "SentryBOT inter module agent."
 mode: primary
 ---
 
-# Inter-Module
-Detaylı prosedür: `.sentrybot/agents/inter-module.md`
-Context: `.sentrybot/context/api-surface.md`
+# inter-module
+
+> Tüm içerik `.sentrybot/agents/inter-module.md` dosyasına taşınmıştır.
