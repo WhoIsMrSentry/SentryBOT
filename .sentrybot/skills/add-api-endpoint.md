@@ -93,7 +93,7 @@ def test_{{endpoint_function_name}}_router():
 
 1. `README.md` endpoint tablosuna yeni endpoint'i ekle
 2. `architecture_{{MODULE_NAME}}.md` dosyasını güncelle
-3. `.sentrybot/context/api-surface.md` dosyasını güncelle
+3. MCP knowledge graph'ı yeniden indexle (`index_repository`)
 
 ## Kontrol Listesi
 

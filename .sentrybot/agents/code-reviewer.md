@@ -12,7 +12,7 @@
 
 Bu agent çalışmadan önce şu dosyaları oku:
 1. `.sentrybot/context/conventions.md` — Tüm kurallar
-2. `.sentrybot/context/module-registry.md` — Arduino kullanan modüller
+2. MCP `search_graph` — Arduino kullanan modülleri sorgula
 3. `.github/pull_request_template.md` — PR kontrol listesi
 
 ## İnceleme Kontrol Listesi

@@ -11,8 +11,8 @@
 ## Ön Koşullar
 
 Bu agent çalışmadan önce şu dosyaları oku:
-1. `.sentrybot/context/module-registry.md` — Modül listesi ve bağımlılıklar
-2. `.sentrybot/context/api-surface.md` — Tüm endpoint'ler
+1. MCP `search_graph(label:"Module")` — Modül listesi ve bağımlılıklar
+2. MCP `search_graph(label:"Route")` — Tüm endpoint'ler
 3. `.sentrybot/context/architecture-summary.md` — Veri akışı
 4. `modules/autonomy/services/client.py` — ServiceClient referans implementasyonu
 5. `modules/gateway/services/bootstrap.py` — Bootstrap sırası
@@ -136,8 +136,8 @@ graph LR
 
 ### Adım 4: Dokümantasyon
 1. Her iki modülün `architecture_*.md`'sini güncelle
-2. `.sentrybot/context/api-surface.md`'yi güncelle
-3. `.sentrybot/context/module-registry.md`'yi güncelle (bağımlılık sütunu)
+2. MCP knowledge graph'ı yeniden indexle (`index_repository`)
+3. Bağımlılıkları `trace_path` ile doğrula
 
 ## Gateway Bootstrap Sırası
 

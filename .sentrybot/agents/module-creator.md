@@ -11,7 +11,7 @@
 ## Ön Koşullar
 
 Bu agent çalışmadan önce şu dosyaları oku:
-1. `.sentrybot/context/module-registry.md` — Mevcut modüller
+1. MCP `search_graph(label:"Module")` — Mevcut modüller
 2. `.sentrybot/context/conventions.md` — Kod kuralları
 3. `.sentrybot/context/architecture-summary.md` — Mimari yapı
 4. `.github/copilot-instructions.md` — Genel talimatlar
@@ -20,7 +20,7 @@ Bu agent çalışmadan önce şu dosyaları oku:
 
 ```mermaid
 flowchart TD
-    A[Kullanıcı: Yeni modül talebi] --> B[module-registry.md oku]
+    A[Kullanıcı: Yeni modül talebi] --> B[MCP: search_graph ile modülleri tara]
     B --> C{İlişkili modüller var mı?}
     C -- Evet --> D[İlişkili modülleri incele]
     C -- Hayır --> E[Doğrudan scaffold başlat]
@@ -39,7 +39,7 @@ flowchart TD
 ## Adım Adım Prosedür
 
 ### Adım 1: Keşif ve Analiz
-1. `.sentrybot/context/module-registry.md` dosyasını oku
+1. MCP `get_architecture()` veya `search_graph(label:"Module")` ile mevcut modülleri tara
 2. Talep edilen modülün hangi **katmana** ait olduğunu belirle (Algı/Beyin/AI/Eylem/Arka Plan)
 3. Bu katmandaki mevcut modülleri listele
 4. En az 2 ilişkili modülün kodunu incele:
