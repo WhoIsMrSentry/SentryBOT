@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import threading
 import time
-import os
-import logging
-from queue import Queue, Empty
-from typing import Any, Dict, Optional, Callable, List
+from queue import Empty, Queue
+from typing import Any, Callable, Dict, List, Optional
+
 try:
     import requests
 except Exception:
     requests = None
+
+import json as _json
+import pathlib as _pathlib
 
 from .config_loader import load_config
 from .contract import (
@@ -19,9 +23,9 @@ from .contract import (
     build_cute_cmd,
     build_drive_cmd,
     build_laser_cmd,
+    build_liveliness_cmd,
     build_pid_enable_cmd,
     build_policy_cmd,
-    build_liveliness_cmd,
     build_set_pose_cmd,
     build_set_servo_cmd,
     build_simple_cmd,
@@ -33,8 +37,6 @@ from .contract import (
     build_tune_cmd,
     build_zero_set_cmd,
 )
-import json as _json
-import pathlib as _pathlib
 
 try:
     import serial  # type: ignore
@@ -70,10 +72,6 @@ class SerialTransport:
 
 
 class xArduinoSerialService:
-    _class_esp_paused_until: float = 0.0
-    _class_esp_pause_logged: bool = False
-    _class_esp_fail_streak: int = 0
-
     """NDJSON tabanlı Arduino seri haberleşme servisi.
 
     - Her satır bir JSON mesajıdır. `{ "cmd": ... }` gönderilir.
@@ -83,8 +81,16 @@ class xArduinoSerialService:
 
     CUTE_SOUND_CATALOG: Dict[str, Dict[str, Any]] = {
         "connection": {"animation": "PULSE", "color": "0,180,80", "iterations": 1},
-        "disconnection": {"animation": "THEATER_CHASE", "color": "220,30,30", "iterations": 1},
-        "button_pushed": {"animation": "PULSE", "color": "180,180,180", "iterations": 1},
+        "disconnection": {
+            "animation": "THEATER_CHASE",
+            "color": "220,30,30",
+            "iterations": 1,
+        },
+        "button_pushed": {
+            "animation": "PULSE",
+            "color": "180,180,180",
+            "iterations": 1,
+        },
         "mode1": {"animation": "WAVE", "color": "0,180,255", "iterations": 1},
         "mode2": {"animation": "WAVE", "color": "180,0,255", "iterations": 1},
         "mode3": {"animation": "WAVE", "color": "255,80,0", "iterations": 1},
@@ -93,8 +99,16 @@ class xArduinoSerialService:
         "super_happy": {"animation": "RAINBOW", "color": "", "iterations": 1},
         "sad": {"animation": "BREATHE", "color": "0,70,255", "iterations": 2},
         "surprise": {"animation": "TWINKLE", "color": "255,255,255", "iterations": 2},
-        "ohooh": {"animation": "THEATER_CHASE", "color": "255,255,255", "iterations": 1},
-        "ohooh2": {"animation": "THEATER_CHASE", "color": "255,255,255", "iterations": 2},
+        "ohooh": {
+            "animation": "THEATER_CHASE",
+            "color": "255,255,255",
+            "iterations": 1,
+        },
+        "ohooh2": {
+            "animation": "THEATER_CHASE",
+            "color": "255,255,255",
+            "iterations": 2,
+        },
         "cuddly": {"animation": "BREATHE", "color": "255,50,150", "iterations": 2},
         "confused": {"animation": "PULSE", "color": "170,0,255", "iterations": 2},
         "sleeping": {"animation": "BREATHE", "color": "20,40,120", "iterations": 2},
@@ -115,26 +129,42 @@ class xArduinoSerialService:
         "disconnected": "disconnection",
     }
 
-    def __init__(self, config_overrides: Optional[Dict[str, Any]] = None, transport_factory: Optional[Callable[..., Any]] = None):
+    def __init__(
+        self,
+        config_overrides: Optional[Dict[str, Any]] = None,
+        transport_factory: Optional[Callable[..., Any]] = None,
+    ):
         self._logger = logging.getLogger("arduino_serial.service")
         self.cfg = load_config(base_dir=None, overrides=config_overrides)
         self._transport_mode = str(self.cfg.get("transport", "serial")).strip().lower()
         self._esp_mode = self._transport_mode == "esp_http"
-        self._esp_base_url = str(self.cfg.get("esp_base_url", "http://127.0.0.1:8091")).rstrip("/")
+        self._esp_base_url = str(
+            self.cfg.get("esp_base_url", "http://127.0.0.1:8091")
+        ).rstrip("/")
         self._esp_request_path = str(self.cfg.get("esp_request_path", "/request"))
         self._esp_send_path = str(self.cfg.get("esp_send_path", "/send"))
         self._esp_health_path = str(self.cfg.get("esp_health_path", "/healthz"))
         self._esp_timeout = float(self.cfg.get("esp_timeout_sec", 1.2) or 1.2)
-        self._esp_connect_timeout = float(self.cfg.get("esp_connect_timeout_sec", 0.4) or 0.4)
+        self._esp_connect_timeout = float(
+            self.cfg.get("esp_connect_timeout_sec", 0.4) or 0.4
+        )
         self._esp_fail_streak = 0
         self._esp_paused_until = 0.0
-        self._esp_pause_after = max(1, int(self.cfg.get("esp_pause_after_failures", 5) or 5))
-        self._esp_pause_sec = max(10.0, float(self.cfg.get("esp_pause_sec", 120) or 120))
+        self._esp_pause_after = max(
+            1, int(self.cfg.get("esp_pause_after_failures", 5) or 5)
+        )
+        self._esp_pause_sec = max(
+            10.0, float(self.cfg.get("esp_pause_sec", 120) or 120)
+        )
         self._esp_pause_logged = False
         self._esp_http: Any = None
         if self._esp_mode and requests is not None:
             self._esp_http = requests.Session()
-        self.transport_factory = transport_factory or (lambda port, baudrate, timeout, write_timeout: SerialTransport(port, baudrate, timeout, write_timeout))
+        self.transport_factory = transport_factory or (
+            lambda port, baudrate, timeout, write_timeout: SerialTransport(
+                port, baudrate, timeout, write_timeout
+            )
+        )
         self._ser: Optional[SerialTransport] = None
         self._rx_thread: Optional[threading.Thread] = None
         self._rx_queue: "Queue[Dict[str, Any]]" = Queue(maxsize=100)
@@ -144,6 +174,14 @@ class xArduinoSerialService:
         self._rfid_lock = threading.Lock()
         self._last_rfid: Optional[tuple[str, float]] = None
         self._saw_boot_ready = False  # drop one-time boot line from request matching
+        # Serializes full request/response transactions. Multiple callers (autonomy,
+        # agent_core tools, vlm_bridge track loop, ...) can call request() concurrently
+        # via separate HTTP requests; without this lock, two in-flight requests would
+        # both read from the shared _rx_queue and could steal each other's ACK/ERR
+        # (e.g. a set_servo caller receiving an estop response), which is unsafe for a
+        # physical actuator. Serial NDJSON has no per-message correlation id, so a
+        # strict one-transaction-at-a-time policy is the safest fix.
+        self._request_lock = threading.Lock()
         self._event_handlers: List[Callable[[Dict[str, Any]], None]] = []
         # metrics
         self._metrics = {"rx_count": 0, "tx_count": 0, "acks_sent": 0}
@@ -158,7 +196,9 @@ class xArduinoSerialService:
 
         # outgoing writer queue and thread
         self._write_queue: "Queue[bytes]" = Queue()
-        self._writer_thread = threading.Thread(target=self._writer_loop, name="arduino-writer", daemon=True)
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop, name="arduino-writer", daemon=True
+        )
         self._writer_thread.start()
 
     def _esp_url(self, path: str) -> str:
@@ -168,33 +208,35 @@ class xArduinoSerialService:
         return f"{self._esp_base_url}{p}"
 
     def _esp_is_paused(self) -> bool:
-        return time.time() < max(self._esp_paused_until, self._class_esp_paused_until)
+        return time.time() < self._esp_paused_until
 
     def _esp_note_failure(self, exc: Exception) -> None:
-        self._class_esp_fail_streak += 1
-        if self._class_esp_fail_streak < self._esp_pause_after:
+        self._esp_fail_streak += 1
+        if self._esp_fail_streak < self._esp_pause_after:
             return
         until = time.time() + self._esp_pause_sec
         self._esp_paused_until = until
-        xArduinoSerialService._class_esp_paused_until = until
-        if not self._class_esp_pause_logged:
+        if not self._esp_pause_logged:
             self._logger.warning(
                 "ESP bridge unreachable after %d failures (%s); pausing HTTP for %.0fs",
-                self._class_esp_fail_streak,
+                self._esp_fail_streak,
                 exc.__class__.__name__,
                 self._esp_pause_sec,
             )
-            xArduinoSerialService._class_esp_pause_logged = True
+            self._esp_pause_logged = True
 
     def _esp_note_success(self) -> None:
         self._esp_fail_streak = 0
         self._esp_paused_until = 0.0
         self._esp_pause_logged = False
-        xArduinoSerialService._class_esp_fail_streak = 0
-        xArduinoSerialService._class_esp_paused_until = 0.0
-        xArduinoSerialService._class_esp_pause_logged = False
 
-    def _esp_post(self, path: str, payload: Optional[Dict[str, Any]] = None, timeout: Optional[float] = None, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _esp_post(
+        self,
+        path: str,
+        payload: Optional[Dict[str, Any]] = None,
+        timeout: Optional[float] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         if requests is None:
             raise RuntimeError("requests is required for ESP HTTP transport")
         if self._esp_is_paused():
@@ -240,14 +282,21 @@ class xArduinoSerialService:
             self._connect()
         self._stop.clear()
         if not self._esp_mode:
-            self._rx_thread = threading.Thread(target=self._reader_loop, name="arduino-rx", daemon=True)
+            self._rx_thread = threading.Thread(
+                target=self._reader_loop, name="arduino-rx", daemon=True
+            )
             self._rx_thread.start()
         if self.cfg.get("auto_heartbeat", True):
-            self._hb_thread = threading.Thread(target=self._heartbeat_loop, name="arduino-hb", daemon=True)
+            self._hb_thread = threading.Thread(
+                target=self._heartbeat_loop, name="arduino-hb", daemon=True
+            )
             self._hb_thread.start()
 
     def stop(self) -> None:
         self._stop.set()
+        self._write_queue.put(None)
+        if self._writer_thread:
+            self._writer_thread.join(timeout=1.0)
         if self._rx_thread:
             self._rx_thread.join(timeout=1.0)
         if self._hb_thread:
@@ -264,10 +313,14 @@ class xArduinoSerialService:
     # -------- public api --------
     def send(self, obj: Dict[str, Any]) -> None:
         if self._esp_mode:
-            data = self._esp_post(self._esp_send_path, payload=obj, timeout=self._esp_timeout)
+            data = self._esp_post(
+                self._esp_send_path, payload=obj, timeout=self._esp_timeout
+            )
             ok = bool(data.get("ok", False))
             if not ok:
-                raise RuntimeError(str(data.get("error") or data.get("err") or "esp_send_failed"))
+                raise RuntimeError(
+                    str(data.get("error") or data.get("err") or "esp_send_failed")
+                )
             self._metrics["tx_count"] += 1
             return
         line = (json.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8")
@@ -277,38 +330,60 @@ class xArduinoSerialService:
         self._metrics["tx_count"] += 1
 
     def request(self, obj: Dict[str, Any], timeout: float = 1.0) -> Dict[str, Any]:
-        if self._esp_mode:
-            max_retries = int(self.cfg.get("request_max_retries", 0) or 0)
-            if timeout is None or timeout == 1.0:
-                cfg_ms = int(self.cfg.get("request_timeout_ms", 1000) or 1000)
-                timeout = float(cfg_ms) / 1000.0
-            last_exc: Optional[Exception] = None
-            for attempt in range(0, max_retries + 1):
-                try:
-                    data = self._esp_post(
-                        self._esp_request_path,
-                        payload=obj,
-                        timeout=float(timeout),
-                        params={"timeout": float(timeout)},
-                    )
-                    self._metrics["tx_count"] += 1
-                    resp = data.get("resp") if isinstance(data, dict) and "resp" in data else data
-                    if isinstance(resp, dict):
-                        self._ingest_message(resp)
-                        return resp
-                    raise RuntimeError("ESP bridge response missing 'resp' object")
-                except Exception as exc:
-                    last_exc = exc
-                    if attempt < max_retries:
-                        time.sleep(0.05)
-                        continue
-            if last_exc:
-                raise last_exc
-            raise TimeoutError("No response from ESP bridge")
+        """Send a command and wait for its matching ACK/ERR.
 
-        # Support config-driven retries and default timeout
+        Wrapped in ``_request_lock`` so only one logical request/response
+        transaction is ever in flight (see the lock's docstring in __init__).
+        """
+        with self._request_lock:
+            return self._request_locked(obj, timeout)
+
+    def _request_locked(
+        self, obj: Dict[str, Any], timeout: float = 1.0
+    ) -> Dict[str, Any]:
+        if self._esp_mode:
+            return self._request_locked_esp(obj, timeout)
+        return self._request_locked_serial(obj, timeout)
+
+    def _request_locked_esp(
+        self, obj: Dict[str, Any], timeout: float
+    ) -> Dict[str, Any]:
         max_retries = int(self.cfg.get("request_max_retries", 0) or 0)
-        # allow per-call timeout (seconds); if caller passed default, prefer configured ms
+        if timeout is None or timeout == 1.0:
+            cfg_ms = int(self.cfg.get("request_timeout_ms", 1000) or 1000)
+            timeout = float(cfg_ms) / 1000.0
+        last_exc: Optional[Exception] = None
+        for attempt in range(0, max_retries + 1):
+            try:
+                data = self._esp_post(
+                    self._esp_request_path,
+                    payload=obj,
+                    timeout=float(timeout),
+                    params={"timeout": float(timeout)},
+                )
+                self._metrics["tx_count"] += 1
+                resp = (
+                    data.get("resp")
+                    if isinstance(data, dict) and "resp" in data
+                    else data
+                )
+                if isinstance(resp, dict):
+                    self._ingest_message(resp)
+                    return resp
+                raise RuntimeError("ESP bridge response missing 'resp' object")
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_retries:
+                    time.sleep(0.05)
+                    continue
+        if last_exc:
+            raise last_exc
+        raise TimeoutError("No response from ESP bridge")
+
+    def _request_locked_serial(
+        self, obj: Dict[str, Any], timeout: float
+    ) -> Dict[str, Any]:
+        max_retries = int(self.cfg.get("request_max_retries", 0) or 0)
         if timeout is None or timeout == 1.0:
             cfg_ms = int(self.cfg.get("request_timeout_ms", 1000) or 1000)
             timeout = float(cfg_ms) / 1000.0
@@ -317,7 +392,6 @@ class xArduinoSerialService:
         last_exc: Optional[Exception] = None
         echo_samples: List[str] = []
         for attempt in range(0, max_retries + 1):
-            # send each attempt
             self.send(obj)
             t0 = time.time()
             try:
@@ -328,20 +402,30 @@ class xArduinoSerialService:
                         break
                     try:
                         msg = self._rx_queue.get(timeout=remaining)
-                        # Filter out initial boot "ready" message once, so it doesn't satisfy the first request.
-                        if not obj.get("allow_ready", False) and isinstance(msg, dict) and msg.get("ok") is True and msg.get("msg") == "ready":
+                        if (
+                            not obj.get("allow_ready", False)
+                            and isinstance(msg, dict)
+                            and msg.get("ok") is True
+                            and msg.get("msg") == "ready"
+                        ):
                             if not self._saw_boot_ready:
                                 self._saw_boot_ready = True
                                 continue
-                        # Ignore heartbeat acks unless we explicitly requested hb
-                        if want_cmd != "hb" and isinstance(msg, dict) and msg.get("ok") is True and msg.get("msg") == "hb":
+                        if (
+                            want_cmd != "hb"
+                            and isinstance(msg, dict)
+                            and msg.get("ok") is True
+                            and msg.get("msg") == "hb"
+                        ):
                             continue
-                        # Echo-only frames (e.g. {"cmd":"hello"}) indicate a line echo or wrong peer.
-                        # Keep waiting for an explicit ACK/ERR, but remember samples for diagnostics.
-                        if isinstance(msg, dict) and ("ok" not in msg and "err" not in msg):
+                        if isinstance(msg, dict) and (
+                            "ok" not in msg and "err" not in msg
+                        ):
                             if msg.get("cmd") == want_cmd and len(echo_samples) < 3:
                                 try:
-                                    echo_samples.append(json.dumps(msg, separators=(",", ":")))
+                                    echo_samples.append(
+                                        json.dumps(msg, separators=(",", ":"))
+                                    )
                                 except Exception:
                                     echo_samples.append(str(msg))
                             continue
@@ -349,9 +433,7 @@ class xArduinoSerialService:
                             return msg
                         continue
                     except Empty:
-                        # no message in remaining interval, will check overall timeout
                         pass
-                # timed out for this attempt
                 if echo_samples:
                     sample = "; ".join(echo_samples)
                     last_exc = TimeoutError(
@@ -360,16 +442,16 @@ class xArduinoSerialService:
                         % (want_cmd, attempt + 1, sample)
                     )
                 else:
-                    last_exc = TimeoutError("No response from Arduino (attempt %d)" % (attempt + 1))
+                    last_exc = TimeoutError(
+                        "No response from Arduino (attempt %d)" % (attempt + 1)
+                    )
             except Exception as exc:
                 last_exc = exc
 
-            # if we get here, attempt failed; if more retries remain, backoff briefly and retry
             if attempt < max_retries:
                 time.sleep(0.05)
                 continue
 
-        # all attempts exhausted
         if last_exc:
             raise last_exc
         raise TimeoutError("No response from Arduino")
@@ -404,13 +486,19 @@ class xArduinoSerialService:
     def set_servo(self, index: int, deg: float) -> Dict[str, Any]:
         return self.request(build_set_servo_cmd(index, deg))
 
-    def set_pose(self, pose: List[int], duration_ms: Optional[int] = None) -> Dict[str, Any]:
+    def set_pose(
+        self, pose: List[int], duration_ms: Optional[int] = None
+    ) -> Dict[str, Any]:
         if len(pose) != SERVO_COUNT:
-            raise ValueError(f"pose must be a list of {SERVO_COUNT} integers (servo degrees)")
+            raise ValueError(
+                f"pose must be a list of {SERVO_COUNT} integers (servo degrees)"
+            )
         payload = build_set_pose_cmd(pose, duration_ms=duration_ms)
         return self.request(payload)
 
-    def stepper(self, id_: int, mode: str, value: int, drive: Optional[int] = None) -> Dict[str, Any]:
+    def stepper(
+        self, id_: int, mode: str, value: int, drive: Optional[int] = None
+    ) -> Dict[str, Any]:
         payload = build_stepper_cmd(id_=id_, mode=mode, value=value, drive=drive)
         return self.request(payload)
 
@@ -421,10 +509,9 @@ class xArduinoSerialService:
         return self.request(build_simple_cmd("estop"))
 
     # -------- extended helpers matching firmware README --------
-    def leg_ik(self, x: float, side: str = "L") -> Dict[str, Any]:
-        raise NotImplementedError("leg_ik is not supported by the current firmware build")
-
-    def stepper_cfg(self, maxSpeed: Optional[int] = None, accel: Optional[int] = None) -> Dict[str, Any]:
+    def stepper_cfg(
+        self, maxSpeed: Optional[int] = None, accel: Optional[int] = None
+    ) -> Dict[str, Any]:
         payload = build_stepper_cfg_cmd(max_speed=maxSpeed, accel=accel)
         return self.request(payload)
 
@@ -469,11 +556,18 @@ class xArduinoSerialService:
         # Neutral calibration in firmware
         return self.request(build_simple_cmd("calibrate"))
 
-    def tune(self, pid: Optional[Dict[str, Any]] = None, skate: Optional[Dict[str, Any]] = None, servoSpeed: Optional[float] = None) -> Dict[str, Any]:
+    def tune(
+        self,
+        pid: Optional[Dict[str, Any]] = None,
+        skate: Optional[Dict[str, Any]] = None,
+        servoSpeed: Optional[float] = None,
+    ) -> Dict[str, Any]:
         payload = build_tune_cmd(pid=pid, skate=skate, servo_speed=servoSpeed)
         return self.request(payload)
 
-    def policy(self, pose: Optional[List[int]] = None, steppers: Optional[List[int]] = None) -> Dict[str, Any]:
+    def policy(
+        self, pose: Optional[List[int]] = None, steppers: Optional[List[int]] = None
+    ) -> Dict[str, Any]:
         payload = build_policy_cmd()
         if pose is not None:
             if len(pose) != SERVO_COUNT:
@@ -494,7 +588,9 @@ class xArduinoSerialService:
             tilt=kwargs.get("tilt"),
             pan=kwargs.get("pan"),
         )
-        payload.update({k: v for k, v in kwargs.items() if v is not None and k not in payload})
+        payload.update(
+            {k: v for k, v in kwargs.items() if v is not None and k not in payload}
+        )
         return self.request(payload)
 
     def drive(self, value: int) -> Dict[str, Any]:
@@ -545,7 +641,9 @@ class xArduinoSerialService:
             raise ValueError("mode must be loud or quiet")
         return self.request(build_sound_output_cmd(mode_low))
 
-    def buzzer(self, freq: int = 2200, ms: int = 60, out: Optional[str] = None) -> Dict[str, Any]:
+    def buzzer(
+        self, freq: int = 2200, ms: int = 60, out: Optional[str] = None
+    ) -> Dict[str, Any]:
         out_low: Optional[str] = None
         if out is not None:
             out_low = str(out).strip().lower()
@@ -567,8 +665,7 @@ class xArduinoSerialService:
         return {
             "ok": True,
             "sounds": [
-                {"name": name, **cfg}
-                for name, cfg in self.CUTE_SOUND_CATALOG.items()
+                {"name": name, **cfg} for name, cfg in self.CUTE_SOUND_CATALOG.items()
             ],
             "emotion_map": self.EMOTION_TO_CUTE,
         }
@@ -582,7 +679,11 @@ class xArduinoSerialService:
 
     # -------- internals --------
     def _connect(self) -> None:
-        port = self._autodetect_port(self.cfg["port"]) if self.cfg.get("port") in (None, "auto", "AUTO") else self.cfg["port"]
+        port = (
+            self._autodetect_port(self.cfg["port"])
+            if self.cfg.get("port") in (None, "auto", "AUTO")
+            else self.cfg["port"]
+        )
         try:
             self._ser = self.transport_factory(
                 port,
@@ -653,10 +754,14 @@ class xArduinoSerialService:
             uid, ts = self._last_rfid
         return {"uid": uid, "seen_at": ts, "age_s": max(0.0, time.time() - ts)}
 
-    def authorize_rfid(self, uid: Optional[str] = None, window_s: Optional[float] = None) -> Dict[str, Any]:
+    def authorize_rfid(
+        self, uid: Optional[str] = None, window_s: Optional[float] = None
+    ) -> Dict[str, Any]:
         cfg = self.cfg.get("rfid", {}) or {}
         allowed = {self._normalize_uid(x) for x in cfg.get("allowed_uids", []) if x}
-        window = float(window_s if window_s is not None else cfg.get("authorize_window_s", 8.0))
+        window = float(
+            window_s if window_s is not None else cfg.get("authorize_window_s", 8.0)
+        )
 
         if uid:
             normalized_uid = self._normalize_uid(uid)
@@ -668,7 +773,12 @@ class xArduinoSerialService:
             normalized_uid = self._normalize_uid(snap.get("uid"))
             age_s = snap.get("age_s")
             if age_s is not None and age_s > window:
-                return {"authorized": False, "uid": normalized_uid, "age_s": age_s, "reason": "stale"}
+                return {
+                    "authorized": False,
+                    "uid": normalized_uid,
+                    "age_s": age_s,
+                    "reason": "stale",
+                }
 
         if not normalized_uid:
             return {"authorized": False, "reason": "invalid_uid"}
@@ -709,7 +819,11 @@ class xArduinoSerialService:
                 if seq is not None:
                     # best-effort ACK immediately
                     try:
-                        self._write_queue.put(( _json.dumps({"ok": True, "ack_seq": int(seq)}) + "\n" ).encode("utf-8"))
+                        self._write_queue.put(
+                            (
+                                _json.dumps({"ok": True, "ack_seq": int(seq)}) + "\n"
+                            ).encode("utf-8")
+                        )
                         self._metrics["acks_sent"] += 1
                         # Emit telemetry event for ACK if configured
                         try:
@@ -755,19 +869,25 @@ class xArduinoSerialService:
             return str(v or "").lower()
 
         def _is_arduino_like(p: Any) -> bool:
-            txt = " ".join([
-                _text(getattr(p, "description", "")),
-                _text(getattr(p, "manufacturer", "")),
-                _text(getattr(p, "product", "")),
-                _text(getattr(p, "hwid", "")),
-            ])
+            txt = " ".join(
+                [
+                    _text(getattr(p, "description", "")),
+                    _text(getattr(p, "manufacturer", "")),
+                    _text(getattr(p, "product", "")),
+                    _text(getattr(p, "hwid", "")),
+                ]
+            )
             keys = ("arduino", "mega", "2560", "ch340", "cp210", "usb serial")
             return any(k in txt for k in keys)
 
         # 1) Prefer Arduino-like USB serial adapters first.
         for p in ports:
             dev = str(getattr(p, "device", "") or "")
-            if dev and any(x in dev for x in ("ttyACM", "ttyUSB", "COM")) and _is_arduino_like(p):
+            if (
+                dev
+                and any(x in dev for x in ("ttyACM", "ttyUSB", "COM"))
+                and _is_arduino_like(p)
+            ):
                 return dev
 
         # 2) Then any USB serial-style device.
@@ -806,10 +926,9 @@ class xArduinoSerialService:
         return "COM3" if os.name == "nt" else "/dev/serial0"
 
     def _writer_loop(self) -> None:
-        # background thread to serialize writes to serial port
-        while True:
+        while not self._stop.is_set():
             try:
-                data = self._write_queue.get()
+                data = self._write_queue.get(timeout=0.1)
                 if data is None:
                     break
                 try:
@@ -818,6 +937,8 @@ class xArduinoSerialService:
                         self._ser.write(data)
                 except Exception:
                     time.sleep(0.01)
+            except Empty:
+                continue
             except Exception:
                 time.sleep(0.01)
                 continue

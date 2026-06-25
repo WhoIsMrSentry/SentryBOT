@@ -8,10 +8,25 @@ SERVO_COUNT = 4
 SERVO_MIN_DEG = 0.0
 SERVO_MAX_DEG = 180.0
 
-# Firmware liveliness (idle breathing / micro-motion) bounds.
+# Per-index servo bounds matching firmware limits.
+# Index 0 (pan): 30-150, Index 1 (tilt): 60-120, Index 2-3 (pi servos): 0-180
+SERVO_BOUNDS: list[tuple[float, float]] = [
+    (30.0, 150.0),
+    (60.0, 120.0),
+    (0.0, 180.0),
+    (0.0, 180.0),
+]
+
 LIVELINESS_MODES = ("breathe", "idle", "micro")
 LIVELINESS_AMPLITUDE_MAX_DEG = 30.0
 LIVELINESS_PERIOD_MIN_MS = 200
+
+SIMPLE_CMDS: frozenset[str] = frozenset({
+    "home", "zero_now", "calibrate", "stand", "sit",
+    "imu_read", "imu_cal", "eeprom_save", "eeprom_load",
+    "get_state", "estop", "telemetry_stop", "hello", "hb",
+    "rfid_last", "ultra_read", "speech_play",
+})
 
 
 def build_set_servo_cmd(index: int, deg: float) -> Dict[str, Any]:
@@ -106,13 +121,6 @@ def build_liveliness_cmd(
     pan_center: Optional[float] = None,
     tilt_center: Optional[float] = None,
 ) -> Dict[str, Any]:
-    """Idle liveliness on the head servos (firmware-native subtle motion).
-
-    ``enable=False`` stops the motion and re-centres; other fields are only
-    meaningful when enabling. Keeping this in the contract (instead of streaming
-    raw set_servo waves from the Pi) lets the firmware own a smooth, jitter-free
-    breathing loop even if the bridge stalls.
-    """
     payload: Dict[str, Any] = {"cmd": "liveliness", "enable": bool(enable)}
     if mode is not None:
         payload["mode"] = str(mode)
@@ -171,33 +179,6 @@ def build_lcd_cmd(id_: Optional[int] = None, msg: Optional[str] = None, top: Opt
     return payload
 
 
-def validate_set_servo_cmd(payload: Dict[str, Any]) -> Optional[str]:
-    if payload.get("cmd") != "set_servo":
-        return None
-
-    if "index" not in payload:
-        return "set_servo requires 'index'"
-    if "deg" not in payload:
-        return "set_servo requires 'deg'"
-
-    try:
-        index = int(payload.get("index"))
-    except Exception:
-        return "set_servo 'index' must be an integer"
-
-    try:
-        deg = float(payload.get("deg"))
-    except Exception:
-        return "set_servo 'deg' must be numeric"
-
-    if index < 0 or index >= SERVO_COUNT:
-        return f"set_servo 'index' must be in [0,{SERVO_COUNT - 1}]"
-    if deg < SERVO_MIN_DEG or deg > SERVO_MAX_DEG:
-        return f"set_servo 'deg' must be in [{int(SERVO_MIN_DEG)},{int(SERVO_MAX_DEG)}]"
-
-    return None
-
-
 def _as_int(value: Any) -> Optional[int]:
     try:
         return int(value)
@@ -225,8 +206,9 @@ def _validate_pose_values(pose: Any, field_name: str) -> Optional[str]:
         deg = _as_float(v)
         if deg is None:
             return f"{field_name}[{idx}] must be numeric"
-        if deg < SERVO_MIN_DEG or deg > SERVO_MAX_DEG:
-            return f"{field_name}[{idx}] must be in [{int(SERVO_MIN_DEG)},{int(SERVO_MAX_DEG)}]"
+        lo, hi = SERVO_BOUNDS[idx] if idx < len(SERVO_BOUNDS) else (SERVO_MIN_DEG, SERVO_MAX_DEG)
+        if deg < lo or deg > hi:
+            return f"{field_name}[{idx}] must be in [{int(lo)},{int(hi)}]"
     return None
 
 
@@ -241,12 +223,181 @@ def _validate_stepper_id(payload: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def validate_liveliness_cmd(payload: Dict[str, Any]) -> Optional[str]:
-    if payload.get("cmd") != "liveliness":
-        return None
+# ---- per-command validators ----
+
+def _validate_ack_seq(payload: Dict[str, Any]) -> Optional[str]:
+    ack_seq = _as_int(payload.get("ack_seq"))
+    if ack_seq is None or ack_seq <= 0:
+        return "'ack_seq' must be a positive integer"
+    if "ok" in payload and not _is_bool(payload.get("ok")):
+        return "'ok' must be boolean"
+    return None
+
+
+def _validate_set_servo(payload: Dict[str, Any]) -> Optional[str]:
+    if "index" not in payload:
+        return "set_servo requires 'index'"
+    if "deg" not in payload:
+        return "set_servo requires 'deg'"
+    try:
+        index = int(payload.get("index"))
+    except Exception:
+        return "set_servo 'index' must be an integer"
+    try:
+        deg = float(payload.get("deg"))
+    except Exception:
+        return "set_servo 'deg' must be numeric"
+    if index < 0 or index >= SERVO_COUNT:
+        return f"set_servo 'index' must be in [0,{SERVO_COUNT - 1}]"
+    lo, hi = SERVO_BOUNDS[index] if index < len(SERVO_BOUNDS) else (SERVO_MIN_DEG, SERVO_MAX_DEG)
+    if deg < lo or deg > hi:
+        return f"set_servo 'deg' must be in [{int(lo)},{int(hi)}] for index {index}"
+    return None
+
+
+def _validate_set_pose(payload: Dict[str, Any]) -> Optional[str]:
+    if "pose" not in payload:
+        return "set_pose requires 'pose'"
+    err = _validate_pose_values(payload.get("pose"), "pose")
+    if err:
+        return err
+    if "duration_ms" in payload:
+        dur = _as_int(payload.get("duration_ms"))
+        if dur is None or dur < 0:
+            return "set_pose 'duration_ms' must be >= 0"
+    return None
+
+
+def _validate_stepper(payload: Dict[str, Any]) -> Optional[str]:
+    mode = payload.get("mode")
+    if mode not in ("pos", "vel"):
+        return "stepper 'mode' must be 'pos' or 'vel'"
+    err = _validate_stepper_id(payload)
+    if err:
+        return f"stepper {err}"
+    if "value" not in payload:
+        return "stepper requires 'value'"
+    if _as_float(payload.get("value")) is None:
+        return "stepper 'value' must be numeric"
+    if "drive" in payload and _as_float(payload.get("drive")) is None:
+        return "stepper 'drive' must be numeric"
+    return None
+
+
+def _validate_zero_set(payload: Dict[str, Any]) -> Optional[str]:
+    p1 = _as_int(payload.get("p1"))
+    p2 = _as_int(payload.get("p2"))
+    if p1 is None or p2 is None:
+        return "zero_set requires integer 'p1' and 'p2'"
+    return None
+
+
+def _validate_stepper_cfg(payload: Dict[str, Any]) -> Optional[str]:
+    if "maxSpeed" not in payload and "accel" not in payload:
+        return "stepper_cfg requires 'maxSpeed' and/or 'accel'"
+    if "maxSpeed" in payload and _as_float(payload.get("maxSpeed")) is None:
+        return "stepper_cfg 'maxSpeed' must be numeric"
+    if "accel" in payload and _as_float(payload.get("accel")) is None:
+        return "stepper_cfg 'accel' must be numeric"
+    return None
+
+
+def _validate_pid_enable(payload: Dict[str, Any]) -> Optional[str]:
+    err = _validate_stepper_id(payload)
+    if err:
+        return f"pid_enable {err}"
+    if "enable" not in payload or not _is_bool(payload.get("enable")):
+        return "pid_enable requires boolean 'enable'"
+    return None
+
+
+def _validate_pid_set(payload: Dict[str, Any]) -> Optional[str]:
+    err = _validate_stepper_id(payload)
+    if err:
+        return f"pid_set {err}"
+    has_any = False
+    for key in ("kp", "ki", "kd", "target"):
+        if key in payload:
+            has_any = True
+            if _as_float(payload.get(key)) is None:
+                return f"pid_set '{key}' must be numeric"
+    if not has_any:
+        return "pid_set requires at least one of: kp, ki, kd, target"
+    return None
+
+
+def _validate_pid_action(payload: Dict[str, Any]) -> Optional[str]:
+    err = _validate_stepper_id(payload)
+    if err:
+        return f"{payload.get('cmd')} {err}"
+    return None
+
+
+def _validate_policy(payload: Dict[str, Any]) -> Optional[str]:
+    if "pose" in payload:
+        err = _validate_pose_values(payload.get("pose"), "policy.pose")
+        if err:
+            return err
+    if "steppers" in payload:
+        steppers = payload.get("steppers")
+        if not isinstance(steppers, list):
+            return "policy.steppers must be a list"
+        if len(steppers) != 2:
+            return "policy.steppers must have exactly 2 values"
+        for idx, v in enumerate(steppers):
+            if _as_float(v) is None:
+                return f"policy.steppers[{idx}] must be numeric"
+    if "pose" not in payload and "steppers" not in payload:
+        return "policy requires 'pose' and/or 'steppers'"
+    return None
+
+
+def _validate_tune(payload: Dict[str, Any]) -> Optional[str]:
+    has_any = False
+    if "servo_speed" in payload:
+        has_any = True
+        if _as_float(payload.get("servo_speed")) is None:
+            return "tune 'servo_speed' must be numeric"
+    if "pid" in payload:
+        has_any = True
+        pid = payload.get("pid")
+        if not isinstance(pid, dict):
+            return "tune 'pid' must be an object"
+        for key in ("kp", "ki", "kd"):
+            if key in pid and _as_float(pid.get(key)) is None:
+                return f"tune pid.{key} must be numeric"
+    if "skate" in payload:
+        has_any = True
+        skate = payload.get("skate")
+        if not isinstance(skate, dict):
+            return "tune 'skate' must be an object"
+        for key in ("kp", "ki", "kd", "max"):
+            if key in skate and _as_float(skate.get(key)) is None:
+                return f"tune skate.{key} must be numeric"
+    if not has_any:
+        return "tune requires 'servo_speed', 'pid', and/or 'skate'"
+    return None
+
+
+def _validate_track(payload: Dict[str, Any]) -> Optional[str]:
+    has_head = any(k in payload for k in ("head_tilt", "head_pan", "tilt", "pan"))
+    if not has_head and "drive" not in payload:
+        return "track requires head keys and/or 'drive'"
+    for key in ("head_tilt", "head_pan", "tilt", "pan", "drive"):
+        if key in payload and _as_float(payload.get(key)) is None:
+            return f"track '{key}' must be numeric"
+    return None
+
+
+def _validate_drive(payload: Dict[str, Any]) -> Optional[str]:
+    if _as_float(payload.get("value")) is None:
+        return "drive requires numeric 'value'"
+    return None
+
+
+def _validate_liveliness(payload: Dict[str, Any]) -> Optional[str]:
     if "enable" not in payload or not _is_bool(payload.get("enable")):
         return "liveliness requires boolean 'enable'"
-    # Disabling needs no further parameters.
     if not payload.get("enable"):
         return None
     if "mode" in payload and payload.get("mode") not in LIVELINESS_MODES:
@@ -267,249 +418,171 @@ def validate_liveliness_cmd(payload: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+def _validate_encoder_calibrate(payload: Dict[str, Any]) -> Optional[str]:
+    if "duration_ms" in payload:
+        dur = _as_int(payload.get("duration_ms"))
+        if dur is None or dur <= 0:
+            return "encoder_calibrate 'duration_ms' must be > 0"
+    return None
+
+
+def _validate_telemetry_start(payload: Dict[str, Any]) -> Optional[str]:
+    if "interval_ms" in payload:
+        interval = _as_int(payload.get("interval_ms"))
+        if interval is None or interval <= 0:
+            return "telemetry_start 'interval_ms' must be > 0"
+    return None
+
+
+def _validate_laser(payload: Dict[str, Any]) -> Optional[str]:
+    if "on" not in payload or not _is_bool(payload.get("on")):
+        return "laser requires boolean 'on'"
+    if payload.get("on"):
+        if payload.get("both") is True:
+            return None
+        lid = _as_int(payload.get("id"))
+        if lid not in (1, 2):
+            return "laser requires 'id' as 1 or 2 when 'on' is true and both is not true"
+    return None
+
+
+def _validate_sound(payload: Dict[str, Any]) -> Optional[str]:
+    if "out" in payload and payload.get("out") not in ("loud", "quiet"):
+        return "sound 'out' must be 'loud' or 'quiet'"
+    if "mode" in payload and payload.get("mode") not in ("loud", "quiet"):
+        return "sound 'mode' must be 'loud' or 'quiet'"
+    if "both" in payload and not _is_bool(payload.get("both")):
+        return "sound 'both' must be boolean"
+    if "out" not in payload and "mode" not in payload and "both" not in payload:
+        return "sound requires one of: out, mode, both"
+    return None
+
+
+def _validate_buzzer(payload: Dict[str, Any]) -> Optional[str]:
+    freq = _as_int(payload.get("freq", 2200))
+    ms = _as_int(payload.get("ms", 60))
+    if freq is None:
+        return "buzzer 'freq' must be integer"
+    if ms is None:
+        return "buzzer 'ms' must be integer"
+    if "out" in payload and payload.get("out") not in ("loud", "quiet"):
+        return "buzzer 'out' must be 'loud' or 'quiet'"
+    return None
+
+
+def _validate_sound_play(payload: Dict[str, Any]) -> Optional[str]:
+    name = payload.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return "sound_play requires non-empty 'name'"
+    if "out" in payload and payload.get("out") not in ("loud", "quiet"):
+        return "sound_play 'out' must be 'loud' or 'quiet'"
+    return None
+
+
+def _validate_speech(payload: Dict[str, Any]) -> Optional[str]:
+    text = payload.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return "speech requires non-empty 'text'"
+    return None
+
+
+def _validate_cute(payload: Dict[str, Any]) -> Optional[str]:
+    name = payload.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return "cute requires non-empty 'name'"
+    return None
+
+
+def _validate_lcd(payload: Dict[str, Any]) -> Optional[str]:
+    has_msg = any(isinstance(payload.get(k), str) and payload.get(k).strip() for k in ("msg", "top", "bottom"))
+    if not has_msg:
+        return "lcd requires non-empty 'msg' or 'top'/'bottom'"
+    if "id" in payload and _as_int(payload.get("id")) is None:
+        return "lcd 'id' must be integer"
+    return None
+
+
+def _validate_avoid(payload: Dict[str, Any]) -> Optional[str]:
+    if "enable" not in payload or not _is_bool(payload.get("enable")):
+        return "avoid requires boolean 'enable'"
+    return None
+
+
+def _validate_ir_key(payload: Dict[str, Any]) -> Optional[str]:
+    if "key" not in payload:
+        return "ir_key requires 'key'"
+    return None
+
+
+def _validate_menu_goto(payload: Dict[str, Any]) -> Optional[str]:
+    if "menu" not in payload:
+        return "menu_goto requires 'menu'"
+    return None
+
+
+def _validate_temp_read(payload: Dict[str, Any]) -> Optional[str]:
+    return None
+
+
+# ---- command dispatch table ----
+_VALIDATORS: dict[str, tuple[str, Any]] = {
+    "set_servo": ("_validate_set_servo", _validate_set_servo),
+    "set_pose": ("_validate_set_pose", _validate_set_pose),
+    "stepper": ("_validate_stepper", _validate_stepper),
+    "zero_set": ("_validate_zero_set", _validate_zero_set),
+    "stepper_cfg": ("_validate_stepper_cfg", _validate_stepper_cfg),
+    "pid_enable": ("_validate_pid_enable", _validate_pid_enable),
+    "pid_set": ("_validate_pid_set", _validate_pid_set),
+    "policy": ("_validate_policy", _validate_policy),
+    "tune": ("_validate_tune", _validate_tune),
+    "track": ("_validate_track", _validate_track),
+    "drive": ("_validate_drive", _validate_drive),
+    "liveliness": ("_validate_liveliness", _validate_liveliness),
+    "encoder_calibrate": ("_validate_encoder_calibrate", _validate_encoder_calibrate),
+    "telemetry_start": ("_validate_telemetry_start", _validate_telemetry_start),
+    "laser": ("_validate_laser", _validate_laser),
+    "sound": ("_validate_sound", _validate_sound),
+    "buzzer": ("_validate_buzzer", _validate_buzzer),
+    "sound_play": ("_validate_sound_play", _validate_sound_play),
+    "speech": ("_validate_speech", _validate_speech),
+    "cute": ("_validate_cute", _validate_cute),
+    "lcd": ("_validate_lcd", _validate_lcd),
+    "avoid": ("_validate_avoid", _validate_avoid),
+    "ir_key": ("_validate_ir_key", _validate_ir_key),
+    "menu_goto": ("_validate_menu_goto", _validate_menu_goto),
+    "temp_read": ("_validate_temp_read", _validate_temp_read),
+}
+
+PID_ACTION_CMDS: frozenset[str] = frozenset({
+    "pid_status", "pid_save", "pid_load", "pid_clear_stall", "pid_reset",
+})
+
+
 def validate_arduino_payload(payload: Dict[str, Any]) -> Optional[str]:
     if not isinstance(payload, dict):
         return "payload must be a JSON object"
-
-    # Allow internal ACK style payloads that can be proxied as-is.
     if "ack_seq" in payload:
-        ack_seq = _as_int(payload.get("ack_seq"))
-        if ack_seq is None or ack_seq <= 0:
-            return "'ack_seq' must be a positive integer"
-        if "ok" in payload and not _is_bool(payload.get("ok")):
-            return "'ok' must be boolean"
-        return None
-
+        return _validate_ack_seq(payload)
     cmd = payload.get("cmd")
     if not isinstance(cmd, str) or not cmd:
         return "payload requires non-empty string 'cmd'"
-
-    if cmd == "set_servo":
-        return validate_set_servo_cmd(payload)
-
-    if cmd == "set_pose":
-        if "pose" not in payload:
-            return "set_pose requires 'pose'"
-        err = _validate_pose_values(payload.get("pose"), "pose")
-        if err:
-            return err
-        if "duration_ms" in payload:
-            dur = _as_int(payload.get("duration_ms"))
-            if dur is None or dur < 0:
-                return "set_pose 'duration_ms' must be >= 0"
+    if cmd in SIMPLE_CMDS:
         return None
-
-    if cmd == "stepper":
-        mode = payload.get("mode")
-        if mode not in ("pos", "vel"):
-            return "stepper 'mode' must be 'pos' or 'vel'"
-        err = _validate_stepper_id(payload)
-        if err:
-            return f"stepper {err}"
-        if "value" not in payload:
-            return "stepper requires 'value'"
-        if _as_float(payload.get("value")) is None:
-            return "stepper 'value' must be numeric"
-        if "drive" in payload and _as_float(payload.get("drive")) is None:
-            return "stepper 'drive' must be numeric"
-        return None
-
-    if cmd in (
-        "home",
-        "zero_now",
-        "calibrate",
-        "stand",
-        "sit",
-        "imu_read",
-        "imu_cal",
-        "eeprom_save",
-        "eeprom_load",
-        "get_state",
-        "estop",
-        "telemetry_stop",
-        "hello",
-        "hb",
-        "rfid_last",
-        "ultra_read",
-        "speech_play",
-    ):
-        return None
-
-    if cmd == "zero_set":
-        p1 = _as_int(payload.get("p1"))
-        p2 = _as_int(payload.get("p2"))
-        if p1 is None or p2 is None:
-            return "zero_set requires integer 'p1' and 'p2'"
-        return None
-
-    if cmd == "stepper_cfg":
-        if "maxSpeed" not in payload and "accel" not in payload:
-            return "stepper_cfg requires 'maxSpeed' and/or 'accel'"
-        if "maxSpeed" in payload and _as_float(payload.get("maxSpeed")) is None:
-            return "stepper_cfg 'maxSpeed' must be numeric"
-        if "accel" in payload and _as_float(payload.get("accel")) is None:
-            return "stepper_cfg 'accel' must be numeric"
-        return None
-
-    if cmd == "pid_enable":
-        err = _validate_stepper_id(payload)
-        if err:
-            return f"pid_enable {err}"
-        if "enable" not in payload or not _is_bool(payload.get("enable")):
-            return "pid_enable requires boolean 'enable'"
-        return None
-
-    if cmd == "pid_set":
-        err = _validate_stepper_id(payload)
-        if err:
-            return f"pid_set {err}"
-        has_any = False
-        for key in ("kp", "ki", "kd", "target"):
-            if key in payload:
-                has_any = True
-                if _as_float(payload.get(key)) is None:
-                    return f"pid_set '{key}' must be numeric"
-        if not has_any:
-            return "pid_set requires at least one of: kp, ki, kd, target"
-        return None
-
-    if cmd in ("pid_status", "pid_save", "pid_load", "pid_clear_stall", "pid_reset"):
-        err = _validate_stepper_id(payload)
-        if err:
-            return f"{cmd} {err}"
-        return None
-
-    if cmd == "policy":
-        if "pose" in payload:
-            err = _validate_pose_values(payload.get("pose"), "policy.pose")
-            if err:
-                return err
-        if "steppers" in payload:
-            steppers = payload.get("steppers")
-            if not isinstance(steppers, list):
-                return "policy.steppers must be a list"
-            if len(steppers) != 2:
-                return "policy.steppers must have exactly 2 values"
-            for idx, v in enumerate(steppers):
-                if _as_float(v) is None:
-                    return f"policy.steppers[{idx}] must be numeric"
-        if "pose" not in payload and "steppers" not in payload:
-            return "policy requires 'pose' and/or 'steppers'"
-        return None
-
-    if cmd == "tune":
-        has_any = False
-        if "servo_speed" in payload:
-            has_any = True
-            if _as_float(payload.get("servo_speed")) is None:
-                return "tune 'servo_speed' must be numeric"
-        if "skate" in payload:
-            has_any = True
-            skate = payload.get("skate")
-            if not isinstance(skate, dict):
-                return "tune 'skate' must be an object"
-            for key in ("kp", "ki", "kd", "max"):
-                if key in skate and _as_float(skate.get(key)) is None:
-                    return f"tune skate.{key} must be numeric"
-        if not has_any:
-            return "tune requires 'servo_speed' and/or 'skate'"
-        return None
-
-    if cmd == "track":
-        has_head = any(k in payload for k in ("head_tilt", "head_pan", "tilt", "pan"))
-        if not has_head and "drive" not in payload:
-            return "track requires head keys and/or 'drive'"
-        for key in ("head_tilt", "head_pan", "tilt", "pan", "drive"):
-            if key in payload and _as_float(payload.get(key)) is None:
-                return f"track '{key}' must be numeric"
-        return None
-
-    if cmd == "drive":
-        if _as_float(payload.get("value")) is None:
-            return "drive requires numeric 'value'"
-        return None
-
-    if cmd == "liveliness":
-        return validate_liveliness_cmd(payload)
-
-    if cmd == "encoder_calibrate":
-        if "duration_ms" in payload:
-            dur = _as_int(payload.get("duration_ms"))
-            if dur is None or dur <= 0:
-                return "encoder_calibrate 'duration_ms' must be > 0"
-        return None
-
-    if cmd == "telemetry_start":
-        if "interval_ms" in payload:
-            interval = _as_int(payload.get("interval_ms"))
-            if interval is None or interval <= 0:
-                return "telemetry_start 'interval_ms' must be > 0"
-        return None
-
-    if cmd == "laser":
-        if "on" not in payload or not _is_bool(payload.get("on")):
-            return "laser requires boolean 'on'"
-        if payload.get("on"):
-            if payload.get("both") is True:
-                return None
-            lid = _as_int(payload.get("id"))
-            if lid not in (1, 2):
-                return "laser requires 'id' as 1 or 2 when 'on' is true and both is not true"
-        return None
-
-    if cmd == "sound":
-        if "out" in payload and payload.get("out") not in ("loud", "quiet"):
-            return "sound 'out' must be 'loud' or 'quiet'"
-        if "mode" in payload and payload.get("mode") not in ("loud", "quiet"):
-            return "sound 'mode' must be 'loud' or 'quiet'"
-        if "both" in payload and not _is_bool(payload.get("both")):
-            return "sound 'both' must be boolean"
-        if "out" not in payload and "mode" not in payload and "both" not in payload:
-            return "sound requires one of: out, mode, both"
-        return None
-
-    if cmd == "buzzer":
-        freq = _as_int(payload.get("freq", 2200))
-        ms = _as_int(payload.get("ms", 60))
-        if freq is None:
-            return "buzzer 'freq' must be integer"
-        if ms is None:
-            return "buzzer 'ms' must be integer"
-        if "out" in payload and payload.get("out") not in ("loud", "quiet"):
-            return "buzzer 'out' must be 'loud' or 'quiet'"
-        return None
-
-    if cmd == "sound_play":
-        name = payload.get("name")
-        if not isinstance(name, str) or not name.strip():
-            return "sound_play requires non-empty 'name'"
-        if "out" in payload and payload.get("out") not in ("loud", "quiet"):
-            return "sound_play 'out' must be 'loud' or 'quiet'"
-        return None
-
-    if cmd == "speech":
-        text = payload.get("text")
-        if not isinstance(text, str) or not text.strip():
-            return "speech requires non-empty 'text'"
-        return None
-
-    if cmd == "cute":
-        name = payload.get("name")
-        if not isinstance(name, str) or not name.strip():
-            return "cute requires non-empty 'name'"
-        return None
-
-    if cmd == "lcd":
-        has_msg = any(isinstance(payload.get(k), str) and payload.get(k).strip() for k in ("msg", "top", "bottom"))
-        if not has_msg:
-            return "lcd requires non-empty 'msg' or 'top'/'bottom'"
-        if "id" in payload and _as_int(payload.get("id")) is None:
-            return "lcd 'id' must be integer"
-        return None
-
-    if cmd == "avoid":
-        if "enable" not in payload or not _is_bool(payload.get("enable")):
-            return "avoid requires boolean 'enable'"
-        return None
-
+    if cmd in PID_ACTION_CMDS:
+        return _validate_pid_action(payload)
+    validator = _VALIDATORS.get(cmd)
+    if validator is not None:
+        return validator[1](payload)
     return f"unsupported cmd '{cmd}'"
+
+
+def validate_set_servo_cmd(payload: Dict[str, Any]) -> Optional[str]:
+    if payload.get("cmd") != "set_servo":
+        return None
+    return _validate_set_servo(payload)
+
+
+def validate_liveliness_cmd(payload: Dict[str, Any]) -> Optional[str]:
+    if payload.get("cmd") != "liveliness":
+        return None
+    return _validate_liveliness(payload)
