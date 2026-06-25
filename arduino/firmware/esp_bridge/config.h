@@ -3,7 +3,9 @@
 
 #include <Arduino.h>
 
-// WiFi Credentials (override via define or env)
+// WiFi Credentials — override via platformio.ini build_flags or env vars
+//   build_flags = -DWIFI_SSID='"MySSID"' -DWIFI_PASS='"MyPass"'
+// Do NOT commit real credentials; use a config/local_config.h pattern.
 #ifndef WIFI_SSID
 #define WIFI_SSID "SentryBOT"
 #endif
