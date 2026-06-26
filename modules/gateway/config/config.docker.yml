@@ -40,3 +40,17 @@ security:
   role_header: X-Role
   api_keys: []
   admin_keys: []
+  # Hassas GET/HEAD uclari: security.enabled=true olursa bu prefixlerle
+  # eslesen okuma istekleri (kamera, son konusma, durum, telemetri, vlm,
+  # agent/autonomy/sosyal) trust_loopback disindan gecerli bir API key ister.
+  protected_get_prefixes:
+    - /camera
+    - /speech/last
+    - /speech/direction
+    - /speech/track
+    - /state
+    - /telemetry
+    - /vlm
+    - /agent
+    - /autonomy
+    - /social

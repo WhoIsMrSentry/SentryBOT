@@ -51,3 +51,19 @@ security:
     - /config
     - /ota
     - /scheduler/jobs
+  # Hassas GET/HEAD uclari: security.enabled=true iken bu prefixlerle eslesen
+  # okuma istekleri (kamera goruntusu, son duyulan konusma, ic durum/mood,
+  # telemetri, VLM baglami, agent/autonomy/sosyal durum) trust_loopback
+  # disindan geliyorsa gecerli bir API key ister. Listede olmayan diger GET
+  # uclari geriye donuk uyumluluk icin acik kalir.
+  protected_get_prefixes:
+    - /camera
+    - /speech/last
+    - /speech/direction
+    - /speech/track
+    - /state
+    - /telemetry
+    - /vlm
+    - /agent
+    - /autonomy
+    - /social
