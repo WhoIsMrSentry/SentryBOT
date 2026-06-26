@@ -1,18 +1,21 @@
-
 from __future__ import annotations
+
 import inspect
 import logging
 import os
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+
 from .config_loader import load_config
-from contextlib import asynccontextmanager
 
 logger = logging.getLogger("gateway.service")
 
 # Optional central logging
 try:
     from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
+
     _init_global_logging()
 except Exception as exc:
     logger.debug("global logging init skipped: %s", exc)
@@ -33,6 +36,40 @@ def _client_is_loopback(request) -> bool:
     except Exception:
         return False
     return host in {"127.0.0.1", "::1", "localhost", "testclient"}
+
+
+def _check_insecure_defaults(cfg: dict) -> list[str]:
+    """Check for insecure default credentials and return list of warnings."""
+    warnings = []
+    
+    # Check agent.yaml auth_token
+    agent_cfg = cfg.get("agent", {}) if isinstance(cfg.get("agent", {}), dict) else {}
+    auth_token = str(agent_cfg.get("auth_token", "") or "").strip()
+    if auth_token in ("", "changeme", "your-auth-token", "replace_me"):
+        warnings.append("SECURITY WARNING: agent.auth_token is using default/empty value 'changeme' - please set a strong token in config/agent.yaml")
+    
+    # Check esp_link WiFi password
+    esp_cfg = cfg.get("esp_link", {}) if isinstance(cfg.get("esp_link", {}), dict) else {}
+    network_cfg = esp_cfg.get("network", {}) if isinstance(esp_cfg.get("network", {}), dict) else {}
+    wifi_password = str(network_cfg.get("password", "") or "").strip()
+    wifi_ssid = str(network_cfg.get("ssid", "") or "").strip()
+    if wifi_password and wifi_password == wifi_ssid and wifi_ssid == "SentryBOT":
+        warnings.append("SECURITY WARNING: esp_link WiFi password equals SSID ('SentryBOT') - please set a strong unique password in modules/esp_link/config/config.yml")
+    
+    # Check vlm_bridge auth_token
+    vlm_cfg = cfg.get("vlm_bridge", {}) if isinstance(cfg.get("vlm_bridge", {}), dict) else {}
+    remote_cfg = vlm_cfg.get("remote", {}) if isinstance(vlm_cfg.get("remote", {}), dict) else {}
+    vlm_auth = str(remote_cfg.get("auth_token", "") or "").strip()
+    if vlm_auth in ("", "changeme", "your-auth-token", "replace_me"):
+        warnings.append("SECURITY WARNING: vlm_bridge.remote.auth_token is using default/empty value 'changeme' - please set a strong token in config/agent.yaml")
+    
+    # Check gateway api_keys
+    sec = cfg.get("security", {}) if isinstance(cfg.get("security", {}), dict) else {}
+    api_keys = sec.get("api_keys", [])
+    if not api_keys and sec.get("enabled", False):
+        warnings.append("SECURITY WARNING: gateway security.enabled=true but no api_keys configured - API will reject all non-loopback requests")
+    
+    return warnings
 
 
 def _build_security_policy(cfg: dict) -> dict:
@@ -57,6 +94,26 @@ def _build_security_policy(cfg: dict) -> dict:
         "admin_write_prefixes": _listify(
             sec.get("admin_write_prefixes", ["/config", "/ota", "/scheduler/jobs"])
         ),
+        # Sensitive read endpoints (camera stream, last-heard speech, internal
+        # state/mood, telemetry, VLM context, agent/autonomy/social state) that
+        # must require a valid API key even though GET/HEAD is open by default.
+        "protected_get_prefixes": _listify(
+            sec.get(
+                "protected_get_prefixes",
+                [
+                    "/camera",
+                    "/speech/last",
+                    "/speech/direction",
+                    "/speech/track",
+                    "/state",
+                    "/telemetry",
+                    "/vlm",
+                    "/agent",
+                    "/autonomy",
+                    "/social",
+                ],
+            )
+        ),
         "admin_keys": admin_keys,
         "valid_keys": valid_keys,
     }
@@ -65,6 +122,10 @@ def _build_security_policy(cfg: dict) -> dict:
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
     security = _build_security_policy(cfg)
+    
+    # Check for insecure defaults at startup
+    for warning in _check_insecure_defaults(cfg):
+        logger.warning(warning)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -72,6 +133,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         started = {}
         try:
             from .services.bootstrap import bootstrap  # type: ignore
+
             started = bootstrap(app, cfg)
             app.state.started = started  # make started available to runtime
         except Exception as exc:
@@ -80,6 +142,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         # Mount core router after bootstrap so it receives the started dict reference
         try:
             from .api.router import get_router as get_core_router  # type: ignore
+
             app.include_router(get_core_router(cfg, app.state.started))  # type: ignore[attr-defined]
         except Exception as exc:
             logger.warning("gateway core router mount failed: %s", exc)
@@ -120,7 +183,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
                                 await res
                         except BaseException:
                             pass
-                    elif hasattr(svc, "shutdown") and callable(getattr(svc, "shutdown")):
+                    elif hasattr(svc, "shutdown") and callable(
+                        getattr(svc, "shutdown")
+                    ):
                         try:
                             res = svc.shutdown()
                             if inspect.isawaitable(res):
@@ -142,6 +207,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     app.state.started = {}  # type: ignore[attr-defined]
 
     if security.get("enabled", False):
+
         @app.middleware("http")
         async def _security_middleware(request, call_next):
             path = str(request.url.path or "")
@@ -154,23 +220,44 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 if path.startswith(prefix):
                     return await call_next(request)
 
-            # Read-only access is left open by default; write operations require key.
-            if method in {"GET", "HEAD"}:
+            is_read_only = method in {"GET", "HEAD"}
+            is_protected_read = is_read_only and any(
+                path.startswith(prefix) for prefix in security["protected_get_prefixes"]
+            )
+
+            # Read-only access is left open by default; write operations and
+            # the sensitive read endpoints in protected_get_prefixes (camera,
+            # speech, state, telemetry, vlm, agent, autonomy, social...) are
+            # subject to the same key check as writes below.
+            if is_read_only and not is_protected_read:
                 return await call_next(request)
 
             if security.get("trust_loopback", True) and _client_is_loopback(request):
                 return await call_next(request)
 
-            key = request.headers.get(security["api_key_header"]) or request.query_params.get("api_key")
+            key = request.headers.get(
+                security["api_key_header"]
+            ) or request.query_params.get("api_key")
             if not key or str(key) not in security["valid_keys"]:
-                return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
+                return JSONResponse(
+                    status_code=401, content={"ok": False, "error": "unauthorized"}
+                )
 
-            needs_admin = any(path.startswith(prefix) for prefix in security["admin_write_prefixes"])
+            needs_admin = any(
+                path.startswith(prefix) for prefix in security["admin_write_prefixes"]
+            )
             if needs_admin:
-                header_role = str(request.headers.get(security["role_header"], "")).strip().lower()
+                header_role = (
+                    str(request.headers.get(security["role_header"], ""))
+                    .strip()
+                    .lower()
+                )
                 is_admin = str(key) in security["admin_keys"] or header_role == "admin"
                 if not is_admin:
-                    return JSONResponse(status_code=403, content={"ok": False, "error": "admin_required"})
+                    return JSONResponse(
+                        status_code=403,
+                        content={"ok": False, "error": "admin_required"},
+                    )
 
             return await call_next(request)
 
@@ -179,5 +266,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
 if __name__ == "__main__":
     import uvicorn
+
     cfg = load_config()
-    uvicorn.run(create_app(), host=str(cfg["server"]["host"]), port=int(cfg["server"]["port"]), log_config=None)
+    uvicorn.run(
+        create_app(),
+        host=str(cfg["server"]["host"]),
+        port=int(cfg["server"]["port"]),
+        log_config=None,
+    )

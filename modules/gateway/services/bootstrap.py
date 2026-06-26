@@ -83,18 +83,9 @@ def _should_autostart_services() -> bool:
     return not bool(os.getenv("PYTEST_CURRENT_TEST"))
 
 
-def _register_runtime_keys(registry: Any, started: Dict[str, object]) -> None:
-    """Seed the runtime registry with hot-applyable keys exposed by modules.
-
-    Each ``apply_fn`` updates the corresponding live instance, so the admin UI
-    can flip vision modes, swap realtime profiles, or rebind autonomy hooks
-    without restarting the gateway.
-    """
-    vlm_bridge = started.get("vlm_bridge")
-    autonomy = started.get("autonomy")
-    agent = None
-    if autonomy is not None and hasattr(autonomy, "brain"):
-        agent = getattr(autonomy.brain, "agent", None)
+def _register_vlm_keys(registry: Any, vlm_bridge: Any) -> None:
+    if vlm_bridge is None or not hasattr(vlm_bridge, "get_modes"):
+        return
 
     def _vlm_apply_mode(key: str):
         def _apply(value: Any) -> Optional[Dict[str, Any]]:
@@ -103,148 +94,109 @@ def _register_runtime_keys(registry: Any, started: Dict[str, object]) -> None:
             return vlm_bridge.set_modes({key: bool(value)})
         return _apply
 
-    if vlm_bridge is not None and hasattr(vlm_bridge, "get_modes"):
-        modes = vlm_bridge.get_modes() if callable(getattr(vlm_bridge, "get_modes", None)) else {}
-        for mode_name, default in modes.items():
-            registry.register(
-                "vlm_bridge",
-                f"modes.{mode_name}",
-                type="bool",
-                default=bool(default),
-                description=f"Enable/disable VLM bridge mode '{mode_name}'.",
-                apply_fn=_vlm_apply_mode(mode_name),
-            )
+    modes = vlm_bridge.get_modes() if callable(getattr(vlm_bridge, "get_modes", None)) else {}
+    for mode_name, default in modes.items():
+        registry.register("vlm_bridge", f"modes.{mode_name}", type="bool", default=bool(default),
+                          description=f"Enable/disable VLM bridge mode '{mode_name}'.", apply_fn=_vlm_apply_mode(mode_name))
 
-        def _apply_profile(value: Any) -> Optional[Dict[str, Any]]:
-            if not hasattr(vlm_bridge, "apply_mode_profile"):
-                return None
-            return vlm_bridge.apply_mode_profile(str(value))
+    def _apply_profile(value: Any) -> Optional[Dict[str, Any]]:
+        if not hasattr(vlm_bridge, "apply_mode_profile"):
+            return None
+        return vlm_bridge.apply_mode_profile(str(value))
 
-        if hasattr(vlm_bridge, "list_profiles"):
-            try:
-                choices = tuple(vlm_bridge.list_profiles())
-            except Exception:
-                choices = None
-            registry.register(
-                "vlm_bridge",
-                "mode_profile",
-                type="choice",
-                default="balanced",
-                choices=choices,
-                description="VLM bridge mode profile.",
-                apply_fn=_apply_profile,
-            )
+    if hasattr(vlm_bridge, "list_profiles"):
+        try:
+            choices = tuple(vlm_bridge.list_profiles())
+        except Exception:
+            choices = None
+        registry.register("vlm_bridge", "mode_profile", type="choice", default="balanced", choices=choices,
+                          description="VLM bridge mode profile.", apply_fn=_apply_profile)
 
-        def _apply_realtime(value: Any) -> Optional[Dict[str, Any]]:
-            if not hasattr(vlm_bridge, "apply_realtime_profile"):
-                return None
-            return vlm_bridge.apply_realtime_profile(str(value))
+    def _apply_realtime(value: Any) -> Optional[Dict[str, Any]]:
+        if not hasattr(vlm_bridge, "apply_realtime_profile"):
+            return None
+        return vlm_bridge.apply_realtime_profile(str(value))
 
-        registry.register(
-            "vlm_bridge",
-            "realtime_profile",
-            type="choice",
-            default="fast",
-            choices=("fast", "normal"),
-            description="VLM bridge realtime latency profile.",
-            apply_fn=_apply_realtime,
-        )
+    registry.register("vlm_bridge", "realtime_profile", type="choice", default="fast", choices=("fast", "normal"),
+                      description="VLM bridge realtime latency profile.", apply_fn=_apply_realtime)
 
-        def _apply_processing_mode(value: Any) -> Optional[Dict[str, Any]]:
-            if vlm_bridge is None or not hasattr(vlm_bridge, "set_processing_mode"):
-                return None
-            return vlm_bridge.set_processing_mode(str(value or "local"))
+    def _apply_processing_mode(value: Any) -> Optional[Dict[str, Any]]:
+        if vlm_bridge is None or not hasattr(vlm_bridge, "set_processing_mode"):
+            return None
+        return vlm_bridge.set_processing_mode(str(value or "local"))
 
-        registry.register(
-            "vlm_bridge",
-            "vision.processing_mode",
-            type="string",
-            default="local",
-            description="VLM bridge processing pipeline (local or remote)",
-            apply_fn=_apply_processing_mode,
-        )
+    registry.register("vlm_bridge", "vision.processing_mode", type="string", default="local",
+                      description="VLM bridge processing pipeline (local or remote)", apply_fn=_apply_processing_mode)
 
-        if hasattr(vlm_bridge, "get_mode_categories") and hasattr(vlm_bridge, "set_mode_categories"):
-            try:
-                categories = vlm_bridge.get_mode_categories()
-            except Exception:
-                categories = {}
+    if hasattr(vlm_bridge, "get_mode_categories") and hasattr(vlm_bridge, "set_mode_categories"):
+        try:
+            categories = vlm_bridge.get_mode_categories()
+        except Exception:
+            categories = {}
 
-            def _make_cat_apply(category: str, key: str):
-                def _apply(value: Any) -> Optional[Dict[str, Any]]:
-                    return vlm_bridge.set_mode_categories({category: {key: bool(value)}})
-                return _apply
+        def _make_cat_apply(category: str, key: str):
+            def _apply(value: Any) -> Optional[Dict[str, Any]]:
+                return vlm_bridge.set_mode_categories({category: {key: bool(value)}})
+            return _apply
 
-            for category, flags in categories.items():
-                for key, default in flags.items():
-                    registry.register(
-                        "vlm_bridge",
-                        f"mode_categories.{category}.{key}",
-                        type="bool",
-                        default=bool(default),
-                        description=f"Enable/disable '{key}' under '{category}' vision pipeline.",
-                        apply_fn=_make_cat_apply(category, key),
-                    )
+        for category, flags in categories.items():
+            for key, default in flags.items():
+                registry.register("vlm_bridge", f"mode_categories.{category}.{key}", type="bool", default=bool(default),
+                                  description=f"Enable/disable '{key}' under '{category}' vision pipeline.",
+                                  apply_fn=_make_cat_apply(category, key))
 
-    if agent is not None:
-        def _apply_agent_profile(value: Any) -> Optional[Dict[str, Any]]:
-            mode = str(value or "").strip().lower()
-            rt_cfg = agent.config.get("realtime_profile", {}) if isinstance(agent.config, dict) else {}
-            if not isinstance(rt_cfg, dict):
-                return {"ok": False, "error": "invalid_config"}
-            profiles_map = rt_cfg.get("profiles", {}) if isinstance(rt_cfg.get("profiles", {}), dict) else {}
-            profile = profiles_map.get(mode, {}) if mode else {}
-            if not isinstance(profile, dict) or not profile:
-                profile = rt_cfg.get(mode, {})
-            if not isinstance(profile, dict) or not profile:
-                return {"ok": False, "error": "unknown_profile"}
-            rt_cfg["active"] = mode
-            applied = agent.apply_realtime_profile(profile) if hasattr(agent, "apply_realtime_profile") else {}
-            return {"ok": True, "applied": applied}
 
-        registry.register(
-            "agent_core",
-            "realtime_profile",
-            type="choice",
-            default="normal",
-            choices=None,
-            description="Named Agent Core realtime profile (matches realtime_profile.profiles keys).",
-            apply_fn=_apply_agent_profile,
-        )
+def _register_agent_keys(registry: Any, agent: Any) -> None:
+    if agent is None:
+        return
 
-        def _apply_max_subagents(value: Any) -> Optional[Dict[str, Any]]:
-            try:
-                n = max(1, int(value))
-            except (TypeError, ValueError):
-                return {"ok": False, "error": "invalid_value"}
-            router = getattr(agent, "router", None)
-            if router is None:
-                return {"ok": False, "error": "no_router"}
-            if hasattr(router, "set_max"):
-                clamped = router.set_max(n)
-                return {"ok": True, "max_subagents": clamped}
-            if hasattr(router, "max_subagents"):
-                router.max_subagents = n
-            return {"ok": True, "max_subagents": getattr(router, "max_subagents", n)}
+    def _apply_agent_profile(value: Any) -> Optional[Dict[str, Any]]:
+        mode = str(value or "").strip().lower()
+        rt_cfg = agent.config.get("realtime_profile", {}) if isinstance(agent.config, dict) else {}
+        if not isinstance(rt_cfg, dict):
+            return {"ok": False, "error": "invalid_config"}
+        profiles_map = rt_cfg.get("profiles", {}) if isinstance(rt_cfg.get("profiles", {}), dict) else {}
+        profile = profiles_map.get(mode, {}) if mode else {}
+        if not isinstance(profile, dict) or not profile:
+            profile = rt_cfg.get(mode, {})
+        if not isinstance(profile, dict) or not profile:
+            return {"ok": False, "error": "unknown_profile"}
+        rt_cfg["active"] = mode
+        applied = agent.apply_realtime_profile(profile) if hasattr(agent, "apply_realtime_profile") else {}
+        return {"ok": True, "applied": applied}
 
-        registry.register(
-            "agent_core",
-            "max_subagents",
-            type="int",
-            default=2,
-            minimum=1,
-            maximum=8,
-            description="Maximum concurrent sub-agents launched per request.",
-            apply_fn=_apply_max_subagents,
-        )
+    registry.register("agent_core", "realtime_profile", type="choice", default="normal", choices=None,
+                      description="Named Agent Core realtime profile (matches realtime_profile.profiles keys).",
+                      apply_fn=_apply_agent_profile)
 
-    imx_runner = started.get("imx500_runner")
+    def _apply_max_subagents(value: Any) -> Optional[Dict[str, Any]]:
+        try:
+            n = max(1, int(value))
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_value"}
+        router = getattr(agent, "router", None)
+        if router is None:
+            return {"ok": False, "error": "no_router"}
+        if hasattr(router, "set_max"):
+            clamped = router.set_max(n)
+            return {"ok": True, "max_subagents": clamped}
+        if hasattr(router, "max_subagents"):
+            router.max_subagents = n
+        return {"ok": True, "max_subagents": getattr(router, "max_subagents", n)}
+
+    registry.register("agent_core", "max_subagents", type="int", default=2, minimum=1, maximum=8,
+                      description="Maximum concurrent sub-agents launched per request.", apply_fn=_apply_max_subagents)
+
+
+def _register_imx500_keys(registry: Any, imx_runner: Any) -> None:
+    if imx_runner is None:
+        return
 
     def _apply_imx500_enabled(value: Any) -> Optional[Dict[str, Any]]:
         if imx_runner is None:
             return {"ok": False, "error": "no_runner"}
         try:
-            from modules.camera.services import imx500_runner as imx_mod  # type: ignore
+            from modules.camera.services import imx500_runner as imx_mod
 
             imx_runner.cfg.enabled = bool(value)
             imx_runner._available = bool(value) and bool(getattr(imx_mod, "IMX500_AVAILABLE", False))
@@ -266,41 +218,37 @@ def _register_runtime_keys(registry: Any, started: Dict[str, object]) -> None:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    if imx_runner is not None:
-        registry.register(
-            "camera",
-            "imx500.enabled",
-            type="bool",
-            default=bool(getattr(getattr(imx_runner, "cfg", None), "enabled", False)),
-            description="Toggle IMX500 on-sensor inference loop.",
-            apply_fn=_apply_imx500_enabled,
-        )
-        registry.register(
-            "camera",
-            "imx500.confidence",
-            type="float",
-            default=float(getattr(getattr(imx_runner, "cfg", None), "confidence", 0.45)),
-            minimum=0.05,
-            maximum=1.0,
-            description="Confidence threshold forwarded to SSD post-filter.",
-            apply_fn=_apply_imx500_conf,
-        )
+    registry.register("camera", "imx500.enabled", type="bool",
+                      default=bool(getattr(getattr(imx_runner, "cfg", None), "enabled", False)),
+                      description="Toggle IMX500 on-sensor inference loop.", apply_fn=_apply_imx500_enabled)
+    registry.register("camera", "imx500.confidence", type="float",
+                      default=float(getattr(getattr(imx_runner, "cfg", None), "confidence", 0.45)),
+                      minimum=0.05, maximum=1.0,
+                      description="Confidence threshold forwarded to SSD post-filter.", apply_fn=_apply_imx500_conf)
 
-    state_manager = started.get("state_manager")
-    if state_manager is not None and hasattr(state_manager, "set_operational"):
-        def _apply_operational(value: Any) -> Optional[Dict[str, Any]]:
-            state_manager.set_operational(str(value or "idle"))
-            return {"ok": True, "operational": str(value or "idle")}
 
-        registry.register(
-            "state_manager",
-            "operational",
-            type="choice",
-            default="idle",
-            choices=("idle", "active", "sleep", "maintenance"),
-            description="Global operational state for SentryBOT.",
-            apply_fn=_apply_operational,
-        )
+def _register_state_manager_keys(registry: Any, state_manager: Any) -> None:
+    if state_manager is None or not hasattr(state_manager, "set_operational"):
+        return
+
+    def _apply_operational(value: Any) -> Optional[Dict[str, Any]]:
+        state_manager.set_operational(str(value or "idle"))
+        return {"ok": True, "operational": str(value or "idle")}
+
+    registry.register("state_manager", "operational", type="choice", default="idle",
+                      choices=("idle", "active", "sleep", "maintenance"),
+                      description="Global operational state for SentryBOT.", apply_fn=_apply_operational)
+
+
+def _register_runtime_keys(registry: Any, started: Dict[str, object]) -> None:
+    vlm_bridge = started.get("vlm_bridge")
+    autonomy = started.get("autonomy")
+    agent = getattr(getattr(autonomy, "brain", None), "agent", None) if autonomy is not None else None
+
+    _register_vlm_keys(registry, vlm_bridge)
+    _register_agent_keys(registry, agent)
+    _register_imx500_keys(registry, started.get("imx500_runner"))
+    _register_state_manager_keys(registry, started.get("state_manager"))
 
 
 def _include_admin_ui(app: FastAPI, started: Dict[str, object], gw_cfg: Dict[str, Any]) -> None:
@@ -797,12 +745,75 @@ _CRITICAL_MODULES = frozenset(
     {"arduino", "camera", "autonomy", "agent_core", "speech", "wakeword", "speak", "ollama"}
 )
 
+_IMPORT_MODULES: list[tuple[str, str]] = [
+    ("mutagen", "mutagen"),
+    ("ota", "ota"),
+    ("hardware", "hardware"),
+    ("telemetry", "telemetry"),
+    ("diagnostics", "diagnostics"),
+    ("calibration", "calibration"),
+]
+
+
+def _mount_import_module(app: FastAPI, name: str, cfg: Dict[str, Any]) -> None:
+    router_path = f"modules.{name}.api.router"
+    config_path = f"modules.{name}.config_loader"
+    app.include_router(
+        __import__(router_path, fromlist=["get_router"]).get_router(
+            _merge_with_agent_section(
+                __import__(config_path, fromlist=["load_config"]).load_config(None),
+                name,
+            )
+        )
+    )
+
+
+def _mount_state_manager(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
+    cfg_sm = _merge_with_agent_section(
+        __import__("modules.state_manager.config_loader", fromlist=["load_config"]).load_config(None),
+        "state_manager",
+    )
+    StateStore = __import__("modules.state_manager.services.store", fromlist=["StateStore"]).StateStore
+    get_router = __import__("modules.state_manager.api.router", fromlist=["get_router"]).get_router
+    store = StateStore(defaults=cfg_sm.get("defaults", {}), persistence=cfg_sm.get("persistence", {}))
+    started["state_manager"] = store
+    app.include_router(get_router(store))
+
+
+def _mount_scheduler(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
+    cfg_sc = _merge_with_agent_section(
+        __import__("modules.scheduler.config_loader", fromlist=["load_config"]).load_config(None),
+        "scheduler",
+    )
+    Scheduler = __import__("modules.scheduler.services.runner", fromlist=["Scheduler"]).Scheduler
+    get_router = __import__("modules.scheduler.api.router", fromlist=["get_router"]).get_router
+    gw_base = str(cfg_sc.get("gateway_base_url") or started.get("gateway_base_url")
+                  or f"http://127.0.0.1:{int(cfg.get('server', {}).get('port', 8080))}")
+    sched = Scheduler(jobs=cfg_sc.get("jobs", []), gateway_base_url=gw_base)
+    if _should_autostart_services():
+        sched.start()
+    else:
+        logger.info("scheduler auto-start skipped (autostart disabled)")
+    started["scheduler"] = sched
+    app.include_router(get_router(cfg_sc, sched))
+
+
+def _mount_config_center(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
+    from modules.config_center.config_loader import load_config as load_cc_cfg
+    from modules.config_center.api.router import get_router as get_cc_router
+    from modules.config_center.services import RuntimeConfigRegistry, set_default_registry
+
+    cc_cfg = _merge_with_agent_section(load_cc_cfg(None), "config_center")
+    registry = RuntimeConfigRegistry()
+    set_default_registry(registry)
+    _register_runtime_keys(registry, started)
+    started["runtime_registry"] = registry
+    app.include_router(get_cc_router(cc_cfg, registry=registry))
+
 
 def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
-    """Start and wire modules according to cfg.include and return started dict."""
     started: Dict[str, object] = {}
-    gateway_base = _init_gateway_base_url(started, cfg)
-
+    _init_gateway_base_url(started, cfg)
     include = cfg.get("include", {})
 
     def _try(fn, name: str = ""):
@@ -812,239 +823,124 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             log = logger.error if name in _CRITICAL_MODULES else logger.warning
             log("module %s failed to mount: %s", name or fn.__name__, exc)
 
-    # social_db is the persistence backbone for identity, mood and rituals; mount first.
-    if include.get("social_db", True):
-        _try(lambda: _include_social_db(app, started), "social_db")
+    _include_map = {
+        "social_db": lambda: _include_social_db(app, started),
+        "arduino": lambda: _include_arduino(app, started),
+        "esp_link": lambda: _include_esp_link(app, started),
+        "camera": lambda: _include_camera(app, started),
+        "vlm_bridge": lambda: _include_vlm_bridge(app, started, cfg),
+        "neopixel": lambda: _include_neopixel(app, started),
+        "interactions": lambda: _include_interactions(app, started, cfg),
+        "speak": lambda: _include_speak(app, started),
+        "wakeword": lambda: _include_wakeword(app, started),
+        "speech": lambda: _include_speech(app, started),
+        "ollama": lambda: _include_ollama(app, started),
+        "logs": lambda: _include_logs(app, started),
+        "animate": lambda: _include_animate(app, started),
+        "piservo": lambda: _include_piservo(app, started),
+        "autonomy": lambda: _include_autonomy(app, started),
+        "agent_core": lambda: _include_agent_core(app, started),
+        "oled_faces": lambda: _include_oled_faces(app, started),
+        "notifier": lambda: _include_notifier(app, started),
+    }
 
-    if include.get("arduino"):
-        _try(lambda: _include_arduino(app, started), "arduino")
-    if include.get("esp_link"):
-        _try(lambda: _include_esp_link(app, started), "esp_link")
-    # Camera before VLM so HTTP healthz / MJPEG exist before stream capture starts.
-    if include.get("camera"):
-        _try(lambda: _include_camera(app, started), "camera")
-    if include.get("vlm_bridge"):
-        _try(lambda: _include_vlm_bridge(app, started, cfg), "vlm_bridge")
-    if include.get("neopixel"):
-        _try(lambda: _include_neopixel(app, started), "neopixel")
-    if include.get("interactions"):
-        _try(lambda: _include_interactions(app, started, cfg), "interactions")
-    if include.get("speak"):
-        _try(lambda: _include_speak(app, started), "speak")
-    if include.get("wakeword"):
-        _try(lambda: _include_wakeword(app, started), "wakeword")
-    if include.get("speech"):
-        _try(lambda: _include_speech(app, started), "speech")
-    if include.get("ollama"):
-        _try(lambda: _include_ollama(app, started), "ollama")
-    if include.get("logs"):
-        _try(lambda: _include_logs(app, started), "logs")
-    if include.get("animate"):
-        _try(lambda: _include_animate(app, started), "animate")
-    if include.get("piservo"):
-        _try(lambda: _include_piservo(app, started), "piservo")
-    if include.get("autonomy"):
-        _try(lambda: _include_autonomy(app, started), "autonomy")
-    if include.get("agent_core", True):
-        _try(lambda: _include_agent_core(app, started), "agent_core")
+    _defaults = {"social_db": True, "agent_core": True}
+    for name in _include_map:
+        if include.get(name, _defaults.get(name, False)):
+            _try(_include_map[name], name)
 
-    # optional: mutagen
-    if include.get("mutagen"):
-        _try(lambda: app.include_router(__import__("modules.mutagen.api.router", fromlist=["get_router"]).get_router(
-            _merge_with_agent_section(
-                __import__("modules.mutagen.config_loader", fromlist=["load_config"]).load_config(None),
-                "mutagen",
-            )
-        )), "mutagen")
-        started["mutagen"] = True
-
-    # optional: ota
-    if include.get("ota"):
-        _try(lambda: app.include_router(__import__("modules.ota.api.router", fromlist=["get_router"]).get_router(
-            _merge_with_agent_section(
-                __import__("modules.ota.config_loader", fromlist=["load_config"]).load_config(None),
-                "ota",
-            )
-        )), "ota")
-        started["ota"] = True
-
-    # new optional modules
-    if include.get("hardware"):
-        _try(lambda: app.include_router(__import__("modules.hardware.api.router", fromlist=["get_router"]).get_router(
-            _merge_with_agent_section(
-                __import__("modules.hardware.config_loader", fromlist=["load_config"]).load_config(None),
-                "hardware",
-            )
-        )), "hardware")
-        started["hardware"] = True
-
-    if include.get("telemetry"):
-        _try(lambda: app.include_router(__import__("modules.telemetry.api.router", fromlist=["get_router"]).get_router(
-            _merge_with_agent_section(
-                __import__("modules.telemetry.config_loader", fromlist=["load_config"]).load_config(None),
-                "telemetry",
-            )
-        )), "telemetry")
-        started["telemetry"] = True
-
-    if include.get("diagnostics"):
-        _try(lambda: app.include_router(__import__("modules.diagnostics.api.router", fromlist=["get_router"]).get_router(
-            _merge_with_agent_section(
-                __import__("modules.diagnostics.config_loader", fromlist=["load_config"]).load_config(None),
-                "diagnostics",
-            )
-        )), "diagnostics")
-        started["diagnostics"] = True
+    for name, _ in _IMPORT_MODULES:
+        if include.get(name):
+            _try(lambda n=name: _mount_import_module(app, n, cfg), name)
+            started[name] = True
 
     if include.get("state_manager"):
-        def _mount_state():
-            cfg_sm = _merge_with_agent_section(
-                __import__("modules.state_manager.config_loader", fromlist=["load_config"]).load_config(None),
-                "state_manager",
-            )
-            StateStore = __import__("modules.state_manager.services.store", fromlist=["StateStore"]).StateStore
-            get_router = __import__("modules.state_manager.api.router", fromlist=["get_router"]).get_router
-            store = StateStore(
-                defaults=cfg_sm.get("defaults", {}),
-                persistence=cfg_sm.get("persistence", {}),
-            )
-            started["state_manager"] = store
-            app.include_router(get_router(store))
-        _try(_mount_state, "state_manager")
-
-    if include.get("oled_faces"):
-        _try(lambda: _include_oled_faces(app, started), "oled_faces")
-
+        _try(lambda: _mount_state_manager(app, started, cfg), "state_manager")
     if include.get("scheduler"):
-        def _mount_scheduler():
-            cfg_sc = _merge_with_agent_section(
-                __import__("modules.scheduler.config_loader", fromlist=["load_config"]).load_config(None),
-                "scheduler",
-            )
-            Scheduler = __import__("modules.scheduler.services.runner", fromlist=["Scheduler"]).Scheduler
-            get_router = __import__("modules.scheduler.api.router", fromlist=["get_router"]).get_router
-            gw_base = str(
-                cfg_sc.get("gateway_base_url")
-                or started.get("gateway_base_url")
-                or f"http://127.0.0.1:{int(cfg.get('server', {}).get('port', 8080))}"
-            )
-            sched = Scheduler(
-                jobs=cfg_sc.get("jobs", []),
-                gateway_base_url=gw_base,
-            )
-            if _should_autostart_services():
-                sched.start()
-            else:
-                logger.info("scheduler auto-start skipped (autostart disabled)")
-            started["scheduler"] = sched
-            app.include_router(get_router(cfg_sc, sched))
-
-        _try(_mount_scheduler, "scheduler")
-
-    if include.get("notifier"):
-        _try(lambda: _include_notifier(app, started), "notifier")
-
-    if include.get("calibration"):
-        _try(lambda: app.include_router(__import__("modules.calibration.api.router", fromlist=["get_router"]).get_router(
-            _merge_with_agent_section(
-                __import__("modules.calibration.config_loader", fromlist=["load_config"]).load_config(None),
-                "calibration",
-            )
-        )), "calibration")
-        started["calibration"] = True
-
+        _try(lambda: _mount_scheduler(app, started, cfg), "scheduler")
     if include.get("config_center"):
-        def _mount_config_center():
-            from modules.config_center.config_loader import load_config as load_cc_cfg  # type: ignore
-            from modules.config_center.api.router import get_router as get_cc_router  # type: ignore
-            from modules.config_center.services import (  # type: ignore
-                RuntimeConfigRegistry,
-                set_default_registry,
-            )
-
-            cc_cfg = _merge_with_agent_section(load_cc_cfg(None), "config_center")
-            registry = RuntimeConfigRegistry()
-            set_default_registry(registry)
-            _register_runtime_keys(registry, started)
-            started["runtime_registry"] = registry
-            app.include_router(get_cc_router(cc_cfg, registry=registry))
-
-        _try(_mount_config_center, "config_center")
+        _try(lambda: _mount_config_center(app, started, cfg), "config_center")
         started["config_center"] = True
-
     if include.get("admin_ui", True):
         _try(lambda: _include_admin_ui(app, started, cfg), "admin_ui")
 
+    _wire_arduino_neopixel(app, started, cfg)
+    _wire_vlm_autonomy(started)
+    _wire_onsensor_vlm(started)
+    _wire_interactions_piservo(started)
+
+    return started
+
+
+def _wire_arduino_neopixel(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
     arduino = started.get("arduino")
     neopixel = started.get("neopixel")
-    if arduino is not None and neopixel is not None and hasattr(arduino, "register_event_handler"):
-        # rate-limited queue to prevent NeoPixel overload from Arduino bursts
-        import threading
-        _np_lock = threading.Lock()
-        _np_queue: list[Dict[str, Any]] = []
-        _np_last_ms = 0
-        _np_min_interval_ms = int(cfg.get("neopixel", {}).get("min_interval_ms", 100))
-        _np_max_queue = int(cfg.get("neopixel", {}).get("max_queue", 32))
+    if arduino is None or neopixel is None or not hasattr(arduino, "register_event_handler"):
+        return
+    import threading
+    _np_lock = threading.Lock()
+    _np_queue: list[Dict[str, Any]] = []
+    _np_last_ms = 0
+    _np_min_interval_ms = int(cfg.get("neopixel", {}).get("min_interval_ms", 100))
+    _np_max_queue = int(cfg.get("neopixel", {}).get("max_queue", 32))
 
-        def _enqueue_np(req: Dict[str, Any]) -> None:
-            nonlocal _np_queue
-            with _np_lock:
-                if len(_np_queue) >= _np_max_queue:
-                    # drop oldest to make room
-                    _np_queue.pop(0)
-                _np_queue.append(req)
+    def _enqueue_np(req: Dict[str, Any]) -> None:
+        nonlocal _np_queue
+        with _np_lock:
+            if len(_np_queue) >= _np_max_queue:
+                _np_queue.pop(0)
+            _np_queue.append(req)
 
-        def _flush_queue() -> None:
-            nonlocal _np_last_ms
-            now_ms = int(__import__("time").time() * 1000)
-            with _np_lock:
-                if not _np_queue:
-                    return
-                if now_ms - _np_last_ms < _np_min_interval_ms:
-                    return
-                req = _np_queue.pop(0)
-            try:
-                name = str(req.get("name", "")).strip()
-                iterations = int(req.get("iterations", 1) or 1)
-                # clamp iterations
-                if iterations < 1: iterations = 1
-                if iterations > 10: iterations = 10
-                color = None
-                if isinstance(req.get("color"), str):
-                    parts = [p.strip() for p in str(req.get("color")).split(",")]
-                    if len(parts) == 3:
-                        color = (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
-                segment = req.get("segment")
-                if name:
-                    neopixel.animate(name=name, iterations=iterations, color=color, segment=segment)
-                elif color is not None:
-                    if segment:
-                        neopixel.fill(*color, segment=segment)
-                    else:
-                        neopixel.fill(*color)
-            except Exception as exc:
-                logger.debug("neopixel request handling failed during flush: %s", exc)
-            _np_last_ms = int(__import__("time").time() * 1000)
-
-        def _on_arduino_event(msg: Dict[str, Any]) -> None:
-            if not isinstance(msg, dict):
+    def _flush_queue() -> None:
+        nonlocal _np_last_ms
+        now_ms = int(__import__("time").time() * 1000)
+        with _np_lock:
+            if not _np_queue:
                 return
-            if msg.get("event") != "neopixel_request":
+            if now_ms - _np_last_ms < _np_min_interval_ms:
                 return
-            try:
-                # enqueue and attempt a flush
-                _enqueue_np(msg)
-                _flush_queue()
-            except Exception as exc:
-                logger.debug("neopixel request handling failed: %s", exc)
-
+            req = _np_queue.pop(0)
         try:
-            arduino.register_event_handler(_on_arduino_event)
-            logger.info("arduino->neopixel event bridge mounted (rate-limited)")
+            name = str(req.get("name", "")).strip()
+            iterations = int(req.get("iterations", 1) or 1)
+            if iterations < 1: iterations = 1
+            if iterations > 10: iterations = 10
+            color = None
+            if isinstance(req.get("color"), str):
+                parts = [p.strip() for p in str(req.get("color")).split(",")]
+                if len(parts) == 3:
+                    color = (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
+            segment = req.get("segment")
+            if name:
+                neopixel.animate(name=name, iterations=iterations, color=color, segment=segment)
+            elif color is not None:
+                if segment:
+                    neopixel.fill(*color, segment=segment)
+                else:
+                    neopixel.fill(*color)
         except Exception as exc:
-            logger.warning("arduino->neopixel bridge mount failed: %s", exc)
+            logger.debug("neopixel request handling failed during flush: %s", exc)
+        _np_last_ms = int(__import__("time").time() * 1000)
 
-    # Living Vision wiring: VLM event bus -> Autonomy -> Agent Core events
+    def _on_arduino_event(msg: Dict[str, Any]) -> None:
+        if not isinstance(msg, dict):
+            return
+        if msg.get("event") != "neopixel_request":
+            return
+        try:
+            _enqueue_np(msg)
+            _flush_queue()
+        except Exception as exc:
+            logger.debug("neopixel request handling failed: %s", exc)
+
+    try:
+        arduino.register_event_handler(_on_arduino_event)
+        logger.info("arduino->neopixel event bridge mounted (rate-limited)")
+    except Exception as exc:
+        logger.warning("arduino->neopixel bridge mount failed: %s", exc)
+
+
+def _wire_vlm_autonomy(started: Dict[str, object]) -> None:
     vlm_bridge = started.get("vlm_bridge")
     autonomy = started.get("autonomy")
     try:
@@ -1056,13 +952,14 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
                         brain.client.emit_agent_event(event_type, data)
                 except Exception:
                     pass
-
             vlm_bridge.event_bus.subscribe_all(_forward_vlm_event)
             logger.info("vlm event bus -> agent event bridge mounted")
     except Exception as exc:
         logger.warning("vlm/autonomy event bridge mount failed: %s", exc)
 
-    # On-sensor (IMX500) detections -> VLM processor cache
+
+def _wire_onsensor_vlm(started: Dict[str, object]) -> None:
+    vlm_bridge = started.get("vlm_bridge")
     bus = started.get("onsensor_bus")
     if vlm_bridge is not None and bus is not None and hasattr(vlm_bridge, "attach_onsensor_bus"):
         try:
@@ -1071,38 +968,36 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         except Exception as exc:
             logger.warning("onsensor bus attach failed: %s", exc)
 
+
+def _wire_interactions_piservo(started: Dict[str, object]) -> None:
     interactions = started.get("interactions")
     piservo = started.get("piservo")
-    if interactions is not None and piservo is not None and hasattr(interactions, "register_event_handler"):
-        # Map interaction events onto expressive ear motion. Emotion events keep
-        # the ears in sync with eyes/LEDs; sound/vision events add reactive
-        # gestures; wakeword keeps its dedicated perk-up gesture.
-        _ear_gesture_events = {
-            "wakeword.detected": "wakeword",
-            "sound.detected": "sound",
-            "vision.focus": "sound",
-            "vision.person": "sound",
-            "environment.scene_changed": "sound",
-        }
+    if interactions is None or piservo is None or not hasattr(interactions, "register_event_handler"):
+        return
+    _ear_gesture_events = {
+        "wakeword.detected": "wakeword",
+        "sound.detected": "sound",
+        "vision.focus": "sound",
+        "vision.person": "sound",
+        "environment.scene_changed": "sound",
+    }
 
-        def _piservo_on_interaction(evt: str, data: Dict[str, Any]) -> None:
-            key = str(evt or "").strip().lower()
-            try:
-                if key.startswith("emotion:") and hasattr(piservo, "emotion"):
-                    piservo.emotion(key.split(":", 1)[1])
-                    return
-                gesture = _ear_gesture_events.get(key)
-                if gesture and hasattr(piservo, "gesture"):
-                    piservo.gesture(gesture)
-            except Exception:
-                pass
-
+    def _piservo_on_interaction(evt: str, data: Dict[str, Any]) -> None:
+        key = str(evt or "").strip().lower()
         try:
-            interactions.register_event_handler(_piservo_on_interaction)
-            logger.info("interactions -> piservo ear expression bridge mounted")
-        except Exception as exc:
-            logger.warning("piservo interactions bridge mount failed: %s", exc)
+            if key.startswith("emotion:") and hasattr(piservo, "emotion"):
+                piservo.emotion(key.split(":", 1)[1])
+                return
+            gesture = _ear_gesture_events.get(key)
+            if gesture and hasattr(piservo, "gesture"):
+                piservo.gesture(gesture)
+        except Exception:
+            pass
 
-    return started
+    try:
+        interactions.register_event_handler(_piservo_on_interaction)
+        logger.info("interactions -> piservo ear expression bridge mounted")
+    except Exception as exc:
+        logger.warning("piservo interactions bridge mount failed: %s", exc)
 
 
