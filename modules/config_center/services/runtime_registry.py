@@ -214,31 +214,54 @@ class RuntimeConfigRegistry:
             raise ValueError(f"invalid runtime key: {composed!r}")
         return parts[0], parts[1]
 
+    @staticmethod
+    def _coerce_int(value: Any) -> Any:
+        return int(value)
+
+    @staticmethod
+    def _coerce_float(value: Any) -> Any:
+        return float(value)
+
+    @staticmethod
+    def _coerce_bool(value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    def _coerce_choice(self, key: RuntimeKey, value: Any) -> Tuple[Any, Optional[str]]:
+        if key.choices is not None and value not in key.choices:
+            return None, f"invalid_choice (allowed={list(key.choices)})"
+        return value, None
+
+    @staticmethod
+    def _coerce_list(value: Any) -> Tuple[Any, Optional[str]]:
+        if isinstance(value, str):
+            return [v.strip() for v in value.split(",") if v.strip()], None
+        if isinstance(value, (list, tuple)):
+            return list(value), None
+        return None, "invalid_list"
+
+    @staticmethod
+    def _coerce_string(value: Any) -> Any:
+        return str(value) if value is not None else ""
+
+    _COERCE_MAP = {
+        "int": (_coerce_int, False),
+        "float": (_coerce_float, False),
+        "bool": (_coerce_bool, False),
+        "choice": (None, True),
+        "list": (None, True),
+    }
+
     def _coerce(self, key: RuntimeKey, value: Any) -> Tuple[Any, Optional[str]]:
         t = (key.type or "string").lower()
         try:
-            if t == "int":
-                coerced: Any = int(value)
-            elif t == "float":
-                coerced = float(value)
-            elif t == "bool":
-                if isinstance(value, str):
-                    coerced = value.strip().lower() in {"1", "true", "yes", "on"}
-                else:
-                    coerced = bool(value)
-            elif t == "choice":
-                coerced = value
-                if key.choices is not None and coerced not in key.choices:
-                    return None, f"invalid_choice (allowed={list(key.choices)})"
-            elif t == "list":
-                if isinstance(value, str):
-                    coerced = [v.strip() for v in value.split(",") if v.strip()]
-                elif isinstance(value, (list, tuple)):
-                    coerced = list(value)
-                else:
-                    return None, "invalid_list"
-            else:
-                coerced = str(value) if value is not None else ""
+            if t == "choice":
+                return self._coerce_choice(key, value)
+            if t == "list":
+                return self._coerce_list(value)
+            fn = self._COERCE_MAP.get(t, (self._coerce_string, False))[0]
+            coerced = fn(value) if fn else self._coerce_string(value)
         except (TypeError, ValueError) as exc:
             return None, f"coerce_failed:{exc}"
 
