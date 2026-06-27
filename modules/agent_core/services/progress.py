@@ -284,60 +284,58 @@ class ProgressManager:
         self._cancel_stale(token)
 
     # ── Raw progress callback (for Agent Core integration) ────────────
-    def on_progress_event(self, event: Dict[str, Any]) -> None:
-        """Handle a raw progress event from AgentOrchestrator.
+    def _handle_progress_status(self, event, token):
+        text = str(event.get("text", "")).strip()
+        if text:
+            self._speak_progress(token, text, event_type="status")
 
-        This is the bridge between agent.step(progress_cb=...) and
-        the staged TTS system.
-        """
+    def _handle_progress_tool_done(self, event, token):
+        tool = str(event.get("tool", "")).strip()
+        if tool and token:
+            self.emit_tool_done(token, tool, str(event.get("result", "")))
+
+    def _handle_progress_tool_error(self, event, token):
+        tool = str(event.get("tool", "")).strip()
+        error = str(event.get("error", "")).strip()
+        if token:
+            self.emit_tool_error(token, tool, error)
+
+    def _handle_progress_plan(self, event, token):
+        plan = event.get("plan", [])
+        if isinstance(plan, list) and token:
+            self.emit_plan(token, plan)
+
+    def _handle_progress_subagent_start(self, event, token):
+        module = str(event.get("module", "")).strip()
+        if module and token and subagent_module_should_speak(module):
+            msg = f"Running the {module} module." if self._lang_for(token) == "en" else f"{module} modülünü çalıştırıyorum."
+            self._speak_progress(token, msg, "subagent_start")
+
+    def _handle_progress_subagent_done(self, event, token):
+        pass
+
+    def _handle_progress_persona_start(self, event, token):
+        if token:
+            msg = "Putting the answer together." if self._lang_for(token) == "en" else "Sonuçları birleştirip yanıt hazırlıyorum."
+            self._speak_progress(token, msg, "persona_start")
+
+    _PROGRESS_HANDLER_NAMES = {
+        "status": "_handle_progress_status",
+        "tool_done": "_handle_progress_tool_done",
+        "tool_error": "_handle_progress_tool_error",
+        "plan": "_handle_progress_plan",
+        "subagent_start": "_handle_progress_subagent_start",
+        "subagent_done": "_handle_progress_subagent_done",
+        "persona_start": "_handle_progress_persona_start",
+    }
+
+    def on_progress_event(self, event: Dict[str, Any]) -> None:
         event_type = str(event.get("type", "")).strip()
         token = str(event.get("token", "")).strip()
-        self._latest_event = {
-            "timestamp": time.time(),
-            "token": token,
-            "event": dict(event),
-        }
-
-        if event_type == "status":
-            text = str(event.get("text", "")).strip()
-            if text:
-                self._speak_progress(token, text, event_type="status")
-
-        elif event_type == "tool_done":
-            tool = str(event.get("tool", "")).strip()
-            if tool and token:
-                self.emit_tool_done(token, tool, str(event.get("result", "")))
-
-        elif event_type == "tool_error":
-            tool = str(event.get("tool", "")).strip()
-            error = str(event.get("error", "")).strip()
-            if token:
-                self.emit_tool_error(token, tool, error)
-
-        elif event_type == "plan":
-            plan = event.get("plan", [])
-            if isinstance(plan, list) and token:
-                self.emit_plan(token, plan)
-
-        elif event_type == "subagent_start":
-            module = str(event.get("module", "")).strip()
-            if module and token and subagent_module_should_speak(module):
-                if self._lang_for(token) == "en":
-                    msg = f"Running the {module} module."
-                else:
-                    msg = f"{module} modülünü çalıştırıyorum."
-                self._speak_progress(token, msg, "subagent_start")
-
-        elif event_type == "subagent_done":
-            pass  # silent
-
-        elif event_type == "persona_start":
-            if token:
-                if self._lang_for(token) == "en":
-                    msg = "Putting the answer together."
-                else:
-                    msg = "Sonuçları birleştirip yanıt hazırlıyorum."
-                self._speak_progress(token, msg, "persona_start")
+        self._latest_event = {"timestamp": time.time(), "token": token, "event": dict(event)}
+        handler_name = self._PROGRESS_HANDLER_NAMES.get(event_type)
+        if handler_name:
+            getattr(self, handler_name)(event, token)
 
     # ── Internal ──────────────────────────────────────────────────────
     def _speak_progress(self, token: str, text: str, event_type: str = "progress") -> None:

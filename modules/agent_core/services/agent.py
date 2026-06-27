@@ -44,28 +44,35 @@ class AgentOrchestrator:
     """
 
     def __init__(self, config: dict, autonomy_client=None):
-        """
-        Args:
-            config: The agent.yaml config dict.
-            autonomy_client: ServiceClient used to trigger real hardware.
-        """
         self.config = config
         self.autonomy_client = autonomy_client
+        self._warn_insecure_defaults(config)
 
+        self._init_gateway_config(config)
+        agent_cfg = self._init_llm_settings(config)
+        self._init_llm_clients()
+        self._init_subsystems(config)
+        self._init_background_threads()
+        self._init_chat_history(agent_cfg)
+        self._init_tri_layer(config, agent_cfg)
+
+        self.last_run = 0.0
+        self.is_busy = False
+        self._active_progress_token: str = ""
+        self.last_routed_subagents: List[str] = []
+
+    def _init_gateway_config(self, config):
         actions_cfg = config.get("actions", {}) if isinstance(config.get("actions", {}), dict) else {}
         try:
             from modules.gateway.url import resolve_config_url, resolve_gateway_base_url
-
             default_gw = resolve_gateway_base_url(self.config)
             raw_gw = str(actions_cfg.get("gateway_base_url", default_gw)).strip()
             self._gateway_base_url = resolve_config_url(raw_gw, default_gw).rstrip("/")
         except Exception:
-            self._gateway_base_url = str(
-                actions_cfg.get("gateway_base_url", "http://127.0.0.1:8080")
-            ).rstrip("/")
+            self._gateway_base_url = str(actions_cfg.get("gateway_base_url", "http://127.0.0.1:8080")).rstrip("/")
         self._action_http_timeout_s = float(actions_cfg.get("http_timeout_s", 2.5))
 
-        # LLM settings
+    def _init_llm_settings(self, config) -> dict:
         agent_cfg = config.get("agent", {})
         self.model = agent_cfg.get("model", "llama3.2:3b-q4_K_M")
         self.temperature = agent_cfg.get("temperature", 0.15)
@@ -74,40 +81,27 @@ class AgentOrchestrator:
         llm_cfg = config.get("llm", {}) if isinstance(config.get("llm", {}), dict) else {}
         self.llm_provider = str(llm_cfg.get("provider", "ollama")).strip().lower() or "ollama"
         self.clm_fallback_enabled = bool(llm_cfg.get("clm_fallback_enabled", True))
-        self.clm_fallback_model = str(
-            llm_cfg.get("clm_fallback_model", agent_cfg.get("clm_fallback_model", ""))
-        ).strip()
+        self.clm_fallback_model = str(llm_cfg.get("clm_fallback_model", agent_cfg.get("clm_fallback_model", ""))).strip()
         self.fallback_on_missing_model = bool(llm_cfg.get("fallback_on_missing_model", True))
         self.fallback_on_error = bool(llm_cfg.get("fallback_on_error", True))
         self.request_timeout = self._safe_float(
-            agent_cfg.get("request_timeout", agent_cfg.get("ollama_request_timeout", 60.0)),
-            fallback=60.0,
-            minimum=1.0,
+            agent_cfg.get("request_timeout", agent_cfg.get("ollama_request_timeout", 60.0)), fallback=60.0, minimum=1.0,
         )
-        self.status_interval_s = self._safe_float(
-            agent_cfg.get("status_interval_s", 2.0),
-            fallback=2.0,
-            minimum=0.2,
-        )
+        self.status_interval_s = self._safe_float(agent_cfg.get("status_interval_s", 2.0), fallback=2.0, minimum=0.2)
         self.max_steps = self._safe_int(
-            agent_cfg.get("max_steps", agent_cfg.get("max_tool_loops", 10)),
-            fallback=10,
-            minimum=1,
+            agent_cfg.get("max_steps", agent_cfg.get("max_tool_loops", 10)), fallback=10, minimum=1,
         )
         self.ollama_base_url = self._resolve_ollama_base_url(agent_cfg)
-
         if self.llm_provider != "ollama":
-            logger.info(
-                "Agent Core running in provider mode: %s (limited tool-calling adaptation enabled)",
-                self.llm_provider,
-            )
+            logger.info("Agent Core running in provider mode: %s (limited tool-calling adaptation enabled)", self.llm_provider)
+        return agent_cfg
 
+    def _init_llm_clients(self):
         self.ollama_client = None
         self.provider_client = None
         self.provider_name = self.llm_provider
         self._cached_model_names: List[str] = []
         self._cached_model_names_ts = 0.0
-
         if ollama:
             try:
                 self.ollama_client = ollama.Client(host=self.ollama_base_url, timeout=self.request_timeout)
@@ -117,86 +111,60 @@ class AgentOrchestrator:
                     self.ollama_client = ollama.Client(host=self.ollama_base_url)
                 except Exception:
                     self.ollama_client = None
-
         if self.llm_provider != "ollama" and create_llm_client:
             try:
                 self.provider_client, self.provider_name = create_llm_client(self.config)
-                logger.info(
-                    "LLM provider client ready: %s (model=%s)",
-                    self.provider_name,
-                    getattr(self.provider_client, "model", ""),
-                )
+                logger.info("LLM provider client ready: %s (model=%s)", self.provider_name, getattr(self.provider_client, "model", ""))
             except Exception as exc:
-                logger.error(
-                    "Provider client init failed for %s: %s",
-                    self.llm_provider,
-                    exc,
-                )
+                logger.error("Provider client init failed for %s: %s", self.llm_provider, exc)
 
-        # Subsystems
+    def _init_subsystems(self, config):
         self.world_state = WorldState()
         self.memory = EpisodicMemory()
         self.memory_consolidator = self._build_memory_consolidator()
         self.slam = TopologicalMap()
         self.safety_filter = ActionSafetyFilter(config)
         self.tool_execution_arbiter = ToolExecutionArbiter()
-        # ── Living Vision Agent: Arbiter & Progress subsystems ──
-        # Instantiated before ToolRegistry so vlm tools can lock the vision arbiter.
         self.action_arbiter = ActionArbiter()
         self.vision_arbiter = VisionArbiter()
         self.expression_arbiter = ExpressionArbiter()
         self.speech_arbiter = SpeechArbiter()
         self.progress_manager = ProgressManager(speech_arbiter=self.speech_arbiter)
         self.progress_manager.attach_arbiters(
-            action_arbiter=self.action_arbiter,
-            vision_arbiter=self.vision_arbiter,
-            expression_arbiter=self.expression_arbiter,
-            tool_execution_arbiter=self.tool_execution_arbiter,
+            action_arbiter=self.action_arbiter, vision_arbiter=self.vision_arbiter,
+            expression_arbiter=self.expression_arbiter, tool_execution_arbiter=self.tool_execution_arbiter,
         )
-
         self.tool_registry = ToolRegistry(
-            client=self.autonomy_client,
-            memory=self.memory,
-            slam=self.slam,
-            world_state=self.world_state,
-            safety_filter=self.safety_filter,
-            tool_execution_arbiter=self.tool_execution_arbiter,
-            vision_arbiter=self.vision_arbiter,
+            client=self.autonomy_client, memory=self.memory, slam=self.slam,
+            world_state=self.world_state, safety_filter=self.safety_filter,
+            tool_execution_arbiter=self.tool_execution_arbiter, vision_arbiter=self.vision_arbiter,
             vlm_ask_timeout_s=float((config.get("tool_execution", {}) or {}).get("timeout_s", 22.0)),
             gateway_base_url=self._gateway_base_url,
         )
 
-        # Background threads
-        self.sensor_loop = SensorFeedbackLoop(self.world_state, client=autonomy_client)
-        self.idle_system = IdleBehaviorSystem(self, client=autonomy_client)
+    def _init_background_threads(self):
+        self.sensor_loop = SensorFeedbackLoop(self.world_state, client=self.autonomy_client)
+        self.idle_system = IdleBehaviorSystem(self, client=self.autonomy_client)
         if self.autonomy_client and hasattr(self.autonomy_client, "set_stt_suppressed"):
-            self.speech_arbiter.set_tts_state_callback(
-                lambda active: self.autonomy_client.set_stt_suppressed(bool(active))
-            )
+            self.speech_arbiter.set_tts_state_callback(lambda active: self.autonomy_client.set_stt_suppressed(bool(active)))
         if self.autonomy_client and hasattr(self.autonomy_client, "stop_speaking"):
             self.speech_arbiter.set_stop_playback_fn(self.autonomy_client.stop_speaking)
         self._register_action_handlers()
 
-        self.last_run = 0.0
-        self.is_busy = False
-        self._active_progress_token: str = ""
-
-        # Short-term conversational/reasoning memory across steps
+    def _init_chat_history(self, agent_cfg):
         self.chat_history = []
         self.max_history = agent_cfg.get("max_history", 10)
 
-        # MARK: Tri-layer agent settings (router -> sub-agents -> main persona)
-        tri_cfg = self.config.get("tri_layer", {}) if isinstance(self.config.get("tri_layer", {}), dict) else {}
+    def _init_tri_layer(self, config, agent_cfg):
+        tri_cfg = config.get("tri_layer", {}) if isinstance(config.get("tri_layer", {}), dict) else {}
         router_cfg = tri_cfg.get("router", {}) if isinstance(tri_cfg.get("router", {}), dict) else {}
         subagent_cfg = tri_cfg.get("subagent", {}) if isinstance(tri_cfg.get("subagent", {}), dict) else {}
         persona_cfg = tri_cfg.get("persona", {}) if isinstance(tri_cfg.get("persona", {}), dict) else {}
-
         default_modules = router_cfg.get("default_modules", ["autonomy", "agent_core"])
         if not isinstance(default_modules, list):
             default_modules = ["autonomy", "agent_core"]
         if not self._vision_input_available():
             default_modules = [m for m in default_modules if str(m).strip().lower() != "vlm_bridge"]
-
         profile_overrides = tri_cfg.get("profiles") if isinstance(tri_cfg.get("profiles"), dict) else None
         self.subagent_profiles = build_subagent_profiles(profile_overrides)
         self.router = TriLayerRouter(
@@ -204,19 +172,13 @@ class AgentOrchestrator:
             max_subagents=self._safe_int(router_cfg.get("max_subagents", 2), fallback=2, minimum=1),
             default_modules=default_modules,
         )
-
         self.tri_layer_enabled = bool(tri_cfg.get("enabled", True))
         self.subagent_max_steps = self._safe_int(subagent_cfg.get("max_steps", 2), fallback=2, minimum=1)
-        # Number of worker threads for running sub-agents in parallel to reduce latency
         self.subagent_workers = self._safe_int(subagent_cfg.get("workers", 2), fallback=2, minimum=1)
-        # Persona system prompt can be overridden via config.tri_layer.persona.system_prompt
         self.persona_system_prompt = str(persona_cfg.get("system_prompt", "")).strip()
-        default_persona_np = persona_cfg.get("num_predict", 180)
-        self.persona_num_predict = self._safe_int(default_persona_np, fallback=180, minimum=64)
+        self.persona_num_predict = self._safe_int(persona_cfg.get("num_predict", 180), fallback=180, minimum=64)
         self.chat_num_predict = self._safe_int(agent_cfg.get("num_predict", 100), fallback=100, minimum=48)
-
-        # Apply active realtime profile overrides at startup
-        rt_cfg = self.config.get("realtime_profile", {}) if isinstance(self.config.get("realtime_profile", {}), dict) else {}
+        rt_cfg = config.get("realtime_profile", {}) if isinstance(config.get("realtime_profile", {}), dict) else {}
         active_profile_name = str(rt_cfg.get("active", "")).strip().lower()
         profiles_map = rt_cfg.get("profiles", {}) if isinstance(rt_cfg.get("profiles", {}), dict) else {}
         active_profile = profiles_map.get(active_profile_name, {}) if active_profile_name else {}
@@ -224,8 +186,6 @@ class AgentOrchestrator:
             active_profile = rt_cfg.get(active_profile_name, {}) if active_profile_name else {}
         if isinstance(active_profile, dict) and active_profile:
             self.apply_realtime_profile(active_profile)
-
-        self.last_routed_subagents: List[str] = []
 
     def _build_memory_consolidator(self):
         """Wire the consolidator to episodic memory and (if present) social_db.
@@ -384,47 +344,44 @@ class AgentOrchestrator:
         self.action_arbiter.register_handler("face_focus", _handle_face_focus)
         self.action_arbiter.register_handler("face_register", _handle_face_register)
 
-    def apply_realtime_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply runtime-safe realtime profile values without restart.
+    def _apply_profile_field(self, applied: Dict[str, Any], profile: Dict[str, Any],
+                             key: str, attr: str, converter: str = "int",
+                             fallback: Any = None, minimum: Any = None) -> None:
+        if key not in profile:
+            return
+        raw = profile[key]
+        if converter == "int":
+            value = self._safe_int(raw, fallback=fallback if fallback is not None else getattr(self, attr, 0), minimum=minimum)
+        else:
+            value = self._safe_float(raw, fallback=fallback if fallback is not None else getattr(self, attr, 0.0), minimum=minimum)
+        setattr(self, attr, value)
+        applied[key] = value
 
-        Supports atomic swaps for chat/persona ``num_predict``, context window,
-        temperature, request timeout, sub-agent fan-out (``max_subagents``) and
-        the sub-agent worker pool size.
-        """
+    def apply_realtime_profile(self, profile: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(profile, dict):
             return {}
 
+        _FIELDS = [
+            ("num_predict_persona", "persona_num_predict", "int", 64),
+            ("num_predict_chat", "chat_num_predict", "int", 48),
+            ("num_ctx", "num_ctx", "int", 512),
+            ("temperature", "temperature", "float", 0.0),
+            ("request_timeout_s", "request_timeout", "float", 1.0),
+            ("subagent_workers", "subagent_workers", "int", 1),
+            ("subagent_max_steps", "subagent_max_steps", "int", 1),
+        ]
         applied: Dict[str, Any] = {}
-        if "num_predict_persona" in profile:
-            self.persona_num_predict = self._safe_int(profile.get("num_predict_persona"), fallback=self.persona_num_predict, minimum=64)
-            applied["num_predict_persona"] = self.persona_num_predict
-        if "num_predict_chat" in profile:
-            self.chat_num_predict = self._safe_int(profile.get("num_predict_chat"), fallback=self.chat_num_predict, minimum=48)
-            applied["num_predict_chat"] = self.chat_num_predict
-        if "num_ctx" in profile:
-            self.num_ctx = self._safe_int(profile.get("num_ctx"), fallback=self.num_ctx, minimum=512)
-            applied["num_ctx"] = self.num_ctx
-        if "temperature" in profile:
-            self.temperature = self._safe_float(profile.get("temperature"), fallback=self.temperature, minimum=0.0)
-            applied["temperature"] = self.temperature
-        if "request_timeout_s" in profile:
-            self.request_timeout = self._safe_float(profile.get("request_timeout_s"), fallback=self.request_timeout, minimum=1.0)
-            applied["request_timeout_s"] = self.request_timeout
+        for key, attr, conv, minimum in _FIELDS:
+            self._apply_profile_field(applied, profile, key, attr, conv, minimum=minimum)
+
         if "max_subagents" in profile:
-            value = self._safe_int(profile.get("max_subagents"), fallback=getattr(self.router, "max_subagents", 2), minimum=1)
+            value = self._safe_int(profile["max_subagents"], fallback=getattr(self.router, "max_subagents", 2), minimum=1)
             if hasattr(self.router, "set_max"):
                 applied["max_subagents"] = self.router.set_max(value)
             else:
                 self.router.max_subagents = value
                 applied["max_subagents"] = self.router.max_subagents
-        if "subagent_workers" in profile:
-            self.subagent_workers = self._safe_int(profile.get("subagent_workers"), fallback=self.subagent_workers, minimum=1)
-            applied["subagent_workers"] = self.subagent_workers
-        if "subagent_max_steps" in profile:
-            self.subagent_max_steps = self._safe_int(profile.get("subagent_max_steps"), fallback=self.subagent_max_steps, minimum=1)
-            applied["subagent_max_steps"] = self.subagent_max_steps
 
-        # Keep tool VLM ask timeout aligned with active profile.
         if hasattr(self, "tool_registry") and self.tool_registry is not None:
             vlm_timeout = profile.get("vlm_ask_timeout_s", profile.get("request_timeout_s"))
             if vlm_timeout is not None:
@@ -466,6 +423,41 @@ class AgentOrchestrator:
             return max(minimum, float(value))
         except (TypeError, ValueError):
             return max(minimum, float(fallback))
+
+    def _warn_insecure_defaults(self, config: dict) -> None:
+        """Log warnings for insecure default credentials."""
+        warnings = []
+        
+        # Check agent.yaml auth_token
+        agent_cfg = config.get("agent", {}) if isinstance(config.get("agent", {}), dict) else {}
+        auth_token = str(agent_cfg.get("auth_token", "") or "").strip()
+        if auth_token in ("", "changeme", "your-auth-token", "replace_me"):
+            warnings.append("SECURITY WARNING: agent.auth_token is using default/empty value 'changeme' - please set a strong token in config/agent.yaml")
+        
+        # Check vlm_bridge auth_token
+        vlm_cfg = config.get("vlm_bridge", {}) if isinstance(config.get("vlm_bridge", {}), dict) else {}
+        remote_cfg = vlm_cfg.get("remote", {}) if isinstance(vlm_cfg.get("remote", {}), dict) else {}
+        vlm_auth = str(remote_cfg.get("auth_token", "") or "").strip()
+        if vlm_auth in ("", "changeme", "your-auth-token", "replace_me"):
+            warnings.append("SECURITY WARNING: vlm_bridge.remote.auth_token is using default/empty value 'changeme' - please set a strong token in config/agent.yaml")
+        
+        # Check speak remote auth_token
+        speak_cfg = config.get("speak", {}) if isinstance(config.get("speak", {}), dict) else {}
+        remote_speak = speak_cfg.get("remote", {}) if isinstance(speak_cfg.get("remote", {}), dict) else {}
+        speak_auth = str(remote_speak.get("auth_token", "") or "").strip()
+        if speak_auth in ("", "changeme", "your-auth-token", "replace_me"):
+            warnings.append("SECURITY WARNING: speak.tts.remote.auth_token is using default/empty value - please set a strong token in config/agent.yaml")
+        
+        # Check esp_link WiFi password
+        esp_cfg = config.get("esp_link", {}) if isinstance(config.get("esp_link", {}), dict) else {}
+        network_cfg = esp_cfg.get("network", {}) if isinstance(esp_cfg.get("network", {}), dict) else {}
+        wifi_password = str(network_cfg.get("password", "") or "").strip()
+        wifi_ssid = str(network_cfg.get("ssid", "") or "").strip()
+        if wifi_password and wifi_password == wifi_ssid and wifi_ssid == "SentryBOT":
+            warnings.append("SECURITY WARNING: esp_link WiFi password equals SSID ('SentryBOT') - please set a strong unique password in modules/esp_link/config/config.yml")
+        
+        for warning in warnings:
+            logger.warning(warning)
 
     def start(self):
         """Start background subsystems."""
@@ -1064,6 +1056,90 @@ class AgentOrchestrator:
             return min(256, max(base, 160))
         return base
 
+    def _build_progress_callback(self, progress_token: str, progress_cb: Optional[Callable] = None) -> Callable:
+        def _unified_progress_cb(event: Dict[str, Any]) -> None:
+            event["token"] = progress_token
+            self.progress_manager.on_progress_event(event)
+            if progress_cb:
+                try:
+                    progress_cb(event)
+                except Exception:
+                    pass
+        return _unified_progress_cb
+
+    def _check_provider_availability(self) -> Optional[Dict[str, Any]]:
+        if self.llm_provider == "ollama" and not ollama:
+            logger.error("Ollama library not found. Native tool loop requires 'ollama' package.")
+            return {"text": "System Error: Missing ollama backend."}
+        if self.llm_provider != "ollama" and self.provider_client is None:
+            logger.error("Provider '%s' selected but provider client is unavailable.", self.llm_provider)
+            return {"text": "System Error: Missing provider client backend."}
+        return None
+
+    def _run_tri_layer(self, user_prompt: str, world_context: str, survival_override: str,
+                       active_model: str, session_language: str,
+                       progress_token: str, cb: Callable) -> tuple[str, int, list]:
+        self.last_routed_subagents = self.router.route(user_prompt)
+        logger.info("Tri-layer route selected: %s", self.last_routed_subagents)
+
+        plan_summary = self._build_plan_summary(user_prompt, self.last_routed_subagents)
+        self.progress_manager.emit_plan(progress_token, plan_summary)
+        self._emit_progress(cb, {"type": "plan", "plan": plan_summary})
+
+        subagent_reports: list = []
+        total_steps = 0
+        if self.last_routed_subagents:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(self.last_routed_subagents), self.subagent_workers)) as ex:
+                futures = {}
+                for module_name in self.last_routed_subagents:
+                    profile = self.subagent_profiles.get(module_name)
+                    if not profile:
+                        continue
+                    fut = ex.submit(self._run_subagent, profile, user_prompt, world_context, survival_override, active_model, cb)
+                    futures[fut] = module_name
+                for fut in concurrent.futures.as_completed(futures):
+                    try:
+                        report = fut.result()
+                    except Exception as exc:
+                        self._safe_log_warning("Sub-agent %s failed in executor: %s", futures.get(fut), exc)
+                        continue
+                    subagent_reports.append(report)
+                    total_steps += int(report.get("steps", 0))
+
+        final_text, total_steps = self._synthesize_from_reports(
+            subagent_reports, user_prompt, survival_override, active_model,
+            session_language, cb, total_steps,
+        )
+        return final_text, total_steps, subagent_reports
+
+    def _synthesize_from_reports(self, subagent_reports: list, user_prompt: str,
+                                  survival_override: str, active_model: str,
+                                  session_language: str, cb: Callable,
+                                  total_steps: int) -> tuple[str, int]:
+        if not subagent_reports:
+            messages = list(self.chat_history)
+            return self._run_native_history_loop(active_model, messages)
+
+        try:
+            from modules.ollama.services.clients import GoogleAIStudioClient
+            gemini_limited = GoogleAIStudioClient.is_rate_limited(str(getattr(self.provider_client, "api_key", "")))
+        except Exception:
+            gemini_limited = False
+
+        if gemini_limited:
+            final_text = "AI quota is exhausted right now. Can you try again in a minute or two?" if session_language == "en" else "Şu an yapay zeka kotası dolu. Bir iki dakika sonra tekrar dener misin?"
+            self._append_history("assistant", final_text)
+            return final_text, total_steps
+
+        self._emit_progress(cb, {"type": "persona_start"})
+        final_text = self._synthesize_main_persona(
+            user_prompt=user_prompt, reports=subagent_reports,
+            survival_override=survival_override, active_model=active_model,
+            session_language=session_language,
+        )
+        self._append_history("assistant", final_text)
+        return final_text, total_steps
+
     def step(
         self,
         user_prompt: str = "",
@@ -1071,27 +1147,14 @@ class AgentOrchestrator:
         language: Optional[str] = None,
         speaker: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        """
-        One complete Agent thought cycle with staged execution.
-
-        Stage 1: Immediate ack (100-500ms, template based)
-        Stage 2: Plan summary
-        Stage 3: Tool execution with progress
-        Stage 4: Final persona response
-        """
         now = time.time()
-        if now - self.last_run < self.cooldown:
+        if now - self.last_run < self.cooldown or self.is_busy or not user_prompt:
             return None
         self.last_run = now
-
-        if self.is_busy or not user_prompt:
-            return None
 
         self.is_busy = True
         previous_hook = self.tool_registry.status_hook
 
-        # Bridge active speaker into world state so consolidation and tools
-        # can attribute facts to the right person during this turn.
         if speaker and str(speaker).strip().lower() not in {"unknown", "none", ""}:
             try:
                 self.world_state.update_state({"speaker": str(speaker).strip()})
@@ -1099,32 +1162,16 @@ class AgentOrchestrator:
                 pass
 
         session_language = self._normalize_session_language(language)
-
-        # ── Create progress token for this request lifecycle ──
         progress_token = self.progress_manager.new_request(language=session_language)
         self._active_progress_token = progress_token
-
-        # Build a unified progress callback that routes through ProgressManager
-        def _unified_progress_cb(event: Dict[str, Any]) -> None:
-            event["token"] = progress_token
-            self.progress_manager.on_progress_event(event)
-            # Also call the original callback if provided
-            if progress_cb:
-                try:
-                    progress_cb(event)
-                except Exception:
-                    pass
-
-        self.tool_registry.status_hook = _unified_progress_cb
+        cb = self._build_progress_callback(progress_token, progress_cb)
+        self.tool_registry.status_hook = cb
 
         try:
-            # ── Stage 1: Immediate acknowledgement ──
             self.progress_manager.emit_ack(progress_token)
 
-            # 1. Collect world & survival context
             survival_override = self.check_survival_drives()
             world_context = self.world_state.inject_world_state("")
-
             lang_rule = self._language_directive(session_language)
             full_prompt = f"{user_prompt}\n\n[{lang_rule}]\n\n[World State]\n{world_context}"
             if survival_override:
@@ -1133,112 +1180,38 @@ class AgentOrchestrator:
             self._append_history("user", full_prompt)
             active_model = self._get_active_persona_model()
 
-            if self.llm_provider == "ollama" and not ollama:
-                logger.error("Ollama library not found. Native tool loop requires 'ollama' package.")
-                return {"text": "System Error: Missing ollama backend."}
-
-            if self.llm_provider != "ollama" and self.provider_client is None:
-                logger.error("Provider '%s' selected but provider client is unavailable.", self.llm_provider)
-                return {"text": "System Error: Missing provider client backend."}
+            provider_err = self._check_provider_availability()
+            if provider_err:
+                return provider_err
 
             final_text = ""
             total_steps = 0
             subagent_reports: List[Dict[str, Any]] = []
 
             if self.tri_layer_enabled:
-                self.last_routed_subagents = self.router.route(user_prompt)
-                logger.info("Tri-layer route selected: %s", self.last_routed_subagents)
-
-                # ── Stage 2: Plan summary ──
-                plan_summary = self._build_plan_summary(user_prompt, self.last_routed_subagents)
-                self.progress_manager.emit_plan(progress_token, plan_summary)
-                self._emit_progress(_unified_progress_cb, {"type": "plan", "plan": plan_summary})
-
-                # ── Stage 3: Sub-agent execution with progress ──
-                if self.last_routed_subagents:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(self.last_routed_subagents), self.subagent_workers)) as ex:
-                        futures = {}
-                        for module_name in self.last_routed_subagents:
-                            profile = self.subagent_profiles.get(module_name)
-                            if not profile:
-                                continue
-                            fut = ex.submit(
-                                self._run_subagent,
-                                profile,
-                                user_prompt,
-                                world_context,
-                                survival_override,
-                                active_model,
-                                _unified_progress_cb,
-                            )
-                            futures[fut] = module_name
-
-                        for fut in concurrent.futures.as_completed(futures):
-                            try:
-                                report = fut.result()
-                            except Exception as exc:
-                                self._safe_log_warning("Sub-agent %s failed in executor: %s", futures.get(fut), exc)
-                                continue
-                            subagent_reports.append(report)
-                            total_steps += int(report.get("steps", 0))
-
-                if subagent_reports:
-                    try:
-                        from modules.ollama.services.clients import GoogleAIStudioClient  # type: ignore
-
-                        gemini_limited = GoogleAIStudioClient.is_rate_limited(
-                            str(getattr(self.provider_client, "api_key", ""))
-                        )
-                    except Exception:
-                        gemini_limited = False
-
-                    if gemini_limited:
-                        if session_language == "en":
-                            final_text = (
-                                "AI quota is exhausted right now. Can you try again in a minute or two?"
-                            )
-                        else:
-                            final_text = (
-                                "Şu an yapay zeka kotası dolu. Bir iki dakika sonra tekrar dener misin?"
-                            )
-                        self._append_history("assistant", final_text)
-                    else:
-                        self._emit_progress(_unified_progress_cb, {"type": "persona_start"})
-                        final_text = self._synthesize_main_persona(
-                            user_prompt=user_prompt,
-                            reports=subagent_reports,
-                            survival_override=survival_override,
-                            active_model=active_model,
-                            session_language=session_language,
-                        )
-                        self._append_history("assistant", final_text)
-                else:
-                    messages = list(self.chat_history)
-                    final_text, total_steps = self._run_native_history_loop(active_model, messages)
+                final_text, total_steps, subagent_reports = self._run_tri_layer(
+                    user_prompt, world_context, survival_override, active_model,
+                    session_language, progress_token, cb,
+                )
             else:
                 messages = list(self.chat_history)
                 final_text, total_steps = self._run_native_history_loop(active_model, messages)
 
-            # ── Stage 4: Final — cancel stale progress, deliver response ──
             self.progress_manager.emit_final(progress_token)
-
-            # 4. Save to episodic long-term memory + consolidate durable facts
             self.memory.remember("dialogue", f"User: {user_prompt} | Bot: {final_text}")
             try:
                 self.memory_consolidator.consolidate(user_prompt, speaker=self._current_speaker())
             except Exception:
                 logger.debug("memory consolidation failed", exc_info=True)
 
-            # 5. Return dict matching AutonomyBrain expectations (but empty plan/actions)
             return {
                 "text": final_text,
                 "thoughts": f"Tri-layer executed with {total_steps} internal steps.",
                 "actions": [],
-                "plan": plan_summary if 'plan_summary' in locals() else [],
+                "plan": [],
                 "route": self.last_routed_subagents,
                 "subagents": subagent_reports,
             }
-
         finally:
             self.progress_manager.emit_final(progress_token)
             self.tool_registry.status_hook = previous_hook

@@ -285,61 +285,59 @@ class TriLayerRouter:
     def _tokenize(text: str) -> set[str]:
         return {t for t in re.findall(r"[a-z0-9_]+", str(text or "").lower()) if len(t) > 1}
 
-    def route(self, user_prompt: str) -> List[str]:
-        text = str(user_prompt or "").strip().lower()
-        if not text:
-            return list(self.default_modules[: self.max_subagents])
-
-        q_tokens = self._tokenize(text)
-
+    def _score_keyword_matches(self, text: str, q_tokens: set[str]) -> Dict[str, float]:
         scores: Dict[str, float] = {}
         for module_name, profile in self.profiles.items():
             for keyword in profile.keywords:
                 key = str(keyword or "").strip().lower()
                 if key and key in text:
                     scores[module_name] = scores.get(module_name, 0.0) + 2.5
-
             p_tokens = self._profile_tokens.get(module_name, set())
             if q_tokens and p_tokens:
                 overlap = len(q_tokens & p_tokens)
                 if overlap:
                     scores[module_name] = scores.get(module_name, 0.0) + (1.0 + overlap / max(1, len(p_tokens)))
+        return scores
 
-        # Small semantic priors for frequent intents.
-        if q_tokens & {"navigate", "navigation", "route", "where", "location", "path"}:
-            if "agent_core" in self.profiles:
-                scores["agent_core"] = scores.get("agent_core", 0.0) + 1.2
-            if "autonomy" in self.profiles:
-                scores["autonomy"] = scores.get("autonomy", 0.0) + 0.8
-        if q_tokens & {"health", "fault", "diagnostic", "error", "status"} and "diagnostics" in self.profiles:
-            scores["diagnostics"] = scores.get("diagnostics", 0.0) + 1.2
-        if q_tokens & {"schedule", "timer", "later", "remind", "periodic"} and "scheduler" in self.profiles:
-            scores["scheduler"] = scores.get("scheduler", 0.0) + 1.1
+    def _apply_semantic_priors(self, q_tokens: set[str], scores: Dict[str, float]) -> None:
+        _PRIORS = [
+            ({"navigate", "navigation", "route", "where", "location", "path"}, {"agent_core": 1.2, "autonomy": 0.8}),
+            ({"health", "fault", "diagnostic", "error", "status"}, {"diagnostics": 1.2}),
+            ({"schedule", "timer", "later", "remind", "periodic"}, {"scheduler": 1.1}),
+        ]
+        for trigger_tokens, boosts in _PRIORS:
+            if q_tokens & trigger_tokens:
+                for module_name, boost in boosts.items():
+                    if module_name in self.profiles:
+                        scores[module_name] = scores.get(module_name, 0.0) + boost
 
-        emotion_tokens = {
+    def _apply_emotion_priors(self, text: str, q_tokens: set[str], scores: Dict[str, float]) -> None:
+        _EMOTION_TOKENS = {
             "sinirlen", "sinirli", "kizgin", "kızgın", "mutlu", "uzgun", "üzgün", "kork",
             "emotion", "duygu", "ifade", "yuz", "yüz", "face", "angry", "happy", "sad",
             "excited", "bored", "furious", "scared", "love", "worried", "confused",
             "led", "light", "lights", "neopixel", "renk", "color", "oled", "eyes",
         }
-        emotion_phrases = (
+        _EMOTION_PHRASES = (
             "mutlu ol", "sinirli ol", "kizgin ol", "kızgın ol", "uzgun ol", "üzgün ol",
             "kirmizi yan", "kırmızı yan", "yuzunu degistir", "yüzünü değiştir",
         )
-        if q_tokens & emotion_tokens or any(p in text for p in emotion_phrases):
-            if "interactions" in self.profiles:
-                scores["interactions"] = scores.get("interactions", 0.0) + 2.8
-            if "autonomy" in self.profiles:
-                scores["autonomy"] = scores.get("autonomy", 0.0) + 2.4
-            if "neopixel" in self.profiles:
-                scores["neopixel"] = scores.get("neopixel", 0.0) + 1.8
-            if "oled_faces" in self.profiles:
-                scores["oled_faces"] = scores.get("oled_faces", 0.0) + 1.6
-            if "speak" in self.profiles:
-                scores["speak"] = scores.get("speak", 0.0) + 1.0
+        if not (q_tokens & _EMOTION_TOKENS or any(p in text for p in _EMOTION_PHRASES)):
+            return
+        _EMOTION_BOOSTS = {"interactions": 2.8, "autonomy": 2.4, "neopixel": 1.8, "oled_faces": 1.6, "speak": 1.0}
+        for module_name, boost in _EMOTION_BOOSTS.items():
+            if module_name in self.profiles:
+                scores[module_name] = scores.get(module_name, 0.0) + boost
 
+    def route(self, user_prompt: str) -> List[str]:
+        text = str(user_prompt or "").strip().lower()
+        if not text:
+            return list(self.default_modules[: self.max_subagents])
+        q_tokens = self._tokenize(text)
+        scores = self._score_keyword_matches(text, q_tokens)
+        self._apply_semantic_priors(q_tokens, scores)
+        self._apply_emotion_priors(text, q_tokens, scores)
         if not scores:
             return list(self.default_modules[: self.max_subagents])
-
         ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
         return [name for name, _ in ranked[: self.max_subagents]]
