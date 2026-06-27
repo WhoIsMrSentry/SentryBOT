@@ -350,6 +350,36 @@ class NeoRunner:
             if c1:
                 self.fill(*c1)
 
+    def _dispatch_animation(self, name: str, driver: Any, cols: list, c1: tuple | None, c2: tuple | None, iterations: int | None) -> bool:
+        _ANIM_MAP = {
+            "RAINBOW": lambda: anim_rainbow(driver, c1, iterations or 1),
+            "RAINBOW_CYCLE": lambda: rainbow_cycle(driver, c1, iterations or 1),
+            "SPINNER": lambda: anim_spinner(driver, c1 or (255, 0, 0), iterations or 1),
+            "BREATHE": lambda: anim_breathe(driver, c1 or (255, 0, 0), iterations or 1),
+            "METEOR": lambda: meteor_rain(driver, c1 or (255, 255, 255)),
+            "FIRE": lambda: fire_flicker(driver, c1 or (255, 165, 0)),
+            "COMET": lambda: anim_comet(driver, c1 or (0, 255, 255)),
+            "WAVE": lambda: anim_wave(driver, c1),
+            "PULSE": lambda: anim_pulse(driver, c1 or (255, 0, 127)),
+            "TWINKLE": lambda: anim_twinkle(driver, c1 or (255, 255, 255)),
+            "COLOR_WIPE": lambda: color_wipe(driver, c1 or (255, 0, 0)),
+            "RANDOM_BLINK": lambda: random_blink(driver, c1),
+            "THEATER_CHASE": lambda: anim_theater_chase(driver, c1 or (127, 127, 127)),
+            "SNOW": lambda: anim_snow(driver, c1 or (255, 255, 255)),
+            "ALTERNATING": lambda: alternating_colors(driver, c1 or (255, 0, 0), c2 or (0, 0, 255)),
+            "GRADIENT": lambda: gradient_fade(driver, 5, c1),
+            "BOUNCING_BALL": lambda: bouncing_ball(driver, c1 or (255, 0, 0)),
+            "RUNNING_LIGHTS": lambda: running_lights(driver, c1 or (255, 0, 0)),
+            "STACKED_BARS": lambda: stacked_bars(driver, 50, c1),
+            "MULTI_GRADIENT": lambda: multi_color_gradient(driver, cols, iterations or 5) if cols else None,
+            "MULTI_WAVE": lambda: multi_color_wave(driver, cols, iterations or 5) if cols else None,
+        }
+        fn = _ANIM_MAP.get(name)
+        if fn is None:
+            return False
+        fn()
+        return True
+
     def _run_named_animation(
         self,
         name: str,
@@ -358,60 +388,9 @@ class NeoRunner:
         c1: tuple[int, int, int] | None,
         iterations: int | None,
     ) -> bool:
-        """Dispatch a named animation onto ``driver`` (full strip or segment view).
-
-        Returns ``False`` when the name is not a known software animation.
-        """
         name = name.upper()
         c2 = cols[1] if len(cols) > 1 else None
-        # Map names to functions
-        if name == "RAINBOW":
-            anim_rainbow(driver, c1, iterations or 1)
-        elif name == "RAINBOW_CYCLE":
-            rainbow_cycle(driver, c1, iterations or 1)
-        elif name == "SPINNER":
-            anim_spinner(driver, c1 or (255, 0, 0), iterations or 1)
-        elif name == "BREATHE":
-            anim_breathe(driver, c1 or (255, 0, 0), iterations or 1)
-        elif name == "METEOR":
-            meteor_rain(driver, c1 or (255, 255, 255))
-        elif name == "FIRE":
-            fire_flicker(driver, c1 or (255, 165, 0))
-        elif name == "COMET":
-            anim_comet(driver, c1 or (0, 255, 255))
-        elif name == "WAVE":
-            anim_wave(driver, c1)
-        elif name == "PULSE":
-            anim_pulse(driver, c1 or (255, 0, 127))
-        elif name == "TWINKLE":
-            anim_twinkle(driver, c1 or (255, 255, 255))
-        elif name == "COLOR_WIPE":
-            color_wipe(driver, c1 or (255, 0, 0))
-        elif name == "RANDOM_BLINK":
-            random_blink(driver, c1)
-        elif name == "THEATER_CHASE":
-            anim_theater_chase(driver, c1 or (127, 127, 127))
-        elif name == "SNOW":
-            anim_snow(driver, c1 or (255, 255, 255))
-        elif name == "ALTERNATING":
-            alternating_colors(driver, c1 or (255, 0, 0), c2 or (0, 0, 255))
-        elif name == "GRADIENT":
-            gradient_fade(driver, 5, c1)
-        elif name == "BOUNCING_BALL":
-            bouncing_ball(driver, c1 or (255, 0, 0))
-        elif name == "RUNNING_LIGHTS":
-            running_lights(driver, c1 or (255, 0, 0))
-        elif name == "STACKED_BARS":
-            stacked_bars(driver, 50, c1)
-        elif name == "MULTI_GRADIENT":
-            if cols:
-                multi_color_gradient(driver, cols, iterations or 5)
-        elif name == "MULTI_WAVE":
-            if cols:
-                multi_color_wave(driver, cols, iterations or 5)
-        else:
-            return False
-        return True
+        return self._dispatch_animation(name, driver, cols, c1, c2, iterations)
 
     def _animate_worker_loop(self) -> None:
         while True:

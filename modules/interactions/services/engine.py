@@ -250,106 +250,125 @@ class InteractionEngine:
             self._tick()
             time.sleep(interval)
 
-    def _tick(self) -> None:
-        now = time.time()
-        quiet_hours_active = self._is_quiet_hours_active()
-        metrics = self.metrics.sample()
-        self._update_arduino_state(now)
-        net_burst = False
+    def _detect_net_burst(self, now: float, metrics) -> bool:
         try:
             thr = self.cfg.get("thresholds", {}).get("net", {})
             burst_mbps = float(thr.get("burst_mbps", 20))
             min_dur_ms = int(thr.get("min_duration_ms", 200))
             if metrics.net_mbps and metrics.net_mbps >= burst_mbps:
-                net_burst = True
                 self._last_net_burst = now + max(0.05, min_dur_ms / 1000.0)
-            elif now < self._last_net_burst:
-                net_burst = True
+                return True
+            return now < self._last_net_burst
         except Exception:
-            pass
+            return False
+
+    def _evaluate_rules(self) -> Optional[Rule]:
+        chosen: Optional[Rule] = None
+        for r in self.rules:
+            if eval_condition(r.when, dict(self._ctx)) and r.ready():
+                if chosen is None or priority_rank(r.priority) > priority_rank(chosen.priority):
+                    chosen = r
+        return chosen
+
+    def _render_manual_effect(self, now: float, manual_effect: dict) -> bool:
+        if now < self._active_effect_until:
+            return True
+        if not (bool(manual_effect.get("force")) or self._effect_allowed("manual.effect")):
+            return True
+        name = str(manual_effect.get("name", "COMET"))
+        duration_ms = int(manual_effect.get("duration_ms", 800))
+        self._active_effect_until = now + duration_ms / 1000.0
+        threading.Thread(
+            target=self.neo.play_effect, args=(name, duration_ms),
+            kwargs={"color": manual_effect.get("color"), "emotions": manual_effect.get("emotions")},
+            daemon=True,
+        ).start()
+        return True
+
+    def _render_manual_base(self, now: float, manual_base: tuple) -> bool:
+        if now < self._active_effect_until:
+            return True
+        name, color = manual_base
+        key = (str(name).upper(), color)
+        if key != self._last_base:
+            self._last_base = key
+            self.neo.set_base(name=str(name), color=color)
+        return True
+
+    def _render_rule_effect(self, now: float, act: dict, chosen: Rule) -> bool:
+        if "effect" not in act or now < self._active_effect_until:
+            return False
+        eff = act.get("effect") or {}
+        name = str(eff.get("name", "COMET"))
+        duration_ms = int(eff.get("duration_ms", 800))
+        event_name = self._ctx.get("event")
+        if not (self._effect_allowed(event_name) and self._claim_lights_for_event(event_name)):
+            return True
+        self._active_effect_until = now + duration_ms / 1000.0
+        chosen.stamp()
+        threading.Thread(
+            target=self.neo.play_effect, args=(name, duration_ms),
+            kwargs={"color": eff.get("color"), "emotions": eff.get("emotions") if isinstance(eff.get("emotions"), list) else None},
+            daemon=True,
+        ).start()
+        return True
+
+    def _render_rule_base(self, now: float, act: dict, chosen: Rule) -> bool:
+        if "base" not in act or now < self._active_effect_until:
+            return False
+        base = act["base"] or {}
+        name = str(base.get("name", self.defaults.get("idle", {}).get("base", {}).get("name", "BREATHE")))
+        color = base.get("color")
+        key = (name.upper(), color)
+        if key != self._last_base:
+            self._last_base = key
+            self.neo.set_base(name=name, color=color)
+            chosen.stamp()
+        return True
+
+    def _render_idle_base(self, now: float) -> None:
+        if now < self._active_effect_until:
+            return
+        idle = self.defaults.get("idle", {}).get("base", {})
+        name = str(idle.get("name", "BREATHE"))
+        color = idle.get("color")
+        key = (name.upper(), color)
+        if key != self._last_base:
+            self._last_base = key
+            self.neo.set_base(name=name, color=color)
+
+    def _tick(self) -> None:
+        now = time.time()
+        quiet_hours_active = self._is_quiet_hours_active()
+        metrics = self.metrics.sample()
+        self._update_arduino_state(now)
+        net_burst = self._detect_net_burst(now, metrics)
 
         with self._lock:
             self._ctx["metrics"] = {
-                "cpu_temp": metrics.cpu_temp,
-                "cpu_load": metrics.cpu_load,
-                "net_mbps": metrics.net_mbps,
+                "cpu_temp": metrics.cpu_temp, "cpu_load": metrics.cpu_load, "net_mbps": metrics.net_mbps,
             }
             self._ctx["arduino_connected"] = self._ctx.get("arduino_connected", True)
             self._ctx["net_burst"] = net_burst
             self._ctx["quiet_hours_active"] = quiet_hours_active
 
-            # Evaluate rules
             manual_base = self._ctx.pop("manual_base", None)
             manual_effect = self._manual_effect
             self._manual_effect = None
-            chosen: Optional[Rule] = None
-            for r in self.rules:
-                ctx = dict(self._ctx)
-                if eval_condition(r.when, ctx) and r.ready():
-                    if chosen is None or priority_rank(r.priority) > priority_rank(chosen.priority):
-                        chosen = r
+            chosen = self._evaluate_rules()
 
-            # Render
+            rendered = False
             if manual_effect and now >= self._active_effect_until:
-                if bool(manual_effect.get("force")) or self._effect_allowed("manual.effect"):
-                    name = str(manual_effect.get("name", "COMET"))
-                    duration_ms = int(manual_effect.get("duration_ms", 800))
-                    color = manual_effect.get("color")
-                    emotions = manual_effect.get("emotions")
-                    self._active_effect_until = now + duration_ms / 1000.0
-                    threading.Thread(
-                        target=self.neo.play_effect,
-                        args=(name, duration_ms),
-                        kwargs={"color": color, "emotions": emotions},
-                        daemon=True,
-                    ).start()
+                rendered = self._render_manual_effect(now, manual_effect)
             elif manual_base and now >= self._active_effect_until:
-                name, color = manual_base
-                key = (str(name).upper(), color)
-                if key != self._last_base:
-                    self._last_base = key
-                    self.neo.set_base(name=str(name), color=color)
+                rendered = self._render_manual_base(now, manual_base)
             elif chosen:
                 act = chosen.action or {}
-                # effect or base
-                if "effect" in act and now >= self._active_effect_until:
-                    eff = act["effect"] or {}
-                    name = str(eff.get("name", "COMET"))
-                    duration_ms = int(eff.get("duration_ms", 800))
-                    color = eff.get("color")
-                    emotions = eff.get("emotions") if isinstance(eff.get("emotions"), list) else None
-                    event_name = self._ctx.get("event")
-                    if self._effect_allowed(event_name) and self._claim_lights_for_event(event_name):
-                        self._active_effect_until = now + duration_ms / 1000.0
-                        chosen.stamp()
-                        threading.Thread(
-                            target=self.neo.play_effect,
-                            args=(name, duration_ms),
-                            kwargs={"color": color, "emotions": emotions},
-                            daemon=True,
-                        ).start()
-                elif "base" in act and now >= self._active_effect_until:
-                    base = act["base"] or {}
-                    name = str(base.get("name", self.defaults.get("idle", {}).get("base", {}).get("name", "BREATHE")))
-                    color = base.get("color")
-                    # Apply only if changed
-                    key = (name.upper(), color)
-                    if key != self._last_base:
-                        self._last_base = key
-                        self.neo.set_base(name=name, color=color)
-                        chosen.stamp()
-            else:
-                # No rule matched; ensure idle base
-                if now >= self._active_effect_until:
-                    idle = self.defaults.get("idle", {}).get("base", {})
-                    name = str(idle.get("name", "BREATHE"))
-                    color = idle.get("color")
-                    key = (name.upper(), color)
-                    if key != self._last_base:
-                        self._last_base = key
-                        self.neo.set_base(name=name, color=color)
+                rendered = self._render_rule_effect(now, act, chosen) or self._render_rule_base(now, act, chosen)
 
-            # one-shot event is consumed
+            if not rendered:
+                self._render_idle_base(now)
+
             self._ctx.pop("event", None)
 
     def _claim_lights_for_event(self, event_name: Any, *, force: bool = False) -> bool:

@@ -845,51 +845,36 @@ class AutonomyBrain(
             pass
         return False
 
-    def _react_to_speech(self, text, source_lang: str | None = None):
-        """React to heard text."""
+    def _handle_barge_in_and_wakeword(self, text: str, low: str, has_wake: bool, request_id: str) -> bool:
         from modules.speech.services.wake_phrase import contains_wakeword, strip_wakewords
 
-        low = str(text or "").lower()
-        has_wake = contains_wakeword(low)
-        # Natural barge-in: any meaningful utterance (not only a wakeword) cuts
-        # off the robot if it's mid-sentence, like a real conversation.
-        if self.barge_in.should_interrupt(
-            robot_speaking=self._robot_is_speaking(),
-            user_text=text,
-            has_wakeword=has_wake,
-        ):
+        if self.barge_in.should_interrupt(robot_speaking=self._robot_is_speaking(), user_text=text, has_wakeword=has_wake):
             self._barge_in_stop_speaking()
         elif has_wake:
             self._barge_in_stop_speaking()
 
-        request_id = uuid.uuid4().hex[:10]
-        with self._speech_req_lock:
-            self._active_speech_req_id = request_id
-            self._speech_busy = True
-
-        logger.info("Heard: %s", text)
-        self.state["last_interaction"] = time.time()
-        lang = str(source_lang or self.state.get("last_speech_language") or "tr")
-        wake_only = len(strip_wakewords(low).split()) < 1 and contains_wakeword(low)
-        if wake_only:
+        if contains_wakeword(low) and len(strip_wakewords(low).split()) < 1:
             self._run_scene("wakeword_reaction", context={"text": text})
-            if len(strip_wakewords(low).split()) < 1:
-                logger.info("Wakeword-only utterance; listening for command.")
-                try:
-                    self.client.start_speech_listening()
-                except Exception:
-                    pass
-                with self._speech_req_lock:
-                    if self._active_speech_req_id == request_id:
-                        self._speech_busy = False
-                return
+            logger.info("Wakeword-only utterance; listening for command.")
+            try:
+                self.client.start_speech_listening()
+            except Exception:
+                pass
+            with self._speech_req_lock:
+                if self._active_speech_req_id == request_id:
+                    self._speech_busy = False
+            return True
+        return False
 
+    def _handle_speech_command_shortcuts(self, text: str, lang: str, request_id: str) -> bool:
         if self._handle_emotion_command(text, lang):
             with self._speech_req_lock:
                 if self._active_speech_req_id == request_id:
                     self._speech_busy = False
-            return
+            return True
+        return False
 
+    def _process_speech_social_context(self, text: str) -> str | None:
         self.mood.modify("happiness", 5)
         sentiment_event = self._sentiment_event_for_text(text)
         if sentiment_event:
@@ -903,110 +888,130 @@ class AutonomyBrain(
             self._remember_person_chat(speaker, text, role="user")
             if sentiment_event:
                 self._apply_interaction_feedback(sentiment_event, speaker, text)
-
         self._maybe_emit_speech_excited(text, sentiment_event)
+        return speaker
 
+    def _handle_blocked_or_special_commands(self, text: str, speaker: str | None, lang: str) -> bool:
         blocked_response = self._maybe_block_request(text)
         if blocked_response:
             message, emotion = blocked_response
             self._speak_with_mood(message, emotion=emotion, language=lang)
-            return
-
+            return True
         if self._handle_owner_commands(text, speaker):
-            return
-
+            return True
         if self._features_locked_for_request(text):
-            return
-
+            return True
         if self._handle_follow_commands(text, speaker, lang):
-            return
+            return True
+        return False
 
-        is_question = "?" in text or any(
-            key in text.lower() for key in ["nedir", "kimdir", "nasıl", "what", "who", "how"]
-        )
-
+    def _handle_offline_mode(self, text: str, lang: str) -> bool:
         offline_cfg = self.config.get("offline_mode", {})
-        if bool(offline_cfg.get("enabled", False)):
-            target_service = "ollama"
-            if not self.client.is_service_available(target_service):
-                fallback = self._offline_reply(text, target_service)
-                self.client.push_interaction_event("autonomy.offline", {"service": target_service})
-                self._speak_with_mood(fallback, emotion="neutral", language=lang)
-                self.memory.add_event(f"Offline fallback reply used for {target_service}: {fallback}")
-                return
+        if not bool(offline_cfg.get("enabled", False)):
+            return False
+        target_service = "ollama"
+        if not self.client.is_service_available(target_service):
+            fallback = self._offline_reply(text, target_service)
+            self.client.push_interaction_event("autonomy.offline", {"service": target_service})
+            self._speak_with_mood(fallback, emotion="neutral", language=lang)
+            self.memory.add_event(f"Offline fallback reply used for {target_service}: {fallback}")
+            return True
+        return False
 
+    def _try_agent_core_path(self, text: str, lang: str, speaker: str | None, request_id: str) -> bool:
+        if not self.agent:
+            return False
+        try:
+            if not self.agent.speech_arbiter._speak_fn:
+                self.agent.speech_arbiter.set_speak_fn(
+                    lambda text, tone=None, language=None: self.client.speak(
+                        text, tone=tone, language=language or lang,
+                    )
+                )
+            enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
+            agent_result = self.agent.step(enriched_text, language=lang, speaker=speaker)
+            if agent_result and agent_result.get("text"):
+                if not self._is_active_request(request_id):
+                    return True
+                logger.info("Agent Core handled speech with full pipeline.")
+                self.memory.add_event(f"Agent replied: {agent_result['text']}")
+                self._remember_person_chat(speaker, agent_result["text"], role="assistant")
+                tone = self._tone_profile(self.state.get("last_emotion") or self.mood.get_dominant_emotion())
+                self.agent.speech_arbiter.enqueue_final(agent_result["text"], language=lang, tone=tone)
+                return True
+        except Exception as exc:
+            logger.warning("Agent Core step failed, falling back to direct LLM: %s", exc)
+        return False
+
+    def _try_direct_llm_path(self, text: str, lang: str, speaker: str | None, request_id: str) -> None:
+        logger.info("Routing to Ollama...")
+        enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
+        resp = self.client.chat(enriched_text, source_lang=lang, response_lang=lang)
         response_text = ""
         response_actions = None
         raw_response = None
+        if resp and "answer" in resp:
+            response_text = resp["answer"]
+            response_actions = resp.get("actions")
+            raw_response = resp.get("raw")
+            trans = resp.get("translation") if isinstance(resp, dict) else None
+            if isinstance(trans, dict) and trans.get("response_lang"):
+                lang = str(trans.get("response_lang"))
+
+        if not response_text:
+            return
+        if not self._is_active_request(request_id):
+            return
+        clean_text = self.apply_llm_response(response_text, response_actions, raw_response, speak=False)
+        if not clean_text:
+            logger.info("LLM response only triggered physical actions.")
+            return
+        if not self._is_active_request(request_id):
+            return
+        self._remember_person_chat(speaker, clean_text, role="assistant")
+        final_lang = lang
+        if detect_text_language:
+            final_lang = detect_text_language(clean_text, default=lang)
+        self._speak_with_mood(clean_text, language=final_lang)
+        logger.info("Reply: %s", clean_text)
+        self.memory.add_event(f"I replied: {clean_text}")
+
+    def _react_to_speech(self, text, source_lang: str | None = None):
+        """React to heard text."""
+        from modules.speech.services.wake_phrase import contains_wakeword, strip_wakewords
+
+        low = str(text or "").lower()
+        has_wake = contains_wakeword(low)
+
+        request_id = uuid.uuid4().hex[:10]
+        with self._speech_req_lock:
+            self._active_speech_req_id = request_id
+            self._speech_busy = True
+
+        logger.info("Heard: %s", text)
+        self.state["last_interaction"] = time.time()
+        lang = str(source_lang or self.state.get("last_speech_language") or "tr")
+
+        if self._handle_barge_in_and_wakeword(text, low, has_wake, request_id):
+            return
+
+        if self._handle_speech_command_shortcuts(text, lang, request_id):
+            return
+
+        speaker = self._process_speech_social_context(text)
+
+        if self._handle_blocked_or_special_commands(text, speaker, lang):
+            return
+
+        if self._handle_offline_mode(text, lang):
+            return
+
         try:
-            # ── PRIMARY PATH: Agent Core (ReAct + Tool Calling + Safety) ──
-            # Uses built-in ProgressManager + SpeechArbiter for staged
-            # ack → progress → final lifecycle.  No manual _waiter thread
-            # needed — agent.step() emits its own progress events.
-            if self.agent:
-                try:
-                    # Wire SpeechArbiter speak_fn to autonomy's speak client
-                    if not self.agent.speech_arbiter._speak_fn:
-                        self.agent.speech_arbiter.set_speak_fn(
-                            lambda text, tone=None, language=None: self.client.speak(
-                                text, tone=tone, language=language or lang,
-                            )
-                        )
-
-                    enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
-                    agent_result = self.agent.step(enriched_text, language=lang, speaker=speaker)
-                    if agent_result and agent_result.get("text"):
-                        if not self._is_active_request(request_id):
-                            return
-                        response_text = agent_result["text"]
-                        # Actions are already executed by the agent pipeline
-                        # (validated -> safety filtered -> routed -> HAL)
-                        logger.info("Agent Core handled speech with full pipeline.")
-                        self.memory.add_event(f"Agent replied: {response_text}")
-                        self._remember_person_chat(speaker, response_text, role="assistant")
-                        tone = self._tone_profile(
-                            self.state.get("last_emotion") or self.mood.get_dominant_emotion()
-                        )
-                        self.agent.speech_arbiter.enqueue_final(
-                            response_text, language=lang, tone=tone,
-                        )
-                        return
-                except Exception as exc:
-                    logger.warning("Agent Core step failed, falling back to direct LLM: %s", exc)
-
-            # ── FALLBACK PATH: Direct Ollama (no tool-calling) ──
-            logger.info("Routing to Ollama...")
-            enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
-            resp = self.client.chat(
-                enriched_text, source_lang=lang, response_lang=lang,
-            )
-            if resp and "answer" in resp:
-                response_text = resp["answer"]
-                response_actions = resp.get("actions")
-                raw_response = resp.get("raw")
-                trans = resp.get("translation") if isinstance(resp, dict) else None
-                if isinstance(trans, dict) and trans.get("response_lang"):
-                    lang = str(trans.get("response_lang"))
-
-            if response_text:
-                if not self._is_active_request(request_id):
-                    return
-                clean_text = self.apply_llm_response(response_text, response_actions, raw_response, speak=False)
-                if clean_text:
-                    if not self._is_active_request(request_id):
-                        return
-                    self._remember_person_chat(speaker, clean_text, role="assistant")
-                    final_lang = lang
-                    if detect_text_language:
-                        final_lang = detect_text_language(clean_text, default=lang)
-                    self._speak_with_mood(clean_text, language=final_lang)
-                    logger.info("Reply: %s", clean_text)
-                    self.memory.add_event(f"I replied: {clean_text}")
-                else:
-                    logger.info("LLM response only triggered physical actions.")
+            if self._try_agent_core_path(text, lang, speaker, request_id):
+                return
+            self._try_direct_llm_path(text, lang, speaker, request_id)
         except Exception as exc:
             logger.error("Failed to generate reply: %s", exc)
-            # A failed reply both scares and frustrates the robot (causal appraisal).
             self.appraise_event("command_failed", emit=False)
             self.client.push_interaction_event("error", {"source": "ollama", "reason": "chat_failed"})
             self._apply_emotion_visual_state("fear")

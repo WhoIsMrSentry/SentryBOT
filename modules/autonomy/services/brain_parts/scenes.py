@@ -42,107 +42,113 @@ class SceneMixin:
                 logger.debug("Scene step failed (%s): %s", typ, exc)
         return True
 
-    def _run_scene_step(self, typ: str, step: Dict[str, Any], context: Dict[str, Any]) -> None:
-        if typ == "event":
-            event_type = str(step.get("name", "")).strip()
-            if event_type:
-                self.client.push_interaction_event(event_type, dict(context))
-            return
+    def _scene_event(self, step, context):
+        event_type = str(step.get("name", "")).strip()
+        if event_type:
+            self.client.push_interaction_event(event_type, dict(context))
 
-        if typ == "effect":
-            name = str(step.get("name", "COMET"))
-            duration_ms = int(step.get("duration_ms", 700))
-            force = bool(step.get("force", False))
+    def _scene_effect(self, step, context):
+        name = str(step.get("name", "COMET"))
+        duration_ms = int(step.get("duration_ms", 700))
+        force = bool(step.get("force", False))
+        self.client.set_interaction_effect(name=name, duration_ms=duration_ms, force=force)
+
+    def _scene_effect_burst(self, step, context):
+        name = str(step.get("name", "COMET"))
+        duration_ms = int(step.get("duration_ms", 220))
+        count = max(1, int(step.get("count", 2)))
+        interval_ms = max(0, int(step.get("interval_ms", 80)))
+        force = bool(step.get("force", False))
+        for idx in range(count):
             self.client.set_interaction_effect(name=name, duration_ms=duration_ms, force=force)
-            return
+            if idx < count - 1 and interval_ms > 0:
+                time.sleep(interval_ms / 1000.0)
 
-        if typ == "effect_burst":
-            name = str(step.get("name", "COMET"))
-            duration_ms = int(step.get("duration_ms", 220))
-            count = max(1, int(step.get("count", 2)))
-            interval_ms = max(0, int(step.get("interval_ms", 80)))
-            force = bool(step.get("force", False))
-            for idx in range(count):
-                self.client.set_interaction_effect(name=name, duration_ms=duration_ms, force=force)
-                if idx < count - 1 and interval_ms > 0:
-                    time.sleep(interval_ms / 1000.0)
-            return
+    def _scene_base(self, step, context):
+        name = str(step.get("name", "BREATHE"))
+        color = step.get("color")
+        self.client.set_interaction_base(name=name, color=color)
 
-        if typ == "base":
-            name = str(step.get("name", "BREATHE"))
-            color = step.get("color")
-            self.client.set_interaction_base(name=name, color=color)
-            return
+    def _scene_segment_fill(self, step, context):
+        segment = str(step.get("segment", "")).strip()
+        color = self._parse_color(step.get("color"))
+        if segment and color:
+            self.client.fill_neopixel_segment_color(segment, color[0], color[1], color[2])
 
-        if typ == "segment_fill":
-            segment = str(step.get("segment", "")).strip()
-            color = self._parse_color(step.get("color"))
-            if segment and color:
-                self.client.fill_neopixel_segment_color(segment, color[0], color[1], color[2])
-            return
+    def _scene_segment_anim(self, step, context):
+        segment = str(step.get("segment", "")).strip()
+        name = str(step.get("name", "PULSE")).strip()
+        color = self._parse_color(step.get("color"))
+        emotions = step.get("emotions")
+        if isinstance(emotions, str):
+            emotions = [emotions]
+        iterations = step.get("iterations")
+        if segment and name:
+            self.client.set_neopixel_segment_effect(
+                segment=segment, effect=name, color=color,
+                emotions=emotions if isinstance(emotions, list) else None,
+                iterations=iterations,
+            )
 
-        if typ == "segment_anim":
-            segment = str(step.get("segment", "")).strip()
-            name = str(step.get("name", "PULSE")).strip()
-            color = self._parse_color(step.get("color"))
-            emotions = step.get("emotions")
-            if isinstance(emotions, str):
-                emotions = [emotions]
-            iterations = step.get("iterations")
-            if segment and name:
-                self.client.set_neopixel_segment_effect(
-                    segment=segment,
-                    effect=name,
-                    color=color,
-                    emotions=emotions if isinstance(emotions, list) else None,
-                    iterations=iterations,
-                )
-            return
+    def _scene_preset(self, step, context):
+        preset_name = str(step.get("name", "")).strip()
+        if preset_name:
+            self.client.apply_neopixel_preset(preset_name)
 
-        if typ == "preset":
-            preset_name = str(step.get("name", "")).strip()
-            if preset_name:
-                self.client.apply_neopixel_preset(preset_name)
-            return
+    def _scene_anim(self, step, context):
+        name = str(step.get("name", ""))
+        if name:
+            speed = float(step.get("speed", 1.0))
+            loop = bool(step.get("loop", False))
+            self._trigger_animation(name, speed=speed, loop=loop)
 
-        if typ == "anim":
-            name = str(step.get("name", ""))
-            if name:
-                speed = float(step.get("speed", 1.0))
-                loop = bool(step.get("loop", False))
-                self._trigger_animation(name, speed=speed, loop=loop)
+    def _scene_head(self, step, context):
+        pan = step.get("pan")
+        tilt = step.get("tilt")
+        if pan is None and tilt is None:
             return
+        cur_pan = int(self.state.get("current_pan", 90))
+        cur_tilt = int(self.state.get("current_tilt", 90))
+        target_pan = max(0, min(180, int(float(pan)))) if pan is not None else cur_pan
+        target_tilt = max(0, min(180, int(float(tilt)))) if tilt is not None else cur_tilt
+        self.state["current_pan"] = target_pan
+        self.state["current_tilt"] = target_tilt
+        self.client.move_head(target_pan, target_tilt)
 
-        if typ == "head":
-            pan = step.get("pan")
-            tilt = step.get("tilt")
-            if pan is None and tilt is None:
-                return
-            cur_pan = int(self.state.get("current_pan", 90))
-            cur_tilt = int(self.state.get("current_tilt", 90))
-            target_pan = max(0, min(180, int(float(pan)))) if pan is not None else cur_pan
-            target_tilt = max(0, min(180, int(float(tilt)))) if tilt is not None else cur_tilt
-            self.state["current_pan"] = target_pan
-            self.state["current_tilt"] = target_tilt
-            self.client.move_head(target_pan, target_tilt)
+    def _scene_speak(self, step, context):
+        text_tmpl = str(step.get("text", "")).strip()
+        if not text_tmpl:
             return
+        text = self._render_scene_text(text_tmpl, context)
+        emotion = step.get("emotion")
+        if emotion is None:
+            self._speak_with_mood(text)
+        else:
+            self._speak_with_mood(text, emotion=str(emotion))
 
-        if typ == "speak":
-            text_tmpl = str(step.get("text", "")).strip()
-            if text_tmpl:
-                text = self._render_scene_text(text_tmpl, context)
-                emotion = step.get("emotion")
-                if emotion is None:
-                    self._speak_with_mood(text)
-                else:
-                    self._speak_with_mood(text, emotion=str(emotion))
-            return
+    def _scene_sleep(self, step, context):
+        ms = int(step.get("duration_ms", 0))
+        if ms > 0:
+            time.sleep(ms / 1000.0)
 
-        if typ == "sleep":
-            ms = int(step.get("duration_ms", 0))
-            if ms > 0:
-                time.sleep(ms / 1000.0)
-            return
+    _SCENE_HANDLERS = {
+        "event": "_scene_event",
+        "effect": "_scene_effect",
+        "effect_burst": "_scene_effect_burst",
+        "base": "_scene_base",
+        "segment_fill": "_scene_segment_fill",
+        "segment_anim": "_scene_segment_anim",
+        "preset": "_scene_preset",
+        "anim": "_scene_anim",
+        "head": "_scene_head",
+        "speak": "_scene_speak",
+        "sleep": "_scene_sleep",
+    }
+
+    def _run_scene_step(self, typ: str, step: Dict[str, Any], context: Dict[str, Any]) -> None:
+        handler_name = self._SCENE_HANDLERS.get(typ)
+        if handler_name:
+            getattr(self, handler_name)(step, context)
 
     @staticmethod
     def _render_scene_text(template: str, context: Dict[str, Any]) -> str:
