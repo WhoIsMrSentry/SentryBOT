@@ -25,7 +25,9 @@ def test_service_instantiation():
 def test_router():
     """Router olusturulabilir mi?"""
     from modules.esp_link.api.router import get_router
-    router = get_router()
+    from modules.esp_link import xEspLinkService
+    svc = xEspLinkService(config_overrides={})
+    router = get_router(svc)
     assert router is not None
     paths = [r.path for r in router.routes]
     assert "/status" in paths or any("/status" in str(p) for p in paths)
