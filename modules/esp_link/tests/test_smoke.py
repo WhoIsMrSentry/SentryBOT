@@ -30,4 +30,4 @@ def test_router():
     router = get_router(svc)
     assert router is not None
     paths = [r.path for r in router.routes]
-    assert "/status" in paths or any("/status" in str(p) for p in paths)
+    assert "/healthz" in paths or any("/healthz" in str(p) for p in paths)
