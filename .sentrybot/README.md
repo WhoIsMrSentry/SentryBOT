@@ -8,7 +8,7 @@ Bu dizin, SentryBOT deposunda çalışan **tüm AI kodlama asistanları** için 
 |------|--------------|-------|
 | **Claude Code** | `CLAUDE.md` (kök dizin) | ✅ |
 | **GitHub Copilot** | `.github/copilot-instructions.md` + `.github/agents/` | ✅ |
-| **Cursor** | `.cursorrules` (kök dizin) | ✅ |
+| **Cursor** | `.cursor/rules/*.mdc` | ✅ |
 | **Windsurf** | `.windsurfrules` (kök dizin) | ✅ |
 | **OpenCode** | `AGENTS.md` (kök dizin) | ✅ |
 | **Aider** | `AGENTS.md` (kök dizin) | ✅ |
@@ -41,13 +41,9 @@ Bu dizin, SentryBOT deposunda çalışan **tüm AI kodlama asistanları** için 
 │   ├── module-dependency-map.md # Bağımlılık haritası
 │   └── debug-module.md          # Debugging
 ├── context/                     # Bilgi tabanı
-│   ├── module-registry.md       # 29 modülün listesi
-│   ├── api-surface.md           # Tüm HTTP endpoint'ler
 │   ├── architecture-summary.md  # Mimari özet
-│   └── conventions.md           # Kod kuralları
-├── obsidian/                    # Obsidian bilgi kasası notları
-│   └── modules/                 # Modül bazlı bilgi notları
-├── tools/                       # AI varlık üretici scriptleri
+│   ├── conventions.md           # Kod kuralları
+│   └── roadmap-companion-vision.md  # Proje yol haritası
 └── templates/                   # İskelet şablonları
     └── module/                  # Modül dosya şablonları
         ├── __init__.py.tmpl
@@ -75,7 +71,7 @@ Bu dizin, SentryBOT deposunda çalışan **tüm AI kodlama asistanları** için 
 AI Asistana: "Yeni bir ultrasonik sensör modülü oluştur"
 
 AI Asistan:
-1. .sentrybot/context/module-registry.md → mevcut modülleri öğrenir
+1. MCP `search_graph(label:"Module")` → mevcut modülleri öğrenir
 2. .sentrybot/agents/module-creator.md → iş akışını takip eder
 3. .sentrybot/skills/scaffold-module.md → iskelet oluşturur
 4. .sentrybot/skills/gateway-bootstrap.md → Gateway'e kaydeder
@@ -85,8 +81,7 @@ AI Asistan:
 ## Güncelleme
 
 Bu dosyalar depoyla birlikte güncel tutulmalıdır:
-- Yeni modül eklendiğinde → `context/module-registry.md` güncellenir
-- Yeni endpoint eklendiğinde → `context/api-surface.md` güncellenir
+- Modül/endpoint değiştiğinde → MCP knowledge graph yeniden indexlenir (`index_repository`)
 - Kural değiştiğinde → `context/conventions.md` güncellenir
 
 
