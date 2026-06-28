@@ -4,7 +4,7 @@
 		{
 			"label": "Run SentryBOT (gateway) with platform overrides",
 			"type": "shell",
-			"command": "C:/Users/emirh/SentryBOT/.venv/Scripts/python.exe",
+			"command": "python",
 			"args": [
 				"-X",
 				"utf8",
@@ -12,18 +12,15 @@
 				"pip",
 				"--version"
 			],
-			"isBackground": false,
-			"problemMatcher": [
-				"$eslint-stylish"
-			],
+			"problemMatcher": [],
 			"group": "build"
 		},
 		{
 			"label": "Run Gateway server (platform)",
 			"type": "shell",
-			"command": "C:/Users/emirh/SentryBOT/.venv/Scripts/python.exe",
+			"command": "python",
 			"args": [
-				"c:/Users/emirh/SentryBOT/run_robot.py"
+				"run_robot.py"
 			],
 			"isBackground": true,
 			"group": "build"

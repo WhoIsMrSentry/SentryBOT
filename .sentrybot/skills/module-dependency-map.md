@@ -44,4 +44,4 @@ graph LR
 | **Event** | Olay bildirimi ile | `POST /interactions/event` |
 
 ## Çıktı Formatı
-Bağımlılık haritası `.sentrybot/context/module-registry.md`'deki "Kilit Bağımlılıklar" sütununa yansıtılır.
+Bağımlılık haritası MCP `trace_path` ile doğrulanır, `index_repository` ile güncellenir.

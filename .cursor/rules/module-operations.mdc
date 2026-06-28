@@ -6,7 +6,7 @@ alwaysApply: true
 # Modül Oluşturma / Düzenleme
 
 ## Yeni Modül Oluşturmak İçin
-1. `.sentrybot/context/module-registry.md` oku — 29 mevcut modül
+1. `.sentrybot/context/module-registry.md` oku — 30 mevcut modül
 2. `.sentrybot/agents/module-creator.md` oku — iş akışı
 3. `.sentrybot/skills/scaffold-module.md` takip et — iskelet oluşturma
 

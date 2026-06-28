@@ -15,7 +15,7 @@ Bu agent çalışmadan önce şu dosyaları oku:
 2. Hedef modülün `config/config.yml` dosyası
 3. Hedef modülün `x<Name>Service.py` dosyası
 4. `.sentrybot/context/conventions.md`
-5. `.sentrybot/context/module-registry.md`
+5. MCP `search_graph(label:"Module")`
 
 ## İş Akışı
 
