@@ -136,6 +136,18 @@ def compute_layout(nodes, edges):
         if iteration % 40 == 0:
             print(f"  Spring iteration {iteration+1}/120")
 
+    # Center layout at origin
+    xs = [pos[nid][0] for nid in node_ids]
+    ys = [pos[nid][1] for nid in node_ids]
+    zs = [pos[nid][2] for nid in node_ids]
+    cx = (min(xs) + max(xs)) / 2
+    cy = (min(ys) + max(ys)) / 2
+    cz = (min(zs) + max(zs)) / 2
+    for nid in node_ids:
+        pos[nid][0] -= cx
+        pos[nid][1] -= cy
+        pos[nid][2] -= cz
+
     return pos, id_to_idx
 
 
