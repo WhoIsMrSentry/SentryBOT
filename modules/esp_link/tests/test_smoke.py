@@ -18,7 +18,7 @@ def test_config_loader():
 def test_service_instantiation():
     """Service olusturulabilir mi?"""
     from modules.esp_link import xEspLinkService
-    svc = xEspLinkService(cfg={})
+    svc = xEspLinkService(config_overrides={})
     assert svc is not None
 
 
