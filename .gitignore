@@ -32,5 +32,7 @@ social.sqlite3-wal
 yolov8n.pt
 _codeql_detected_source_root
 .cursorrules
-.codebase-memory/
+.codebase-memory/*
+!.codebase-memory/graph.db.zst
+!.codebase-memory/artifact.json
 vendor/
