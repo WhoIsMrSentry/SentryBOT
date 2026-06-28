@@ -53,7 +53,7 @@ jobs:
       - name: Build
         run: npm run build
         env:
-          VITE_BASE: /Project-SentryBOT-V5/
+          VITE_BASE: /SentryBOT/
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3

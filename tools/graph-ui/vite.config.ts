@@ -5,7 +5,7 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  base: process.env.VITE_BASE || "/Project-SentryBOT-V5/",
+  base: process.env.VITE_BASE || "/SentryBOT/",
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
