@@ -10,13 +10,21 @@ interface StatsTabProps {
 /* ── Glowy health dot ───────────────────────────────────── */
 
 function HealthDot({ name }: { name: string }) {
-  const [status, setStatus] = useState<"loading" | "healthy" | "corrupt" | "missing">("loading");
+  const [status, setStatus] = useState<"loading" | "healthy" | "corrupt" | "missing" | "static">("loading");
   const [info, setInfo] = useState("");
 
   useEffect(() => {
     fetch(`/api/project-health?name=${encodeURIComponent(name)}`)
-      .then((r) => r.json())
+      .then((r) => {
+        if (r.status === 404) {
+          setStatus("static");
+          setInfo("Static snapshot — no live backend");
+          return null;
+        }
+        return r.json();
+      })
       .then((d) => {
+        if (d === null) return;
         setStatus(d.status ?? "corrupt");
         if (d.nodes !== undefined) {
           const sizeMB = ((d.size_bytes ?? 0) / 1024 / 1024).toFixed(1);
@@ -31,11 +39,13 @@ function HealthDot({ name }: { name: string }) {
   const dotColor =
     status === "healthy" ? "#34d399" :
     status === "missing" ? "#fbbf24" :
+    status === "static" ? "#60a5fa" :
     status === "corrupt" ? "#f87171" : "#555";
 
   const label =
     status === "healthy" ? "Database healthy" :
     status === "missing" ? "Database missing" :
+    status === "static" ? "Static snapshot" :
     status === "corrupt" ? "Database unhealthy" : "Checking...";
 
   return (
@@ -308,6 +318,13 @@ export function StatsTab({ onSelectProject }: StatsTabProps) {
   const { projects, loading, error, refresh } = useProjects();
   const [showModal, setShowModal] = useState(false);
   const [indexing, setIndexing] = useState(false);
+
+  /* Auto-navigate when exactly one project loads (static snapshot) */
+  useEffect(() => {
+    if (projects.length === 1) {
+      onSelectProject(projects[0].project.name);
+    }
+  }, [projects, onSelectProject]);
 
   const aggregate = useMemo(() => {
     let totalNodes = 0, totalEdges = 0;

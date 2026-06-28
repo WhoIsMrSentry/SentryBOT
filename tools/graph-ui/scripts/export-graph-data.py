@@ -75,9 +75,9 @@ def compute_layout(nodes, edges):
         lbl = nd["label"]
         label_groups.setdefault(lbl, []).append(nd["id"])
 
-    # Place label groups on a sphere surface (smaller radius this time)
+    # Place label groups on a sphere surface
     labels = sorted(label_groups.keys())
-    R = 8.0
+    R = 120.0
     pos = {}
     for i, lbl in enumerate(labels):
         theta = 2 * math.pi * i / len(labels)
@@ -87,15 +87,15 @@ def compute_layout(nodes, edges):
                   R * math.cos(phi)]
         group = label_groups[lbl]
         for j, nid in enumerate(group):
-            offset = [random.uniform(-2, 2) for _ in range(3)]
+            offset = [random.uniform(-30, 30) for _ in range(3)]
             pos[nid] = [center[k] + offset[k] for k in range(3)]
 
     # Spring layout: connected nodes attract, all repel weakly
-    ideal_dist = 3.0
-    spring_k = 0.08
-    repel_k = 0.3
+    ideal_dist = 40.0
+    spring_k = 0.015
+    repel_k = 0.05
 
-    for iteration in range(60):
+    for iteration in range(120):
         # Spring forces (edges)
         for edge in edges:
             s, t = edge["source_id"], edge["target_id"]
@@ -122,7 +122,6 @@ def compute_layout(nodes, edges):
                       R * math.cos(2 * math.pi * j / len(labels)), 0]
                 dx = ci[0] - cj[0]; dy = ci[1] - cj[1]; dz = ci[2] - cj[2]
                 dist = max(math.sqrt(dx*dx + dy*dy + dz*dz), 0.1)
-                # Only apply if clusters are too close
                 if dist < ideal_dist * 2:
                     push = (ideal_dist * 2 - dist) / dist * repel_k * 0.5
                     for nid in label_groups[lbl_i]:
@@ -134,24 +133,8 @@ def compute_layout(nodes, edges):
                         pos[nid][1] += dy * push
                         pos[nid][2] += dz * push
 
-        if iteration % 20 == 0:
-            print(f"  Spring iteration {iteration+1}/60")
-
-    # Normalize to [0, 20]
-    xs = [pos[nid][0] for nid in node_ids]
-    ys = [pos[nid][1] for nid in node_ids]
-    zs = [pos[nid][2] for nid in node_ids]
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
-    min_z, max_z = min(zs), max(zs)
-    scl = min(20 / (max_x - min_x) if max_x > min_x else 1,
-              20 / (max_y - min_y) if max_y > min_y else 1,
-              20 / (max_z - min_z) if max_z > min_z else 1)
-    cx, cy, cz = (min_x + max_x) / 2, (min_y + max_y) / 2, (min_z + max_z) / 2
-    for nid in node_ids:
-        pos[nid][0] = (pos[nid][0] - cx) * scl + 10
-        pos[nid][1] = (pos[nid][1] - cy) * scl + 10
-        pos[nid][2] = (pos[nid][2] - cz) * scl + 10
+        if iteration % 40 == 0:
+            print(f"  Spring iteration {iteration+1}/120")
 
     return pos, id_to_idx
 
