@@ -6,8 +6,7 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import requests
 
-from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
-from modules.config_center.log_redact import redact_secrets
+# lazy imports to avoid circular dependency with config_center.google_keys
 
 try:
     from ollama import Client  # type: ignore
@@ -211,6 +210,7 @@ class GoogleAIStudioClient:
 
     @staticmethod
     def _parse_api_error(resp: requests.Response) -> str:
+        from modules.config_center.log_redact import redact_secrets
         try:
             body = resp.json()
             if isinstance(body, dict):
@@ -315,6 +315,7 @@ class GoogleAIStudioClient:
         return {"message": {"content": text}, "raw": data}
 
     def _post_generate_content(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        from modules.config_center.log_redact import redact_secrets
         if self._is_rate_limited():
             raise RuntimeError(
                 f"Gemini rate limited; retry in {self.rate_limit_remaining_s(self.api_key)}s"
@@ -414,6 +415,7 @@ class GoogleAIStudioClient:
 
 
 def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
+    from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
     llm_cfg = cfg.get("llm", {}) or {}
     provider = str(llm_cfg.get("provider", "ollama")).strip().lower() or "ollama"
 
