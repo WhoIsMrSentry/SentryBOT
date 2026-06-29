@@ -193,60 +193,38 @@ class OpenWakewordRunner:
             if label:
                 yield label
 
-    def _infer_chunk(self, chunk: bytes) -> Optional[str]:
-        if not chunk:
-            return None
-        self._chunk_counter += 1
+    def _parse_audio(self, chunk: bytes) -> Optional[np.ndarray]:
+        audio = None
         try:
-            # Robustly handle different PCM widths and interleaved stereo.
-            # Prefer int16, but fall back to int32 and downscale if needed.
+            audio16 = np.frombuffer(chunk, dtype=np.int16)
+            if audio16.size > 0:
+                audio = audio16
+        except Exception:
             audio = None
-            # try int16 view
-            try:
-                audio16 = np.frombuffer(chunk, dtype=np.int16)
-                if audio16.size > 0:
-                    audio = audio16
-            except Exception:
-                audio = None
-            # fallback to int32 -> convert to int16
-            if audio is None or audio.size == 0:
-                if len(chunk) % 4 == 0:
-                    try:
-                        audio32 = np.frombuffer(chunk, dtype=np.int32)
-                        # convert by shifting to 16-bit range
-                        audio = (audio32 >> 16).astype(np.int16)
-                    except Exception:
-                        audio = None
-            if audio is None or audio.size == 0:
-                # last resort: try int16 again (best-effort)
+        if audio is None or audio.size == 0:
+            if len(chunk) % 4 == 0:
                 try:
-                    audio = np.frombuffer(chunk, dtype=np.int16)
+                    audio32 = np.frombuffer(chunk, dtype=np.int32)
+                    audio = (audio32 >> 16).astype(np.int16)
                 except Exception:
-                    logger.debug("openwakeword: failed to interpret audio chunk bytes")
-                    return None
-            # Downmix only when input is configured as stereo/multi-channel.
-            if self._input_channels >= 2 and audio.size >= 2:
-                ch0 = audio[0::self._input_channels].astype(np.int32)
-                ch1 = audio[1::self._input_channels].astype(np.int32)
-                if ch1.size:
-                    audio = ((ch0 + ch1) // 2).astype(np.int16)
-                else:
-                    audio = ch0.astype(np.int16)
+                    audio = None
+        if audio is None or audio.size == 0:
+            try:
+                audio = np.frombuffer(chunk, dtype=np.int16)
+            except Exception:
+                logger.debug("openwakeword: failed to interpret audio chunk bytes")
+                return None
+        if self._input_channels >= 2 and audio.size >= 2:
+            ch0 = audio[0::self._input_channels].astype(np.int32)
+            ch1 = audio[1::self._input_channels].astype(np.int32)
+            audio = ((ch0 + ch1) // 2).astype(np.int16) if ch1.size else ch0.astype(np.int16)
+        if self._input_gain != 1.0 and audio.size:
+            boosted = audio.astype(np.float32) * float(self._input_gain)
+            audio = np.clip(boosted, -32768.0, 32767.0).astype(np.int16)
+        return audio
 
-            # Software gain for low-level digital mics.
-            if self._input_gain != 1.0 and audio.size:
-                boosted = audio.astype(np.float32) * float(self._input_gain)
-                audio = np.clip(boosted, -32768.0, 32767.0).astype(np.int16)
-
-            scores = self._model.predict(audio)
-            logger.debug("openwakeword predict raw scores: %s", scores)
-        except Exception as exc:
-            logger.debug("openwakeword inference failed: %s", exc)
-            return None
-        if not isinstance(scores, dict):
-            logger.debug("openwakeword: predict did not return dict, got: %s", type(scores))
-            return None
-        best_label = None
+    def _smooth_scores(self, scores: dict) -> tuple[Optional[str], float]:
+        best_label: Optional[str] = None
         best_score = 0.0
         for name, value in scores.items():
             score = _score_value(value)
@@ -258,60 +236,80 @@ class OpenWakewordRunner:
             if smoothed > best_score:
                 best_score = smoothed
                 best_label = name
+        return best_label, best_score
+
+    def _run_auto_calibration(self, best_score: float) -> bool:
+        if not self._auto_calibration_enabled or self._calibration_done:
+            return True
+        self._calibration_scores.append(float(best_score))
+        elapsed = time.time() - self._calibration_started_ts
+        enough_time = elapsed >= self._calibration_duration_sec
+        enough_samples = len(self._calibration_scores) >= self._calibration_min_samples
+        if not (enough_time and enough_samples):
+            return False
+        try:
+            noise_p = float(np.percentile(np.asarray(self._calibration_scores, dtype=np.float32), self._calibration_percentile))
+        except Exception:
+            noise_p = max(self._calibration_scores) if self._calibration_scores else 0.0
+        calibrated = noise_p + self._calibration_margin
+        calibrated = max(self._calibration_min_threshold, min(self._calibration_max_threshold, calibrated))
+        old_threshold = self._threshold
+        self._threshold = float(calibrated)
+        self._calibration_done = True
+        logger.info(
+            "openwakeword auto-calibration done: samples=%d elapsed=%.1fs noise_p=%.6f threshold %.6f -> %.6f",
+            len(self._calibration_scores), elapsed, noise_p, old_threshold, self._threshold,
+        )
+        return True
+
+    def _log_periodic_probe(self, best_label: Optional[str], best_score: float):
+        if not self._log_every_n_chunks or (self._chunk_counter % self._log_every_n_chunks != 0):
+            return
+        if self._auto_calibration_enabled and not self._calibration_done:
+            logger.info(
+                "openwakeword probe(calibrating): best=%s score=%.4f threshold=%.4f samples=%d",
+                best_label, best_score, self._threshold, len(self._calibration_scores),
+            )
+        else:
+            logger.debug("openwakeword probe: best=%s score=%.4f threshold=%.4f", best_label, best_score, self._threshold)
+
+    def _verify_label(self, label: str) -> bool:
+        if self._verifier is None:
+            return True
+        try:
+            feats = self._model.preprocessor.get_features(self._model.model_inputs.get(label))
+            return bool(self._verifier.predict([feats.flatten()])[0])
+        except Exception:
+            return True
+
+    def _infer_chunk(self, chunk: bytes) -> Optional[str]:
+        if not chunk:
+            return None
+        self._chunk_counter += 1
+
+        audio = self._parse_audio(chunk)
+        if audio is None or audio.size == 0:
+            return None
+
+        try:
+            scores = self._model.predict(audio)
+        except Exception as exc:
+            logger.debug("openwakeword inference failed: %s", exc)
+            return None
+
+        if not isinstance(scores, dict):
+            logger.debug("openwakeword: predict did not return dict, got: %s", type(scores))
+            return None
+
+        best_label, best_score = self._smooth_scores(scores)
         logger.debug("openwakeword smoothed best=%s score=%s threshold=%s", best_label, best_score, self._threshold)
 
-        if self._auto_calibration_enabled and not self._calibration_done:
-            self._calibration_scores.append(float(best_score))
-            elapsed = time.time() - self._calibration_started_ts
-            enough_time = elapsed >= self._calibration_duration_sec
-            enough_samples = len(self._calibration_scores) >= self._calibration_min_samples
-            if enough_time and enough_samples:
-                try:
-                    noise_p = float(np.percentile(np.asarray(self._calibration_scores, dtype=np.float32), self._calibration_percentile))
-                except Exception:
-                    noise_p = max(self._calibration_scores) if self._calibration_scores else 0.0
-                calibrated = noise_p + self._calibration_margin
-                calibrated = max(self._calibration_min_threshold, calibrated)
-                calibrated = min(self._calibration_max_threshold, calibrated)
-                old_threshold = self._threshold
-                self._threshold = float(calibrated)
-                self._calibration_done = True
-                logger.info(
-                    "openwakeword auto-calibration done: samples=%d elapsed=%.1fs noise_p=%.6f threshold %.6f -> %.6f",
-                    len(self._calibration_scores),
-                    elapsed,
-                    noise_p,
-                    old_threshold,
-                    self._threshold,
-                )
-            else:
-                # Do not trigger wakeword during calibration window.
-                return None
+        if not self._run_auto_calibration(best_score):
+            return None
 
-        if self._log_every_n_chunks and (self._chunk_counter % self._log_every_n_chunks == 0):
-            if self._auto_calibration_enabled and not self._calibration_done:
-                logger.info(
-                    "openwakeword probe(calibrating): best=%s score=%.4f threshold=%.4f samples=%d",
-                    best_label,
-                    best_score,
-                    self._threshold,
-                    len(self._calibration_scores),
-                )
-            else:
-                logger.debug("openwakeword probe: best=%s score=%.4f threshold=%.4f", best_label, best_score, self._threshold)
-        if best_label and best_score >= self._threshold:
-            # optional verifier step
-            if self._verifier is not None:
-                try:
-                    # extract features for verifier using model internals
-                    feats = self._model.preprocessor.get_features(self._model.model_inputs.get(best_label))
-                    # The verifier expects flattened features per its training pipeline
-                    ok = bool(self._verifier.predict([feats.flatten()])[0])
-                    if not ok:
-                        return None
-                except Exception:
-                    # on error, fall back to unlverified accept
-                    pass
+        self._log_periodic_probe(best_label, best_score)
+
+        if best_label and best_score >= self._threshold and self._verify_label(best_label):
             logger.info("openwakeword accepted: %s (score=%s)", best_label, best_score)
             return best_label
         return None

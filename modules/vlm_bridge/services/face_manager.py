@@ -151,64 +151,56 @@ class FaceManager:
 
         return best_name, best_score, best_good
 
-    def load_faces(self) -> None:
-        self.known_face_names = []
-        self._known_descriptors = {}
-
-        if self._social_db is not None:
+    def _load_faces_from_social_db(self) -> bool:
+        try:
+            rows = self._social_db.face_descriptors.list_all_by_kind("orb")
+        except Exception as exc:
+            logger.warning("face_descriptors load from social_db failed: %s", exc)
+            return False
+        for _pid, row in rows:
             try:
-                rows = self._social_db.face_descriptors.list_all_by_kind("orb")
-            except Exception as exc:
-                logger.warning("face_descriptors load from social_db failed: %s", exc)
-                rows = []
-            for _pid, row in rows:
-                try:
-                    rows_n = int(row.get("rows") or 0)
-                    cols_n = int(row.get("cols") or 32)
-                    blob = bytes(row.get("blob") or b"")
-                    if not blob or cols_n <= 0:
-                        continue
-                    arr = np.frombuffer(blob, dtype=np.uint8)
-                    if rows_n <= 0:
-                        rows_n = max(1, arr.size // max(1, cols_n))
-                    arr = arr.reshape(rows_n, cols_n)
-                    if arr.ndim != 2 or arr.shape[1] != 32:
-                        continue
-                    name = str(row.get("display_name") or row.get("canonical_name") or "").strip()
-                    if not name:
-                        continue
-                    self._known_descriptors[name] = arr
-                except Exception:
+                rows_n = int(row.get("rows") or 0)
+                cols_n = int(row.get("cols") or 32)
+                blob = bytes(row.get("blob") or b"")
+                if not blob or cols_n <= 0:
                     continue
-            self.known_face_names = sorted(self._known_descriptors.keys())
-            logger.info("Loaded %d known faces from social_db.", len(self.known_face_names))
-            return
+                arr = np.frombuffer(blob, dtype=np.uint8)
+                if rows_n <= 0:
+                    rows_n = max(1, arr.size // max(1, cols_n))
+                arr = arr.reshape(rows_n, cols_n)
+                if arr.ndim != 2 or arr.shape[1] != 32:
+                    continue
+                name = str(row.get("display_name") or row.get("canonical_name") or "").strip()
+                if not name:
+                    continue
+                self._known_descriptors[name] = arr
+            except Exception:
+                continue
+        self.known_face_names = sorted(self._known_descriptors.keys())
+        logger.info("Loaded %d known faces from social_db.", len(self.known_face_names))
+        return True
 
+    def _load_faces_from_json(self) -> bool:
         if not os.path.exists(self.faces_file):
             logger.info("No existing faces file found.")
-            return
-
+            return False
         try:
             with open(self.faces_file, "r", encoding="utf-8") as f:
                 raw = json.load(f) if os.path.getsize(self.faces_file) > 0 else {}
         except Exception as exc:
             logger.warning("Failed to load faces file: %s", exc)
-            return
-
+            return False
         if not isinstance(raw, dict):
             logger.warning("Faces file format invalid, expected dict.")
-            return
-
+            return False
         for name, item in raw.items():
             desc_list = None
             if isinstance(item, dict):
                 desc_list = item.get("descriptors")
             elif isinstance(item, list):
                 desc_list = item
-
             if not isinstance(desc_list, list) or not desc_list:
                 continue
-
             try:
                 arr = np.array(desc_list, dtype=np.uint8)
                 if arr.ndim != 2 or arr.shape[1] != 32:
@@ -217,8 +209,15 @@ class FaceManager:
                 self.known_face_names.append(str(name))
             except Exception:
                 continue
-
         logger.info("Loaded %d known faces.", len(self.known_face_names))
+        return True
+
+    def load_faces(self) -> None:
+        self.known_face_names = []
+        self._known_descriptors = {}
+        if self._social_db is not None and self._load_faces_from_social_db():
+            return
+        self._load_faces_from_json()
 
     def save_faces(self) -> None:
         if self._social_db is not None:

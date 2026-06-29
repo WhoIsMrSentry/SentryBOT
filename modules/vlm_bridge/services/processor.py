@@ -158,97 +158,10 @@ class VisionProcessor:
         self._context_max_age_s = max(5.0, float(vision_cfg.get("context_max_age_s", 45.0)))
         self.conf_threshold = float(vision_cfg.get("confidence_threshold", 0.5))
 
-        raw_modes = vision_cfg.get("modes", {}) if isinstance(vision_cfg.get("modes", {}), dict) else {}
-        self.mode_flags: Dict[str, bool] = {
-            "objects": bool(raw_modes.get("objects", True)),
-            "people": bool(raw_modes.get("people", True)),
-            "faces": bool(raw_modes.get("faces", True)),
-            "depth": bool(raw_modes.get("depth", False)),
-            "ocr": bool(raw_modes.get("ocr", False)),
-            "hazards": bool(raw_modes.get("hazards", True)),
-            "semantic_scene": bool(raw_modes.get("semantic_scene", True)),
-        }
-        raw_categories = vision_cfg.get("mode_categories", {}) if isinstance(vision_cfg.get("mode_categories", {}), dict) else {}
-        def _bool_map(section: Dict[str, Any]) -> Dict[str, bool]:
-            return {str(k): bool(v) for k, v in (section or {}).items()}
-        self.mode_categories: Dict[str, Dict[str, bool]] = {
-            "local": _bool_map(raw_categories.get("local", {"face_match": True, "visual_logger": True})),
-            "remote": _bool_map(raw_categories.get("remote", {
-                "objects": self.mode_flags["objects"],
-                "people": self.mode_flags["people"],
-                "faces": self.mode_flags["faces"],
-                "ocr": self.mode_flags["ocr"],
-                "hazards": self.mode_flags["hazards"],
-                "semantic_scene": self.mode_flags["semantic_scene"],
-                "depth": self.mode_flags["depth"],
-            })),
-            "onsensor": _bool_map(raw_categories.get("onsensor", {"tiny_detect": False, "tiny_pose": False})),
-        }
-        # Optional ergonomics buckets (backward compatible aliases for mode_categories)
-        lm = vision_cfg.get("local_modes")
-        rm = vision_cfg.get("remote_modes")
-        om = vision_cfg.get("onsensor_modes") or vision_cfg.get("sensor_modes")
-        if isinstance(lm, dict):
-            for key, value in lm.items():
-                if key in self.mode_categories["local"]:
-                    self.mode_categories["local"][key] = bool(value)
-        if isinstance(rm, dict):
-            for key, value in rm.items():
-                if key in self.mode_categories["remote"]:
-                    self.mode_categories["remote"][key] = bool(value)
-        if isinstance(om, dict):
-            for key, value in om.items():
-                if key in self.mode_categories["onsensor"]:
-                    self.mode_categories["onsensor"][key] = bool(value)
-        disabled = vision_cfg.get("disabled_modes") or {}
-        if isinstance(disabled, dict):
-            for key, value in disabled.items():
-                if not bool(value):
-                    continue
-                for cat_name, bucket in list(self.mode_categories.items()):
-                    if key in bucket:
-                        bucket[key] = False
-                if key in self.mode_flags:
-                    self.mode_flags[key] = False
-        self.mode_profiles: Dict[str, Dict[str, bool]] = {
-            "balanced": dict(self.mode_flags),
-            "people_focus": {
-                "objects": False,
-                "people": True,
-                "faces": True,
-                "depth": False,
-                "ocr": False,
-                "hazards": True,
-                "semantic_scene": True,
-            },
-            "objects_focus": {
-                "objects": True,
-                "people": False,
-                "faces": False,
-                "depth": False,
-                "ocr": False,
-                "hazards": True,
-                "semantic_scene": True,
-            },
-            "assistive": {
-                "objects": True,
-                "people": True,
-                "faces": True,
-                "depth": bool(raw_modes.get("depth", False)),
-                "ocr": bool(raw_modes.get("ocr", False)),
-                "hazards": True,
-                "semantic_scene": True,
-            },
-            "minimal": {
-                "objects": False,
-                "people": False,
-                "faces": False,
-                "depth": False,
-                "ocr": False,
-                "hazards": False,
-                "semantic_scene": False,
-            },
-        }
+        self.mode_flags = self._init_mode_flags(vision_cfg)
+        self.mode_categories = self._init_mode_categories(vision_cfg, self.mode_flags)
+        self._apply_aliases_and_disabled(vision_cfg)
+        self.mode_profiles = self._init_mode_profiles(vision_cfg, self.mode_flags)
 
         self._face_cascade = load_frontal_face_cascade(logger)
 
@@ -398,6 +311,67 @@ class VisionProcessor:
             },
         }
         self._active_realtime_profile = "fast"
+
+    @staticmethod
+    def _init_mode_flags(vision_cfg: dict) -> Dict[str, bool]:
+        raw_modes = vision_cfg.get("modes", {}) if isinstance(vision_cfg.get("modes", {}), dict) else {}
+        return {
+            "objects": bool(raw_modes.get("objects", True)),
+            "people": bool(raw_modes.get("people", True)),
+            "faces": bool(raw_modes.get("faces", True)),
+            "depth": bool(raw_modes.get("depth", False)),
+            "ocr": bool(raw_modes.get("ocr", False)),
+            "hazards": bool(raw_modes.get("hazards", True)),
+            "semantic_scene": bool(raw_modes.get("semantic_scene", True)),
+        }
+
+    @staticmethod
+    def _init_mode_categories(vision_cfg: dict, mode_flags: dict) -> Dict[str, Dict[str, bool]]:
+        raw_categories = vision_cfg.get("mode_categories", {}) if isinstance(vision_cfg.get("mode_categories", {}), dict) else {}
+        def _bool_map(section: Dict[str, Any]) -> Dict[str, bool]:
+            return {str(k): bool(v) for k, v in (section or {}).items()}
+        return {
+            "local": _bool_map(raw_categories.get("local", {"face_match": True, "visual_logger": True})),
+            "remote": _bool_map(raw_categories.get("remote", {
+                "objects": mode_flags["objects"], "people": mode_flags["people"],
+                "faces": mode_flags["faces"], "ocr": mode_flags["ocr"],
+                "hazards": mode_flags["hazards"], "semantic_scene": mode_flags["semantic_scene"],
+                "depth": mode_flags["depth"],
+            })),
+            "onsensor": _bool_map(raw_categories.get("onsensor", {"tiny_detect": False, "tiny_pose": False})),
+        }
+
+    def _apply_aliases_and_disabled(self, vision_cfg: dict) -> None:
+        for alias_key in ("local_modes", "remote_modes", "onsensor_modes"):
+            bucket_key = alias_key.replace("_modes", "")
+            if bucket_key not in self.mode_categories:
+                continue
+            raw = vision_cfg.get(alias_key) or (vision_cfg.get("sensor_modes") if alias_key == "onsensor_modes" else None)
+            if isinstance(raw, dict):
+                for key, value in raw.items():
+                    if key in self.mode_categories[bucket_key]:
+                        self.mode_categories[bucket_key][key] = bool(value)
+        disabled = vision_cfg.get("disabled_modes") or {}
+        if isinstance(disabled, dict):
+            for key, value in disabled.items():
+                if not bool(value):
+                    continue
+                for bucket in self.mode_categories.values():
+                    if key in bucket:
+                        bucket[key] = False
+                if key in self.mode_flags:
+                    self.mode_flags[key] = False
+
+    @staticmethod
+    def _init_mode_profiles(vision_cfg: dict, mode_flags: dict = None) -> Dict[str, Dict[str, bool]]:
+        raw_modes = vision_cfg.get("modes", {}) if isinstance(vision_cfg.get("modes", {}), dict) else {}
+        return {
+            "balanced": dict(mode_flags) if mode_flags else {},
+            "people_focus": {"objects": False, "people": True, "faces": True, "depth": False, "ocr": False, "hazards": True, "semantic_scene": True},
+            "objects_focus": {"objects": True, "people": False, "faces": False, "depth": False, "ocr": False, "hazards": True, "semantic_scene": True},
+            "assistive": {"objects": True, "people": True, "faces": True, "depth": bool(raw_modes.get("depth", False)), "ocr": bool(raw_modes.get("ocr", False)), "hazards": True, "semantic_scene": True},
+            "minimal": {"objects": False, "people": False, "faces": False, "depth": False, "ocr": False, "hazards": False, "semantic_scene": False},
+        }
 
     def get_modes(self) -> Dict[str, bool]:
         return dict(self.mode_flags)
@@ -897,26 +871,31 @@ class VisionProcessor:
     # -----------------------------------------------------------------
     # Core analysis
     # -----------------------------------------------------------------
-    def _analyze_frame(self, frame: Any, enable_follow: bool) -> Tuple[List[Dict[str, Any]], Any]:
-        boxes: List[Tuple[int, int, int, int]] = []
-        tracked_box = None
-        onsensor_active = self._onsensor_active()
+    def _identify_face_in_roi(self, face_roi) -> tuple[str, float]:
+        if self.face_manager is None:
+            return "Unknown", 0.5
+        try:
+            if hasattr(self.face_manager, "identify_face_with_score"):
+                name, score = self.face_manager.identify_face_with_score(face_roi)
+                return name, max(0.0, min(1.0, float(score)))
+            name = self.face_manager.identify_face(face_roi)
+            return name, 0.9 if name != "Unknown" else 0.5
+        except Exception as exc:
+            logger.debug("face identify failed: %s", exc)
+            return "Unknown", 0.5
 
-        if enable_follow and self._follow_active:
-            tracked_box = self._update_tracker(frame)
-            if tracked_box is not None:
-                boxes = [tracked_box]
-            else:
-                if onsensor_active:
-                    boxes = self._onsensor_boxes_for_label(frame.shape, "person")
-                if not boxes:
-                    boxes = self._detect_face_boxes(frame)
-        else:
-            if onsensor_active:
-                boxes = self._onsensor_boxes_for_label(frame.shape, "person")
-            if not boxes:
-                boxes = self._detect_face_boxes(frame)
+    def _annotate_face(self, annotated, x1, y1, x2, y2, name: str, conf: float, distance, tracked: bool):
+        color = (60, 180, 255) if tracked else ((255, 100, 40) if name != "Unknown" else (0, 220, 0))
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+        label = name if name != "Unknown" else "person"
+        tag = f"{label} {conf:.2f}"
+        if distance is not None:
+            tag += f" {distance:.1f}m"
+        if tracked:
+            tag += " [CSRT]"
+        cv2.putText(annotated, tag, (x1, max(14, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
+    def _process_face_boxes(self, frame, boxes, tracked_box=None) -> Tuple[List[Dict[str, Any]], Any]:
         parsed: List[Dict[str, Any]] = []
         annotated = frame.copy()
         for idx, bbox in enumerate(boxes):
@@ -924,53 +903,28 @@ class VisionProcessor:
             if x2 <= x1 or y2 <= y1:
                 continue
             face_roi = frame[y1:y2, x1:x2]
-            name = "Unknown"
-            conf = 0.5
-            if self.face_manager is not None:
-                try:
-                    if hasattr(self.face_manager, "identify_face_with_score"):
-                        name, score = self.face_manager.identify_face_with_score(face_roi)
-                        conf = max(0.0, min(1.0, float(score)))
-                    else:
-                        name = self.face_manager.identify_face(face_roi)
-                        conf = 0.9 if name != "Unknown" else 0.5
-                except Exception as exc:
-                    logger.debug("face identify failed: %s", exc)
-
+            name, conf = self._identify_face_in_roi(face_roi)
             distance = self._estimate_face_distance_m(y2 - y1)
             tracked = bool(tracked_box is not None and idx == 0)
-            parsed.append(
-                {
-                    "label": "person",
-                    "confidence": round(conf, 3),
-                    "bbox": [x1, y1, x2, y2],
-                    "distance_m": distance,
-                    "name": name,
-                    "tracked": tracked,
-                }
-            )
+            parsed.append({"label": "person", "confidence": round(conf, 3), "bbox": [x1, y1, x2, y2], "distance_m": distance, "name": name, "tracked": tracked})
+            self._annotate_face(annotated, x1, y1, x2, y2, name, conf, distance, tracked)
+        return parsed, annotated
 
-            color = (0, 220, 0)
-            if name != "Unknown":
-                color = (255, 100, 40)
-            if tracked:
-                color = (60, 180, 255)
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-            label = name if name != "Unknown" else "person"
-            tag = f"{label} {conf:.2f}"
-            if distance is not None:
-                tag += f" {distance:.1f}m"
-            if tracked:
-                tag += " [CSRT]"
-            cv2.putText(
-                annotated,
-                tag,
-                (x1, max(14, y1 - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                color,
-                2,
-            )
+    def _analyze_frame(self, frame: Any, enable_follow: bool) -> Tuple[List[Dict[str, Any]], Any]:
+        tracked_box = None
+        boxes: List[Tuple[int, int, int, int]] = []
+        onsensor_active = self._onsensor_active()
+
+        if enable_follow and self._follow_active:
+            tracked_box = self._update_tracker(frame)
+            if tracked_box is not None:
+                boxes = [tracked_box]
+        if not boxes and onsensor_active:
+            boxes = self._onsensor_boxes_for_label(frame.shape, "person")
+        if not boxes:
+            boxes = self._detect_face_boxes(frame)
+
+        parsed, annotated = self._process_face_boxes(frame, boxes, tracked_box)
 
         if enable_follow and self._follow_active:
             if self._follow_tracker is None and parsed:
