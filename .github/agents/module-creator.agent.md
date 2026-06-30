@@ -14,5 +14,4 @@ Yeni SentryBOT modülü oluşturma uzmanı. Detaylı prosedür ve skill dosyalar
 4. `.sentrybot/skills/gateway-bootstrap.md` → Gateway'e kayıt
 5. Arduino gerekiyorsa → `.sentrybot/skills/arduino-contract.md`
 6. `.sentrybot/skills/write-tests.md` → test yaz
-7. `.sentrybot/skills/write-architecture-doc.md` → mimari dok yaz
 8. `.sentrybot/skills/create-pr.md` → PR hazırla

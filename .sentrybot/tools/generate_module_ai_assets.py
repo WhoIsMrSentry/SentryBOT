@@ -19,8 +19,6 @@ MODULES_DIR = ROOT / "modules"
 REGISTRY_PATH = ROOT / ".sentrybot" / "context" / "module-registry.md"
 
 SKILLS_DIR = ROOT / ".sentrybot" / "skills" / "modules"
-SUB_AGENTS_DIR = ROOT / ".sentrybot" / "agents" / "sub"
-OBSIDIAN_MODULES_DIR = ROOT / ".sentrybot" / "obsidian" / "modules"
 
 EXCLUDE_DIR_NAMES = {"__pycache__", "node_modules", "_irisoled_src", ".git", ".pytest_cache"}
 INCLUDE_SUFFIXES = {
@@ -835,7 +833,7 @@ def skill_content(module: ModuleInfo, analysis: ModuleAnalysis, module_map: dict
 {bulletize([f"← [[{l.source_module}]] ({l.link_type}): {explain_inbound(module.name, l, module_map)}" for l in analysis.inbound[:10]])}
 
 ## Tam bilgi
-`.sentrybot/obsidian/modules/{module.name}.md` ({analysis.file_count} dosya, {analysis.total_lines} satır)
+Kod tabanı MCP graph ve kaynak dosyalar üzerinden okunur.
 """
 
 
@@ -846,7 +844,7 @@ def sub_agent_content(module: ModuleInfo, analysis: ModuleAnalysis, module_map: 
 `{analysis.main_class}` ve `{module.name}` modül ekosistemi.
 
 ## Bilgi kaynağı
-`.sentrybot/obsidian/modules/{module.name}.md`
+Kod tabanı MCP graph ve kaynak dosyalar
 
 ## Bileşen haritası
 {bulletize([f"`{c.name}` — {c.doc or c.file}" for c in analysis.classes if "/services/" in c.file or c.name == analysis.main_class][:12])}
@@ -896,8 +894,6 @@ def main() -> None:
     known_modules = {m.name for m in modules}
     module_map = {m.name: m for m in modules}
 
-    module_map = {m.name: m for m in modules}
-
     analyses: dict[str, ModuleAnalysis] = {}
     for m in modules:
         analyses[m.name] = analyze_module(m.name, m, known_modules)
@@ -907,17 +903,13 @@ def main() -> None:
 
     for m in modules:
         a = analyses[m.name]
-        write_text(OBSIDIAN_MODULES_DIR / f"{m.name}.md", obsidian_module_note(m, a, module_map))
         write_text(SKILLS_DIR / f"{m.name}.md", skill_content(m, a, module_map))
-        write_text(SUB_AGENTS_DIR / f"{m.name}.md", sub_agent_content(m, a, module_map))
         print(f"  {m.name}: class={a.main_class}, endpoints={len(a.endpoints)}, "
               f"out={len(a.outbound)}, in={len(a.inbound)}, lines={a.total_lines}")
 
     names = [m.name for m in modules]
     write_index(SKILLS_DIR / "INDEX.md", "Module Skills", names, ".")
-    write_index(SUB_AGENTS_DIR / "INDEX.md", "Sub-Agents", names, ".")
-    write_obsidian_master_index(modules, analyses)
-    print(f"\nDone: {len(modules)} modules with semantic knowledge base.")
+    print(f"\nDone: {len(modules)} modules with codebase-driven semantic skills.")
 
 
 if __name__ == "__main__":

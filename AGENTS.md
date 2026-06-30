@@ -20,7 +20,6 @@ Tüm detaylı agent, skill, context ve template dosyaları **tek dizinde** topla
 │   ├── add-service-class.md
 │   ├── update-config.md
 │   ├── write-tests.md
-│   ├── write-architecture-doc.md
 │   ├── arduino-contract.md
 │   ├── gateway-bootstrap.md
 │   ├── create-pr.md

@@ -13,8 +13,7 @@
 Bu agent çalışmadan önce şu dosyaları oku:
 1. MCP `search_graph(label:"Module")` — Mevcut modüller
 2. `.sentrybot/context/conventions.md` — Kod kuralları
-3. `.sentrybot/context/architecture-summary.md` — Mimari yapı
-4. `.github/copilot-instructions.md` — Genel talimatlar
+3. `.github/copilot-instructions.md` — Genel talimatlar
 
 ## İş Akışı
 
@@ -31,9 +30,8 @@ flowchart TD
     G -- Hayır --> I[gateway-bootstrap skill çalıştır]
     H --> I
     I --> J[write-tests skill çalıştır]
-    J --> K[write-architecture-doc skill çalıştır]
-    K --> L[create-pr skill çalıştır]
-    L --> M[Sonuç raporu]
+    J --> K[create-pr skill çalıştır]
+    K --> L[Sonuç raporu]
 ```
 
 ## Adım Adım Prosedür
@@ -66,7 +64,6 @@ modules/<module_name>/
 │   └── __init__.py
 ├── tests/
 │   └── test_smoke.py
-├── architecture_<module_name>.md
 └── README.md
 ```
 
@@ -93,16 +90,7 @@ En az şunları içermeli:
 - Service class instantiation testi
 - API endpoint testi (mock ile)
 
-### Adım 6: Mimari Dokümantasyon
-**Skill:** `.sentrybot/skills/write-architecture-doc.md`
-
-`architecture_<module_name>.md` dosyası:
-- Genel bakış
-- Mermaid veri akışı diyagramı
-- Modüller arası etkileşim tablosu
-- Tasarım kararları
-
-### Adım 7: PR Hazırlama
+### Adım 6: PR Hazırlama
 **Skill:** `.sentrybot/skills/create-pr.md`
 
 PR açıklamasında şunlar bulunmalı:

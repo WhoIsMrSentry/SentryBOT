@@ -47,11 +47,9 @@ Bu agent çalışmadan önce şu dosyaları oku:
 - [ ] CI'da çalışacak mı? (donanım gerektiren testler skip edilmeli)
 
 ### 5. Dokümantasyon
-- [ ] `architecture_<name>.md` güncel mi?
-- [ ] `README.md` güncel mi?
+- [ ] Kod tabanı MCP graph ile modül yerleşimi doğrulanmış mı?
 - [ ] Yeni config alanları belgelenmiş mi?
 - [ ] API endpoint'leri belgelenmiş mi?
-- [ ] Mermaid diyagramı güncel mi?
 
 ### 6. Güvenlik
 - [ ] API key/token hardcode edilmemiş mi?

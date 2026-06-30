@@ -20,7 +20,6 @@ Bu dizin, SentryBOT deposunda çalışan **tüm AI kodlama asistanları** için 
 .sentrybot/
 ├── README.md                    ← Bu dosya
 ├── agents/                      # İş akışı yöneticileri
-│   └── sub/                     # Modül bazlı sub-agent dosyaları
 │   ├── module-creator.md        # 🏗️ Yeni modül oluşturma
 │   ├── module-editor.md         # ✏️ Mevcut modül düzenleme
 │   ├── github-ops.md            # 🐙 GitHub işlemleri (PR/Issue/CI)
@@ -33,7 +32,6 @@ Bu dizin, SentryBOT deposunda çalışan **tüm AI kodlama asistanları** için 
 │   ├── add-service-class.md     # Service class ekleme
 │   ├── update-config.md         # Config güncelleme
 │   ├── write-tests.md           # Test yazma
-│   ├── write-architecture-doc.md# Mimari dok yazma
 │   ├── arduino-contract.md      # Arduino kontrat ekleme
 │   ├── gateway-bootstrap.md     # Gateway modül kaydı
 │   ├── create-pr.md             # PR oluşturma
@@ -72,10 +70,10 @@ AI Asistana: "Yeni bir ultrasonik sensör modülü oluştur"
 
 AI Asistan:
 1. MCP `search_graph(label:"Module")` → mevcut modülleri öğrenir
-2. .sentrybot/agents/module-creator.md → iş akışını takip eder
-3. .sentrybot/skills/scaffold-module.md → iskelet oluşturur
-4. .sentrybot/skills/gateway-bootstrap.md → Gateway'e kaydeder
-5. .sentrybot/skills/write-tests.md → test yazar
+2. `.sentrybot/agents/module-creator.md` → iş akışını takip eder
+3. `.sentrybot/skills/scaffold-module.md` → iskelet oluşturur
+4. `.sentrybot/skills/gateway-bootstrap.md` → Gateway'e kaydeder
+5. `.sentrybot/skills/write-tests.md` → test yazar
 ```
 
 ## Güncelleme
@@ -89,8 +87,6 @@ Bu dosyalar depoyla birlikte güncel tutulmalıdır:
 
 Aşağıdaki içerikler otomatik üretilir:
 - `.sentrybot/skills/modules/*.md`
-- `.sentrybot/agents/sub/*.md`
-- `.sentrybot/obsidian/modules/*.md`
 
 Üretmek/güncellemek için:
 

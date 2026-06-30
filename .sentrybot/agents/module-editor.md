@@ -11,11 +11,10 @@
 ## Ön Koşullar
 
 Bu agent çalışmadan önce şu dosyaları oku:
-1. Hedef modülün `architecture_<name>.md` dosyası
+1. MCP `search_graph(label:"Module")`
 2. Hedef modülün `config/config.yml` dosyası
 3. Hedef modülün `x<Name>Service.py` dosyası
 4. `.sentrybot/context/conventions.md`
-5. MCP `search_graph(label:"Module")`
 
 ## İş Akışı
 
@@ -33,11 +32,10 @@ flowchart TD
     F --> I
     G --> I
     H --> I
-    I --> J[write-architecture-doc skill güncelle]
-    J --> K{Arduino etkisi var mı?}
-    K -- Evet --> L[arduino-contract skill kontrol]
-    K -- Hayır --> M[create-pr skill]
-    L --> M
+    I --> J{Arduino etkisi var mı?}
+    J -- Evet --> K[arduino-contract skill kontrol]
+    J -- Hayır --> L[create-pr skill]
+    K --> L
 ```
 
 ## Değişiklik Türleri ve Prosedürleri

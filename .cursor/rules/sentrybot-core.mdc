@@ -28,7 +28,6 @@ Tüm detaylı prosedürler ve roller `.sentrybot/` dizininde tanımlanmıştır.
 - **Service Class Ekleme**: `.sentrybot/skills/add-service-class.md`
 - **Config Güncelleme**: `.sentrybot/skills/update-config.md`
 - **Test Yazma**: `.sentrybot/skills/write-tests.md`
-- **Mimari Doküman Yazma**: `.sentrybot/skills/write-architecture-doc.md`
 - **Arduino Kontrat Ekleme**: `.sentrybot/skills/arduino-contract.md`
 - **Gateway Modül Kaydı**: `.sentrybot/skills/gateway-bootstrap.md`
 - **PR Oluşturma**: `.sentrybot/skills/create-pr.md`

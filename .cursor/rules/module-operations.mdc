@@ -11,7 +11,7 @@ alwaysApply: true
 3. `.sentrybot/skills/scaffold-module.md` takip et — iskelet oluşturma
 
 ## Modül Düzenlemek İçin
-1. Hedef modülün `architecture_*.md` dosyasını oku
+1. MCP `search_graph(label:"Module")` ile modül yerleşimini doğrula
 2. `.sentrybot/agents/module-editor.md` oku
 3. Değişiklik türüne göre skill seç:
    - Endpoint → `.sentrybot/skills/add-api-endpoint.md`
@@ -28,6 +28,5 @@ modules/<name>/
 ├── api/router.py
 ├── services/
 ├── tests/test_smoke.py
-├── architecture_<name>.md
 └── README.md
 ```

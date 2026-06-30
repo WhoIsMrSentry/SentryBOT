@@ -42,7 +42,6 @@ modules/
     │   └── backend_adapters.md
     ├── tests/
     │   └── test_smoke.py
-    ├── architecture_<ModuleName>.md
     └── README.md
 
 ## Servis Başlatıcı (xAudioService)
@@ -59,8 +58,7 @@ modules/
 - Config değerleri doğrudan kod içinde **hardcode edilmemeli**, sadece `config.yml` üzerinden okunmalı.
 - Kod yorumları ve dokümantasyon eklenmeli, ancak gereksiz açıklamalardan kaçınılmalı.
 - Kodun okunabilirliği ve sürdürülebilirliği ön planda tutulmalı.
-- Architecture ve tasarım kararları `architecture_<ModuleName>.md` dosyasında belgelenmeli.
-- Architecture dosyası modülün yapısını, akışını, tasarım kararlarını, genişletilebilirliğini ve diğer modüllerle etkileşimini açıklamalıdır (mermaid diyagramları ile desteklenebilir).
+- Tasarım kararları ilgili kod, test ve PR bağlamında tutulur; ayrı modül md dosyası zorunlu değildir.
 
 ## Modül Oluşturma Öncesi İnceleme
 - Yeni bir modül yazmadan önce, konuyla **doğrudan ilişkili** mevcut modüller incelenmeli.

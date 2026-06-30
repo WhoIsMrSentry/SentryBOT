@@ -113,8 +113,7 @@ Güvenlik riski içeren bulgular → public issue **değil** → `SECURITY.md` p
 
 ## 8. Dokümantasyon Kuralları
 
-- Her modülde `architecture_<name>.md` → Mermaid diyagramları, veri akışı, tasarım kararları
-- Her modülde `README.md` → Kullanım, API, config açıklaması
 - Merkezi mimari: `docs/ARCHITECTURE.md`
 - Backend bilgisi: `.github/backend_knowledge.md`
 - Frontend bilgisi: `.github/frontend_knowledge.md`
+- Modül yerleşimi ve referans için kod tabanı MCP graph kullanılır; ayrı modül md notları zorunlu değildir.

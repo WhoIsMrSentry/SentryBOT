@@ -135,9 +135,8 @@ graph LR
 3. Entegrasyon testi: ikisini birlikte test et
 
 ### Adım 4: Dokümantasyon
-1. Her iki modülün `architecture_*.md`'sini güncelle
-2. MCP knowledge graph'ı yeniden indexle (`index_repository`)
-3. Bağımlılıkları `trace_path` ile doğrula
+1. MCP knowledge graph'ı yeniden indexle (`index_repository`) veya `search_graph` ile doğrula
+2. Bağımlılıkları `trace_path` ile doğrula
 
 ## Gateway Bootstrap Sırası
 
