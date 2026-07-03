@@ -49,8 +49,12 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
         "autonomy": SubAgentProfile(
             module="autonomy",
             role="Behavior specialist",
-            goal="Decide autonomous behavior policy.",
-            allowed_tools=("search_memory", "interaction_event", "set_emotion", "get_sensor_data"),
+            goal="Decide autonomous behavior policy and perform expressive actions.",
+            allowed_tools=(
+                "search_memory", "search_social_memory", "interaction_event",
+                "set_emotion", "get_sensor_data", "set_lights", "oled_face",
+                "move_head", "play_sound", "speak", "queue_action",
+            ),
             keywords=("autonomy", "idle", "bored", "follow", "behavior", "sinirlen", "mutlu", "duygu", "ifade", "companion"),
         ),
         "calibration": SubAgentProfile(
@@ -121,7 +125,10 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             role="Lighting specialist",
             goal="Control body lighting effects safely.",
             allowed_tools=("set_lights", "interaction_event", "set_emotion"),
-            keywords=("light", "led", "neopixel", "color", "effect"),
+            keywords=(
+                "light", "led", "neopixel", "color", "effect",
+                "ışık", "isik", "renk", "kırmızı", "kirmizi", "mavi", "yeşil", "yesil",
+            ),
         ),
         "notifier": SubAgentProfile(
             module="notifier",
@@ -169,8 +176,8 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             module="speak",
             role="Speech output specialist",
             goal="Shape voice output and response tone.",
-            allowed_tools=("play_sound", "set_emotion"),
-            keywords=("speak", "say", "voice", "tts", "reply"),
+            allowed_tools=("speak", "play_sound", "set_emotion"),
+            keywords=("speak", "say", "voice", "tts", "reply", "söyle", "soyle", "seslendir", "konuş", "konus"),
         ),
         "speech": SubAgentProfile(
             module="speech",
@@ -283,7 +290,9 @@ class TriLayerRouter:
 
     @staticmethod
     def _tokenize(text: str) -> set[str]:
-        return {t for t in re.findall(r"[a-z0-9_]+", str(text or "").lower()) if len(t) > 1}
+        # \w+ is unicode-aware in Python 3, so Turkish and other non-ASCII
+        # words (kırmızı, üzgün...) stay intact instead of being split.
+        return {t for t in re.findall(r"\w+", str(text or "").lower()) if len(t) > 1}
 
     def _score_keyword_matches(self, text: str, q_tokens: set[str]) -> Dict[str, float]:
         scores: Dict[str, float] = {}
@@ -311,23 +320,43 @@ class TriLayerRouter:
                     if module_name in self.profiles:
                         scores[module_name] = scores.get(module_name, 0.0) + boost
 
+    _EMOTION_TOKENS = {
+        "sinirlen", "sinirli", "kizgin", "kızgın", "mutlu", "uzgun", "üzgün", "kork",
+        "korkmuş", "neşeli", "neseli", "heyecanlı", "heyecanli", "sakin", "yorgun",
+        "emotion", "duygu", "duygusu", "duygunu", "durumunu", "ifade", "yuz", "yüz",
+        "face", "angry", "happy", "sad", "excited", "bored", "furious", "scared",
+        "love", "worried", "confused", "mood", "moral",
+    }
+    _LIGHT_TOKENS = {
+        "led", "ledleri", "ledler", "light", "lights", "neopixel", "neopixelleri",
+        "neopixeller", "renk", "rengi", "renkleri", "color", "colour", "ışık", "isik",
+        "ışıkları", "isiklari", "kırmızı", "kirmizi", "mavi", "yeşil", "yesil", "sarı",
+        "sari", "mor", "turuncu", "pembe", "beyaz", "red", "blue", "green", "yellow",
+        "purple", "orange", "pink", "white", "oled", "eyes", "göz", "gözler",
+    }
+    _EMOTION_PHRASES = (
+        "mutlu ol", "sinirli ol", "kizgin ol", "kızgın ol", "uzgun ol", "üzgün ol",
+        "kirmizi yan", "kırmızı yan", "yuzunu degistir", "yüzünü değiştir",
+        "duygu durumunu", "duygu durumu",
+    )
+
     def _apply_emotion_priors(self, text: str, q_tokens: set[str], scores: Dict[str, float]) -> None:
-        _EMOTION_TOKENS = {
-            "sinirlen", "sinirli", "kizgin", "kızgın", "mutlu", "uzgun", "üzgün", "kork",
-            "emotion", "duygu", "ifade", "yuz", "yüz", "face", "angry", "happy", "sad",
-            "excited", "bored", "furious", "scared", "love", "worried", "confused",
-            "led", "light", "lights", "neopixel", "renk", "color", "oled", "eyes",
-        }
-        _EMOTION_PHRASES = (
-            "mutlu ol", "sinirli ol", "kizgin ol", "kızgın ol", "uzgun ol", "üzgün ol",
-            "kirmizi yan", "kırmızı yan", "yuzunu degistir", "yüzünü değiştir",
-        )
-        if not (q_tokens & _EMOTION_TOKENS or any(p in text for p in _EMOTION_PHRASES)):
+        emotion_hit = bool(q_tokens & self._EMOTION_TOKENS) or any(p in text for p in self._EMOTION_PHRASES)
+        light_hit = bool(q_tokens & self._LIGHT_TOKENS)
+        if not (emotion_hit or light_hit):
             return
-        _EMOTION_BOOSTS = {"interactions": 2.8, "autonomy": 2.4, "neopixel": 1.8, "oled_faces": 1.6, "speak": 1.0}
-        for module_name, boost in _EMOTION_BOOSTS.items():
-            if module_name in self.profiles:
-                scores[module_name] = scores.get(module_name, 0.0) + boost
+        if emotion_hit:
+            for module_name, boost in {
+                "interactions": 2.8, "autonomy": 2.4, "neopixel": 1.8, "oled_faces": 1.6, "speak": 1.0,
+            }.items():
+                if module_name in self.profiles:
+                    scores[module_name] = scores.get(module_name, 0.0) + boost
+        if light_hit:
+            # Direct lighting commands must win the routing slot even when
+            # max_subagents is 1, otherwise set_lights never becomes available.
+            for module_name, boost in {"neopixel": 3.5, "interactions": 1.2, "oled_faces": 0.8}.items():
+                if module_name in self.profiles:
+                    scores[module_name] = scores.get(module_name, 0.0) + boost
 
     def route(self, user_prompt: str) -> List[str]:
         text = str(user_prompt or "").strip().lower()
