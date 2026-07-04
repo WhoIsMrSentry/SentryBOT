@@ -8,6 +8,7 @@ echo-guard flag so Vosk can pause during TTS playback.
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 import uuid
@@ -15,6 +16,40 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("agent.speech_arbiter")
+
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
+
+
+def split_sentences(text: str, max_chars: int = 160, max_chunks: int = 8) -> List[str]:
+    """Split text into sentence chunks so TTS can start on the first sentence.
+
+    Long sentences are hard-wrapped by words; output is capped at *max_chunks*
+    (the tail is merged into the last chunk) to protect the speech queue.
+    """
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(raw) if p.strip()]
+    chunks: List[str] = []
+    for part in parts:
+        if len(part) <= max_chars:
+            chunks.append(part)
+            continue
+        words = part.split()
+        buf: List[str] = []
+        for w in words:
+            if len(" ".join(buf + [w])) > max_chars and buf:
+                chunks.append(" ".join(buf))
+                buf = [w]
+            else:
+                buf.append(w)
+        if buf:
+            chunks.append(" ".join(buf))
+    if len(chunks) > max_chunks:
+        head = chunks[: max_chunks - 1]
+        head.append(" ".join(chunks[max_chunks - 1 :]))
+        chunks = head
+    return chunks
 
 
 # ── Priority tiers ────────────────────────────────────────────────────
@@ -203,40 +238,49 @@ class SpeechArbiter:
         )
 
     def enqueue_final(self, text: str, language: str = "", tone: Optional[Dict] = None) -> Optional[str]:
-        """Convenience: enqueue a final-response-level message."""
+        """Convenience: enqueue a final-response-level message.
+
+        The answer is split into sentence chunks so playback starts on the
+        first sentence while the rest waits in the queue (streaming feel even
+        with a blocking TTS backend).
+        """
         # Final answer should preempt stale progress chatter.
         self.cancel_progress()
         text = str(text or "").strip()
         if not text:
             return None
 
-        # Micro-staging for long final answers: speak first clause ASAP, then remainder.
-        first_chunk = text
-        remainder = ""
-        if len(text) > 140:
-            cut = max(text.find(". "), text.find("? "), text.find("! "))
-            if 40 < cut < 220:
-                first_chunk = text[: cut + 1].strip()
-                remainder = text[cut + 1 :].strip()
-
-        first_id = self.enqueue(
-            text=first_chunk,
-            priority=SpeechPriority.FINAL_RESPONSE,
-            category="final",
-            language=language,
-            tone=tone,
-            max_age_s=30.0,
-        )
-        if remainder:
-            self.enqueue(
-                text=remainder,
-                priority=SpeechPriority.FINAL_RESPONSE - 1,
+        chunks = split_sentences(text) or [text]
+        first_id: Optional[str] = None
+        for idx, chunk in enumerate(chunks):
+            item_id = self.enqueue(
+                text=chunk,
+                priority=SpeechPriority.FINAL_RESPONSE - min(idx, 20),
                 category="final",
                 language=language,
                 tone=tone,
-                max_age_s=30.0,
+                max_age_s=45.0,
             )
+            if first_id is None:
+                first_id = item_id
         return first_id
+
+    def enqueue_final_chunk(self, text: str, index: int = 0, language: str = "", tone: Optional[Dict] = None) -> Optional[str]:
+        """Enqueue one incremental final chunk (for streaming LLM output).
+
+        Call with increasing *index* so earlier chunks keep higher priority.
+        The first chunk (index 0) cancels stale progress messages.
+        """
+        if index == 0:
+            self.cancel_progress()
+        return self.enqueue(
+            text=text,
+            priority=SpeechPriority.FINAL_RESPONSE - min(int(index), 20),
+            category="final",
+            language=language,
+            tone=tone,
+            max_age_s=45.0,
+        )
 
     def enqueue_safety(self, text: str) -> Optional[str]:
         """Convenience: enqueue a safety-level message (highest priority)."""
