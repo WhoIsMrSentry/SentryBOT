@@ -87,6 +87,17 @@ class NeoHttpClient:
         self.set_base(name, color=color)
         time.sleep(max(0.0, duration_ms / 1000.0))
 
+    def companion_mode(self, mode: str, eye_color: Any = None) -> None:
+        payload: Dict[str, Any] = {"mode": str(mode)}
+        if eye_color is not None:
+            rgb = _normalize_color(eye_color)
+            if rgb is not None:
+                payload["eye_color"] = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
+        self._post("/companion/mode", json=payload)
+
+    def companion_vu(self, level: float) -> None:
+        self._post("/companion/vu", json={"level": float(level)})
+
 
 class NoOpNeoClient:
     def clear(self) -> None:  # pragma: no cover

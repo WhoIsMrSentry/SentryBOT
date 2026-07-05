@@ -119,6 +119,24 @@ class InteractionEngine:
                     except Exception:
                         pass
 
+                def companion_mode(self, mode: str, eye_color: Any = None) -> None:
+                    try:
+                        if eye_color is not None:
+                            rgb = self._engine._normalize_color(eye_color)
+                            if rgb is not None and hasattr(self._runner, "companion_set_eye_color"):
+                                self._runner.companion_set_eye_color(*rgb)
+                        if hasattr(self._runner, "companion_set_mode"):
+                            self._runner.companion_set_mode(str(mode))
+                    except Exception:
+                        pass
+
+                def companion_vu(self, level: float) -> None:
+                    try:
+                        if hasattr(self._runner, "companion_set_vu_level"):
+                            self._runner.companion_set_vu_level(float(level))
+                    except Exception:
+                        pass
+
             self.neo = _LocalNeoAdapter(provided, self)
         else:
             base_url = str(cfg.get("adapter", {}).get("http_base_url", "http://localhost:8092/neopixel"))
@@ -183,6 +201,13 @@ class InteractionEngine:
                 handler(evt, data or {})
             except Exception:
                 pass
+        if evt == "speech.audio_level" and isinstance(data, dict):
+            level = data.get("level")
+            if level is not None and hasattr(self.neo, "companion_vu"):
+                try:
+                    self.neo.companion_vu(float(level))
+                except Exception:
+                    pass
 
     def register_event_handler(self, handler) -> None:
         if handler is None:
@@ -295,6 +320,17 @@ class InteractionEngine:
             self.neo.set_base(name=str(name), color=color)
         return True
 
+    def _render_rule_companion(self, act: dict, chosen: Rule) -> bool:
+        comp = act.get("companion")
+        if not isinstance(comp, dict):
+            return False
+        mode = str(comp.get("mode", "off"))
+        eye = comp.get("eye_color")
+        if hasattr(self.neo, "companion_mode"):
+            self.neo.companion_mode(mode, eye_color=eye)
+        chosen.stamp()
+        return True
+
     def _render_rule_effect(self, now: float, act: dict, chosen: Rule) -> bool:
         if "effect" not in act or now < self._active_effect_until:
             return False
@@ -364,7 +400,10 @@ class InteractionEngine:
                 rendered = self._render_manual_base(now, manual_base)
             elif chosen:
                 act = chosen.action or {}
-                rendered = self._render_rule_effect(now, act, chosen) or self._render_rule_base(now, act, chosen)
+                if "companion" in act:
+                    rendered = self._render_rule_companion(act, chosen)
+                else:
+                    rendered = self._render_rule_effect(now, act, chosen) or self._render_rule_base(now, act, chosen)
 
             if not rendered:
                 self._render_idle_base(now)
