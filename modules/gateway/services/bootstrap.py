@@ -384,6 +384,7 @@ def _include_vlm_bridge(app: FastAPI, started: Dict[str, object], cfg: Dict[str,
                 logger.warning("vlm_bridge stream start skipped: %s", exc)
         else:
             logger.info("vlm_bridge stream skipped (camera off or remote-only mode)")
+    started["vlm_bridge"] = processor
     # Mount router and expose processor so other modules can reference it
     try:
         app.include_router(
@@ -396,7 +397,6 @@ def _include_vlm_bridge(app: FastAPI, started: Dict[str, object], cfg: Dict[str,
     except Exception:
         # If router mount fails, continue in degraded mode
         pass
-    started["vlm_bridge"] = processor
     logger.info("module vlm_bridge mounted")
 
 
