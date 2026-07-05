@@ -106,26 +106,43 @@ class SpeechService:
         self._auto_language = bool(rec_cfg.get("auto_language", True))
         self._auto_switch_model = bool(rec_cfg.get("auto_switch_model", True))
         self._dual_decode_margin = float(rec_cfg.get("dual_decode_margin", 0.6))
+        self._prefer_online_detect = bool(rec_cfg.get("prefer_online_detect", True))
+        self._dual_decode_only_if_ambiguous = bool(rec_cfg.get("dual_decode_only_if_ambiguous", True))
         self._utterance_pcm = bytearray()
         self._max_utterance_bytes = int(
             rec_cfg.get("utterance_buffer_sec", 20) or 20
         ) * int(rec_cfg.get("samplerate", 16000) or 16000) * 2
         self._secondary_recognizer: Optional[Recognizer] = None
+        self._extra_recognizers: dict[str, Recognizer] = {}
+        self._last_audio_level = 0.0
+        lang_models = rec_cfg.get("language_models", {}) if isinstance(rec_cfg.get("language_models"), dict) else {}
+        dual_langs = rec_cfg.get("dual_decode_languages")
+        if not isinstance(dual_langs, list) or not dual_langs:
+            dual_langs = list(lang_models.keys()) if lang_models else ["tr", "en"]
+        primary_lang = str(rec_cfg.get("language") or self.source_language or "tr").split("-", 1)[0]
         if self._auto_language and self._auto_switch_model:
-            alt_cfg = copy.deepcopy(rec_cfg)
-            alt_lang = "tr" if self.source_language.startswith("en") else "en"
-            alt_cfg["language"] = alt_lang
-            alt_cfg.pop("model_path", None)
-            try:
-                self._secondary_recognizer = Recognizer(alt_cfg)
-                # Pre-warm secondary Vosk model so dual-decode works on first utterance
+            for lang_key in dual_langs:
+                lang = str(lang_key).split("-", 1)[0].lower()
+                if not lang or lang == primary_lang:
+                    continue
+                if lang in self._extra_recognizers:
+                    continue
+                alt_cfg = copy.deepcopy(rec_cfg)
+                alt_cfg["language"] = lang_key
+                alt_cfg.pop("model_path", None)
                 try:
-                    self._secondary_recognizer._ensure_model()
-                    logger.info(f"{alt_lang.upper()} Vosk model pre-loaded for dual-decode STT")
-                except Exception as warm_exc:
-                    logger.warning(f"{alt_lang.upper()} Vosk model pre-warm failed (will lazy-load): {warm_exc}")
-            except Exception as exc:
-                logger.warning(f"{alt_lang.upper()} Vosk model unavailable for auto STT: {exc}")
+                    self._extra_recognizers[lang] = Recognizer(alt_cfg)
+                    try:
+                        self._extra_recognizers[lang]._ensure_model()
+                        logger.info("%s Vosk model pre-loaded for dual-decode STT", lang.upper())
+                    except Exception as warm_exc:
+                        logger.warning("%s Vosk model pre-warm failed (will lazy-load): %s", lang.upper(), warm_exc)
+                except Exception as exc:
+                    logger.warning("%s Vosk model unavailable for auto STT: %s", lang.upper(), exc)
+            # Backward-compatible single secondary pointer (first extra)
+            if self._extra_recognizers:
+                first_lang = next(iter(self._extra_recognizers))
+                self._secondary_recognizer = self._extra_recognizers[first_lang]
         self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
         # Direction estimator (optional, needs stereo)
         dir_cfg = self.cfg.get("direction", {})
@@ -242,6 +259,23 @@ class SpeechService:
                     last_ts = time.time()
             except Exception:
                 pass
+            # Track audio level for VU-meter (normalized ~0..1)
+            try:
+                import struct
+                if len(chunk) >= 2:
+                    count = len(chunk) // 2
+                    vals = struct.unpack('<' + 'h' * count, chunk[:count * 2])
+                    step = 2 if self.capture.cfg.channels >= 2 else 1
+                    acc = 0.0
+                    n = 0
+                    for i in range(0, len(vals), step):
+                        acc += float(vals[i]) * float(vals[i])
+                        n += 1
+                    if n:
+                        rms = (acc / n) ** 0.5
+                        self._last_audio_level = min(1.0, rms / 8000.0)
+            except Exception:
+                pass
             # Downmix to mono for recognizer if input is stereo
             if self.capture.cfg.channels >= 2:
                 try:
@@ -280,12 +314,15 @@ class SpeechService:
             text,
             pcm,
             primary=self.recognizer,
+            extra_recognizers=self._extra_recognizers,
             secondary=self._secondary_recognizer,
             primary_lang=self.recognizer.cfg.language if hasattr(self.recognizer, 'cfg') and getattr(self.recognizer.cfg, 'language', None) else "tr",
             secondary_lang=self._secondary_recognizer.cfg.language if self._secondary_recognizer and hasattr(self._secondary_recognizer, 'cfg') and getattr(self._secondary_recognizer.cfg, 'language', None) else "en",
             default_language=self._default_language,
             auto_switch_model=self._auto_switch_model,
             dual_decode_margin=self._dual_decode_margin,
+            prefer_online_detect=self._prefer_online_detect,
+            dual_decode_only_if_ambiguous=self._dual_decode_only_if_ambiguous,
         )
         self.source_language = resolved_lang
         return resolved_text, resolved_lang
@@ -346,15 +383,34 @@ class SpeechService:
         st["angle"] = self._last_angle
         return st
 
-    # Hardware send stub: replace with Arduino/driver integration
+    # Hardware send: route through VLM head arbiter when enabled (unified pan/tilt).
     def _send_pan(self, angle_deg: float) -> None:
-        # Send to Arduino via HTTP (Gateway)
-        # We use a simple requests call here, but in production consider async client or keeping a session
+        pt_cfg = self.cfg.get("pan_tilt", {}) if isinstance(self.cfg.get("pan_tilt"), dict) else {}
+        if bool(pt_cfg.get("use_head_arbiter", True)):
+            try:
+                import requests
+                from modules.gateway.url import gateway_url, resolve_gateway_base_url
+
+                base = resolve_gateway_base_url(self.cfg)
+                url = gateway_url(base, "/vlm/head/move")
+                requests.post(
+                    url,
+                    json={
+                        "pan": float(angle_deg),
+                        "tilt": float(pt_cfg.get("center_tilt_deg", 90.0)),
+                        "source": "sound_direction",
+                        "priority": int(pt_cfg.get("arbiter_priority", 60)),
+                    },
+                    timeout=0.25,
+                )
+                return
+            except Exception as exc:
+                logger.debug("head arbiter pan failed, falling back to Arduino: %s", exc)
         try:
             import requests
             from modules.gateway.url import gateway_url, resolve_gateway_base_url
 
-            url = gateway_url(resolve_gateway_base_url(), "/arduino/request")
+            url = gateway_url(resolve_gateway_base_url(self.cfg), "/arduino/request")
             payload = build_set_servo_cmd(SERVO_INDEX_PAN, int(angle_deg))
             requests.post(url, json=payload, params={"timeout": 0.1}, timeout=0.2)
         except Exception as e:

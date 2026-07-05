@@ -63,6 +63,7 @@ actions:
   speech_last_url: "@gateway/speech/last"
   interactions_event_url: "@gateway/interactions/event"
   listen_window_sec: 8.0
-  min_listen_before_final_sec: 1.5   # ignore early finals (often the wakeword itself)
+  min_listen_before_final_sec: 1.0   # shorter when VAD filters wakeword echo
+  min_listen_before_final_sec_vad: 0.75
   stop_on_final: true
   poll_interval_ms: 200

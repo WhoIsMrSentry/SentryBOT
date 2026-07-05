@@ -24,6 +24,8 @@ tts:
     auto_language: true
     prefer_text_language: false
     lock_session_language: true
+    # Dil için Piper sesi yoksa bu motorla seslendir (pyttsx3 | xtts | dummy).
+    fallback_engine: pyttsx3
   language_voices:
     tr: tr
     en: glados

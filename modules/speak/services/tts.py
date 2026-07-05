@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional
 import threading
 from pathlib import Path
-from .lang_detect import normalize_lang, piper_voice_for_language, resolve_speak_language
+from .lang_detect import (
+    has_piper_voice_for_language,
+    normalize_lang,
+    piper_voice_for_language,
+    resolve_speak_language,
+)
 from .pcm import PCM
 
 import io
@@ -434,7 +439,7 @@ class TextToSpeech:
             merged[key] = value
         return merged
 
-    def _resolve_piper_voice_key(
+    def _resolve_piper_language(
         self,
         text: str,
         cfg: Dict,
@@ -446,24 +451,53 @@ class TextToSpeech:
         explicit = overrides.get("language") if isinstance(overrides, dict) else None
         lock_session = bool(piper_cfg.get("lock_session_language", True))
         if explicit and str(explicit).strip() and lock_session:
-            lang = normalize_lang(explicit, fallback=str(cfg.get("language", "tr")))
-        else:
-            lang = resolve_speak_language(
-                text,
-                explicit=explicit,
-                default=str(cfg.get("language", "tr")),
-                prefer_text=bool(piper_cfg.get("prefer_text_language", True)),
-            )
-        voice_key = piper_voice_for_language(lang, piper_cfg)
-        logger.debug("piper language=%s voice=%s", lang, voice_key)
-        return voice_key
+            return normalize_lang(explicit, fallback=str(cfg.get("language", "tr")))
+        return resolve_speak_language(
+            text,
+            explicit=explicit,
+            default=str(cfg.get("language", "tr")),
+            prefer_text=bool(piper_cfg.get("prefer_text_language", True)),
+        )
+
+    def _piper_language_fallback_backend(self, cfg: Dict, lang: str) -> Optional[TTSBackend]:
+        """Build a substitute backend when no Piper voice exists for the language.
+
+        Reading e.g. German text with the Turkish Piper voice sounds broken, so
+        a generic engine (pyttsx3/xtts) configured via ``piper.fallback_engine``
+        takes over instead. Empty value disables the fallback (old behaviour).
+        """
+        piper_cfg = cfg.get("piper", {}) if isinstance(cfg.get("piper", {}), dict) else {}
+        fallback_engine = str(piper_cfg.get("fallback_engine", "")).strip().lower()
+        if not fallback_engine or fallback_engine == "piper":
+            return None
+        fb_cfg = copy.deepcopy(cfg)
+        fb_cfg["engine"] = fallback_engine
+        fb_cfg["language"] = lang
+        try:
+            backend = self._build_backend(fb_cfg)
+        except Exception as exc:
+            logger.warning("piper language fallback engine %s failed: %s", fallback_engine, exc)
+            return None
+        logger.info("no piper voice for language=%s, using %s fallback", lang, fallback_engine)
+        return backend
 
     def synthesize(self, text: str, overrides: Optional[Dict] = None):
         cfg = self._merge_overrides(overrides) if overrides else copy.deepcopy(self._base_cfg)
         backend = self._build_backend(cfg) if overrides else self.backend
         piper_voice = None
         if str(cfg.get("engine", "")).strip().lower() == "piper":
-            piper_voice = self._resolve_piper_voice_key(text, cfg, overrides)
+            lang = self._resolve_piper_language(text, cfg, overrides)
+            if lang is not None:
+                piper_cfg = cfg.get("piper", {}) if isinstance(cfg.get("piper", {}), dict) else {}
+                if isinstance(backend, PiperBackend) and not has_piper_voice_for_language(lang, piper_cfg):
+                    fb_backend = self._piper_language_fallback_backend(cfg, lang)
+                    if fb_backend is not None:
+                        if isinstance(fb_backend, (XTTSHttpBackend, RemoteTTSHttpBackend)):
+                            speaker_wav = overrides.get("speaker_wav") if isinstance(overrides, dict) else None
+                            return fb_backend.synthesize(text, speaker_wav=speaker_wav, language=lang)
+                        return fb_backend.synthesize(text)
+                piper_voice = piper_voice_for_language(lang, piper_cfg)
+                logger.debug("piper language=%s voice=%s", lang, piper_voice)
 
         if isinstance(backend, PiperBackend):
             return backend.synthesize(text, voice_key=piper_voice)
