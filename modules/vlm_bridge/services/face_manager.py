@@ -5,7 +5,10 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # type: ignore
 import numpy as np
 
 try:

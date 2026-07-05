@@ -6,7 +6,10 @@ import os
 import tempfile
 from typing import Optional
 
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # type: ignore
 
 _CASCADE_FILENAME = "haarcascade_frontalface_default.xml"
 
@@ -46,16 +49,13 @@ def _copy_to_ascii_temp(src_path: str, logger: logging.Logger) -> Optional[str]:
     return dst_path
 
 
-def _load_cascade(path: str):
-    cascade = cv2.CascadeClassifier(path)
-    if cascade is not None and not cascade.empty():
-        return cascade
-    return None
-
-
 def load_frontal_face_cascade(logger: Optional[logging.Logger] = None):
     """Load frontal face cascade with a Windows non-ASCII path fallback."""
     log = logger or logging.getLogger("vlm_bridge.cascade")
+    if cv2 is None:
+        log.warning("OpenCV not available; face cascade disabled")
+        return None
+
     source_path = os.path.join(cv2.data.haarcascades, _CASCADE_FILENAME)
 
     candidate_paths = []
@@ -65,13 +65,12 @@ def load_frontal_face_cascade(logger: Optional[logging.Logger] = None):
         fallback_path = _copy_to_ascii_temp(source_path, log)
         if fallback_path:
             candidate_paths.append(fallback_path)
-        # Keep original path as last resort.
         candidate_paths.append(source_path)
 
     for candidate in candidate_paths:
         try:
-            cascade = _load_cascade(candidate)
-            if cascade is not None:
+            cascade = cv2.CascadeClassifier(candidate)
+            if cascade is not None and not cascade.empty():
                 if candidate != source_path:
                     log.info("Loaded Haar cascade via ASCII fallback path: %s", candidate)
                 return cascade

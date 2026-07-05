@@ -8,7 +8,10 @@ import base64
 from datetime import datetime
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None  # type: ignore
 import requests
 
 try:
