@@ -18,16 +18,14 @@ def test_config_loader():
 def test_service_instantiation():
     """Service olusturulabilir mi?"""
     from modules.esp_link import xEspLinkService
-    svc = xEspLinkService(config_overrides={})
+    svc = xEspLinkService(cfg={})
     assert svc is not None
 
 
 def test_router():
     """Router olusturulabilir mi?"""
     from modules.esp_link.api.router import get_router
-    from modules.esp_link import xEspLinkService
-    svc = xEspLinkService(config_overrides={})
-    router = get_router(svc)
+    router = get_router()
     assert router is not None
     paths = [r.path for r in router.routes]
-    assert "/healthz" in paths or any("/healthz" in str(p) for p in paths)
+    assert "/status" in paths or any("/status" in str(p) for p in paths)
