@@ -52,8 +52,8 @@ def _copy_to_ascii_temp(src_path: str, logger: logging.Logger) -> Optional[str]:
 def load_frontal_face_cascade(logger: Optional[logging.Logger] = None):
     """Load frontal face cascade with a Windows non-ASCII path fallback."""
     log = logger or logging.getLogger("vlm_bridge.cascade")
-    if cv2 is None:
-        log.warning("OpenCV not available; face cascade disabled")
+    if cv2 is None or not hasattr(cv2, "CascadeClassifier"):
+        log.warning("OpenCV not available or CascadeClassifier not supported; face cascade disabled")
         return None
 
     source_path = os.path.join(cv2.data.haarcascades, _CASCADE_FILENAME)

@@ -1,4 +1,4 @@
-opencv-python-headless
+opencv-python-headless<5.0
 numpy
 requests
 fastapi

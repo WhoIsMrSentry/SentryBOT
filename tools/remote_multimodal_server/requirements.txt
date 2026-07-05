@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-opencv-python
+opencv-python-headless<5.0
 numpy
 pydantic
 requests
