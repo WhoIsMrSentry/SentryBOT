@@ -1,0 +1,243 @@
+# Progress TTS mesaj kataloğu — çok dilli.
+# progress.py bu dosyayı yükler; oturum dili katalogda yoksa default_language kullanılır.
+# Yeni dil eklemek için languages altına yeni bir blok eklemek yeterlidir (kod değişikliği gerekmez).
+# name: LLM dil direktifinde kullanılan İngilizce dil adı.
+
+default_language: en
+
+languages:
+  en:
+    name: English
+    quota_exhausted: "AI quota is exhausted right now. Can you try again in a minute or two?"
+    ack:
+      - "Okay, let me check."
+      - "Got it, working on that."
+      - "One moment, I'm on it."
+      - "Sure, give me a second."
+    plan_prefix: "My plan: "
+    persona_start: "Putting the answer together."
+    tool_error: "There was a problem while running {tool}."
+    vision_capture: "Image captured, processing now."
+    subagent_start: "Running the {module} module."
+    vlm_processing:
+      - "Processing the image, one moment."
+      - "Analyzing the scene."
+    tool_start:
+      get_vision: "Fetching vision data."
+      get_visual_context: "Checking the latest vision cache."
+      get_sensor_data: "Reading sensor data."
+      search_memory: "Searching my memory."
+      move_head: "Turning my head."
+      set_lights: "Adjusting the lights."
+      focus_person: "Focusing on the person."
+      ask_vlm_about_scene: "Analyzing the scene."
+      describe_scene: "Describing what I see."
+      remember_person: "Saving this person to memory."
+    tool_done:
+      get_vision: "Image captured."
+      get_visual_context: "Got the view, checking people now."
+      get_sensor_data: "Sensor data received."
+      search_memory: "Memory search complete."
+      ask_vlm_about_scene: "Scene analysis complete."
+
+  tr:
+    name: Turkish
+    quota_exhausted: "Şu an yapay zeka kotası dolu. Bir iki dakika sonra tekrar dener misin?"
+    ack:
+      - "Tamam, bakıyorum."
+      - "Anladım, işleme alıyorum."
+      - "Hemen kontrol ediyorum."
+      - "Bir saniye, üzerinde çalışıyorum."
+    plan_prefix: "Planım: "
+    persona_start: "Sonuçları birleştirip yanıt hazırlıyorum."
+    tool_error: "{tool} çalışırken bir sorun oldu."
+    vision_capture: "Görüntüyü aldım, şimdi işliyorum."
+    subagent_start: "{module} modülünü çalıştırıyorum."
+    vlm_processing:
+      - "Görüntüyü işliyorum, biraz bekle."
+      - "Sahneyi yorumluyorum."
+    tool_start:
+      get_vision: "Görüş verisini alıyorum."
+      get_visual_context: "Çevreyi inceliyorum, son görüntü önbelleğine bakıyorum."
+      get_sensor_data: "Sensör verilerini okuyorum."
+      search_memory: "Hafızamı tarıyorum."
+      move_head: "Kafamı çeviriyorum."
+      set_lights: "Işıkları ayarlıyorum."
+      focus_person: "Kişiye odaklanıyorum."
+      ask_vlm_about_scene: "Sahneyi analiz ediyorum."
+      describe_scene: "Sahneyi yorumluyorum."
+      remember_person: "Kişiyi hafızama kaydediyorum."
+    tool_done:
+      get_vision: "Görüntüyü aldım."
+      get_visual_context: "Görüntüyü aldım, şimdi kişileri kontrol ediyorum."
+      get_sensor_data: "Sensör verileri geldi."
+      search_memory: "Hafıza taraması tamamlandı."
+      ask_vlm_about_scene: "Sahne analizi tamamlandı."
+
+  de:
+    name: German
+    ack:
+      - "Okay, ich schaue nach."
+      - "Verstanden, ich arbeite daran."
+      - "Einen Moment, ich bin dran."
+    plan_prefix: "Mein Plan: "
+    persona_start: "Ich stelle die Antwort zusammen."
+    tool_error: "Beim Ausführen von {tool} gab es ein Problem."
+    vision_capture: "Bild aufgenommen, verarbeite es jetzt."
+    subagent_start: "Ich starte das Modul {module}."
+    vlm_processing:
+      - "Ich verarbeite das Bild, einen Moment."
+
+  es:
+    name: Spanish
+    ack:
+      - "Vale, déjame ver."
+      - "Entendido, estoy en ello."
+      - "Un momento, ya voy."
+    plan_prefix: "Mi plan: "
+    persona_start: "Estoy preparando la respuesta."
+    tool_error: "Hubo un problema al ejecutar {tool}."
+    vision_capture: "Imagen capturada, procesando ahora."
+    subagent_start: "Ejecutando el módulo {module}."
+    vlm_processing:
+      - "Procesando la imagen, un momento."
+
+  fr:
+    name: French
+    ack:
+      - "D'accord, je regarde."
+      - "Compris, je m'en occupe."
+      - "Un instant, j'y suis."
+    plan_prefix: "Mon plan : "
+    persona_start: "Je prépare la réponse."
+    tool_error: "Un problème est survenu avec {tool}."
+    vision_capture: "Image capturée, traitement en cours."
+    subagent_start: "J'exécute le module {module}."
+    vlm_processing:
+      - "Je traite l'image, un instant."
+
+  it:
+    name: Italian
+    ack:
+      - "Va bene, controllo."
+      - "Capito, ci sto lavorando."
+      - "Un attimo, ci penso io."
+    plan_prefix: "Il mio piano: "
+    persona_start: "Sto preparando la risposta."
+    tool_error: "C'è stato un problema con {tool}."
+    vision_capture: "Immagine acquisita, la sto elaborando."
+    subagent_start: "Eseguo il modulo {module}."
+    vlm_processing:
+      - "Sto elaborando l'immagine, un attimo."
+
+  pt:
+    name: Portuguese
+    ack:
+      - "Certo, deixa eu ver."
+      - "Entendido, estou nisso."
+      - "Um momento, já vou."
+    plan_prefix: "Meu plano: "
+    persona_start: "Estou montando a resposta."
+    tool_error: "Houve um problema ao executar {tool}."
+    vision_capture: "Imagem capturada, processando agora."
+    subagent_start: "Executando o módulo {module}."
+    vlm_processing:
+      - "Processando a imagem, um momento."
+
+  ru:
+    name: Russian
+    ack:
+      - "Хорошо, проверяю."
+      - "Понял, работаю над этим."
+      - "Секунду, уже занимаюсь."
+    plan_prefix: "Мой план: "
+    persona_start: "Собираю ответ."
+    tool_error: "При выполнении {tool} возникла проблема."
+    vision_capture: "Изображение получено, обрабатываю."
+    subagent_start: "Запускаю модуль {module}."
+    vlm_processing:
+      - "Обрабатываю изображение, секунду."
+
+  ar:
+    name: Arabic
+    ack:
+      - "حسنًا، دعني أتحقق."
+      - "فهمت، أعمل على ذلك."
+      - "لحظة من فضلك."
+    plan_prefix: "خطتي: "
+    persona_start: "أقوم بتجهيز الإجابة."
+    tool_error: "حدثت مشكلة أثناء تشغيل {tool}."
+    vision_capture: "تم التقاط الصورة، أعالجها الآن."
+    subagent_start: "أشغل وحدة {module}."
+    vlm_processing:
+      - "أعالج الصورة، لحظة."
+
+  ja:
+    name: Japanese
+    ack:
+      - "はい、確認します。"
+      - "了解しました、対応中です。"
+      - "少々お待ちください。"
+    plan_prefix: "プラン: "
+    persona_start: "回答をまとめています。"
+    tool_error: "{tool} の実行中に問題が発生しました。"
+    vision_capture: "画像を取得しました。処理中です。"
+    subagent_start: "{module} モジュールを実行しています。"
+    vlm_processing:
+      - "画像を処理しています。少々お待ちください。"
+
+  ko:
+    name: Korean
+    ack:
+      - "네, 확인해 볼게요."
+      - "알겠어요, 처리 중입니다."
+      - "잠시만요."
+    plan_prefix: "계획: "
+    persona_start: "답변을 정리하고 있어요."
+    tool_error: "{tool} 실행 중 문제가 발생했어요."
+    vision_capture: "이미지를 캡처했어요. 처리 중입니다."
+    subagent_start: "{module} 모듈을 실행하고 있어요."
+    vlm_processing:
+      - "이미지를 처리하고 있어요. 잠시만요."
+
+  zh:
+    name: Chinese
+    ack:
+      - "好的，我看一下。"
+      - "明白了，正在处理。"
+      - "稍等一下。"
+    plan_prefix: "我的计划："
+    persona_start: "正在整理答案。"
+    tool_error: "运行 {tool} 时出现问题。"
+    vision_capture: "已拍摄图像，正在处理。"
+    subagent_start: "正在运行 {module} 模块。"
+    vlm_processing:
+      - "正在处理图像，请稍等。"
+
+  nl:
+    name: Dutch
+    ack:
+      - "Oké, ik kijk even."
+      - "Begrepen, ik ben ermee bezig."
+      - "Momentje, ik ga aan de slag."
+    plan_prefix: "Mijn plan: "
+    persona_start: "Ik stel het antwoord samen."
+    tool_error: "Er ging iets mis bij het uitvoeren van {tool}."
+    vision_capture: "Afbeelding vastgelegd, ik verwerk hem nu."
+    subagent_start: "Ik voer de module {module} uit."
+    vlm_processing:
+      - "Ik verwerk de afbeelding, momentje."
+
+  pl:
+    name: Polish
+    ack:
+      - "Dobrze, sprawdzam."
+      - "Rozumiem, pracuję nad tym."
+      - "Chwileczkę, już się tym zajmuję."
+    plan_prefix: "Mój plan: "
+    persona_start: "Przygotowuję odpowiedź."
+    tool_error: "Wystąpił problem podczas uruchamiania {tool}."
+    vision_capture: "Obraz przechwycony, przetwarzam."
+    subagent_start: "Uruchamiam moduł {module}."
+    vlm_processing:
+      - "Przetwarzam obraz, chwileczkę."
