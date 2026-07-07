@@ -93,4 +93,19 @@ def get_control_router(processor: Any, ardu: Optional[Any], base_url: str) -> AP
             return processor.head_arbiter.get_status()
         return {"pan": 90, "tilt": 90}
 
+    @r.post("/head/move", tags=["vision"], summary="Request pan/tilt via head arbiter")
+    def head_move(body: dict):
+        if not processor or not hasattr(processor, "head_arbiter") or processor.head_arbiter is None:
+            raise HTTPException(status_code=503, detail="Head arbiter not initialized")
+        from modules.vlm_bridge.services.head_control_arbiter import HeadCommand
+
+        pan = float(body.get("pan", 90))
+        tilt = float(body.get("tilt", 90))
+        source = str(body.get("source", "agent_core"))
+        priority = int(body.get("priority", 60))
+        result = processor.head_arbiter.request_move(
+            HeadCommand(pan=pan, tilt=tilt, source=source, priority=priority, ttl_s=float(body.get("ttl_s", 1.5)))
+        )
+        return result
+
     return r

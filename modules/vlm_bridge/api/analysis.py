@@ -72,4 +72,44 @@ def get_analysis_router(processor: Any, base_url: str) -> APIRouter:
             languages = None
         return processor.run_ocr_remote(frame=None, languages=languages)
 
+    @r.post("/fer/analyze", tags=["vision"], summary="Face emotion from base64 JPEG (DeepFace or heuristic)")
+    def fer_analyze(body: dict):
+        image_b64 = str(body.get("image_b64") or "").strip()
+        if not image_b64:
+            raise HTTPException(status_code=400, detail="image_b64 required")
+        try:
+            import base64
+            import cv2
+            import numpy as np
+
+            raw = base64.b64decode(image_b64)
+            arr = np.frombuffer(raw, dtype=np.uint8)
+            face = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if face is None:
+                return {"ok": False, "emotion": "neutral", "confidence": 0.0}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc), "emotion": "neutral", "confidence": 0.0}
+
+        # Optional DeepFace when installed on the robot.
+        try:
+            from deepface import DeepFace  # type: ignore
+
+            result = DeepFace.analyze(face, actions=["emotion"], enforce_detection=False)
+            if isinstance(result, list) and result:
+                result = result[0]
+            emo_map = result.get("emotion") if isinstance(result, dict) else {}
+            if isinstance(emo_map, dict) and emo_map:
+                label = max(emo_map, key=emo_map.get)
+                conf = float(emo_map.get(label, 0.0)) / 100.0
+                return {"ok": True, "emotion": str(label).lower(), "confidence": round(conf, 3), "backend": "deepface"}
+        except Exception:
+            pass
+
+        if processor is not None and getattr(processor, "_face_emotion", None) is not None:
+            out = processor._face_emotion.estimate(face)
+            out["ok"] = True
+            return out
+
+        return {"ok": True, "emotion": "neutral", "confidence": 0.0, "backend": "none"}
+
     return r

@@ -13,6 +13,13 @@ vision:
     ratio_test: 0.78
     min_good_matches: 5
     min_score: 0.08
+  face_emotion:
+    backend: heuristic   # none | heuristic | onnx | remote
+    model_path: models/emotion-ferplus.onnx
+    min_confidence: 0.35
+    remote_url: "@gateway/vlm/fer/analyze"
+    remote_timeout_s: 2.5
+    remote_fallback: heuristic
   follow:
     enabled: false
     track_interval_s: 0.12
