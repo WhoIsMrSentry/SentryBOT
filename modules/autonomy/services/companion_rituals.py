@@ -6,19 +6,14 @@ from typing import Any, Dict, Optional
 
 
 class CompanionRituals:
-    """Low-frequency social rituals to improve companion continuity.
-
-    When a :class:`modules.social_db.SocialDB` instance is registered, the
-    "morning greeting done" flag is persisted in the ``rituals`` table so the
-    ritual is not repeated after a restart on the same day.
-    """
+    """Low-frequency social rituals with optional LLM-generated lines."""
 
     def __init__(self, cfg: Dict[str, Any], social_db: Optional[Any] = None) -> None:
         self.cfg = cfg if isinstance(cfg, dict) else {}
         self.enabled = bool(self.cfg.get("enabled", True))
         self.min_absence_s = float(self.cfg.get("owner_return_min_absence_s", 180.0))
         self.owner_return_cooldown_s = float(self.cfg.get("owner_return_cooldown_s", 300.0))
-        self.morning_window = tuple(self.cfg.get("morning_window_h", [6, 11]))  # inclusive start/end
+        self.morning_window = tuple(self.cfg.get("morning_window_h", [6, 11]))
         if social_db is None:
             try:
                 from modules.social_db import get_default as _social_default  # type: ignore
@@ -32,21 +27,70 @@ class CompanionRituals:
         self._owner_prev_present: bool = False
         self._morning_done_day: str = ""
 
-    def propose(self, now_ts: float, owner_present: bool, is_sleeping: bool) -> Optional[Dict[str, Any]]:
+    def propose(
+        self,
+        now_ts: float,
+        owner_present: bool,
+        is_sleeping: bool,
+        line_generator: Any = None,
+        needs: Optional[Dict[str, Any]] = None,
+        dominant_emotion: str = "neutral",
+        absence_s: float = 0.0,
+    ) -> Optional[Dict[str, Any]]:
         if not self.enabled or is_sleeping:
             self._update_owner_presence(now_ts, owner_present)
             return None
 
-        proposal = self._propose_morning(owner_present)
+        proposal = self._propose_morning(
+            owner_present,
+            line_generator=line_generator,
+            needs=needs or {},
+            dominant_emotion=dominant_emotion,
+        )
         if proposal:
             self._update_owner_presence(now_ts, owner_present)
             return proposal
 
-        proposal = self._propose_owner_return(now_ts, owner_present)
+        proposal = self._propose_owner_return(
+            now_ts,
+            owner_present,
+            line_generator=line_generator,
+            needs=needs or {},
+            dominant_emotion=dominant_emotion,
+            absence_s=absence_s,
+        )
         self._update_owner_presence(now_ts, owner_present)
         return proposal
 
-    def _propose_morning(self, owner_present: bool) -> Optional[Dict[str, Any]]:
+    def _line(
+        self,
+        kind: str,
+        line_generator: Any,
+        needs: Dict[str, Any],
+        dominant_emotion: str,
+        absence_s: float = 0.0,
+    ) -> str:
+        ctx = {
+            "dominant_emotion": dominant_emotion,
+            "owner_present": True,
+            "needs": needs,
+            "absence_s": absence_s,
+        }
+        if line_generator is not None and hasattr(line_generator, "generate"):
+            text = line_generator.generate(kind, **ctx)
+            if text:
+                return text
+        if line_generator is not None and hasattr(line_generator, "_needs_line"):
+            return line_generator._needs_line(kind, ctx) or ""
+        return ""
+
+    def _propose_morning(
+        self,
+        owner_present: bool,
+        line_generator: Any = None,
+        needs: Optional[Dict[str, Any]] = None,
+        dominant_emotion: str = "joy",
+    ) -> Optional[Dict[str, Any]]:
         if not owner_present:
             return None
         now = datetime.datetime.now()
@@ -73,19 +117,30 @@ class CompanionRituals:
                 )
             except Exception:
                 pass
+        text = self._line("ritual_morning", line_generator, needs or {}, dominant_emotion)
+        if not text:
+            text = "Günaydın, bugün nasıl hissediyorsun?"
         return {
-            "text": "Gunaydin, bugun nasil hissettigini merak ediyorum.",
+            "text": text,
             "emotion": "joy",
             "event": "companion.ritual.morning",
         }
 
-    def _propose_owner_return(self, now_ts: float, owner_present: bool) -> Optional[Dict[str, Any]]:
+    def _propose_owner_return(
+        self,
+        now_ts: float,
+        owner_present: bool,
+        line_generator: Any = None,
+        needs: Optional[Dict[str, Any]] = None,
+        dominant_emotion: str = "joy",
+        absence_s: float = 0.0,
+    ) -> Optional[Dict[str, Any]]:
         if not owner_present:
             return None
         if self._owner_prev_present:
             return None
-        absence_s = max(0.0, now_ts - self._owner_absent_since)
-        if absence_s < self.min_absence_s:
+        absence = max(0.0, now_ts - self._owner_absent_since)
+        if absence < self.min_absence_s:
             return None
         if (now_ts - self._last_owner_return_ts) < self.owner_return_cooldown_s:
             return None
@@ -94,12 +149,21 @@ class CompanionRituals:
             try:
                 self._social_db.rituals.mark_done(
                     "owner_return",
-                    payload={"ts": now_ts, "absence_s": absence_s},
+                    payload={"ts": now_ts, "absence_s": absence},
                 )
             except Exception:
                 pass
+        text = self._line(
+            "ritual_owner_return",
+            line_generator,
+            needs or {},
+            dominant_emotion,
+            absence_s=absence_s or absence,
+        )
+        if not text:
+            text = "Tekrar hoş geldin, seni görmek iyi hissettirdi."
         return {
-            "text": "Tekrar hos geldin, seni gormek iyi hissettirdi.",
+            "text": text,
             "emotion": "joy",
             "event": "companion.ritual.owner_return",
         }

@@ -41,21 +41,33 @@ def test_enrichment_injects_trust_hint(tmp_path):
     assert "likes=satranc" in out
 
 
-def test_proactive_callback_uses_high_trust_warm_line():
-    p = ProactivePlanner({"enable_callback_lines": True, "callback_min_trust": 0.2})
-    line = p._callback_line(
-        {"name": "Emir", "likes": ["satranc"], "topics": [], "trust_score": 0.85, "last_user_utterance": ""},
-        speaker="Emir",
-        owner_present=True,
+from modules.autonomy.services.companion_lines import CompanionLineGenerator
+
+
+def test_proactive_uses_social_hint_in_needs_line():
+    gen = CompanionLineGenerator(None, {"use_llm": False})
+    line = gen._needs_line(
+        "proactive",
+        {
+            "speaker": "Emir",
+            "social_hint": "likes satranc",
+            "needs": {"social": 40},
+            "owner_present": True,
+            "dominant_emotion": "neutral",
+        },
     )
     assert line and "satranc" in line.lower()
 
 
-def test_proactive_skips_callback_when_trust_too_low():
-    p = ProactivePlanner({"enable_callback_lines": True, "callback_min_trust": 0.3})
-    line = p._callback_line(
-        {"name": "Emir", "likes": ["satranc"], "topics": [], "trust_score": 0.1, "last_user_utterance": ""},
+def test_proactive_skips_social_hint_when_trust_low():
+    p = ProactivePlanner({"callback_min_trust": 0.3})
+    line = p._generate_line(
+        kind="proactive",
+        mood="neutral",
         speaker="Emir",
         owner_present=True,
+        needs={"social": 50},
+        social_profile={"likes": ["satranc"], "trust_score": 0.1},
     )
-    assert line == ""
+    assert line
+    assert "satranc" not in line.lower()
