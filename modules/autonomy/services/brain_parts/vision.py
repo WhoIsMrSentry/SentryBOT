@@ -100,6 +100,8 @@ class VisionMixin:
                 )
             except Exception:
                 pass
+            if hasattr(self, "appraise_event"):
+                self.appraise_event("scene_change", intensity=min(1.0, novelty))
             if importance >= 0.5:
                 self.mood.modify("curiosity", 6)
 
@@ -185,6 +187,8 @@ class VisionMixin:
                 )
                 if not ran:
                     self._speak_with_mood(utterance, emotion=emotion)
+                if hasattr(self, "appraise_event"):
+                    self.appraise_event("greeted")
                 self.memory.add_event(f"{name} ile konuştum: {utterance}")
         if self._is_owner_name(name):
             self._on_owner_seen(now)

@@ -5,15 +5,17 @@ import random
 import datetime
 import json
 import uuid
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .client import ServiceClient
 from .idle_behaviors import IdleBehaviorPlanner
 from .mood import MoodManager
 from .memory import ShortTermMemory
 from .affective_appraisal import AffectiveAppraisal
+from .appraisal_triggers import speech_appraisal_event
 from .expression_director import ExpressionDirector
 from .companion_rituals import CompanionRituals
+from .companion_lines import CompanionLineGenerator
 from .proactive_planner import ProactivePlanner
 from .barge_in import BargeInController
 from .liveliness import LivelinessScheduler
@@ -73,7 +75,12 @@ class AutonomyBrain(
         self.companion_rituals = CompanionRituals(
             companion_cfg.get("rituals", {}) if isinstance(companion_cfg.get("rituals", {}), dict) else {}
         )
-        self.proactive_planner = ProactivePlanner(companion_cfg.get("proactive", {}) if isinstance(companion_cfg.get("proactive", {}), dict) else {})
+        lines_cfg = companion_cfg.get("lines", {}) if isinstance(companion_cfg.get("lines", {}), dict) else {}
+        self.companion_lines = CompanionLineGenerator(self.client, lines_cfg)
+        self.proactive_planner = ProactivePlanner(
+            companion_cfg.get("proactive", {}) if isinstance(companion_cfg.get("proactive", {}), dict) else {},
+            line_generator=self.companion_lines,
+        )
         learning_cfg = companion_cfg.get("learning", {}) if isinstance(companion_cfg.get("learning", {}), dict) else {}
         self.feedback_learner = InteractionFeedbackLearner(learning_cfg.get("feedback", learning_cfg))
         self.barge_in = BargeInController(config.get("barge_in", {}) if isinstance(config.get("barge_in", {}), dict) else {})
@@ -127,11 +134,17 @@ class AutonomyBrain(
         self._llm_rate_limit_until = 0.0
         self._last_owner_scan = 0.0
         self._last_idle_action = 0.0
+        self._last_agentic_ts = 0.0
+        self._last_alone_appraisal_ts = 0.0
+        self._last_darkness_appraisal_ts = 0.0
+        self._last_owner_left_appraisal_ts = 0.0
+        self._owner_was_present = False
+        self._owner_session_id: int | None = None
         self._reset_daily_timeline()
         self._speech_req_lock = threading.Lock()
         self._active_speech_req_id: str = ""
         self._speech_busy: bool = False
-        self._speech_min_interval_s = float(self.config.get("request_timeouts", {}).get("speech_min_interval_s", 0.8))
+        self._speech_min_interval_s = float(self.config.get("request_timeouts", {}).get("speech_min_interval_s", 0.35))
         visuals_cfg = self.config.get("visual_state", {}) if isinstance(self.config.get("visual_state", {}), dict) else {}
         self._visual_emotion_min_interval_s = float(visuals_cfg.get("emotion_min_interval_s", 2.0))
         self._visual_lock_default_s = float(visuals_cfg.get("default_lock_s", 2.2))
@@ -215,6 +228,15 @@ class AutonomyBrain(
         if source and str(source).lower() != "api":
             self.state["last_speaker"] = source
         self.mood.modify("happiness", 1)
+        social_fill = float(
+            self.config.get("defaults", {}).get("mood", {}).get("needs", {}).get("social", {}).get("interaction_fill", 18)
+        )
+        stim_drain = float(
+            self.config.get("defaults", {}).get("mood", {}).get("needs", {}).get("stimulation", {}).get("interaction_drain", 12)
+        )
+        if hasattr(self.mood, "satisfy_need"):
+            self.mood.satisfy_need("social", social_fill)
+            self.mood.satisfy_need("stimulation", stim_drain)
 
     def _sense(self):
         """Poll sensors for new information."""
@@ -240,6 +262,36 @@ class AutonomyBrain(
         except Exception:
             return False
 
+    def on_speech_final(self, text: str, language: str = "") -> bool:
+        """Event-driven entry: speech module pushes final transcripts here.
+
+        Removes the polling latency (loop interval + debounce) from the voice
+        pipeline. The `_sense_speech_text` poll stays as a fallback and its
+        dedup state is shared, so a pushed utterance is not handled twice.
+        """
+        text = str(text or "").strip()
+        if not text or self._companion_paused():
+            return False
+        lang = str(language or self.state.get("last_speech_language") or "tr")
+        return self._dispatch_final_speech(text, lang)
+
+    def _dispatch_final_speech(self, text: str, lang: str) -> bool:
+        elapsed = time.time() - self.state["last_speech_time"]
+        if text == self.state["last_speech_text"] or elapsed <= self._speech_min_interval_s:
+            return False
+        if self._speech_busy:
+            return False
+        self.state["last_speech_text"] = text
+        self.state["last_speech_time"] = time.time()
+        self.state["last_speech_language"] = lang
+        threading.Thread(
+            target=self._react_to_speech,
+            args=(text,),
+            kwargs={"source_lang": lang},
+            daemon=True,
+        ).start()
+        return True
+
     def _sense_speech_text(self):
         if self._companion_paused():
             return
@@ -248,19 +300,7 @@ class AutonomyBrain(
             if speech and speech.get("final") and speech.get("text"):
                 text = speech["text"]
                 lang = str(speech.get("language") or self.state.get("last_speech_language") or "tr")
-                elapsed = time.time() - self.state["last_speech_time"]
-                if text != self.state["last_speech_text"] and elapsed > self._speech_min_interval_s:
-                    if self._speech_busy:
-                        return
-                    self.state["last_speech_text"] = text
-                    self.state["last_speech_time"] = time.time()
-                    self.state["last_speech_language"] = lang
-                    threading.Thread(
-                        target=self._react_to_speech,
-                        args=(text,),
-                        kwargs={"source_lang": lang},
-                        daemon=True,
-                    ).start()
+                self._dispatch_final_speech(text, lang)
         except Exception:
             pass
 
@@ -340,17 +380,8 @@ class AutonomyBrain(
 
     @staticmethod
     def _sentiment_event_for_text(text: str) -> Optional[str]:
-        """Very lightweight keyword sentiment -> appraisal event mapping."""
-        low = str(text or "").lower()
-        if not low:
-            return None
-        rude = ("aptal", "salak", "gerizekal", "kapa cen", "sus ", "stupid", "shut up", "idiot")
-        praise = ("aferin", "harikasin", "cok iyi", "tesekkur", "sevimlisin", "seviyorum", "good job", "well done", "thank you", "i love you")
-        if any(tok in low for tok in rude):
-            return "user_rude"
-        if any(tok in low for tok in praise):
-            return "user_praise"
-        return None
+        """Speech text -> appraisal event (praise, thanks, petted, …)."""
+        return speech_appraisal_event(text)
 
     def _maybe_emit_speech_excited(self, text: str, sentiment_event: Optional[str]) -> None:
         """Emit autonomy.excited only when configured — not on every utterance."""
@@ -384,25 +415,27 @@ class AutonomyBrain(
 
     @classmethod
     def _emotion_command_for_text(cls, text: str) -> Optional[str]:
-        low = str(text or "").lower().strip()
+        """Match only very short imperative emotion commands (1-2 words)."""
+        low = str(text or "").lower().strip(" .!?")
         if not low:
             return None
+        words = low.split()
+        if len(words) > 2:
+            return None
         for canon, phrases in cls._EMOTION_COMMAND_PHRASES:
-            if any(p in low for p in phrases):
-                return canon
-        try:
-            from modules.common.emotion_vocab import get_vocab
+            for phrase in phrases:
+                p = phrase.strip().lower()
+                if low == p or (len(words) == 1 and words[0] == p.split()[0]):
+                    return canon
+        if len(words) == 1:
+            try:
+                from modules.common.emotion_vocab import get_vocab
 
-            vocab = get_vocab()
-            for token in low.replace(",", " ").split():
-                key = token.strip("!.?")
-                if len(key) < 4:
-                    continue
-                canon = vocab.canonical(key)
+                canon = get_vocab().canonical(words[0])
                 if canon not in {"neutral", "curiosity"}:
                     return canon
-        except Exception:
-            pass
+            except Exception:
+                pass
         return None
 
     @staticmethod
@@ -488,6 +521,7 @@ class AutonomyBrain(
             self._perform_micro_movement()
 
         self._maybe_scan_for_owner()
+        self._check_owner_presence_appraisal(now)
         self._forward_visual_events_to_agent()
 
         boredom_threshold = self.config.get("defaults", {}).get("boredom_threshold_s", 20)
@@ -503,10 +537,16 @@ class AutonomyBrain(
             if now - self._last_idle_action >= idle_interval:
                 if self._run_idle_behavior(now):
                     self._last_idle_action = now
-                elif bool(idle_cfg.get("fallback_to_llm", True)) and random.random() < 0.2:
+                elif bool(idle_cfg.get("fallback_to_llm", True)) and self._should_agentic_decision(now):
                     self._make_agentic_decision()
+                    self._last_agentic_ts = now
         else:
             self.state["is_bored"] = False
+
+        alone_threshold = float(self.config.get("defaults", {}).get("alone_threshold_s", 120))
+        if time_since_interaction > alone_threshold and (now - self._last_alone_appraisal_ts) > alone_threshold:
+            if self.appraise_event("alone_too_long", emit=True):
+                self._last_alone_appraisal_ts = now
 
         self._run_companion_rituals(now)
         self._run_companion_proactive(now)
@@ -519,6 +559,10 @@ class AutonomyBrain(
             now_ts=now,
             owner_present=owner_present,
             is_sleeping=bool(self.state.get("is_sleeping", False)),
+            line_generator=self.companion_lines,
+            needs=self.mood.get_needs() if hasattr(self.mood, "get_needs") else {},
+            dominant_emotion=str(self.mood.get_dominant_emotion() or "neutral"),
+            absence_s=max(0.0, self._owner_absence_seconds(now)),
         )
         if not plan:
             return
@@ -560,6 +604,7 @@ class AutonomyBrain(
             owner_present=owner_present,
             social_profile=social_profile,
             scene=scene_ctx,
+            needs=self.mood.get_needs() if hasattr(self.mood, "get_needs") else {},
         )
         if not plan:
             return
@@ -593,6 +638,7 @@ class AutonomyBrain(
             people = ctx.get("people", []) if isinstance(ctx.get("people", []), list) else []
             if hazards:
                 self.client.emit_agent_event("hazard_detected", {"count": len(hazards)})
+                self.appraise_event("loud_noise", intensity=min(1.0, len(hazards) / 3.0))
                 return
             owner_seen = False
             new_people = 0
@@ -609,6 +655,7 @@ class AutonomyBrain(
                 self.client.emit_agent_event("owner_follow_intent", {})
             elif new_people > 0:
                 self.client.emit_agent_event("new_person_seen", {"count": new_people})
+                self.appraise_event("new_person", intensity=min(1.0, new_people / 2.0))
             elif self.state.get("is_bored"):
                 self.client.emit_agent_event("idle_comment_request", {"prompt": "look around and comment naturally"})
         except Exception:
@@ -624,6 +671,170 @@ class AutonomyBrain(
         self._execute_action(choice.name)
         return True
 
+    def _check_owner_presence_appraisal(self, now: float) -> None:
+        if not self.owner_cfg.get("enabled"):
+            return
+        present = self._owner_seen_recently()
+        self._sync_owner_session(present)
+        if self._owner_was_present and not present:
+            last = float(self.state.get("owner_last_seen", 0.0) or 0.0)
+            timeout = float(self.owner_cfg.get("presence_timeout_s", 30))
+            if last > 0 and (now - last) >= timeout:
+                if (now - self._last_owner_left_appraisal_ts) >= max(60.0, timeout):
+                    self.appraise_event("owner_left")
+                    self._last_owner_left_appraisal_ts = now
+        self._owner_was_present = present
+
+    def _owner_sessions_cfg(self) -> Dict[str, Any]:
+        companion = self.config.get("companion", {}) if isinstance(self.config.get("companion"), dict) else {}
+        cfg = companion.get("owner_sessions", {})
+        return cfg if isinstance(cfg, dict) else {}
+
+    def _social_db(self):
+        return getattr(self.mood, "_social_db", None)
+
+    def _sync_owner_session(self, owner_present: bool) -> None:
+        cfg = self._owner_sessions_cfg()
+        if not cfg.get("enabled", True):
+            return
+        db = self._social_db()
+        if db is None:
+            return
+        source = str(cfg.get("source", "vision") or "vision")
+        try:
+            if owner_present:
+                active = db.owner_sessions.active()
+                if active is None:
+                    self._owner_session_id = int(db.owner_sessions.start(source=source))
+                else:
+                    self._owner_session_id = int(active.get("id") or 0) or None
+            elif self._owner_session_id is not None:
+                db.owner_sessions.end(self._owner_session_id)
+                self._owner_session_id = None
+            elif db.owner_sessions.active() is not None:
+                db.owner_sessions.end_active()
+        except Exception as exc:
+            logger.debug("owner session sync failed: %s", exc)
+
+    def _owner_absence_seconds(self, now: float) -> float:
+        db = self._social_db()
+        if db is not None:
+            try:
+                rows = db.owner_sessions.recent(limit=2)
+                for row in rows:
+                    end_ts = row.get("end_ts")
+                    if end_ts:
+                        return max(0.0, now - float(end_ts))
+            except Exception:
+                pass
+        last = float(self.state.get("owner_last_seen", 0.0) or 0.0)
+        if last > 0:
+            return max(0.0, now - last)
+        return 0.0
+
+    def _preference_summary(self, speaker: str = "") -> str:
+        spk = str(speaker or self.state.get("last_speaker") or "").strip()
+        if not spk:
+            return ""
+        profile = self.relationship_memory.social_profile(spk)
+        if not profile:
+            return ""
+        likes = profile.get("likes", []) if isinstance(profile.get("likes"), list) else []
+        dislikes = profile.get("dislikes", []) if isinstance(profile.get("dislikes"), list) else []
+        topics = profile.get("topics", []) if isinstance(profile.get("topics"), list) else []
+        parts = []
+        if likes:
+            parts.append(f"likes={','.join(str(x) for x in likes[:3])}")
+        if dislikes:
+            parts.append(f"dislikes={','.join(str(x) for x in dislikes[:2])}")
+        if topics:
+            parts.append(f"topics={','.join(str(x) for x in topics[:3])}")
+        trust = float(profile.get("trust_score", 0.0) or 0.0)
+        parts.append(f"trust={trust:.2f}")
+        return "; ".join(parts)
+
+    def _recent_companion_activity_summary(self, limit: int = 4) -> str:
+        db = self._social_db()
+        if db is None:
+            return ""
+        try:
+            rows = db.interaction_events.recent(limit=limit)
+        except Exception:
+            return ""
+        bits = []
+        for row in rows:
+            kind = str(row.get("kind") or "").strip()
+            if kind.startswith(("companion.", "appraisal:", "autonomy.")):
+                bits.append(kind)
+        return ", ".join(bits[:limit])
+
+    def _check_darkness_appraisal(self, now: float) -> None:
+        sleep_cfg = self.config.get("behaviors", {}).get("sleep", {})
+        if not sleep_cfg.get("enabled"):
+            return
+        hour = datetime.datetime.now().hour
+        start = int(sleep_cfg.get("start_hour", 23))
+        end = int(sleep_cfg.get("end_hour", 7))
+        if start > end:
+            dark = hour >= start or hour < end
+        else:
+            dark = start <= hour < end
+        if not dark:
+            return
+        if (now - self._last_darkness_appraisal_ts) < 300:
+            return
+        if self.appraise_event("darkness", emit=False):
+            self._last_darkness_appraisal_ts = now
+
+    def _should_agentic_decision(self, now: float) -> bool:
+        cfg = self.config.get("agentic", {}) if isinstance(self.config.get("agentic"), dict) else {}
+        if not cfg.get("enabled", True):
+            return False
+        min_interval = float(cfg.get("min_interval_s", 45.0))
+        if now - self._last_agentic_ts < min_interval:
+            return False
+        triggers = cfg.get("triggers", {}) if isinstance(cfg.get("triggers"), dict) else {}
+        needs = self.mood.get_needs() if hasattr(self.mood, "get_needs") else {}
+        if float(needs.get("social", 0)) >= float(triggers.get("social_need", 72)):
+            return True
+        if float(needs.get("stimulation", 0)) >= float(triggers.get("stimulation_need", 68)):
+            return True
+        if float(self.mood.get("energy", 100) or 100) <= float(triggers.get("low_energy", 25)):
+            return True
+        if float(needs.get("rest", 100)) <= float(triggers.get("low_rest", 22)):
+            return True
+        return random.random() < float(cfg.get("fallback_random_chance", 0.12))
+
+    def _mood_trend_summary(self) -> str:
+        db = getattr(self.mood, "_social_db", None)
+        if db is None:
+            return ""
+        try:
+            rows = db.mood_snapshots.recent(limit=5)
+            if len(rows) < 2:
+                return ""
+            latest = rows[0]
+            oldest = rows[-1]
+            dh = float(latest.get("happiness", 0)) - float(oldest.get("happiness", 0))
+            de = float(latest.get("energy", 0)) - float(oldest.get("energy", 0))
+            return f"mood_trend happiness {dh:+.0f}, energy {de:+.0f} over {len(rows)} snapshots"
+        except Exception:
+            return ""
+
+    def _last_sighting_summary(self, speaker: str = "") -> str:
+        db = getattr(self.mood, "_social_db", None)
+        if db is None:
+            return ""
+        try:
+            rows = db.sightings.recent(limit=3)
+            if not rows:
+                return ""
+            last = rows[0]
+            ago = int(max(0, time.time() - float(last.get("ts", 0))))
+            return f"last sighting {ago}s ago (person_id={last.get('person_id', '?')})"
+        except Exception:
+            return ""
+
     def _make_agentic_decision(self):
         """Ask LLM what to do based on internal state using the native tool loop."""
         if not self.config.get("llm", {}).get("enabled", False):
@@ -633,12 +844,23 @@ class AutonomyBrain(
         social_context = self.relationship_memory.build_social_context(
             current_speaker=str(self.state.get("last_speaker") or "")
         )
+        pref_summary = self._preference_summary()
+        activity = self._recent_companion_activity_summary()
+        needs = self.mood.get_needs() if hasattr(self.mood, "get_needs") else {}
+        mood_trend = self._mood_trend_summary()
+        sighting = self._last_sighting_summary(str(self.state.get("last_speaker") or ""))
         prompt = (
-            f"You are currently BORED and IDLE.\n"
+            f"You are currently IDLE with unmet needs.\n"
             f"Internal State:\n"
-            f"- Happiness: {int(self.mood['happiness'])}/100, Energy: {int(self.mood['energy'])}/100, Curiosity: {int(self.mood['curiosity'])}/100\n"
+            f"- Happiness: {int(self.mood['happiness'])}/100, Energy: {int(self.mood['energy'])}/100, "
+            f"Curiosity: {int(self.mood['curiosity'])}/100\n"
+            f"- Needs: social={needs.get('social', 0)}, stimulation={needs.get('stimulation', 0)}, "
+            f"rest={needs.get('rest', 0)}\n"
             f"Recent Events:\n{events}\n\n"
-            f"{social_context}\n\n"
+            f"{social_context}\n"
+            f"{('Preferences: ' + pref_summary) if pref_summary else ''}\n"
+            f"{('Recent activity: ' + activity) if activity else ''}\n"
+            f"{mood_trend}\n{sighting}\n\n"
             f"Use your internal physical tools right now (such as looking around, playing an animation on OLED, "
             f"or changing body lights) to entertain yourself or find something interesting to do. Do not ask for permission."
         )
@@ -649,10 +871,12 @@ class AutonomyBrain(
                 res = self.agent.step(prompt)
                 if res and res.get("text"):
                     self._speak_with_mood(res["text"])
+                    self.appraise_event("command_ok", emit=False)
             else:
                 logger.warning("Agent Core is disabled. Cannot make native decision.")
         except Exception as exc:
             logger.error("Agentic decision failed natively: %s", exc)
+            self.appraise_event("command_failed", emit=False)
 
     def _execute_action(self, action):
         if action == "LOOK_AROUND":
@@ -867,6 +1091,11 @@ class AutonomyBrain(
         return False
 
     def _handle_speech_command_shortcuts(self, text: str, lang: str, request_id: str) -> bool:
+        companion_cfg = self.config.get("companion", {}) if isinstance(self.config.get("companion"), dict) else {}
+        if companion_cfg.get("voice_ai_tools", True) and self.agent:
+            return False
+        if not companion_cfg.get("emotion_command_shortcut", False):
+            return False
         if self._handle_emotion_command(text, lang):
             with self._speech_req_lock:
                 if self._active_speech_req_id == request_id:
@@ -924,20 +1153,23 @@ class AutonomyBrain(
         try:
             if not self.agent.speech_arbiter._speak_fn:
                 self.agent.speech_arbiter.set_speak_fn(
-                    lambda text, tone=None, language=None: self.client.speak(
+                    lambda text, tone=None, language=None: self.client.speak_preferred(
                         text, tone=tone, language=language or lang,
                     )
                 )
             enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
-            agent_result = self.agent.step(enriched_text, language=lang, speaker=speaker)
+            agent_result = self.agent.step(
+                enriched_text, language=lang, speaker=speaker, native_tools=True,
+            )
             if agent_result and agent_result.get("text"):
                 if not self._is_active_request(request_id):
                     return True
                 logger.info("Agent Core handled speech with full pipeline.")
                 self.memory.add_event(f"Agent replied: {agent_result['text']}")
                 self._remember_person_chat(speaker, agent_result["text"], role="assistant")
-                tone = self._tone_profile(self.state.get("last_emotion") or self.mood.get_dominant_emotion())
-                self.agent.speech_arbiter.enqueue_final(agent_result["text"], language=lang, tone=tone)
+                if not agent_result.get("speech_handled"):
+                    tone = self._tone_profile(self.state.get("last_emotion") or self.mood.get_dominant_emotion())
+                    self.agent.speech_arbiter.enqueue_final(agent_result["text"], language=lang, tone=tone)
                 return True
         except Exception as exc:
             logger.warning("Agent Core step failed, falling back to direct LLM: %s", exc)
@@ -1225,6 +1457,7 @@ class AutonomyBrain(
 
         if should_sleep and not self.state["is_sleeping"]:
             logger.info("Going to sleep...")
+            self._check_darkness_appraisal(time.time())
             self._deliver_timeline_summary()
             self.state["is_sleeping"] = True
             self.memory.add_event("Going to sleep now.")
@@ -1239,6 +1472,12 @@ class AutonomyBrain(
             logger.info("Waking up!")
             self.state["is_sleeping"] = False
             self.memory.add_event("Waking up from sleep.")
+            self.appraise_event("rested")
+            if hasattr(self.mood, "satisfy_need"):
+                rest_fill = float(
+                    self.config.get("defaults", {}).get("mood", {}).get("needs", {}).get("rest", {}).get("sleep_fill", 35)
+                )
+                self.mood.satisfy_need("rest", rest_fill)
             self.mood.modify("energy", 100)
             self.client.push_interaction_event("autonomy.wake")
             if not self._run_scene("wake_entry", context={"hour": hour}):

@@ -108,8 +108,11 @@ class OwnerGuardMixin:
             self.state["owner_lockout_until"] = time.time() + self.owner_cfg.get("cooldown_s", 20)
             entry["angered"] = True
             self.client.push_interaction_event("autonomy.angry")
-            self.mood.modify("happiness", -10)
-            self.mood.modify("fear", 15)
+            if hasattr(self, "appraise_event"):
+                self.appraise_event("owner_lockout")
+            else:
+                self.mood.modify("happiness", -10)
+                self.mood.modify("fear", 15)
             msg = self.owner_cfg.get("angry_message", "Yeter artık! Sahibim olmadan seni dinlemeyeceğim.")
             return (msg.replace("{nickname}", affectionate), "fear")
         msg = self.owner_cfg.get("polite_message", "Sahibim olmadan isteğini yerine getiremiyorum.")
@@ -184,7 +187,7 @@ class OwnerGuardMixin:
             if not ran:
                 self._speak_with_mood(greeting.replace("{nickname}", affectionate), emotion="joy")
             self.state["owner_last_greet"] = timestamp
-        self.mood.modify("happiness", 10)
+        self.appraise_event("owner_returned")
         self._report_attempts_to_owner()
 
     def _report_attempts_to_owner(self) -> None:

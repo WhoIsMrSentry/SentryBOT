@@ -6,14 +6,14 @@ from modules.autonomy.services.brain import AutonomyBrain
 
 def test_sinirlen_maps_to_anger():
     assert AutonomyBrain._emotion_command_for_text("sinirlen") == "anger"
-    assert AutonomyBrain._emotion_command_for_text("lütfen sinirli ol") == "anger"
 
 
-def test_mutlu_ol_maps_to_joy():
+def test_short_phrase_mutlu_ol_maps_to_joy():
     assert AutonomyBrain._emotion_command_for_text("mutlu ol") == "joy"
 
 
-def test_non_emotion_returns_none():
+def test_long_sentence_not_emotion_command():
+    assert AutonomyBrain._emotion_command_for_text("lütfen sinirli ol") is None
     assert AutonomyBrain._emotion_command_for_text("bugun hava nasil") is None
 
 

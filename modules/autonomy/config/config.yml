@@ -1,6 +1,7 @@
 defaults:
   loop_interval_ms: 500
   boredom_threshold_s: 20
+  alone_threshold_s: 120
   mood:
     decay_rate: 0.5
     anger_threshold: 38
@@ -9,6 +10,19 @@ defaults:
     initial_energy: 100
     max_happiness: 100
     max_energy: 100
+    needs:
+      social:
+        initial: 50
+        decay_per_s: 0.08
+        interaction_fill: 18
+      stimulation:
+        initial: 40
+        growth_per_s: 0.12
+        interaction_drain: 12
+      rest:
+        initial: 80
+        drain_per_s: 0.06
+        sleep_fill: 35
   body_language:
     profiles:
       joy: { pan_delta: 6, tilt_delta: 4, event: "autonomy.joy" }
@@ -156,7 +170,17 @@ request_timeouts:
   default_get_s: 0.8
   ollama_chat_s: 18.0
   ollama_warmup_s: 2.5
-  speech_min_interval_s: 0.8
+  speech_min_interval_s: 0.35
+
+agentic:
+  enabled: true
+  min_interval_s: 45
+  fallback_random_chance: 0.12
+  triggers:
+    social_need: 72
+    stimulation_need: 68
+    low_energy: 25
+    low_rest: 22
 
 speech_reactions:
   excited_on_speech: false
@@ -193,11 +217,28 @@ companion:
     min_idle_s: 50
     max_per_hour: 4
     owner_only: false
-    enable_callback_lines: true
-    callback_min_trust: 0.2    # skip preference callbacks when trust is very low
+    callback_min_trust: 0.2
+    scene_comment_min_importance: 0.45
     policy:
       owner_style: "warm"
       guest_style: "respectful"
+  lines:
+    use_llm: true
+    max_words: 18
+    llm_cooldown_s: 35
+    default_language: tr
+  # Sesli komutlar tri-layer keyword router yerine LLM tool loop'a gider (çok dilli).
+  voice_ai_tools: true
+  emotion_command_shortcut: false
+  owner_sessions:
+    enabled: true
+    source: vision
+
+speech:
+  use_stream_tts: true
+  stream_poll_interval_s: 0.12
+  stream_max_wait_s: 90
+  stream_max_chunk_chars: 220
   # Companion learning loop: extract prefs/facts, reinforce trust from praise/rude.
   learning:
     enabled: true
