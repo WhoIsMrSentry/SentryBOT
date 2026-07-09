@@ -5,7 +5,7 @@ import random
 import datetime
 import json
 import uuid
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .client import ServiceClient
 from .idle_behaviors import IdleBehaviorPlanner
