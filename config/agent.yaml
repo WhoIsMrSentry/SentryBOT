@@ -13,7 +13,7 @@ agent:
   max_steps: 6
 
 llm:
-  provider: "ollama"
+  provider: "google_ai_studio"
   single_model_mode: true
   model: "qwen3.5:9b"
   primary_model: "qwen3.5:9b"
@@ -223,6 +223,9 @@ speak:
       auto_language: true
       prefer_text_language: false
       lock_session_language: true
+      # Dil için Piper sesi yoksa bu motorla seslendir (pyttsx3 | xtts | dummy).
+      # Boş bırakılırsa eski davranış: varsayılan Piper sesi kullanılır.
+      fallback_engine: pyttsx3
       language_voices:
         tr: tr
         en: glados
@@ -332,6 +335,11 @@ actions:
 
 tri_layer:
   enabled: true
+  # HTTP /agent/step istekleri de keyword router yerine LLM tool loop kullanır.
+  api_native_tools: true
+  fast_path:
+    enabled: true
+    max_chars: 140
   router:
     max_subagents: 3
     default_modules:
@@ -341,6 +349,7 @@ tri_layer:
     max_steps: 4
   persona:
     num_predict: 384
+    stream: true
 
 realtime_profile:
   active: fast
