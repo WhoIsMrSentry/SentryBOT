@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import random
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from .tool_progress import plan_goal_should_speak, subagent_module_should_speak, tool_result_succeeded
@@ -37,72 +38,75 @@ PROGRESS_TYPES = frozenset({
 })
 
 
-# ── Template-based immediate acks (no LLM needed) ────────────────────
-_ACK_TEMPLATES_TR = [
-    "Tamam, bakıyorum.",
-    "Anladım, işleme alıyorum.",
-    "Hemen kontrol ediyorum.",
-    "Bir saniye, üzerinde çalışıyorum.",
-]
+# ── Multi-language message catalog (YAML, no hardcoded languages) ─────
+_CATALOG_PATH = Path(__file__).resolve().parent.parent / "config" / "progress_messages.yml"
+_catalog_cache: Optional[Dict[str, Any]] = None
 
-_ACK_TEMPLATES_EN = [
-    "Okay, let me check.",
-    "Got it, working on that.",
-    "One moment, I'm on it.",
-    "Sure, give me a second.",
-]
 
-_TOOL_START_TEMPLATES_TR: Dict[str, str] = {
-    "get_vision": "Görüş verisini alıyorum.",
-    "get_visual_context": "Çevreyi inceliyorum, son görüntü önbelleğine bakıyorum.",
-    "get_sensor_data": "Sensör verilerini okuyorum.",
-    "search_memory": "Hafızamı tarıyorum.",
-    "move_head": "Kafamı çeviriyorum.",
-    "set_lights": "Işıkları ayarlıyorum.",
-    "focus_person": "Kişiye odaklanıyorum.",
-    "ask_vlm_about_scene": "Sahneyi analiz ediyorum.",
-    "describe_scene": "Sahneyi yorumluyorum.",
-    "remember_person": "Kişiyi hafızama kaydediyorum.",
-}
+def _load_catalog() -> Dict[str, Any]:
+    """Load the progress message catalog once (lazy, cached)."""
+    global _catalog_cache
+    if _catalog_cache is not None:
+        return _catalog_cache
+    data: Dict[str, Any] = {}
+    try:
+        import yaml
 
-_TOOL_DONE_TEMPLATES_TR: Dict[str, str] = {
-    "get_vision": "Görüntüyü aldım.",
-    "get_visual_context": "Görüntüyü aldım, şimdi kişileri kontrol ediyorum.",
-    "get_sensor_data": "Sensör verileri geldi.",
-    "search_memory": "Hafıza taraması tamamlandı.",
-    "ask_vlm_about_scene": "Sahne analizi tamamlandı.",
-}
+        with open(_CATALOG_PATH, "r", encoding="utf-8") as fh:
+            loaded = yaml.safe_load(fh)
+        if isinstance(loaded, dict):
+            data = loaded
+    except Exception as exc:  # pragma: no cover - IO/environment specific
+        logger.warning("Progress message catalog load failed: %s", exc)
+    if not isinstance(data.get("languages"), dict):
+        data["languages"] = {"en": {"ack": ["Okay."], "persona_start": "Putting the answer together."}}
+    data.setdefault("default_language", "en")
+    _catalog_cache = data
+    return data
 
-_VLM_PROCESSING_TEMPLATES_TR = [
-    "Görüntüyü işliyorum, biraz bekle.",
-    "Sahneyi yorumluyorum.",
-]
 
-_TOOL_START_TEMPLATES_EN: Dict[str, str] = {
-    "get_vision": "Fetching vision data.",
-    "get_visual_context": "Checking the latest vision cache.",
-    "get_sensor_data": "Reading sensor data.",
-    "search_memory": "Searching my memory.",
-    "move_head": "Turning my head.",
-    "set_lights": "Adjusting the lights.",
-    "focus_person": "Focusing on the person.",
-    "ask_vlm_about_scene": "Analyzing the scene.",
-    "describe_scene": "Describing what I see.",
-    "remember_person": "Saving this person to memory.",
-}
+def _catalog_lang(lang: str) -> Dict[str, Any]:
+    catalog = _load_catalog()
+    languages = catalog.get("languages", {})
+    entry = languages.get(str(lang or "").strip().lower())
+    if isinstance(entry, dict):
+        return entry
+    fallback = languages.get(str(catalog.get("default_language", "en")))
+    return fallback if isinstance(fallback, dict) else {}
 
-_TOOL_DONE_TEMPLATES_EN: Dict[str, str] = {
-    "get_vision": "Image captured.",
-    "get_visual_context": "Got the view, checking people now.",
-    "get_sensor_data": "Sensor data received.",
-    "search_memory": "Memory search complete.",
-    "ask_vlm_about_scene": "Scene analysis complete.",
-}
 
-_VLM_PROCESSING_TEMPLATES_EN = [
-    "Processing the image, one moment.",
-    "Analyzing the scene.",
-]
+def _msg(lang: str, key: str, default: str = "") -> str:
+    """Fetch a single message for a language, falling back to default language."""
+    entry = _catalog_lang(lang)
+    value = entry.get(key)
+    if isinstance(value, str) and value.strip():
+        return value
+    default_entry = _catalog_lang("")
+    value = default_entry.get(key)
+    if isinstance(value, str) and value.strip():
+        return value
+    return default
+
+def _msg_choice(lang: str, key: str) -> str:
+    entry = _catalog_lang(lang)
+    values = entry.get(key)
+    if not (isinstance(values, list) and values):
+        values = _catalog_lang("").get(key)
+    if isinstance(values, list) and values:
+        return str(random.choice(values))
+    return ""
+
+
+def _msg_map(lang: str, key: str) -> Dict[str, str]:
+    entry = _catalog_lang(lang)
+    values = entry.get(key)
+    if not isinstance(values, dict):
+        values = _catalog_lang("").get(key)
+    return values if isinstance(values, dict) else {}
+
+
+def supported_progress_languages() -> List[str]:
+    return sorted(_load_catalog().get("languages", {}).keys())
 
 
 class ProgressManager:
@@ -124,9 +128,13 @@ class ProgressManager:
         self,
         speech_arbiter: Optional[Any] = None,
         speak_fn: Optional[Callable[..., Any]] = None,
+        persona_start_min_elapsed_s: float = 4.0,
+        interaction_emit_fn: Optional[Callable[[str, Optional[Dict[str, Any]]], None]] = None,
     ) -> None:
         self._speech_arbiter = speech_arbiter
         self._speak_fn = speak_fn
+        self._interaction_emit_fn = interaction_emit_fn
+        self._persona_start_min_elapsed_s = float(persona_start_min_elapsed_s)
         self._active_tokens: Dict[str, float] = {}  # token -> created_at
         self._token_languages: Dict[str, str] = {}  # token -> session language (tr|en)
         self._last_progress_text: Dict[str, str] = {}  # token -> last spoken text
@@ -193,13 +201,8 @@ class ProgressManager:
         import uuid
         token = uuid.uuid4().hex[:10]
         self._active_tokens[token] = time.time()
-        lang = str(language or "tr").strip().lower()
-        if lang.startswith("en"):
-            lang = "en"
-        elif lang.startswith("tr"):
-            lang = "tr"
-        else:
-            lang = "tr"
+        # Keep the bare 2-letter code; the catalog decides which languages exist.
+        lang = str(language or "tr").strip().lower()[:2] or "tr"
         self._token_languages[token] = lang
         return token
 
@@ -209,15 +212,21 @@ class ProgressManager:
     def is_active(self, token: str) -> bool:
         return token in self._active_tokens
 
+    def _emit_interaction(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
+        if not self._interaction_emit_fn:
+            return
+        try:
+            self._interaction_emit_fn(event_type, data or {})
+        except Exception as exc:
+            logger.debug("interaction emit failed: %s", exc)
+
     # ── Stage 1: Immediate Ack ────────────────────────────────────────
-    def emit_ack(self, token: str, custom_text: str = "") -> None:
+    def emit_ack(self, token: str, custom_text: str = "", *, speak: bool = True) -> None:
         """Emit an immediate acknowledgement (template-based, no LLM)."""
-        if custom_text:
-            text = custom_text
-        elif self._lang_for(token) == "en":
-            text = random.choice(_ACK_TEMPLATES_EN)
-        else:
-            text = random.choice(_ACK_TEMPLATES_TR)
+        self._emit_interaction("agent.processing.start", {"stage": "ack"})
+        if not speak:
+            return
+        text = custom_text or _msg_choice(self._lang_for(token), "ack")
         self._speak_progress(token, text, event_type="ack")
 
     # ── Stage 2: Plan Summary ────────────────────────────────────────
@@ -232,10 +241,8 @@ class ProgressManager:
             if goal and plan_goal_should_speak(goal):
                 parts.append(goal)
         if parts:
-            if self._lang_for(token) == "en":
-                summary = "My plan: " + ", ".join(parts[:2]) + "."
-            else:
-                summary = "Planım: " + ", ".join(parts[:2]) + "."
+            prefix = _msg(self._lang_for(token), "plan_prefix", "My plan: ")
+            summary = prefix + ", ".join(parts[:2]) + "."
             self._speak_progress(token, summary, event_type="plan")
 
     # ── Stage 3: Tool Progress ───────────────────────────────────────
@@ -247,33 +254,27 @@ class ProgressManager:
         if not tool_result_succeeded(tool_name, result):
             logger.debug("tool_done %s skipped TTS (no usable result)", tool_name)
             return
-        templates = _TOOL_DONE_TEMPLATES_EN if self._lang_for(token) == "en" else _TOOL_DONE_TEMPLATES_TR
-        text = templates.get(tool_name)
+        text = _msg_map(self._lang_for(token), "tool_done").get(tool_name)
         if text:
             self._speak_progress(token, text, event_type="tool_done")
 
     def emit_tool_error(self, token: str, tool_name: str, error: str = "") -> None:
-        if self._lang_for(token) == "en":
-            text = f"There was a problem while running {tool_name}."
-        else:
-            text = f"{tool_name} çalışırken bir sorun oldu."
-        self._speak_progress(token, text, event_type="tool_error")
+        template = _msg(self._lang_for(token), "tool_error", "There was a problem while running {tool}.")
+        self._speak_progress(token, template.format(tool=tool_name), event_type="tool_error")
 
     def emit_vlm_processing(self, token: str) -> None:
-        templates = _VLM_PROCESSING_TEMPLATES_EN if self._lang_for(token) == "en" else _VLM_PROCESSING_TEMPLATES_TR
-        text = random.choice(templates)
-        self._speak_progress(token, text, event_type="vlm_processing")
+        text = _msg_choice(self._lang_for(token), "vlm_processing")
+        if text:
+            self._speak_progress(token, text, event_type="vlm_processing")
 
     def emit_vision_capture(self, token: str) -> None:
-        if self._lang_for(token) == "en":
-            text = "Image captured, processing now."
-        else:
-            text = "Görüntüyü aldım, şimdi işliyorum."
+        text = _msg(self._lang_for(token), "vision_capture", "Image captured, processing now.")
         self._speak_progress(token, text, event_type="vision_capture_done")
 
     # ── Stage 4: Final ───────────────────────────────────────────────
     def emit_final(self, token: str) -> None:
         """Mark request as final – cancel all stale progress messages."""
+        self._emit_interaction("agent.processing.end", {"token": token})
         self._cancel_stale(token)
         self._active_tokens.pop(token, None)
         self._token_languages.pop(token, None)
@@ -308,16 +309,23 @@ class ProgressManager:
     def _handle_progress_subagent_start(self, event, token):
         module = str(event.get("module", "")).strip()
         if module and token and subagent_module_should_speak(module):
-            msg = f"Running the {module} module." if self._lang_for(token) == "en" else f"{module} modülünü çalıştırıyorum."
-            self._speak_progress(token, msg, "subagent_start")
+            template = _msg(self._lang_for(token), "subagent_start", "Running the {module} module.")
+            self._speak_progress(token, template.format(module=module), "subagent_start")
 
     def _handle_progress_subagent_done(self, event, token):
         pass
 
     def _handle_progress_persona_start(self, event, token):
-        if token:
-            msg = "Putting the answer together." if self._lang_for(token) == "en" else "Sonuçları birleştirip yanıt hazırlıyorum."
-            self._speak_progress(token, msg, "persona_start")
+        if not token:
+            return
+        # Only speak the "putting the answer together" filler when the request
+        # has already been running long enough to feel slow; quick turns should
+        # go straight to the final answer.
+        started = self._active_tokens.get(token)
+        if started is not None and (time.time() - started) < self._persona_start_min_elapsed_s:
+            return
+        msg = _msg(self._lang_for(token), "persona_start", "Putting the answer together.")
+        self._speak_progress(token, msg, "persona_start")
 
     _PROGRESS_HANDLER_NAMES = {
         "status": "_handle_progress_status",

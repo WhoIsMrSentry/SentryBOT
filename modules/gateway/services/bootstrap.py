@@ -344,6 +344,7 @@ def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
         presets=ncfg.get("presets", {}),
         preset_store_path=str(preset_store),
         preset_version=int(preset_meta.get("version", 1)),
+        companion_cfg=ncfg.get("companion", {}),
     )
     started["neopixel"] = runner
     try:

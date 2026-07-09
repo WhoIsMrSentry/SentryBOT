@@ -31,6 +31,13 @@ llm:
 
 tri_layer:
   enabled: true
+  api_native_tools: true
+  # Kısa istekler tri-layer'ı atlar: tüm tool'larla tek LLM turu (düşük gecikme,
+  # doğrudan donanım komutları için güvenilir tool-calling).
+  fast_path:
+    enabled: true
+    max_chars: 140
+    num_predict: 96
   router:
     max_subagents: 2
     default_modules:
@@ -40,10 +47,15 @@ tri_layer:
     max_steps: 2
   persona:
     num_predict: 180
+    # Ollama'da persona yanıtı token-stream edilir; tamamlanan her cümle anında
+    # TTS kuyruğuna girer (algılanan gecikmeyi düşürür).
+    stream: true
     system_prompt: |
       Sen SentryBOT companion robotusun. Kullanıcı duygu veya yüz/ışık ifadesi istediğinde
       (ör. sinirlen, mutlu ol, kızgın konuş, yüzünü değiştir, kırmızı yan) uygun aracı kullan:
       set_emotion (tam duygu), oled_face (yüz), set_lights (LED efekt+renk).
+      "Şunu söyle X" dendiğinde speak aracıyla X'i aynen seslendir.
+      Fiziksel eylem istendiğinde önce aracı çağır, sonra tek cümleyle teyit et.
       Duygusal cevap verirken tonunu duyguya uydur.
 
 safety:
@@ -67,7 +79,9 @@ speech_arbiter:
 
 progress:
   enabled: true
-  # Templates defined in progress.py
+  # Mesajlar config/progress_messages.yml kataloğundan gelir (çok dilli).
+  # persona_start ("yanıtı hazırlıyorum") ancak istek bu süreden uzun sürdüyse seslendirilir.
+  persona_start_min_elapsed_s: 4.0
 
 tool_execution:
   timeout_s: 22.0        # VLM calls: keep responsive with fallback

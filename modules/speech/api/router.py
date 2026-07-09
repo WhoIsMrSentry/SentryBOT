@@ -29,25 +29,37 @@ def _barge_in_urls() -> tuple[str, ...]:
     )
 
 
-def _notify_autonomy():
+def _notify_autonomy(text: str = "", language: str = ""):
+    # Push the final transcript so autonomy reacts immediately instead of
+    # waiting for its polling loop; the bare /interaction ping stays implicit.
+    try:
+        requests.post(
+            _gw("/autonomy/speech"),
+            json={"text": text, "language": language, "final": True},
+            timeout=0.5,
+        )
+        return
+    except Exception:
+        pass
     try:
         requests.post(_gw("/autonomy/interaction"), timeout=0.1)
     except Exception:
         pass
 
 
-def _push_interaction_event(event_type: str):
+def _push_interaction_event(event_type: str, data: dict | None = None):
     try:
         requests.post(
             _gw("/interactions/event"),
-            json={"type": event_type},
+            json={"type": event_type, "data": data or {}},
             timeout=0.1,
         )
     except Exception:
         pass
 
-def _emit_speech_event(name: str):
-    threading.Thread(target=_push_interaction_event, args=(name,), daemon=True).start()
+
+def _emit_speech_event(name: str, data: dict | None = None):
+    threading.Thread(target=_push_interaction_event, args=(name, data), daemon=True).start()
 
 
 def _barge_in_for_wakeword() -> None:
@@ -77,6 +89,7 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
     last_nonempty_text = ""
     last_partial_text = ""
     last_partial_ts = 0.0
+    last_vu_emit_ts = 0.0
     speaking = False
     speaking_lock = Lock()
 
@@ -102,13 +115,18 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         timer.start()
 
     def _cb(r):
-        nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text
+        nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text, last_vu_emit_ts
         if hasattr(service, "is_stt_suppressed") and service.is_stt_suppressed():
             return
         text = (r.text or "").strip()
         language = getattr(service, "source_language", "tr")
         if r.is_final and hasattr(service, "finalize_stt"):
             text, language = service.finalize_stt(text or last_nonempty_text)
+        level = float(getattr(service, "_last_audio_level", 0.0) or 0.0)
+        now = time.time()
+        if service.listening and (now - last_vu_emit_ts) >= 0.06:
+            last_vu_emit_ts = now
+            _emit_speech_event("speech.audio_level", {"level": level})
         if text:
             last_nonempty_text = text
         if text and contains_wakeword(text):
@@ -139,7 +157,11 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
                 last_partial_ts = now
 
         if r.is_final and (text or last_nonempty_text):
-            threading.Thread(target=_notify_autonomy, daemon=True).start()
+            threading.Thread(
+                target=_notify_autonomy,
+                args=(text or last_nonempty_text, language),
+                daemon=True,
+            ).start()
             if _mark_speaking(True):
                 _emit_speech_event("speech.start")
             _schedule_speech_end()

@@ -21,12 +21,15 @@ def get_core_router(agent) -> APIRouter:
         return {"ok": True, "cleared": cleared}
 
     @router.post("/step")
-    def step(query: str = Body(embed=True)):
-        result = agent.step(query)
+    def step(query: str = Body(embed=True), native_tools: bool | None = None):
+        use_native = native_tools
+        if use_native is None:
+            use_native = bool(getattr(agent, "api_native_tools", False))
+        result = agent.step(query, native_tools=bool(use_native))
         return result or {"text": "", "thoughts": "idle", "actions": []}
 
     @router.post("/step_stream")
-    def step_stream(query: str = Body(embed=True)):
+    def step_stream(query: str = Body(embed=True), native_tools: bool | None = None):
         event_q: queue.Queue[Dict[str, Any]] = queue.Queue()
         done = threading.Event()
         result_holder: Dict[str, Any] = {}
@@ -34,9 +37,13 @@ def get_core_router(agent) -> APIRouter:
         def emit(event: Dict[str, Any]) -> None:
             event_q.put(event)
 
+        use_native = native_tools
+        if use_native is None:
+            use_native = bool(getattr(agent, "api_native_tools", False))
+
         def worker() -> None:
             try:
-                res = agent.step(query, progress_cb=emit)
+                res = agent.step(query, progress_cb=emit, native_tools=bool(use_native))
                 result_holder["result"] = res or {"text": "", "thoughts": "idle", "actions": []}
             except Exception as exc:
                 result_holder["error"] = str(exc)

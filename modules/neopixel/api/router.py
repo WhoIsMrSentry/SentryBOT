@@ -45,6 +45,15 @@ class EmotionsResponse(BaseModel):
     emotions: List[str]
 
 
+class CompanionModeRequest(BaseModel):
+    mode: str = Field(..., description="off | vu | listen | thinking | eye")
+    eye_color: Optional[str] = Field(None, description='Optional "#RRGGBB" for center eye')
+
+
+class CompanionVuRequest(BaseModel):
+    level: float = Field(..., ge=0.0, le=1.0, description="Audio level 0..1 for stick VU meter")
+
+
 def _pretty(name: str) -> str:
     s = name.replace('_', ' ').title()
     s = s.replace('M Grad', 'Multi Grad').replace('M Wave', 'Multi Wave')
@@ -279,5 +288,25 @@ def get_router(runner: NeoRunner) -> APIRouter:
             "iterations": body.iterations,
             "segment": body.segment,
         }
+
+    @r.get("/companion/status")
+    def companion_status():
+        return {"ok": True, **runner.companion_status()}
+
+    @r.post("/companion/mode")
+    def companion_mode(body: CompanionModeRequest = Body(...)):
+        if body.eye_color:
+            parsed = _parse_color_fields(
+                AnimateRequest(name="X", color=body.eye_color, r=None, g=None, b=None)
+            )
+            if parsed:
+                runner.companion_set_eye_color(*parsed)
+        ok = runner.companion_set_mode(body.mode)
+        return {"ok": ok, "mode": body.mode}
+
+    @r.post("/companion/vu")
+    def companion_vu(body: CompanionVuRequest = Body(...)):
+        ok = runner.companion_set_vu_level(body.level)
+        return {"ok": ok, "level": body.level}
 
     return r

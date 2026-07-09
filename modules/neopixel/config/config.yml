@@ -4,23 +4,37 @@ server:
 
 hardware:
   # backend: auto | pi | arduino | sim
-  # - Raspberry Pi 5: pi (uses pi5neo driver when available)
-  # - Arduino: Arduino connected over serial will drive the LED strip (preferred)
   backend: pi
   device: "/dev/spidev0.0"
   num_leds: 23
   segments:
-    - { name: body, start: 0, count: 3 }
-    - { name: driver, start: 3, count: 2 }
-    - { name: right1, start: 5, count: 3 }
-    - { name: right2, start: 8, count: 3 }
-    - { name: left1, start: 11, count: 3 }
-    - { name: left2, start: 14, count: 3 }
-    - { name: head, start: 17, count: 2 }
-    - { name: extra, start: 19, count: 4 }
+    - { name: jewel, start: 0, count: 7 }
+    - { name: stick, start: 7, count: 16 }
   speed_khz: 800
   ws2812_spi_khz: 2400
-  order: "GRB"  # GRB|RGB|BRG
+  order: "GRB"
+
+companion:
+  enabled: true
+  tick_ms: 50
+  layout:
+    jewel_start: 0
+    jewel_count: 7
+    jewel_center_index: 0
+    stick_start: 7
+    stick_count: 16
+  colors:
+    thinking: "#0066CC"
+    eye_default: "#30E3CA"
+    vu_bar: "#00AAFF"
+    vu_bg: "#051018"
+  thinking:
+    step_ms: 120
+  eye:
+    breathe_ms: 800
+  vu:
+    smoothing: 0.35
+    min_level: 0.04
 
 # Pi5-specific driver hint
 pi5neo:

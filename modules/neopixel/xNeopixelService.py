@@ -45,6 +45,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         presets=cfg.get("presets", {}),
         preset_store_path=str(resolved_cfg_path),
         preset_version=int(preset_meta.get("version", 1)),
+        companion_cfg=cfg.get("companion", {}),
     )
 
     app = FastAPI()

@@ -4,4 +4,6 @@ numpy>=1.23
 # Optional for offline TTS
 pyttsx3>=2.90
 piper-tts>=1.2.0
+# Language detection for multi-language voice routing
+langdetect>=1.0.9
 # Piper ONNX modelleri: python tools/install_piper_models.py --turkish --glados

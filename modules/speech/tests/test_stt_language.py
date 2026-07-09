@@ -52,9 +52,13 @@ def test_piper_locks_voice_from_explicit_language() -> None:
             },
         }
     )
-    voice = tts._resolve_piper_voice_key(
+    from modules.speak.services.lang_detect import piper_voice_for_language
+
+    lang = tts._resolve_piper_language(
         "Merhaba nasılsın",
         tts._base_cfg,
         {"language": "en"},
     )
+    assert lang == "en"
+    voice = piper_voice_for_language(lang, tts._base_cfg.get("piper", {}))
     assert voice == "glados"

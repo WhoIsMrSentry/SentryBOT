@@ -78,8 +78,17 @@ class NeoRunner:
         presets: dict[str, Any] | None = None,
         preset_store_path: str | None = None,
         preset_version: int = 1,
+        companion_cfg: dict[str, Any] | None = None,
     ):
         self.driver = NeoDriver(cfg)
+        self._companion = None
+        if isinstance(companion_cfg, dict) and bool(companion_cfg.get("enabled", True)):
+            try:
+                from .companion_leds import CompanionLedController
+
+                self._companion = CompanionLedController(self.driver, companion_cfg)
+            except Exception:
+                self._companion = None
         # Emotions loader is optional; imported lazily to avoid cost
         self._emotion_store = None
         self._segments: dict[str, tuple[int, int]] = {}
@@ -401,6 +410,29 @@ class NeoRunner:
                 pass
             finally:
                 self._animate_queue.task_done()
+
+    def companion_set_mode(self, mode: str) -> bool:
+        if self._companion is None:
+            return False
+        self._companion.set_mode(mode)
+        return True
+
+    def companion_set_vu_level(self, level: float) -> bool:
+        if self._companion is None:
+            return False
+        self._companion.set_vu_level(level)
+        return True
+
+    def companion_set_eye_color(self, r: int, g: int, b: int) -> bool:
+        if self._companion is None:
+            return False
+        self._companion.set_eye_color((int(r) & 255, int(g) & 255, int(b) & 255))
+        return True
+
+    def companion_status(self) -> dict[str, Any]:
+        if self._companion is None:
+            return {"enabled": False, "mode": "off"}
+        return {"enabled": True, "mode": self._companion.mode}
 
     def animate(
         self,

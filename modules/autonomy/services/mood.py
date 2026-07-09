@@ -9,12 +9,17 @@ class MoodManager:
         self.config = config
         defaults = config.get("defaults", {}).get("mood", {})
 
+        needs_cfg = defaults.get("needs", {}) if isinstance(defaults.get("needs"), dict) else {}
+        self._needs_cfg = needs_cfg
         self.state = {
             "happiness": defaults.get("initial_happiness", 50),
             "energy": defaults.get("initial_energy", 100),
             "curiosity": 50,
             "fear": 0,
             "anger": 0,
+            "social": float((needs_cfg.get("social") or {}).get("initial", 50)),
+            "stimulation": float((needs_cfg.get("stimulation") or {}).get("initial", 40)),
+            "rest": float((needs_cfg.get("rest") or {}).get("initial", 80)),
         }
 
         self.last_update = time.time()
@@ -62,7 +67,41 @@ class MoodManager:
         self.state["curiosity"] = min(100, self.state["curiosity"] + (decay * 0.5)) # Curiosity grows when idle
         self.state["fear"] = max(0, self.state["fear"] - (decay * 2.0)) # Fear recovers quickly
         self.state["anger"] = max(0, self.state["anger"] - (decay * 1.5)) # Anger cools down over time
+        self._update_needs(dt)
         self._maybe_snapshot()
+
+    def _need_rate(self, name: str, key: str, default: float = 0.0) -> float:
+        block = self._needs_cfg.get(name, {}) if isinstance(self._needs_cfg.get(name), dict) else {}
+        try:
+            return float(block.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _update_needs(self, dt: float) -> None:
+        """Config-driven social / stimulation / rest need axes."""
+        social_decay = self._need_rate("social", "decay_per_s", 0.08)
+        stim_growth = self._need_rate("stimulation", "growth_per_s", 0.12)
+        rest_drain = self._need_rate("rest", "drain_per_s", 0.06)
+        self.state["social"] = max(0, min(100, self.state["social"] - social_decay * dt))
+        self.state["stimulation"] = max(0, min(100, self.state["stimulation"] + stim_growth * dt))
+        self.state["rest"] = max(0, min(100, self.state["rest"] - rest_drain * dt))
+
+    def satisfy_need(self, need: str, amount: float) -> None:
+        key = str(need or "").strip().lower()
+        if key not in {"social", "stimulation", "rest"}:
+            return
+        delta = float(amount)
+        if key == "rest":
+            self.state[key] = max(0, min(100, self.state[key] + delta))
+        else:
+            self.state[key] = max(0, min(100, self.state[key] - delta))
+
+    def get_needs(self) -> dict:
+        return {
+            "social": round(float(self.state.get("social", 0)), 1),
+            "stimulation": round(float(self.state.get("stimulation", 0)), 1),
+            "rest": round(float(self.state.get("rest", 0)), 1),
+        }
 
     def modify(self, mood, delta):
         if mood in self.state:

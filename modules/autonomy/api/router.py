@@ -16,6 +16,12 @@ class ActionPayload(BaseModel):
 class PaletteBody(BaseModel):
     rgb: List[int]
 
+
+class SpeechFinalPayload(BaseModel):
+    text: str = ""
+    language: str = ""
+    final: bool = True
+
 def get_router(brain: AutonomyBrain) -> APIRouter:
     router = APIRouter(prefix="/autonomy", tags=["autonomy"])
 
@@ -28,6 +34,15 @@ def get_router(brain: AutonomyBrain) -> APIRouter:
         """Report that an interaction occurred (resets boredom timer)"""
         brain.interaction_occurred(source="api")
         return {"status": "ok", "mood": int(brain.mood["happiness"])}
+
+    @router.post("/speech")
+    def speech_final(payload: SpeechFinalPayload):
+        """Event-driven speech ingestion: process a final transcript immediately."""
+        if not payload.final:
+            return {"ok": True, "handled": False, "reason": "not_final"}
+        brain.interaction_occurred(source="speech")
+        handled = brain.on_speech_final(payload.text, payload.language)
+        return {"ok": True, "handled": handled}
 
     @router.post("/apply_actions")
     def apply_actions(payload: ActionPayload):

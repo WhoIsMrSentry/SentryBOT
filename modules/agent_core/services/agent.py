@@ -129,7 +129,18 @@ class AgentOrchestrator:
         self.vision_arbiter = VisionArbiter()
         self.expression_arbiter = ExpressionArbiter()
         self.speech_arbiter = SpeechArbiter()
-        self.progress_manager = ProgressManager(speech_arbiter=self.speech_arbiter)
+        progress_cfg = config.get("progress", {}) if isinstance(config.get("progress", {}), dict) else {}
+        self.progress_manager = ProgressManager(
+            speech_arbiter=self.speech_arbiter,
+            persona_start_min_elapsed_s=self._safe_float(
+                progress_cfg.get("persona_start_min_elapsed_s", 4.0), fallback=4.0, minimum=0.0,
+            ),
+            interaction_emit_fn=(
+                self.autonomy_client.push_interaction_event
+                if self.autonomy_client and hasattr(self.autonomy_client, "push_interaction_event")
+                else None
+            ),
+        )
         self.progress_manager.attach_arbiters(
             action_arbiter=self.action_arbiter, vision_arbiter=self.vision_arbiter,
             expression_arbiter=self.expression_arbiter, tool_execution_arbiter=self.tool_execution_arbiter,
@@ -173,10 +184,16 @@ class AgentOrchestrator:
             default_modules=default_modules,
         )
         self.tri_layer_enabled = bool(tri_cfg.get("enabled", True))
+        self.api_native_tools = bool(tri_cfg.get("api_native_tools", False))
+        fast_cfg = tri_cfg.get("fast_path", {}) if isinstance(tri_cfg.get("fast_path", {}), dict) else {}
+        self.fast_path_enabled = bool(fast_cfg.get("enabled", True))
+        self.fast_path_max_chars = self._safe_int(fast_cfg.get("max_chars", 140), fallback=140, minimum=20)
+        self.fast_path_num_predict = self._safe_int(fast_cfg.get("num_predict", 96), fallback=96, minimum=32)
         self.subagent_max_steps = self._safe_int(subagent_cfg.get("max_steps", 2), fallback=2, minimum=1)
         self.subagent_workers = self._safe_int(subagent_cfg.get("workers", 2), fallback=2, minimum=1)
         self.persona_system_prompt = str(persona_cfg.get("system_prompt", "")).strip()
         self.persona_num_predict = self._safe_int(persona_cfg.get("num_predict", 180), fallback=180, minimum=64)
+        self.persona_stream_enabled = bool(persona_cfg.get("stream", True))
         self.chat_num_predict = self._safe_int(agent_cfg.get("num_predict", 100), fallback=100, minimum=48)
         rt_cfg = config.get("realtime_profile", {}) if isinstance(config.get("realtime_profile", {}), dict) else {}
         active_profile_name = str(rt_cfg.get("active", "")).strip().lower()
@@ -605,19 +622,17 @@ class AgentOrchestrator:
             if str(t.get("function", {}).get("name", "")).strip()
         }
         cleaned = self._strip_code_fence(content)
-        try:
-            data = json.loads(cleaned)
-        except Exception:
-            return None
-
+        data = self._loads_first_json_object(cleaned)
         if not isinstance(data, dict):
             return None
 
-        tool_name = str(data.get("tool", "")).strip()
+        tool_name = str(
+            data.get("tool") or data.get("tool_name") or data.get("name") or ""
+        ).strip()
         if tool_name not in allowed:
             return None
 
-        arguments = data.get("arguments", {})
+        arguments = data.get("arguments", data.get("args", data.get("parameters", {})))
         if not isinstance(arguments, dict):
             arguments = {}
 
@@ -627,6 +642,38 @@ class AgentOrchestrator:
                 "arguments": arguments,
             }
         }
+
+    @staticmethod
+    def _loads_first_json_object(text: str) -> Optional[Any]:
+        """Parse text as JSON; if that fails, extract the first balanced {...} block.
+
+        Prompt-driven providers (Gemma/Gemini) often wrap the JSON tool call in
+        prose or code fences despite instructions, so plain json.loads is not
+        enough for a reliable multi-turn tool loop.
+        """
+        candidate = str(text or "").strip()
+        if not candidate:
+            return None
+        try:
+            return json.loads(candidate)
+        except Exception:
+            pass
+        start = candidate.find("{")
+        while start != -1:
+            depth = 0
+            for idx in range(start, len(candidate)):
+                ch = candidate[idx]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        try:
+                            return json.loads(candidate[start : idx + 1])
+                        except Exception:
+                            break
+            start = candidate.find("{", start + 1)
+        return None
 
     def _list_ollama_models(self) -> List[str]:
         now = time.time()
@@ -683,6 +730,25 @@ class AgentOrchestrator:
         for msg in messages:
             role = str(msg.get("role", "user"))
             content = str(msg.get("content", ""))
+            # Keep the multi-turn tool trace readable for prompt-based providers:
+            # assistant tool_calls have empty content and would silently vanish,
+            # breaking the model's picture of what it already executed.
+            if role == "assistant" and not content.strip() and msg.get("tool_calls"):
+                try:
+                    calls = [
+                        {
+                            "tool": t.get("function", {}).get("name", ""),
+                            "arguments": t.get("function", {}).get("arguments", {}),
+                        }
+                        for t in msg.get("tool_calls", [])
+                    ]
+                    content = f"[tool_call] {json.dumps(calls, ensure_ascii=False)}"
+                except Exception:
+                    content = "[tool_call]"
+            elif role == "tool":
+                tool_name = str(msg.get("name", "")).strip()
+                content = f"[tool_result {tool_name}] {content}"
+                role = "user"
             provider_messages.append({"role": role, "content": content})
 
         tool_list = tools or []
@@ -764,6 +830,142 @@ class AgentOrchestrator:
                 return ollama.chat(**kwargs)
             raise
 
+    def _chat_maybe_stream(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        options: Optional[Dict[str, Any]],
+        on_sentence: Optional[Callable[[str, int], None]] = None,
+    ) -> Dict[str, Any]:
+        """Blocking chat with optional Ollama token-stream → sentence TTS hooks."""
+        if not (
+            on_sentence
+            and self.persona_stream_enabled
+            and self.llm_provider == "ollama"
+            and self.ollama_client is not None
+        ):
+            return self._chat(model, messages, tools, options)
+
+        import re as _re
+
+        if AgentOrchestrator._SENTENCE_END_RE is None:
+            AgentOrchestrator._SENTENCE_END_RE = _re.compile(r"(?<=[.!?…])\s+")
+        sent_re = AgentOrchestrator._SENTENCE_END_RE
+
+        selected_model = self._pick_runtime_model(model)
+        kwargs: Dict[str, Any] = {
+            "model": selected_model,
+            "messages": messages,
+            "stream": True,
+        }
+        if tools is not None:
+            kwargs["tools"] = tools
+        if options is not None:
+            kwargs["options"] = options
+
+        try:
+            stream = self.ollama_client.chat(**kwargs)
+        except Exception as exc:
+            logger.warning("Streaming chat failed, falling back to blocking: %s", exc)
+            return self._chat(model, messages, tools, options)
+
+        buffer = ""
+        pieces: List[str] = []
+        tool_calls: List[Dict[str, Any]] = []
+        idx = 0
+
+        for chunk in stream:
+            msg = chunk.get("message", {}) or {}
+            chunk_tools = msg.get("tool_calls")
+            if chunk_tools:
+                tool_calls.extend(chunk_tools)
+            piece = str(msg.get("content", ""))
+            if not piece:
+                continue
+            pieces.append(piece)
+            if tool_calls:
+                continue
+            buffer += piece
+            while True:
+                match = sent_re.search(buffer)
+                if not match:
+                    break
+                sentence = buffer[: match.end()].strip()
+                buffer = buffer[match.end() :]
+                if sentence:
+                    try:
+                        on_sentence(sentence, idx)
+                    except Exception:
+                        logger.debug("on_sentence callback failed", exc_info=True)
+                    idx += 1
+
+        full_content = "".join(pieces).strip()
+        if tool_calls:
+            return {"message": {"content": full_content, "tool_calls": tool_calls}}
+
+        tail = buffer.strip()
+        if tail:
+            try:
+                on_sentence(tail, idx)
+            except Exception:
+                logger.debug("on_sentence callback failed", exc_info=True)
+            if not full_content:
+                full_content = tail
+        return {"message": {"content": full_content}}
+
+    _SENTENCE_END_RE = None  # compiled lazily below
+
+    def _stream_chat_sentences(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        options: Dict[str, Any],
+        on_sentence: Callable[[str, int], None],
+    ) -> str:
+        """Stream an Ollama chat and emit complete sentences as they arrive.
+
+        Returns the full response text. Raises on transport errors so the
+        caller can fall back to the blocking path.
+        """
+        import re as _re
+
+        if AgentOrchestrator._SENTENCE_END_RE is None:
+            AgentOrchestrator._SENTENCE_END_RE = _re.compile(r"(?<=[.!?…])\s+")
+        sent_re = AgentOrchestrator._SENTENCE_END_RE
+
+        stream = self.ollama_client.chat(
+            model=model, messages=messages, options=options, stream=True,
+        )
+        buffer = ""
+        pieces: List[str] = []
+        idx = 0
+        for chunk in stream:
+            piece = str((chunk.get("message", {}) or {}).get("content", ""))
+            if not piece:
+                continue
+            pieces.append(piece)
+            buffer += piece
+            while True:
+                match = sent_re.search(buffer)
+                if not match:
+                    break
+                sentence = buffer[: match.end()].strip()
+                buffer = buffer[match.end():]
+                if sentence:
+                    try:
+                        on_sentence(sentence, idx)
+                    except Exception:
+                        logger.debug("on_sentence callback failed", exc_info=True)
+                    idx += 1
+        tail = buffer.strip()
+        if tail:
+            try:
+                on_sentence(tail, idx)
+            except Exception:
+                logger.debug("on_sentence callback failed", exc_info=True)
+        return "".join(pieces).strip()
+
     @staticmethod
     def _extract_tool_arguments(raw_arguments: Any) -> Dict[str, Any]:
         if isinstance(raw_arguments, dict):
@@ -777,22 +979,32 @@ class AgentOrchestrator:
                 return {}
         return {}
 
-    def _run_native_history_loop(self, active_model: str, messages: List[Dict[str, Any]]) -> Tuple[str, int]:
+    def _run_native_history_loop(
+        self,
+        active_model: str,
+        messages: List[Dict[str, Any]],
+        actions_out: Optional[List[Dict[str, Any]]] = None,
+        *,
+        num_predict: Optional[int] = None,
+        on_sentence: Optional[Callable[[str, int], None]] = None,
+    ) -> Tuple[str, int]:
         tools = self.tool_registry.get_tool_schema()
         final_text = ""
         step_idx = 0
+        predict_budget = int(num_predict if num_predict is not None else self.chat_num_predict)
 
         for step_idx in range(self.max_steps):
             try:
-                response = self._chat(
-                    model=active_model,
-                    messages=messages,
-                    tools=tools,
-                    options={
+                response = self._chat_maybe_stream(
+                    active_model,
+                    messages,
+                    tools,
+                    {
                         "temperature": self.temperature,
                         "num_ctx": self.num_ctx,
-                        "num_predict": self.chat_num_predict,
+                        "num_predict": predict_budget,
                     },
+                    on_sentence=on_sentence,
                 )
             except Exception as exc:
                 logger.error("LLM tool loop crashed: %s", exc)
@@ -819,6 +1031,14 @@ class AgentOrchestrator:
                     fn_args = self._extract_tool_arguments(tool.get("function", {}).get("arguments", {}))
 
                     tool_result_str = self.tool_registry.execute(fn_name, fn_args)
+                    if actions_out is not None:
+                        actions_out.append(
+                            {
+                                "tool": fn_name,
+                                "args": fn_args,
+                                "result": str(tool_result_str)[:200],
+                            }
+                        )
                     tool_msg = {
                         "role": "tool",
                         "content": tool_result_str,
@@ -837,6 +1057,19 @@ class AgentOrchestrator:
             final_text = "Task completed using internal tools."
 
         return final_text, step_idx + 1
+
+    @staticmethod
+    def _enqueue_sentences(text: str, on_sentence: Callable[[str, int], None]) -> None:
+        import re
+        parts = [p.strip() for p in re.split(r"(?<=[.!?…])\s+", str(text or "").strip()) if p.strip()]
+        if not parts:
+            parts = [str(text or "").strip()]
+        for idx, sentence in enumerate(parts):
+            if sentence:
+                try:
+                    on_sentence(sentence, idx)
+                except Exception:
+                    logger.debug("on_sentence callback failed", exc_info=True)
 
     def _run_subagent(
         self,
@@ -880,6 +1113,7 @@ class AgentOrchestrator:
 
         final_text = ""
         used_tools: List[str] = []
+        executed_actions: List[Dict[str, Any]] = []
         steps_taken = 0
         max_steps = self.subagent_max_steps if tools else 1
 
@@ -930,6 +1164,13 @@ class AgentOrchestrator:
                 fn_args = self._extract_tool_arguments(tool.get("function", {}).get("arguments", {}))
                 tool_result_str = self.tool_registry.execute(fn_name, fn_args)
                 used_tools.append(fn_name)
+                executed_actions.append(
+                    {
+                        "tool": fn_name,
+                        "args": fn_args,
+                        "result": str(tool_result_str)[:200],
+                    }
+                )
                 messages.append(
                     {
                         "role": "tool",
@@ -950,6 +1191,7 @@ class AgentOrchestrator:
             "module": profile.module,
             "text": final_text,
             "tools": used_tools,
+            "actions": executed_actions,
             "steps": steps_taken,
         }
 
@@ -960,6 +1202,7 @@ class AgentOrchestrator:
         survival_override: Optional[str],
         active_model: str,
         session_language: Optional[str] = None,
+        on_sentence: Optional[Callable[[str, int], None]] = None,
     ) -> str:
         # MARK: Layer-3 is the only layer that speaks as the main persona.
         # Use configurable persona system prompt when provided; otherwise use a neutral default
@@ -975,27 +1218,49 @@ class AgentOrchestrator:
             )
 
         compact_reports = self._compact_subagent_reports(reports)
+        actions_taken = self._summarize_actions(reports)
         user_payload = {
             "request": user_prompt,
             "safety_override": survival_override or "",
             "subagent_reports": compact_reports,
         }
+        if actions_taken:
+            # Let the persona speak consistently with what physically happened
+            # ("I turned the lights red") instead of ignoring executed tools.
+            user_payload["actions_taken"] = actions_taken
 
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
         ]
         adaptive_persona_np = self._adaptive_persona_num_predict(user_prompt=user_prompt, report_count=len(compact_reports))
+        options = {
+            "temperature": self.temperature,
+            "num_ctx": self.num_ctx,
+            "num_predict": adaptive_persona_np,
+        }
+
+        # Streaming path: sentences reach TTS while the model is still writing.
+        if (
+            on_sentence is not None
+            and self.persona_stream_enabled
+            and self.llm_provider == "ollama"
+            and self.ollama_client is not None
+        ):
+            try:
+                streamed = self._stream_chat_sentences(
+                    self._pick_runtime_model(active_model), messages, options, on_sentence,
+                )
+                if streamed:
+                    return streamed
+            except Exception as exc:
+                logger.warning("Persona streaming failed, falling back to blocking chat: %s", exc)
 
         try:
             response = self._chat(
                 model=active_model,
                 messages=messages,
-                options={
-                    "temperature": self.temperature,
-                    "num_ctx": self.num_ctx,
-                    "num_predict": adaptive_persona_np,
-                },
+                options=options,
             )
             final_text = str(response.get("message", {}).get("content", "")).strip()
             if final_text:
@@ -1006,6 +1271,25 @@ class AgentOrchestrator:
         if reports:
             return str(reports[0].get("text", ""))
         return "Task completed using internal tools."
+
+    @staticmethod
+    def _summarize_actions(reports: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Flatten executed tool calls from sub-agent reports for persona/API output."""
+        summary: List[Dict[str, Any]] = []
+        for r in reports:
+            if not isinstance(r, dict):
+                continue
+            for action in r.get("actions") or []:
+                if not isinstance(action, dict):
+                    continue
+                summary.append(
+                    {
+                        "tool": str(action.get("tool", "")),
+                        "args": action.get("args", {}),
+                        "result": str(action.get("result", ""))[:160],
+                    }
+                )
+        return summary
 
     def _compact_subagent_reports(self, reports: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         compact: List[Dict[str, Any]] = []
@@ -1024,24 +1308,31 @@ class AgentOrchestrator:
 
     @staticmethod
     def _normalize_session_language(language: Optional[str]) -> str:
+        """Keep the detected ISO code as-is (2 letters); default is Turkish.
+
+        The language list is not hardcoded here: any code flows through to the
+        LLM directive and the TTS layer, which pick their own fallbacks.
+        """
         raw = str(language or "tr").strip().lower()
-        if raw.startswith("en"):
-            return "en"
-        if raw.startswith("tr"):
-            return "tr"
-        return "tr"
+        code = raw.split("-")[0].split("_")[0][:2]
+        return code if len(code) == 2 and code.isalpha() else "tr"
 
     @classmethod
     def _language_directive(cls, language: Optional[str]) -> str:
         lang = cls._normalize_session_language(language)
-        if lang == "en":
-            return (
-                "The user is speaking English. Reply ONLY in English. "
-                "Do not use Turkish words or sentences."
-            )
+        lang_name = ""
+        try:
+            from .progress import _load_catalog
+
+            entry = _load_catalog().get("languages", {}).get(lang)
+            if isinstance(entry, dict):
+                lang_name = str(entry.get("name", "")).strip()
+        except Exception:
+            lang_name = ""
+        label = lang_name or f"the language with ISO code '{lang}'"
         return (
-            "Kullanıcı Türkçe konuşuyor. Yalnızca Türkçe yanıt ver. "
-            "İngilizce kelime veya cümle kullanma."
+            f"The user is speaking {label} (ISO code: {lang}). "
+            f"Reply ONLY in that language. Do not mix in other languages."
         )
 
     def _adaptive_persona_num_predict(self, user_prompt: str, report_count: int) -> int:
@@ -1067,6 +1358,34 @@ class AgentOrchestrator:
                     pass
         return _unified_progress_cb
 
+    def _should_fast_path(self, user_prompt: str, *, native_tools: bool = False) -> bool:
+        """Short prompts (or voice path) skip tri-layer: one native loop with full tools.
+
+        ``native_tools=True`` is set for autonomy speech so the LLM interprets
+        commands in any language without keyword-router hardcoding.
+        """
+        if native_tools:
+            return True
+        if not self.fast_path_enabled:
+            return False
+        return len(str(user_prompt or "").strip()) <= self.fast_path_max_chars
+
+    def _native_loop_messages(self, session_language: str) -> List[Dict[str, Any]]:
+        lang_rule = self._language_directive(session_language)
+        persona = self.persona_system_prompt or (
+            "You are the robot's single response layer. Answer the user directly."
+        )
+        system_prompt = (
+            f"{persona}\n\n{lang_rule}\n\n"
+            "You understand the user in any language. Interpret intent across languages "
+            "(e.g. LED color, emotion, speak, head movement) and call the matching tool.\n"
+            "You can control the robot with the available tools (lights, emotion, "
+            "speech, head, sounds...). When the user asks for a physical action, "
+            "call the matching tool instead of only describing it, then confirm "
+            "briefly in one sentence in the user's language."
+        )
+        return [{"role": "system", "content": system_prompt}] + list(self.chat_history)
+
     def _check_provider_availability(self) -> Optional[Dict[str, Any]]:
         if self.llm_provider == "ollama" and not ollama:
             logger.error("Ollama library not found. Native tool loop requires 'ollama' package.")
@@ -1078,7 +1397,8 @@ class AgentOrchestrator:
 
     def _run_tri_layer(self, user_prompt: str, world_context: str, survival_override: str,
                        active_model: str, session_language: str,
-                       progress_token: str, cb: Callable) -> tuple[str, int, list]:
+                       progress_token: str, cb: Callable,
+                       on_sentence: Optional[Callable[[str, int], None]] = None) -> tuple[str, int, list]:
         self.last_routed_subagents = self.router.route(user_prompt)
         logger.info("Tri-layer route selected: %s", self.last_routed_subagents)
 
@@ -1108,17 +1428,22 @@ class AgentOrchestrator:
 
         final_text, total_steps = self._synthesize_from_reports(
             subagent_reports, user_prompt, survival_override, active_model,
-            session_language, cb, total_steps,
+            session_language, cb, total_steps, on_sentence=on_sentence,
         )
         return final_text, total_steps, subagent_reports
 
     def _synthesize_from_reports(self, subagent_reports: list, user_prompt: str,
                                   survival_override: str, active_model: str,
                                   session_language: str, cb: Callable,
-                                  total_steps: int) -> tuple[str, int]:
+                                  total_steps: int,
+                                  on_sentence: Optional[Callable[[str, int], None]] = None) -> tuple[str, int]:
         if not subagent_reports:
             messages = list(self.chat_history)
-            return self._run_native_history_loop(active_model, messages)
+            native_actions: List[Dict[str, Any]] = []
+            final_text, steps = self._run_native_history_loop(active_model, messages, actions_out=native_actions)
+            if native_actions:
+                subagent_reports.append({"module": "native", "text": final_text, "tools": [a["tool"] for a in native_actions], "actions": native_actions, "steps": steps})
+            return final_text, steps
 
         try:
             from modules.ollama.services.clients import GoogleAIStudioClient
@@ -1127,7 +1452,13 @@ class AgentOrchestrator:
             gemini_limited = False
 
         if gemini_limited:
-            final_text = "AI quota is exhausted right now. Can you try again in a minute or two?" if session_language == "en" else "Şu an yapay zeka kotası dolu. Bir iki dakika sonra tekrar dener misin?"
+            from .progress import _msg
+
+            final_text = _msg(
+                session_language,
+                "quota_exhausted",
+                "AI quota is exhausted right now. Can you try again in a minute or two?",
+            )
             self._append_history("assistant", final_text)
             return final_text, total_steps
 
@@ -1135,7 +1466,7 @@ class AgentOrchestrator:
         final_text = self._synthesize_main_persona(
             user_prompt=user_prompt, reports=subagent_reports,
             survival_override=survival_override, active_model=active_model,
-            session_language=session_language,
+            session_language=session_language, on_sentence=on_sentence,
         )
         self._append_history("assistant", final_text)
         return final_text, total_steps
@@ -1146,6 +1477,7 @@ class AgentOrchestrator:
         progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
         language: Optional[str] = None,
         speaker: Optional[str] = None,
+        native_tools: bool = False,
     ) -> Optional[Dict[str, Any]]:
         now = time.time()
         if now - self.last_run < self.cooldown or self.is_busy or not user_prompt:
@@ -1168,7 +1500,8 @@ class AgentOrchestrator:
         self.tool_registry.status_hook = cb
 
         try:
-            self.progress_manager.emit_ack(progress_token)
+            use_fast_path = self._should_fast_path(user_prompt, native_tools=native_tools)
+            self.progress_manager.emit_ack(progress_token, speak=not use_fast_path)
 
             survival_override = self.check_survival_drives()
             world_context = self.world_state.inject_world_state("")
@@ -1187,15 +1520,40 @@ class AgentOrchestrator:
             final_text = ""
             total_steps = 0
             subagent_reports: List[Dict[str, Any]] = []
+            executed_actions: List[Dict[str, Any]] = []
 
-            if self.tri_layer_enabled:
+            # Streamed sentences go straight to the speech queue; the caller
+            # then skips its own enqueue (speech_handled flag below).
+            stream_state = {"spoken": 0}
+            on_sentence: Optional[Callable[[str, int], None]] = None
+            if self.speech_arbiter._speak_fn is not None:
+                def _speak_sentence(sentence: str, index: int) -> None:
+                    item_id = self.speech_arbiter.enqueue_final_chunk(
+                        sentence, index=index, language=session_language,
+                    )
+                    if item_id:
+                        stream_state["spoken"] += 1
+
+                on_sentence = _speak_sentence
+
+            if self.tri_layer_enabled and not use_fast_path:
                 final_text, total_steps, subagent_reports = self._run_tri_layer(
                     user_prompt, world_context, survival_override, active_model,
-                    session_language, progress_token, cb,
+                    session_language, progress_token, cb, on_sentence=on_sentence,
                 )
+                executed_actions = self._summarize_actions(subagent_reports)
             else:
-                messages = list(self.chat_history)
-                final_text, total_steps = self._run_native_history_loop(active_model, messages)
+                if use_fast_path:
+                    if native_tools:
+                        logger.info("Voice native-tools path engaged (LLM tool loop, any language).")
+                    else:
+                        logger.info("Fast-path engaged (prompt <= %s chars).", self.fast_path_max_chars)
+                messages = self._native_loop_messages(session_language)
+                final_text, total_steps = self._run_native_history_loop(
+                    active_model, messages, actions_out=executed_actions,
+                    num_predict=self.fast_path_num_predict if use_fast_path else None,
+                    on_sentence=on_sentence,
+                )
 
             self.progress_manager.emit_final(progress_token)
             self.memory.remember("dialogue", f"User: {user_prompt} | Bot: {final_text}")
@@ -1206,11 +1564,12 @@ class AgentOrchestrator:
 
             return {
                 "text": final_text,
-                "thoughts": f"Tri-layer executed with {total_steps} internal steps.",
-                "actions": [],
+                "thoughts": f"Agent executed {total_steps} internal steps.",
+                "actions": executed_actions,
                 "plan": [],
                 "route": self.last_routed_subagents,
                 "subagents": subagent_reports,
+                "speech_handled": stream_state["spoken"] > 0,
             }
         finally:
             self.progress_manager.emit_final(progress_token)

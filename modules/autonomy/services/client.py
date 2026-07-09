@@ -35,6 +35,8 @@ class ServiceClient:
         self.speech_quiet_cfg = dict(cfg.get("speech_quiet_hours", {}))
         self.offline_cfg = dict(cfg.get("offline_mode", {}))
         self.request_timeouts = dict(cfg.get("request_timeouts", {}))
+        speech_cfg = cfg.get("speech", {}) if isinstance(cfg.get("speech"), dict) else {}
+        self.speech_stream_cfg = dict(speech_cfg)
         self._availability_cache = {}
 
     def _agent_core_url(self) -> str:
@@ -330,6 +332,10 @@ class ServiceClient:
         return now >= start_m or now < end_m
 
     def speak(self, text, tone=None, engine=None, language=None):
+        payload = self._build_speak_payload(text, tone=tone, engine=engine, language=language)
+        return self._post("speak", "/say", payload)
+
+    def _build_speak_payload(self, text, tone=None, engine=None, language=None):
         text_value = str(text or "")
         if self._quiet_hours_active():
             max_chars = int(self.speech_quiet_cfg.get("max_chars", 120))
@@ -340,18 +346,60 @@ class ServiceClient:
                 text_value = f"{prefix}{text_value}"
             if tone is None:
                 tone = self.speech_quiet_cfg.get("tone", "calm")
-        payload = {"text": text}
-        payload["text"] = text_value
+        payload = {"text": text_value}
         if tone:
             payload["tone"] = tone
         if engine:
             payload["engine"] = engine
         if language:
             payload["language"] = str(language)
-        return self._post("speak", "/say", payload)
+        return payload
 
-    def chat(self, query, apply_actions: bool = False, source_lang: str | None = None, response_lang: str | None = None):
-        params = {"query": query, "apply_actions": str(bool(apply_actions)).lower()}
+    def speak_stream(self, text, tone=None, engine=None, language=None, max_chunk_chars=None):
+        """Chunked TTS via /speak/say_stream; blocks until the stream job finishes."""
+        payload = self._build_speak_payload(text, tone=tone, engine=engine, language=language)
+        if not str(payload.get("text", "")).strip():
+            return {"ok": False, "error": "text is empty"}
+        if max_chunk_chars is not None:
+            payload["max_chunk_chars"] = int(max_chunk_chars)
+        elif self.speech_stream_cfg.get("stream_max_chunk_chars"):
+            payload["max_chunk_chars"] = int(self.speech_stream_cfg.get("stream_max_chunk_chars"))
+
+        start_timeout = float(self.request_timeouts.get("speak_stream_start_s", 4.0))
+        resp = self._post("speak", "/say_stream", payload, timeout_s=start_timeout)
+        if not resp or not resp.get("ok"):
+            return self.speak(text, tone=tone, engine=engine, language=language)
+
+        job_id = str(resp.get("job_id") or "").strip()
+        if not job_id:
+            return resp
+
+        poll_s = float(self.speech_stream_cfg.get("stream_poll_interval_s", 0.12))
+        max_wait = float(self.speech_stream_cfg.get("stream_max_wait_s", 90.0))
+        deadline = time.time() + max_wait
+        while time.time() < deadline:
+            status = self._get("speak", f"/jobs/{job_id}", timeout_s=2.0)
+            if not isinstance(status, dict):
+                time.sleep(poll_s)
+                continue
+            job = status.get("job") if isinstance(status.get("job"), dict) else status
+            state = str(job.get("status") or "").strip().lower()
+            if state in {"done", "failed", "interrupted"}:
+                return {"ok": state != "failed", "status": state, "job": job, "job_id": job_id}
+            time.sleep(poll_s)
+        return {"ok": False, "error": "stream_timeout", "job_id": job_id}
+
+    def speak_preferred(self, text, tone=None, engine=None, language=None):
+        if bool(self.speech_stream_cfg.get("use_stream_tts", False)):
+            return self.speak_stream(text, tone=tone, engine=engine, language=language)
+        return self.speak(text, tone=tone, engine=engine, language=language)
+
+    def chat(self, query, apply_actions: bool | None = None, source_lang: str | None = None, response_lang: str | None = None):
+        # apply_actions=None leaves the decision to the ollama service config
+        # (actions.default_apply), so tag-based actions work on the fallback path.
+        params = {"query": query}
+        if apply_actions is not None:
+            params["apply_actions"] = str(bool(apply_actions)).lower()
         if source_lang:
             params["source_lang"] = str(source_lang)
         if response_lang:

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional, Tuple
+from pathlib import Path
+from typing import Dict, Optional, Tuple
 
 from modules.speech.services.recognizer import Recognizer
 
@@ -21,10 +22,10 @@ _EN_STOPWORDS = frozenset({
 })
 
 
-def _detect_language(text: str, *, default: str) -> str:
+def _detect_language(text: str, *, default: str, prefer_online: bool = True) -> str:
     from modules.speak.services.lang_detect import detect_text_language
 
-    return detect_text_language(text, default=default)
+    return detect_text_language(text, default=default, prefer_online=prefer_online)
 
 
 def _transcript_score(text: str, target_lang: str) -> float:
@@ -38,7 +39,7 @@ def _transcript_score(text: str, target_lang: str) -> float:
 
     tr_chars = sum(1 for ch in value if ch in _TR_CHARS)
     en_hits = sum(1 for w in words if w in _EN_STOPWORDS)
-    detected = _detect_language(value, default="tr")
+    detected = _detect_language(value, default="tr", prefer_online=True)
 
     if target_lang == "en":
         score = en_hits * 0.45
@@ -52,12 +53,29 @@ def _transcript_score(text: str, target_lang: str) -> float:
             score += 0.8
         return score
 
-    score = 1.0 if detected == "tr" else 0.4
-    score += tr_chars * 0.35
-    score += min(en_hits, 2) * 0.1
-    if detected == "en" and tr_chars == 0 and en_hits >= 3:
-        score -= 1.5
+    if target_lang.startswith("tr"):
+        score = 1.0 if detected == "tr" else 0.4
+        score += tr_chars * 0.35
+        score += min(en_hits, 2) * 0.1
+        if detected == "en" and tr_chars == 0 and en_hits >= 3:
+            score -= 1.5
+        return score
+
+    # Generic languages: trust langdetect + transcript length
+    score = 1.0 if detected == target_lang else 0.25
+    score += min(len(words), 8) * 0.08
     return score
+
+
+def _decode_pcm(recognizer: Recognizer, pcm: bytes) -> str:
+    try:
+        return str(recognizer.recognize_pcm(pcm) or "").strip()
+    except FileNotFoundError:
+        lang = getattr(getattr(recognizer, "cfg", None), "language", "?")
+        logger.warning("%s Vosk model missing; skipping dual-decode for that language", lang)
+    except Exception as exc:
+        logger.debug("secondary STT failed: %s", exc)
+    return ""
 
 
 def resolve_stt_text_and_language(
@@ -65,90 +83,79 @@ def resolve_stt_text_and_language(
     pcm: bytes,
     *,
     primary: Recognizer,
-    secondary: Optional[Recognizer],
-    primary_lang: str = "tr",
+    extra_recognizers: Optional[Dict[str, Recognizer]] = None,
+    secondary: Optional[Recognizer] = None,
     secondary_lang: str = "en",
+    primary_lang: str = "tr",
     default_language: str = "tr",
     auto_switch_model: bool = True,
     dual_decode_margin: float = 0.6,
+    prefer_online_detect: bool = True,
+    dual_decode_only_if_ambiguous: bool = True,
 ) -> Tuple[str, str]:
-    """Pick TR or EN transcript by dual-decoding utterance audio when possible."""
+    """Pick the best transcript/language using langdetect + optional multi-model decode."""
     primary_text = str(text or "").strip()
     if not primary_text and not pcm:
         return "", default_language
 
-    if not auto_switch_model or secondary is None:
-        lang = _detect_language(primary_text, default=default_language) if primary_text else default_language
+    extras: Dict[str, Recognizer] = dict(extra_recognizers or {})
+    if secondary is not None and secondary_lang and secondary_lang not in extras:
+        extras[str(secondary_lang)] = secondary
+
+    if not auto_switch_model or not pcm or not extras:
+        lang = (
+            _detect_language(primary_text, default=default_language, prefer_online=prefer_online_detect)
+            if primary_text
+            else default_language
+        )
         return primary_text, lang
 
-    secondary_text = ""
-    if pcm:
-        try:
-            secondary_text = str(secondary.recognize_pcm(pcm) or "").strip()
-        except FileNotFoundError:
-            logger.warning(f"{secondary_lang.upper()} Vosk model missing; keeping primary transcript only")
-        except Exception as exc:
-            logger.debug("secondary STT failed: %s", exc)
+    if dual_decode_only_if_ambiguous and primary_text:
+        detected = _detect_language(primary_text, default=primary_lang, prefer_online=prefer_online_detect)
+        primary_score = _transcript_score(primary_text, primary_lang)
+        if detected == primary_lang and primary_score >= 2.0:
+            return primary_text, detected
 
-    if not secondary_text:
-        lang = _detect_language(primary_text, default=default_language) if primary_text else default_language
+    candidates: Dict[str, str] = {primary_lang: primary_text}
+    for lang, rec in extras.items():
+        alt_text = _decode_pcm(rec, pcm)
+        if alt_text:
+            candidates[str(lang)] = alt_text
+
+    if len(candidates) <= 1 and primary_text:
+        lang = _detect_language(primary_text, default=default_language, prefer_online=prefer_online_detect)
         return primary_text, lang
 
-    if not primary_text:
-        lang = _detect_language(secondary_text, default=default_language)
-        logger.info("STT language=%s (primary empty, secondary only)", lang)
-        return secondary_text, lang
+    best_lang = primary_lang
+    best_text = primary_text
+    best_score = _transcript_score(primary_text, primary_lang) if primary_text else -1.0
 
-    # Map the outputs to the expected tr/en variables based on the language configuration
-    if primary_lang.startswith("tr"):
-        tr_text = primary_text
-        en_text = secondary_text
-    else:
-        tr_text = secondary_text
-        en_text = primary_text
+    for lang, cand in candidates.items():
+        if not cand:
+            continue
+        score = _transcript_score(cand, lang)
+        if score > best_score + (0.0 if lang == primary_lang else dual_decode_margin * 0.5):
+            best_score = score
+            best_lang = lang
+            best_text = cand
+        elif score > best_score:
+            best_score = score
+            best_lang = lang
+            best_text = cand
 
-    tr_score = _transcript_score(tr_text, "tr")
-    en_score = _transcript_score(en_text, "en")
-    en_words = re.findall(r"[a-zA-Z']+", en_text.lower())
-    en_stop_hits = sum(1 for w in en_words if w in _EN_STOPWORDS)
-    tr_chars_in_tr = sum(1 for ch in tr_text if ch in _TR_CHARS)
+    if not best_text:
+        return primary_text, _detect_language(primary_text or "", default=default_language, prefer_online=prefer_online_detect)
 
-    pick_en = en_score > tr_score + dual_decode_margin
-    # Favor English if the English model produces stop words, to prevent TR hallucination
-    if not pick_en and en_stop_hits >= 2 and en_score >= tr_score - 0.15:
-        if tr_chars_in_tr == 0 or en_score >= tr_score:
-            pick_en = True
-    if not pick_en and en_stop_hits >= 1 and tr_chars_in_tr >= 2 and en_score > tr_score:
-        pick_en = True
+    resolved_lang = _detect_language(best_text, default=best_lang or default_language, prefer_online=prefer_online_detect)
+    # Prefer decoder language when detection is ambiguous but decoder won clearly
+    if resolved_lang != best_lang and best_score >= 2.0:
+        resolved_lang = best_lang.split("-", 1)[0]
 
-    if pick_en:
-        lang = _detect_language(en_text, default=default_language)
-        logger.info(
-            "STT picked vosk-en (tr_score=%.2f en_score=%.2f tr=%r en=%r)",
-            tr_score,
-            en_score,
-            tr_text[:48],
-            en_text[:48],
-        )
-        return en_text, "en" if lang != "tr" else lang
-
-    lang = _detect_language(tr_text, default=default_language)
-    if tr_score >= en_score:
-        logger.info(
-            "STT picked vosk-tr (tr_score=%.2f en_score=%.2f tr=%r en=%r)",
-            tr_score,
-            en_score,
-            tr_text[:48],
-            en_text[:48],
-        )
-        return tr_text, lang
-    
-    lang = _detect_language(en_text, default=default_language)
     logger.info(
-        "STT picked vosk-en (fallback) (tr_score=%.2f en_score=%.2f tr=%r en=%r)",
-        tr_score,
-        en_score,
-        tr_text[:48],
-        en_text[:48],
+        "STT picked lang=%s (score=%.2f candidates=%s text=%r)",
+        resolved_lang,
+        best_score,
+        list(candidates.keys()),
+        best_text[:64],
     )
-    return en_text, "en" if lang != "tr" else lang
+    return best_text, resolved_lang

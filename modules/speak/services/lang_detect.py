@@ -32,6 +32,17 @@ except Exception:
     _detect_lang = None  # type: ignore
 
 
+def network_available(timeout_s: float = 0.8) -> bool:
+    """Best-effort online check for richer language detection."""
+    try:
+        import socket
+
+        socket.create_connection(("1.1.1.1", 53), timeout=timeout_s).close()
+        return True
+    except Exception:
+        return False
+
+
 def normalize_lang(lang: Optional[str], fallback: str = "tr") -> str:
     raw = str(lang or "").strip().lower().replace("_", "-")
     if not raw or raw == "auto":
@@ -41,13 +52,13 @@ def normalize_lang(lang: Optional[str], fallback: str = "tr") -> str:
     return raw
 
 
-def detect_text_language(text: str, *, default: str = "tr") -> str:
-    """Heuristic (+ optional langdetect) language tag for TTS routing."""
+def detect_text_language(text: str, *, default: str = "tr", prefer_online: bool = True) -> str:
+    """Heuristic (+ optional langdetect when online) language tag for TTS/STT routing."""
     value = str(text or "").strip()
     if not value:
         return normalize_lang(default)
 
-    if _detect_lang is not None:
+    if prefer_online and network_available() and _detect_lang is not None:
         try:
             detected = normalize_lang(str(_detect_lang(value)), fallback=default)
             if detected:
@@ -89,6 +100,21 @@ def resolve_speak_language(
     if explicit_norm == detected:
         return detected
     return detected
+
+
+def has_piper_voice_for_language(lang: str, piper_cfg: Dict[str, Any]) -> bool:
+    """True when a Piper voice is explicitly mapped/available for the language."""
+    lang = normalize_lang(lang, fallback="")
+    if not lang:
+        return False
+    lang_map = piper_cfg.get("language_voices", {})
+    if isinstance(lang_map, dict):
+        for key in lang_map:
+            key_norm = normalize_lang(str(key), fallback="")
+            if key_norm and (lang == key_norm or lang.startswith(key_norm)):
+                return True
+    voices = piper_cfg.get("voices", {})
+    return isinstance(voices, dict) and lang in voices
 
 
 def piper_voice_for_language(lang: str, piper_cfg: Dict[str, Any]) -> str:

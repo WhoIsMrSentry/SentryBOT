@@ -12,13 +12,16 @@ audio:
   frame_ms: 30
 
 recognition:
-  # You can set either language or model_path. If model_path is missing, language will be used to auto-pick a model.
-  source_language: en          # legacy fallback when auto_language is off
-  language: en                 # primary Vosk model (en)
+  source_language: auto
+  language: en
   default_language: en
-  auto_language: true          # detect tr/en from transcript; report in /speech/last
-  auto_switch_model: true      # dual-decode utterance with vosk-en and pick best transcript
-  dual_decode_margin: 0.35     # EN wins when en_score > tr_score + margin
+  auto_language: true
+  auto_switch_model: true
+  prefer_online_detect: true
+  dual_decode_margin: 0.35
+  dual_decode_only_if_ambiguous: true
+  # Vosk dual-decode only for installed models; others use langdetect on primary transcript.
+  dual_decode_languages: [tr, en, de, es, fr]
   utterance_buffer_sec: 20
   model_path: null             # explicit path overrides language mapping
   # Optional per-language mapping to override defaults
@@ -47,3 +50,14 @@ direction:
     smoothing_alpha: 0.3      # 0..1 low-pass for angle
     slew_deg_per_s: 120.0     # max change per second
     energy_threshold: 1000    # min RMS energy to update angle
+
+pan_tilt:
+  enabled: false
+  use_head_arbiter: true
+  arbiter_priority: 60
+  center_deg: 90.0
+  center_tilt_deg: 90.0
+  min_deg: 35.0
+  max_deg: 145.0
+  slew_deg_per_s: 120.0
+  update_hz: 20.0

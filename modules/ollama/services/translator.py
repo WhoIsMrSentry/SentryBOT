@@ -16,6 +16,12 @@ except Exception:
 
 logger = logging.getLogger("ollama.translator")
 
+_TR_CHARS = set("çğıöşüÇĞİÖŞÜ")
+_TR_HINT_WORDS = frozenset({
+    "merhaba", "naber", "evet", "hayir", "hayır", "tamam", "günaydın", "gunaydin",
+    "nasilsin", "nasılsın", "iyi", "degil", "değil", "lutfen", "lütfen",
+})
+
 
 @dataclass
 class TranslatorConfig:
@@ -92,7 +98,10 @@ class OllamaTranslator:
             return cached
 
         lang = self.cfg.default_source_lang
-        if _detect_lang is not None:
+        words = {w.lower() for w in value.split() if w.strip()}
+        if any(ch in _TR_CHARS for ch in value) or (words & _TR_HINT_WORDS):
+            lang = "tr"
+        elif _detect_lang is not None:
             try:
                 detected = self.normalize_lang(str(_detect_lang(value)), fallback=lang)
                 if detected and detected != "auto":

@@ -41,7 +41,8 @@ class HeadCommand:
 
 _SOURCE_PRIORITY = {
     "manual": 100, "safety": 95, "owner_follow": 85,
-    "active_speaker": 75, "agent_core": 65, "vlm_interest": 50,
+    "active_speaker": 75, "agent_core": 65, "sound_direction": 60,
+    "vlm_interest": 50,
     "autonomy": 30, "idle": 20,
 }
 

@@ -99,6 +99,10 @@ class WakewordActions:
         self.interactions_event_url = str(cfg.get("interactions_event_url", ""))
         self.listen_window_sec = float(cfg.get("listen_window_sec", 8.0))
         self.min_listen_before_final_sec = float(cfg.get("min_listen_before_final_sec", 1.5))
+        self.min_listen_before_final_sec_vad = float(
+            cfg.get("min_listen_before_final_sec_vad", self.min_listen_before_final_sec)
+        )
+        self.vad_enabled = bool(cfg.get("vad_enabled", False))
         self.stop_on_final = bool(cfg.get("stop_on_final", True))
         self.poll_interval_ms = int(cfg.get("poll_interval_ms", 200))
         self.speak_stop_url = str(cfg.get("speak_stop_url", "http://localhost:8080/speak/stop"))
@@ -178,6 +182,9 @@ class WakewordService:
         else:
             self._recognizer = Recognizer(_resolve_model_paths(self.cfg.get("recognition", {})))
         self.actions = WakewordActions(self.cfg.get("actions", {}))
+        rec_vad = (self.cfg.get("recognition", {}) or {}).get("vad", {})
+        if isinstance(rec_vad, dict) and rec_vad.get("enabled"):
+            self.actions.vad_enabled = True
         logger.info("wakeword engine=%s detector_words=%s degraded=%s", self.engine, list(self.detector.cfg.words), bool(self._degraded_reason))
 
     def start(self) -> None:
@@ -285,7 +292,12 @@ class WakewordService:
             if self.actions.listen_window_sec <= 0:
                 return
             deadline = _now() + self.actions.listen_window_sec
-            grace_until = window_started_ts + max(0.0, self.actions.min_listen_before_final_sec)
+            min_listen = (
+                self.actions.min_listen_before_final_sec_vad
+                if self.actions.vad_enabled
+                else self.actions.min_listen_before_final_sec
+            )
+            grace_until = window_started_ts + max(0.0, min_listen)
             while _now() < deadline:
                 if (
                     _now() >= grace_until

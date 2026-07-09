@@ -66,15 +66,45 @@ rules:
 
   - id: wakeword_detected
     when: { event: wakeword.detected }
-    action: { effect: { name: TWINKLE, duration_ms: 700 } }
+    action:
+      companion: { mode: vu, eye_color: "#30E3CA" }
     priority: critical
     cooldown_ms: 800
 
+  - id: speech_listen_start
+    when: { event: speech.listen.start }
+    action:
+      companion: { mode: vu, eye_color: "#30E3CA" }
+    priority: critical
+    cooldown_ms: 400
+
+  - id: agent_processing_start
+    when: { event: agent.processing.start }
+    action:
+      companion: { mode: thinking, eye_color: "#30E3CA" }
+    priority: high
+    cooldown_ms: 300
+
+  - id: agent_processing_end
+    when: { event: agent.processing.end }
+    action:
+      companion: { mode: eye }
+    priority: high
+    cooldown_ms: 200
+
+  - id: speech_end_companion
+    when: { event: speech.end }
+    action:
+      companion: { mode: off }
+    priority: high
+    cooldown_ms: 300
+
   - id: speech_start
     when: { event: speech.start }
-    action: { effect: { name: PULSE, duration_ms: 900 } }
+    action:
+      companion: { mode: vu, eye_color: "#30E3CA" }
     priority: high
-    cooldown_ms: 1200
+    cooldown_ms: 600
   - id: speech_end
     when: { event: speech.end }
     action: { effect: { name: COMET, duration_ms: 600 } }

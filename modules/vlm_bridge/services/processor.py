@@ -78,6 +78,14 @@ except Exception:
     VisionSampler = None  # type: ignore
 
 try:
+    from .face_emotion import FaceEmotionEstimator
+except Exception:
+    try:
+        from modules.vlm_bridge.services.face_emotion import FaceEmotionEstimator
+    except Exception:
+        FaceEmotionEstimator = None  # type: ignore
+
+try:
     from .vision_event_bus import (
         VisionEventBus,
         EVENT_HAZARD_DETECTED,
@@ -85,6 +93,10 @@ try:
         EVENT_OWNER_SEEN,
         EVENT_SCENE_CHANGED,
         EVENT_VLM_RESULT_READY,
+        EVENT_PERSON_SEEN,
+        EVENT_PERSON_LOST,
+        EVENT_FOLLOW_START,
+        EVENT_FOLLOW_STOP,
     )
 except Exception:
     VisionEventBus = None  # type: ignore
@@ -93,6 +105,10 @@ except Exception:
     EVENT_OWNER_SEEN = "owner_seen"
     EVENT_SCENE_CHANGED = "scene_changed"
     EVENT_VLM_RESULT_READY = "vlm_result_ready"
+    EVENT_PERSON_SEEN = "person_seen"
+    EVENT_PERSON_LOST = "person_lost"
+    EVENT_FOLLOW_START = "follow_start"
+    EVENT_FOLLOW_STOP = "follow_stop"
 
 try:
     from .head_control_arbiter import HeadControlArbiter, HeadCommand
@@ -193,6 +209,13 @@ class VisionProcessor:
         self.last_blind_announcement = 0.0
         self.last_alert_announcement = 0.0
         self._last_person_greet: Dict[str, float] = {}
+        self._visible_persons: set[str] = set()
+
+        fer_cfg = dict(vision_cfg.get("face_emotion", {}) if isinstance(vision_cfg.get("face_emotion"), dict) else {})
+        fer_cfg.setdefault("gateway_base_url", self._gateway_base)
+        self._face_emotion = (
+            FaceEmotionEstimator(fer_cfg) if FaceEmotionEstimator is not None else None
+        )
 
         # Follow mode state (face lock + CSRT)
         follow_cfg = vision_cfg.get("follow", {}) if isinstance(vision_cfg.get("follow", {}), dict) else {}
@@ -438,8 +461,26 @@ class VisionProcessor:
 
         # switch remote -> local
         self.processing_mode = "local"
+        self._ensure_face_manager()
         self.start_stream_processing()
         return {"ok": True, "processing_mode": self.processing_mode}
+
+    def _ensure_face_manager(self) -> None:
+        if self.face_manager is not None or FaceManager is None:
+            return
+        if self.processing_mode != "local":
+            return
+        try:
+            vision_cfg = self.config.get("vision", {}) if isinstance(self.config.get("vision"), dict) else {}
+            face_match_cfg = vision_cfg.get("face_match", {}) if isinstance(vision_cfg.get("face_match", {}), dict) else {}
+            self.face_manager = FaceManager(
+                ratio_test=float(face_match_cfg.get("ratio_test", 0.72)),
+                min_good_matches=int(face_match_cfg.get("min_good_matches", 10)),
+                min_score=float(face_match_cfg.get("min_score", 0.15)),
+            )
+            logger.info("FaceManager lazy-initialized for local processing mode")
+        except Exception as exc:
+            logger.warning("FaceManager lazy init failed: %s", exc)
 
     def get_realtime_profile_status(self) -> Dict[str, Any]:
         active = self._active_realtime_profile
@@ -501,6 +542,9 @@ class VisionProcessor:
                 return {"ok": False, "error": "camera_disabled"}
             self.start_stream_processing()
 
+        if self.event_bus is not None:
+            self.event_bus.publish(EVENT_FOLLOW_START, {"target": self._follow_target})
+
         status = self.follow_status()
         status["ok"] = True
         return status
@@ -511,6 +555,8 @@ class VisionProcessor:
         self._follow_tracker = None
         self._follow_lost_frames = 0
         self._follow_current_bbox = None
+        if self.event_bus is not None:
+            self.event_bus.publish(EVENT_FOLLOW_STOP, {})
         return {"ok": True, **self.follow_status()}
 
     def follow_status(self) -> Dict[str, Any]:
@@ -901,6 +947,7 @@ class VisionProcessor:
     def _process_face_boxes(self, frame, boxes, tracked_box=None) -> Tuple[List[Dict[str, Any]], Any]:
         parsed: List[Dict[str, Any]] = []
         annotated = frame.copy()
+        current_keys: set[str] = set()
         for idx, bbox in enumerate(boxes):
             x1, y1, x2, y2 = bbox
             if x2 <= x1 or y2 <= y1:
@@ -908,9 +955,29 @@ class VisionProcessor:
             face_roi = frame[y1:y2, x1:x2]
             name, conf = self._identify_face_in_roi(face_roi)
             distance = self._estimate_face_distance_m(y2 - y1)
+            emotion = ""
+            if self._face_emotion is not None and face_roi is not None and getattr(face_roi, "size", 1):
+                fer = self._face_emotion.estimate(face_roi)
+                emotion = str(fer.get("emotion", "") or "")
             tracked = bool(tracked_box is not None and idx == 0)
-            parsed.append({"label": "person", "confidence": round(conf, 3), "bbox": [x1, y1, x2, y2], "distance_m": distance, "name": name, "tracked": tracked})
+            parsed.append({
+                "label": "person",
+                "confidence": round(conf, 3),
+                "bbox": [x1, y1, x2, y2],
+                "distance_m": distance,
+                "name": name,
+                "emotion": emotion,
+                "tracked": tracked,
+            })
+            person_key = str(name or f"anon_{idx}")
+            current_keys.add(person_key)
+            if self.event_bus is not None and person_key not in self._visible_persons:
+                self.event_bus.publish(EVENT_PERSON_SEEN, {"name": name, "emotion": emotion})
             self._annotate_face(annotated, x1, y1, x2, y2, name, conf, distance, tracked)
+        if self.event_bus is not None:
+            for key in self._visible_persons - current_keys:
+                self.event_bus.publish(EVENT_PERSON_LOST, {"name": key})
+            self._visible_persons = current_keys
         return parsed, annotated
 
     def _analyze_frame(self, frame: Any, enable_follow: bool) -> Tuple[List[Dict[str, Any]], Any]:

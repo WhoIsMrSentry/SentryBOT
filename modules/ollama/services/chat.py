@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Any
 import logging
 from .clients import LLMClientProtocol
 from .memory import ChatMemory
+from .tags import extract_llm_tags
 
 logger = logging.getLogger("ollama.chat")
 
@@ -42,10 +43,16 @@ class OllamaChatService:
         options: Dict[str, Any] = {"num_predict": self.num_predict}
         res = self.client.chat(messages, format=response_format, model=model_name, options=options)
         raw_text = str(res.get("message", {}).get("content", ""))
-        
+
+        # Fallback action channel: strip [cmd:...] / [[...]] tags the model may
+        # emit so the plain-chat path can still drive hardware via apply_actions.
+        cleaned_text, actions = extract_llm_tags(raw_text)
+
         # Native unstructured conversation
         self.memory.add_user(query)
-        self.memory.add_assistant(raw_text)
+        self.memory.add_assistant(cleaned_text or raw_text)
 
-        payload: Dict[str, Any] = {"text": raw_text, "raw": raw_text}
+        payload: Dict[str, Any] = {"text": cleaned_text or raw_text, "raw": raw_text}
+        if actions:
+            payload["actions"] = actions
         return payload

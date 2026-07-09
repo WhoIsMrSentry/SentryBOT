@@ -732,6 +732,39 @@ class ToolRegistry:
         )
 
         self._register(
+            self.speak,
+            {
+                "type": "function",
+                "function": {
+                    "name": "speak",
+                    "description": (
+                        "Say the given text out loud through the robot's speaker (TTS). "
+                        "Use this when the user asks the robot to say/repeat something "
+                        "('şunu söyle', 'say this') or when speech itself is the action."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                                "type": "string",
+                                "description": "Exact text to speak out loud.",
+                            },
+                            "tone": {
+                                "type": "string",
+                                "description": "Optional emotional tone (e.g. neutral, happy, sad, excited, calm).",
+                            },
+                            "language": {
+                                "type": "string",
+                                "description": "Optional BCP-47/ISO language code of the text (e.g. tr, en, de).",
+                            },
+                        },
+                        "required": ["text"],
+                    },
+                },
+            },
+        )
+
+        self._register(
             self.queue_action,
             {
                 "type": "function",
@@ -1139,6 +1172,20 @@ class ToolRegistry:
             return f"Stop follow failed: HTTP {resp.status_code}"
         except Exception as exc:
             return f"Stop follow failed: {exc}"
+
+    def speak(self, text: str, tone: str = "", language: str = "") -> str:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return "Error: nothing to speak."
+        payload: Dict[str, Any] = {"text": cleaned}
+        if tone:
+            payload["tone"] = str(tone).strip().lower()
+        if language:
+            payload["language"] = str(language).strip().lower()
+        result = self.queue_action("speak", priority=60, ttl_ms=10000, payload=payload)
+        if result.startswith("Action queued"):
+            return f"Speaking: {cleaned[:80]}"
+        return result
 
     def queue_action(
         self,
