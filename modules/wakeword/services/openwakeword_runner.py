@@ -23,6 +23,33 @@ try:
 except Exception:
     pass
 
+_OWW_RELEASE = "v0.5.1"
+_OWW_BASE = f"https://github.com/dscripka/openWakeWord/releases/download/{_OWW_RELEASE}"
+
+# Fallback when installed openwakeword wheel omits MODELS (seen on some Pi builds).
+BUILTIN_FEATURE_MODELS: Dict[str, dict] = {
+    "melspectrogram": {
+        "download_url": f"{_OWW_BASE}/melspectrogram.tflite",
+        "filename": "melspectrogram.tflite",
+    },
+    "embedding": {
+        "download_url": f"{_OWW_BASE}/embedding_model.tflite",
+        "filename": "embedding_model.tflite",
+    },
+}
+BUILTIN_VAD_MODELS: Dict[str, dict] = {
+    "silero_vad": {
+        "download_url": f"{_OWW_BASE}/silero_vad.onnx",
+        "filename": "silero_vad.onnx",
+    },
+}
+BUILTIN_WAKE_MODELS: Dict[str, dict] = {
+    "hey_mycroft": {
+        "download_url": f"{_OWW_BASE}/hey_mycroft_v0.1.tflite",
+        "filename": "hey_mycroft_v0.1.tflite",
+    },
+}
+
 
 def _as_float(value) -> Optional[float]:
     try:
@@ -48,6 +75,47 @@ def _score_value(value) -> Optional[float]:
     except Exception:
         pass
     return _as_float(value)
+
+
+def _module_models_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "models"
+
+
+def _openwakeword_catalog() -> dict:
+    try:
+        import openwakeword  # type: ignore
+
+        catalog = getattr(openwakeword, "MODELS", {}) or {}
+        if catalog:
+            return dict(catalog)
+    except Exception:
+        pass
+    module_dir = _module_models_dir()
+    return {
+        key: {
+            "model_path": str(module_dir / str(meta["filename"])),
+            "download_url": str(meta["download_url"]),
+        }
+        for key, meta in BUILTIN_WAKE_MODELS.items()
+    }
+
+
+def _feature_model_groups() -> list[dict]:
+    try:
+        import openwakeword  # type: ignore
+    except Exception:
+        openwakeword = None  # type: ignore
+    groups: list[dict] = []
+    if openwakeword is not None:
+        feat = getattr(openwakeword, "FEATURE_MODELS", {}) or {}
+        vad = getattr(openwakeword, "VAD_MODELS", {}) or {}
+        if feat:
+            groups.append(dict(feat))
+        if vad:
+            groups.append(dict(vad))
+    if not groups:
+        groups = [BUILTIN_FEATURE_MODELS, BUILTIN_VAD_MODELS]
+    return groups
 
 
 def _openwakeword_pkg_dir() -> Path:
@@ -110,25 +178,25 @@ def _try_utils_download_models(model_names: list[str]) -> bool:
 
 
 def _ensure_openwakeword_assets(model_names: list[str], use_onnx: bool) -> None:
-    import openwakeword  # type: ignore
-
     if _try_utils_download_models(model_names):
         return
 
-    target = _openwakeword_models_dir()
-    for group in (
-        getattr(openwakeword, "FEATURE_MODELS", {}) or {},
-        getattr(openwakeword, "VAD_MODELS", {}) or {},
-    ):
+    targets = [_openwakeword_models_dir(), _module_models_dir()]
+    for target in targets:
+        target.mkdir(parents=True, exist_ok=True)
+
+    for group in _feature_model_groups():
         for entry in group.values():
             if isinstance(entry, dict) and entry.get("download_url"):
-                _download_asset_pair(str(entry["download_url"]), target)
+                for target in targets:
+                    _download_asset_pair(str(entry["download_url"]), target)
 
-    catalog = getattr(openwakeword, "MODELS", {}) or {}
+    catalog = _openwakeword_catalog()
     for name in model_names:
         entry = catalog.get(name)
         if isinstance(entry, dict) and entry.get("download_url"):
-            _download_asset_pair(str(entry["download_url"]), target)
+            for target in targets:
+                _download_asset_pair(str(entry["download_url"]), target)
 
 
 def _normalize_pretrained_names(model_names: list, catalog: dict) -> list[str]:
@@ -156,13 +224,13 @@ def _resolve_pretrained_models(
 ) -> tuple[Dict[str, str], list[str]]:
     """Resolve built-in openWakeWord models (e.g. hey_mycroft) and ensure assets exist."""
     try:
-        import openwakeword  # type: ignore
+        import openwakeword  # type: ignore  # noqa: F401
     except Exception as exc:
         raise RuntimeError(f"openwakeword is required for pretrained models: {exc}") from exc
 
-    catalog = getattr(openwakeword, "MODELS", {}) or {}
+    catalog = _openwakeword_catalog()
     if not catalog:
-        raise RuntimeError("openwakeword.MODELS catalog is empty")
+        raise RuntimeError("openwakeword model catalog is empty")
 
     normalized = _normalize_pretrained_names(model_names, catalog)
     use_onnx = str(inference_framework or "onnx").strip().lower() == "onnx"
@@ -170,13 +238,22 @@ def _resolve_pretrained_models(
 
     resolved: Dict[str, str] = {}
     for key in normalized:
-        base_path = Path(str(catalog[key]["model_path"]))
-        candidate = base_path.with_suffix(".onnx" if use_onnx else ".tflite")
-        if not candidate.exists() and base_path.exists():
-            candidate = base_path
-        if not candidate.exists():
-            raise FileNotFoundError(f"openwakeword model missing after download: {candidate}")
-        resolved[key] = str(candidate.resolve())
+        entry = catalog[key]
+        candidates: list[Path] = []
+        base_path = Path(str(entry.get("model_path", "")))
+        if base_path.name:
+            candidates.append(base_path)
+            candidates.append(base_path.with_suffix(".onnx" if use_onnx else ".tflite"))
+        fname = BUILTIN_WAKE_MODELS.get(key, {}).get("filename")
+        if fname:
+            stem = Path(str(fname)).stem
+            for root in (_openwakeword_models_dir(), _module_models_dir()):
+                candidates.append(root / f"{stem}.onnx" if use_onnx else root / str(fname))
+                candidates.append(root / str(fname))
+        chosen = next((p for p in candidates if p.exists()), None)
+        if chosen is None:
+            raise FileNotFoundError(f"openwakeword model missing after download: {key}")
+        resolved[key] = str(chosen.resolve())
     return resolved, normalized
 
 
@@ -217,10 +294,13 @@ class OpenWakewordRunner:
             ow_pkg = importlib.import_module("openwakeword")
             pkg_dir = Path(getattr(ow_pkg, "__file__", "")).resolve().parent
             _ensure_openwakeword_assets([], True)
-            required = pkg_dir / "resources" / "models" / "melspectrogram.onnx"
-            if not required.exists():
+            mel_candidates = [
+                pkg_dir / "resources" / "models" / "melspectrogram.onnx",
+                _module_models_dir() / "melspectrogram.onnx",
+            ]
+            if not any(path.exists() for path in mel_candidates):
                 raise RuntimeError(
-                    f"openwakeword runtime resource missing: {required}. "
+                    "openwakeword runtime resource missing: melspectrogram.onnx. "
                     "Reinstall openwakeword or use wakeword.engine=vosk."
                 )
         except RuntimeError:

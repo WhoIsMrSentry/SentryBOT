@@ -10,9 +10,9 @@ audio:
   frame_ms: 30
 
 recognition:
-  language: tr
-  # point to speech module's model to reuse existing download
-  model_path: ../speech/models/vosk-tr
+  language: en
+  # Vosk fallback path when openWakeWord is unavailable (hey mycroft is English).
+  model_path: ../speech/models/vosk-en
   language_models:
     tr: models/vosk-tr
     en: models/vosk-en

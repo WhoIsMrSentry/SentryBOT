@@ -199,6 +199,11 @@ class WakewordService:
                 self._degraded_reason = self._degraded_reason or "no wakeword engine available"
                 return
             stream = self.capture.stream()
+            logger.info(
+                "wakeword listening started (engine=%s device=%s)",
+                self.engine,
+                getattr(self.capture.cfg, "device", None),
+            )
             logger.debug("wakeword listening using engine=%s; capture cfg=%s", self.engine, getattr(self.capture, 'cfg', None))
             if self.engine == "openwakeword" and self._openwakeword is not None:
                 for label in self._openwakeword.run(stream):

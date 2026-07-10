@@ -1,7 +1,20 @@
 import sys
 from unittest.mock import MagicMock, patch
 
-from modules.wakeword.services.openwakeword_runner import _resolve_pretrained_models
+from modules.wakeword.services.openwakeword_runner import (
+    BUILTIN_WAKE_MODELS,
+    _openwakeword_catalog,
+    _resolve_pretrained_models,
+)
+
+
+def test_openwakeword_catalog_fallback_when_package_empty() -> None:
+    mock_ow = MagicMock()
+    mock_ow.MODELS = {}
+    with patch.dict(sys.modules, {"openwakeword": mock_ow}):
+        catalog = _openwakeword_catalog()
+    assert "hey_mycroft" in catalog
+    assert catalog["hey_mycroft"]["download_url"] == BUILTIN_WAKE_MODELS["hey_mycroft"]["download_url"]
 
 
 def test_resolve_pretrained_models_hey_mycroft(tmp_path) -> None:
