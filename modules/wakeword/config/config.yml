@@ -20,7 +20,7 @@ recognition:
   samplerate: 16000
   max_alternatives: 0
   vad:
-    enabled: true
+    enabled: false
     aggressiveness: 2
     hangover_ms: 300
 

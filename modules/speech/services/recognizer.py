@@ -99,11 +99,15 @@ class Recognizer:
                 try:
                     import webrtcvad as _webrtcvad  # type: ignore
                 except Exception as exc:
-                    raise RuntimeError(
-                        "VAD enabled but 'webrtcvad' is not installed. Install with 'pip install webrtcvad'."
-                    ) from exc
-                webrtcvad = _webrtcvad
-            if self._vad is None:
+                    logger.warning(
+                        "webrtcvad unavailable; continuing without VAD (%s). "
+                        "Install with 'pip install webrtcvad' for VAD filtering.",
+                        exc,
+                    )
+                    self.cfg.vad_enabled = False
+                else:
+                    webrtcvad = _webrtcvad
+            if self.cfg.vad_enabled and webrtcvad is not None and self._vad is None:
                 self._vad = webrtcvad.Vad(self.cfg.vad_aggressiveness)
 
     def run(self, stream: Iterable[bytes]) -> Iterator[RecognitionResult]:

@@ -8,3 +8,4 @@ def test_wakeword_config_loads_audio_device() -> None:
     assert "wakeword" in cfg
     ow = cfg.get("openwakeword", {})
     assert ow.get("pretrained_models") == ["hey_mycroft"]
+    assert cfg.get("recognition", {}).get("vad", {}).get("enabled") is False
