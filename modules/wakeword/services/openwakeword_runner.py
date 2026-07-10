@@ -50,18 +50,88 @@ def _score_value(value) -> Optional[float]:
     return _as_float(value)
 
 
-def _resolve_pretrained_models(model_names: list, inference_framework: str = "onnx") -> Dict[str, str]:
-    """Resolve built-in openWakeWord models (e.g. hey_mycroft) and ensure they are downloaded."""
+def _openwakeword_pkg_dir() -> Path:
+    ow_pkg = importlib.import_module("openwakeword")
+    return Path(getattr(ow_pkg, "__file__", "")).resolve().parent
+
+
+def _openwakeword_models_dir() -> Path:
+    return _openwakeword_pkg_dir() / "resources" / "models"
+
+
+def _download_url(url: str, dest: Path) -> None:
+    if dest.exists():
+        return
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    import urllib.request
+
+    logger.info("downloading openwakeword asset: %s", dest.name)
+    urllib.request.urlretrieve(url, dest)
+
+
+def _download_asset_pair(url: str, target_dir: Path) -> None:
+    fname = url.rsplit("/", 1)[-1]
+    _download_url(url, target_dir / fname)
+    if fname.endswith(".tflite"):
+        _download_url(url.replace(".tflite", ".onnx"), target_dir / fname.replace(".tflite", ".onnx"))
+
+
+def _try_utils_download_models(model_names: list[str]) -> bool:
+    """Call openWakeWord's download helper when available (API differs across versions)."""
     try:
         import openwakeword  # type: ignore
-        from openwakeword.utils import download_models  # type: ignore
-    except Exception as exc:
-        raise RuntimeError(f"openwakeword is required for pretrained models: {exc}") from exc
+    except Exception:
+        return False
+
+    utils_mod = getattr(openwakeword, "utils", None)
+    download_fn = getattr(utils_mod, "download_models", None) if utils_mod is not None else None
+    if download_fn is None:
+        try:
+            from openwakeword.utils import download_models as download_fn  # type: ignore
+        except Exception:
+            download_fn = None
+    if download_fn is None:
+        return False
+
+    for args, kwargs in (
+        ((), {"model_names": model_names}),
+        ((model_names,), {}),
+        ((), {}),
+    ):
+        try:
+            download_fn(*args, **kwargs)
+            return True
+        except TypeError:
+            continue
+        except Exception as exc:
+            logger.debug("openwakeword.utils.download_models failed: %s", exc)
+            return False
+    return False
+
+
+def _ensure_openwakeword_assets(model_names: list[str], use_onnx: bool) -> None:
+    import openwakeword  # type: ignore
+
+    if _try_utils_download_models(model_names):
+        return
+
+    target = _openwakeword_models_dir()
+    for group in (
+        getattr(openwakeword, "FEATURE_MODELS", {}) or {},
+        getattr(openwakeword, "VAD_MODELS", {}) or {},
+    ):
+        for entry in group.values():
+            if isinstance(entry, dict) and entry.get("download_url"):
+                _download_asset_pair(str(entry["download_url"]), target)
 
     catalog = getattr(openwakeword, "MODELS", {}) or {}
-    if not catalog:
-        raise RuntimeError("openwakeword.MODELS catalog is empty")
+    for name in model_names:
+        entry = catalog.get(name)
+        if isinstance(entry, dict) and entry.get("download_url"):
+            _download_asset_pair(str(entry["download_url"]), target)
 
+
+def _normalize_pretrained_names(model_names: list, catalog: dict) -> list[str]:
     normalized: list[str] = []
     for raw in model_names:
         key = str(raw or "").strip().lower().replace(" ", "_").replace("-", "_")
@@ -75,12 +145,29 @@ def _resolve_pretrained_models(model_names: list, inference_framework: str = "on
             else:
                 raise ValueError(f"unknown openwakeword pretrained model: {raw}")
         normalized.append(key)
-
     if not normalized:
         raise ValueError("pretrained_models is empty")
+    return normalized
 
-    download_models(model_names=normalized)
+
+def _resolve_pretrained_models(
+    model_names: list,
+    inference_framework: str = "onnx",
+) -> tuple[Dict[str, str], list[str]]:
+    """Resolve built-in openWakeWord models (e.g. hey_mycroft) and ensure assets exist."""
+    try:
+        import openwakeword  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(f"openwakeword is required for pretrained models: {exc}") from exc
+
+    catalog = getattr(openwakeword, "MODELS", {}) or {}
+    if not catalog:
+        raise RuntimeError("openwakeword.MODELS catalog is empty")
+
+    normalized = _normalize_pretrained_names(model_names, catalog)
     use_onnx = str(inference_framework or "onnx").strip().lower() == "onnx"
+    _ensure_openwakeword_assets(normalized, use_onnx)
+
     resolved: Dict[str, str] = {}
     for key in normalized:
         base_path = Path(str(catalog[key]["model_path"]))
@@ -90,7 +177,7 @@ def _resolve_pretrained_models(model_names: list, inference_framework: str = "on
         if not candidate.exists():
             raise FileNotFoundError(f"openwakeword model missing after download: {candidate}")
         resolved[key] = str(candidate.resolve())
-    return resolved
+    return resolved, normalized
 
 
 def _resolve_model_paths(model_paths) -> Dict[str, str]:
@@ -129,6 +216,7 @@ class OpenWakewordRunner:
         try:
             ow_pkg = importlib.import_module("openwakeword")
             pkg_dir = Path(getattr(ow_pkg, "__file__", "")).resolve().parent
+            _ensure_openwakeword_assets([], True)
             required = pkg_dir / "resources" / "models" / "melspectrogram.onnx"
             if not required.exists():
                 raise RuntimeError(
@@ -145,16 +233,14 @@ class OpenWakewordRunner:
             pretrained = cfg.get("pretrained_model")
         if isinstance(pretrained, str) and pretrained.strip():
             pretrained = [pretrained.strip()]
+        pretrained_names: list[str] = []
         if isinstance(pretrained, list) and pretrained:
-            model_paths = _resolve_pretrained_models(pretrained, inference_framework)
+            model_paths, pretrained_names = _resolve_pretrained_models(pretrained, inference_framework)
         else:
             model_paths = _resolve_model_paths(cfg.get("model_paths"))
         if not model_paths:
             raise ValueError("openwakeword.pretrained_models or openwakeword.model_paths is required")
         self._labels = list(model_paths.keys())
-        # Instantiate model in a backward/forward-compatible way.
-        # Prefer kwargs so inference_framework maps correctly even when
-        # upstream uses a permissive (*args, **kwargs) constructor.
         paths_list = list(model_paths.values())
         model_ctor = OpenWakeWordModel
 
@@ -171,6 +257,7 @@ class OpenWakewordRunner:
         tried = []
         last_exc = None
         candidates = [
+            {'kwargs': {'wakeword_models': pretrained_names or paths_list, 'inference_framework': inference_framework}},
             {'kwargs': {'wakeword_models': paths_list, 'inference_framework': inference_framework}},
             {'kwargs': {'model_paths': paths_list, 'inference_framework': inference_framework}},
             {'kwargs': {'models': paths_list, 'inference_framework': inference_framework}},
