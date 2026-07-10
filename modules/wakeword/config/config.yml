@@ -27,16 +27,16 @@ recognition:
 wakeword:
   engine: "openwakeword"  # openwakeword | vosk
   words:
-    - "hey sentry"
-    - "sentry"
+    - "hey mycroft"
+    - "mycroft"
   trigger_on_partial: true
   min_confidence: 0.0
   cooldown_sec: 3.0
 
 openwakeword:
-  # model_paths can be a list or a map: {label: path}
-  model_paths:
-    - models/hey_sentribot.onnx
+  # Built-in openWakeWord catalog model (auto-downloaded on first run).
+  pretrained_models:
+    - hey_mycroft
   inference_framework: onnx
   threshold: 0.25
   smooth_window: 3

@@ -50,6 +50,49 @@ def _score_value(value) -> Optional[float]:
     return _as_float(value)
 
 
+def _resolve_pretrained_models(model_names: list, inference_framework: str = "onnx") -> Dict[str, str]:
+    """Resolve built-in openWakeWord models (e.g. hey_mycroft) and ensure they are downloaded."""
+    try:
+        import openwakeword  # type: ignore
+        from openwakeword.utils import download_models  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(f"openwakeword is required for pretrained models: {exc}") from exc
+
+    catalog = getattr(openwakeword, "MODELS", {}) or {}
+    if not catalog:
+        raise RuntimeError("openwakeword.MODELS catalog is empty")
+
+    normalized: list[str] = []
+    for raw in model_names:
+        key = str(raw or "").strip().lower().replace(" ", "_").replace("-", "_")
+        if not key:
+            continue
+        if key not in catalog:
+            aliases = {name.replace("_", ""): name for name in catalog}
+            compact = key.replace("_", "")
+            if compact in aliases:
+                key = aliases[compact]
+            else:
+                raise ValueError(f"unknown openwakeword pretrained model: {raw}")
+        normalized.append(key)
+
+    if not normalized:
+        raise ValueError("pretrained_models is empty")
+
+    download_models(model_names=normalized)
+    use_onnx = str(inference_framework or "onnx").strip().lower() == "onnx"
+    resolved: Dict[str, str] = {}
+    for key in normalized:
+        base_path = Path(str(catalog[key]["model_path"]))
+        candidate = base_path.with_suffix(".onnx" if use_onnx else ".tflite")
+        if not candidate.exists() and base_path.exists():
+            candidate = base_path
+        if not candidate.exists():
+            raise FileNotFoundError(f"openwakeword model missing after download: {candidate}")
+        resolved[key] = str(candidate.resolve())
+    return resolved
+
+
 def _resolve_model_paths(model_paths) -> Dict[str, str]:
     module_root = Path(__file__).resolve().parents[1]
 
@@ -96,11 +139,19 @@ class OpenWakewordRunner:
             raise
         except Exception as exc:
             raise RuntimeError(f"openwakeword preflight failed: {exc}")
-        model_paths = _resolve_model_paths(cfg.get("model_paths"))
-        if not model_paths:
-            raise ValueError("openwakeword.model_paths is required")
-        self._labels = list(model_paths.keys())
         inference_framework = str(cfg.get("inference_framework", "onnx")).strip().lower() or "onnx"
+        pretrained = cfg.get("pretrained_models")
+        if pretrained is None:
+            pretrained = cfg.get("pretrained_model")
+        if isinstance(pretrained, str) and pretrained.strip():
+            pretrained = [pretrained.strip()]
+        if isinstance(pretrained, list) and pretrained:
+            model_paths = _resolve_pretrained_models(pretrained, inference_framework)
+        else:
+            model_paths = _resolve_model_paths(cfg.get("model_paths"))
+        if not model_paths:
+            raise ValueError("openwakeword.pretrained_models or openwakeword.model_paths is required")
+        self._labels = list(model_paths.keys())
         # Instantiate model in a backward/forward-compatible way.
         # Prefer kwargs so inference_framework maps correctly even when
         # upstream uses a permissive (*args, **kwargs) constructor.
