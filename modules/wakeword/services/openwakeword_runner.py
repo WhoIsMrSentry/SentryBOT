@@ -27,7 +27,17 @@ _OWW_RELEASE = "v0.5.1"
 _OWW_BASE = f"https://github.com/dscripka/openWakeWord/releases/download/{_OWW_RELEASE}"
 
 # Fallback when installed openwakeword wheel omits MODELS (seen on some Pi builds).
-BUILTIN_FEATURE_MODELS: Dict[str, dict] = {
+BUILTIN_FEATURE_MODELS_ONNX: Dict[str, dict] = {
+    "melspectrogram": {
+        "download_url": f"{_OWW_BASE}/melspectrogram.onnx",
+        "filename": "melspectrogram.onnx",
+    },
+    "embedding": {
+        "download_url": f"{_OWW_BASE}/embedding_model.onnx",
+        "filename": "embedding_model.onnx",
+    },
+}
+BUILTIN_FEATURE_MODELS_TFLITE: Dict[str, dict] = {
     "melspectrogram": {
         "download_url": f"{_OWW_BASE}/melspectrogram.tflite",
         "filename": "melspectrogram.tflite",
@@ -43,12 +53,20 @@ BUILTIN_VAD_MODELS: Dict[str, dict] = {
         "filename": "silero_vad.onnx",
     },
 }
-BUILTIN_WAKE_MODELS: Dict[str, dict] = {
+BUILTIN_WAKE_MODELS_ONNX: Dict[str, dict] = {
+    "hey_mycroft": {
+        "download_url": f"{_OWW_BASE}/hey_mycroft_v0.1.onnx",
+        "filename": "hey_mycroft_v0.1.onnx",
+    },
+}
+BUILTIN_WAKE_MODELS_TFLITE: Dict[str, dict] = {
     "hey_mycroft": {
         "download_url": f"{_OWW_BASE}/hey_mycroft_v0.1.tflite",
         "filename": "hey_mycroft_v0.1.tflite",
     },
 }
+# Backward-compatible alias used in tests.
+BUILTIN_WAKE_MODELS = BUILTIN_WAKE_MODELS_ONNX
 
 
 def _as_float(value) -> Optional[float]:
@@ -81,7 +99,11 @@ def _module_models_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "models"
 
 
-def _openwakeword_catalog() -> dict:
+def _builtin_wake_models(use_onnx: bool) -> Dict[str, dict]:
+    return BUILTIN_WAKE_MODELS_ONNX if use_onnx else BUILTIN_WAKE_MODELS_TFLITE
+
+
+def _openwakeword_catalog(use_onnx: bool = True) -> dict:
     try:
         import openwakeword  # type: ignore
 
@@ -96,11 +118,11 @@ def _openwakeword_catalog() -> dict:
             "model_path": str(module_dir / str(meta["filename"])),
             "download_url": str(meta["download_url"]),
         }
-        for key, meta in BUILTIN_WAKE_MODELS.items()
+        for key, meta in _builtin_wake_models(use_onnx).items()
     }
 
 
-def _feature_model_groups() -> list[dict]:
+def _feature_model_groups(use_onnx: bool = True) -> list[dict]:
     try:
         import openwakeword  # type: ignore
     except Exception:
@@ -114,7 +136,8 @@ def _feature_model_groups() -> list[dict]:
         if vad:
             groups.append(dict(vad))
     if not groups:
-        groups = [BUILTIN_FEATURE_MODELS, BUILTIN_VAD_MODELS]
+        feat_builtin = BUILTIN_FEATURE_MODELS_ONNX if use_onnx else BUILTIN_FEATURE_MODELS_TFLITE
+        groups = [feat_builtin, BUILTIN_VAD_MODELS]
     return groups
 
 
@@ -127,21 +150,38 @@ def _openwakeword_models_dir() -> Path:
     return _openwakeword_pkg_dir() / "resources" / "models"
 
 
-def _download_url(url: str, dest: Path) -> None:
-    if dest.exists():
+def _download_url(url: str, dest: Path, min_bytes: int = 1024) -> None:
+    if dest.exists() and dest.stat().st_size >= min_bytes:
         return
+    if dest.exists():
+        try:
+            dest.unlink()
+        except Exception:
+            pass
     dest.parent.mkdir(parents=True, exist_ok=True)
     import urllib.request
 
     logger.info("downloading openwakeword asset: %s", dest.name)
     urllib.request.urlretrieve(url, dest)
+    if not dest.exists() or dest.stat().st_size < min_bytes:
+        raise RuntimeError(f"openwakeword download incomplete: {dest.name}")
 
 
-def _download_asset_pair(url: str, target_dir: Path) -> None:
+def _framework_asset_url(url: str, use_onnx: bool) -> tuple[str, str]:
     fname = url.rsplit("/", 1)[-1]
-    _download_url(url, target_dir / fname)
-    if fname.endswith(".tflite"):
-        _download_url(url.replace(".tflite", ".onnx"), target_dir / fname.replace(".tflite", ".onnx"))
+    if use_onnx:
+        if fname.endswith(".tflite"):
+            fname = fname[:-7] + ".onnx"
+            url = url.replace(".tflite", ".onnx")
+    elif fname.endswith(".onnx"):
+        fname = fname[:-5] + ".tflite"
+        url = url.replace(".onnx", ".tflite")
+    return url, fname
+
+
+def _download_framework_asset(url: str, target_dir: Path, use_onnx: bool) -> None:
+    asset_url, fname = _framework_asset_url(url, use_onnx)
+    _download_url(asset_url, target_dir / fname)
 
 
 def _try_utils_download_models(model_names: list[str]) -> bool:
@@ -185,18 +225,18 @@ def _ensure_openwakeword_assets(model_names: list[str], use_onnx: bool) -> None:
     for target in targets:
         target.mkdir(parents=True, exist_ok=True)
 
-    for group in _feature_model_groups():
+    for group in _feature_model_groups(use_onnx):
         for entry in group.values():
             if isinstance(entry, dict) and entry.get("download_url"):
                 for target in targets:
-                    _download_asset_pair(str(entry["download_url"]), target)
+                    _download_framework_asset(str(entry["download_url"]), target, use_onnx)
 
-    catalog = _openwakeword_catalog()
+    catalog = _openwakeword_catalog(use_onnx)
     for name in model_names:
         entry = catalog.get(name)
         if isinstance(entry, dict) and entry.get("download_url"):
             for target in targets:
-                _download_asset_pair(str(entry["download_url"]), target)
+                _download_framework_asset(str(entry["download_url"]), target, use_onnx)
 
 
 def _normalize_pretrained_names(model_names: list, catalog: dict) -> list[str]:
@@ -228,31 +268,34 @@ def _resolve_pretrained_models(
     except Exception as exc:
         raise RuntimeError(f"openwakeword is required for pretrained models: {exc}") from exc
 
-    catalog = _openwakeword_catalog()
+    use_onnx = str(inference_framework or "onnx").strip().lower() == "onnx"
+    catalog = _openwakeword_catalog(use_onnx)
     if not catalog:
         raise RuntimeError("openwakeword model catalog is empty")
 
     normalized = _normalize_pretrained_names(model_names, catalog)
-    use_onnx = str(inference_framework or "onnx").strip().lower() == "onnx"
     _ensure_openwakeword_assets(normalized, use_onnx)
 
     resolved: Dict[str, str] = {}
+    ext = ".onnx" if use_onnx else ".tflite"
     for key in normalized:
         entry = catalog[key]
         candidates: list[Path] = []
+        builtin_fname = _builtin_wake_models(use_onnx).get(key, {}).get("filename")
+        if builtin_fname:
+            stem = Path(str(builtin_fname)).stem
+            for root in (_openwakeword_models_dir(), _module_models_dir()):
+                candidates.append(root / f"{stem}{ext}")
         base_path = Path(str(entry.get("model_path", "")))
         if base_path.name:
-            candidates.append(base_path)
-            candidates.append(base_path.with_suffix(".onnx" if use_onnx else ".tflite"))
-        fname = BUILTIN_WAKE_MODELS.get(key, {}).get("filename")
-        if fname:
-            stem = Path(str(fname)).stem
-            for root in (_openwakeword_models_dir(), _module_models_dir()):
-                candidates.append(root / f"{stem}.onnx" if use_onnx else root / str(fname))
-                candidates.append(root / str(fname))
-        chosen = next((p for p in candidates if p.exists()), None)
+            candidates.append(base_path.with_suffix(ext))
+            if base_path.suffix != ext:
+                candidates.append(base_path)
+        chosen = next((p for p in candidates if p.exists() and p.stat().st_size >= 1024), None)
         if chosen is None:
             raise FileNotFoundError(f"openwakeword model missing after download: {key}")
+        if use_onnx and chosen.suffix.lower() != ".onnx":
+            raise FileNotFoundError(f"openwakeword onnx model missing (found {chosen.name}): {key}")
         resolved[key] = str(chosen.resolve())
     return resolved, normalized
 
