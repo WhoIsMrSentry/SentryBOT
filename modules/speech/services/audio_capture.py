@@ -69,7 +69,8 @@ class AudioCapture:
         if not isinstance(audio, dict):
             return
         dev = audio.get("device")
-        if dev is not None and str(dev).strip():
+        # YAML `null` or empty string must not wipe a device set by wakeword bootstrap.
+        if dev is not None and str(dev).strip().lower() not in {"", "null", "none"}:
             self.cfg.device = dev
         if audio.get("samplerate") is not None:
             self.cfg.samplerate = int(audio.get("samplerate", self.cfg.samplerate))
