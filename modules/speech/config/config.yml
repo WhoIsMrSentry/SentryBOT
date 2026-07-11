@@ -10,6 +10,12 @@ audio:
   channels: 2            # two I2S mics for direction estimation
   dtype: int16
   frame_ms: 30
+  vu:
+    window_ms: 90
+    noise_floor: 120
+    speech_ceiling: 6000
+    left_gain: 1.0
+    right_gain: 1.0
 
 recognition:
   source_language: auto

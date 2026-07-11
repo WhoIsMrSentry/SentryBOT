@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import math
 import queue
 import threading
 import time
@@ -26,11 +27,6 @@ logger = logging.getLogger("speech.audio")
 # GLOBAL SINGLETON for all audio capture to ensure zero contention
 _SINGLE_CAPTURE_INSTANCE: Optional["AudioCapture"] = None
 _INSTANCE_LOCK = threading.Lock()
-
-# RMS sliding window settings
-_RMS_WINDOW_MS = 100
-_RMS_MAX_SAMPLES = 8
-
 
 def _is_alsa_device_name(device: Any) -> bool:
     if device is None:
@@ -94,9 +90,16 @@ class AudioCapture:
         self._pcm = None
 
         # RMS level tracking (short sliding window per channel)
-        self._rms_window: deque[int] = deque(maxlen=_RMS_MAX_SAMPLES)
-        self._rms_left_window: deque[int] = deque(maxlen=_RMS_MAX_SAMPLES)
-        self._rms_right_window: deque[int] = deque(maxlen=_RMS_MAX_SAMPLES)
+        vu_cfg = cfg.get("vu", {}) if isinstance(cfg.get("vu"), dict) else {}
+        self._vu_window_ms = int(vu_cfg.get("window_ms", 90))
+        self._vu_noise_floor = float(vu_cfg.get("noise_floor", 120.0))
+        self._vu_speech_ceiling = float(vu_cfg.get("speech_ceiling", 6000.0))
+        self._vu_left_gain = float(vu_cfg.get("left_gain", 1.0))
+        self._vu_right_gain = float(vu_cfg.get("right_gain", 1.0))
+        window_frames = self._vu_window_frames()
+        self._rms_window: deque[int] = deque(maxlen=window_frames)
+        self._rms_left_window: deque[int] = deque(maxlen=window_frames)
+        self._rms_right_window: deque[int] = deque(maxlen=window_frames)
         self._rms_lock = threading.Lock()
 
     def merge_config(self, cfg: Dict) -> None:
@@ -118,6 +121,21 @@ class AudioCapture:
             self.cfg.samplerate = int(audio.get("samplerate", self.cfg.samplerate))
         if audio.get("channels") is not None:
             self.cfg.channels = int(audio.get("channels", self.cfg.channels))
+        vu_cfg = audio.get("vu") if isinstance(audio.get("vu"), dict) else None
+        if vu_cfg is not None:
+            with self._rms_lock:
+                self._vu_window_ms = int(vu_cfg.get("window_ms", self._vu_window_ms))
+                self._vu_noise_floor = float(vu_cfg.get("noise_floor", self._vu_noise_floor))
+                self._vu_speech_ceiling = float(vu_cfg.get("speech_ceiling", self._vu_speech_ceiling))
+                self._vu_left_gain = float(vu_cfg.get("left_gain", self._vu_left_gain))
+                self._vu_right_gain = float(vu_cfg.get("right_gain", self._vu_right_gain))
+                window_frames = self._vu_window_frames()
+                self._rms_window = deque(self._rms_window, maxlen=window_frames)
+                self._rms_left_window = deque(self._rms_left_window, maxlen=window_frames)
+                self._rms_right_window = deque(self._rms_right_window, maxlen=window_frames)
+
+    def _vu_window_frames(self) -> int:
+        return max(1, int(round(self._vu_window_ms / max(1, self.cfg.frame_ms))))
 
     def _compute_rms(self, data: bytes) -> int:
         """Compute RMS level from raw PCM int16 data. Returns 0-32767."""
@@ -175,22 +193,27 @@ class AudioCapture:
                 self._rms_left_window.append(rms)
                 self._rms_right_window.append(rms)
 
-    def _normalized_peak(self, window: deque[int]) -> float:
+    def _normalized_peak(self, window: deque[int], gain: float = 1.0) -> float:
         if not window:
             return 0.0
-        peak = max(window)
-        return min(1.0, peak / 32767.0)
+        peak = max(window) * max(0.01, float(gain))
+        floor = max(1.0, self._vu_noise_floor)
+        ceiling = max(floor + 1.0, self._vu_speech_ceiling)
+        if peak <= floor:
+            return 0.0
+        level = (math.log10(peak) - math.log10(floor)) / (math.log10(ceiling) - math.log10(floor))
+        return max(0.0, min(1.0, level))
 
     def get_rms_level(self) -> float:
         """Get normalized RMS level (0.0 - 1.0) over the sliding window."""
         with self._rms_lock:
-            return self._normalized_peak(self._rms_window)
+            return self._normalized_peak(self._rms_window, max(self._vu_left_gain, self._vu_right_gain))
 
     def get_rms_levels(self) -> tuple[float, float]:
         """Get normalized stereo RMS (left, right) over the short sliding window."""
         with self._rms_lock:
-            left = self._normalized_peak(self._rms_left_window)
-            right = self._normalized_peak(self._rms_right_window)
+            left = self._normalized_peak(self._rms_left_window, self._vu_left_gain)
+            right = self._normalized_peak(self._rms_right_window, self._vu_right_gain)
             return left, right
 
     def get_rms_raw(self) -> int:
