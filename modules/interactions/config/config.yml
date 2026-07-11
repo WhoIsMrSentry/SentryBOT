@@ -68,7 +68,7 @@ rules:
   - id: wakeword_detected
     when: { event: wakeword.detected }
     action:
-      companion: { mode: wake_spin, eye_color: "#FFD700" }
+      companion: { mode: wake_spin, eye_color: "#30E3CA" }
     priority: critical
     cooldown_ms: 800
 
