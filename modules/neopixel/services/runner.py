@@ -9,7 +9,6 @@ import yaml
 
 try:
     from .driver import NeoDriver, NeoDriverConfig
-    from .effects import wheel
     from .animations import (
         rainbow as anim_rainbow,
         rainbow_cycle,
@@ -35,7 +34,6 @@ try:
     )
 except Exception:
     from driver import NeoDriver, NeoDriverConfig  # type: ignore
-    from effects import wheel  # type: ignore
 
 
 class _SegmentView:
@@ -70,6 +68,64 @@ class _SegmentView:
         self._driver.show()
 
 
+class _AnimationCancelled(RuntimeError):
+    pass
+
+
+class _AnimationDriver:
+    """Buffer animation frames and reject writes from cancelled animations."""
+
+    def __init__(self, runner: Any, generation: int) -> None:
+        self._runner = runner
+        self._generation = generation
+        self._pending: dict[int, tuple[int, int, int]] = {}
+        self.num_leds = runner.driver.num_leds
+
+    def _check(self) -> None:
+        if not self._runner._animation_is_current(self._generation):
+            raise _AnimationCancelled()
+
+    def set(self, idx: int, r: int, g: int, b: int) -> None:
+        self._check()
+        if 0 <= idx < self.num_leds:
+            self._pending[idx] = (r, g, b)
+
+    def show(self) -> None:
+        self._check()
+        with self._runner._frame_lock:
+            self._check()
+            for idx, color in self._pending.items():
+                self._runner.driver.set(idx, *color)
+            self._runner.driver.show()
+        self._pending.clear()
+
+    def clear(self) -> None:
+        self._check()
+        self._pending.clear()
+        with self._runner._frame_lock:
+            self._check()
+            self._runner.driver.clear()
+
+    def fill(self, r: int, g: int, b: int) -> None:
+        self._check()
+        self._pending.clear()
+        with self._runner._frame_lock:
+            self._check()
+            self._runner.driver.fill(r, g, b)
+
+    def animate(
+        self,
+        name: str,
+        r: int = 255,
+        g: int = 255,
+        b: int = 255,
+        iterations: int = 0,
+        speed_ms: int = 50,
+    ) -> bool:
+        self._check()
+        return False
+
+
 class NeoRunner:
     def __init__(
         self,
@@ -81,12 +137,20 @@ class NeoRunner:
         companion_cfg: dict[str, Any] | None = None,
     ):
         self.driver = NeoDriver(cfg)
+        self._frame_lock = threading.RLock()
+        self._animation_lock = threading.Lock()
+        self._animation_generation = 0
+        self._active_animation = ""
         self._companion = None
         if isinstance(companion_cfg, dict) and bool(companion_cfg.get("enabled", True)):
             try:
                 from .companion_leds import CompanionLedController
 
-                self._companion = CompanionLedController(self.driver, companion_cfg)
+                self._companion = CompanionLedController(
+                    self.driver,
+                    companion_cfg,
+                    frame_lock=self._frame_lock,
+                )
             except Exception:
                 self._companion = None
         # Emotions loader is optional; imported lazily to avoid cost
@@ -200,6 +264,18 @@ class NeoRunner:
         except queue.Empty:
             pass
 
+    def _cancel_animations(self) -> int:
+        with self._animation_lock:
+            self._animation_generation += 1
+            generation = self._animation_generation
+        self._drain_animate_queue()
+        return generation
+
+    def _animation_is_current(self, generation: int) -> bool:
+        with self._animation_lock:
+            current = generation == self._animation_generation
+        return current and not self.companion_is_active()
+
     def _wait_for_animations(self, timeout: float = 5.0) -> bool:
         """Wait for all queued animations to complete. Returns True if completed, False on timeout."""
         try:
@@ -209,22 +285,34 @@ class NeoRunner:
             return False
 
     # Exposed operations
-    def clear(self) -> None:
-        self._drain_animate_queue()
-        self.driver.clear()
+    def clear(self) -> bool:
+        if self.companion_is_active():
+            return False
+        self._cancel_animations()
+        with self._frame_lock:
+            self.driver.clear()
+        return True
 
-    def fill(self, r: int, g: int, b: int) -> None:
-        self._drain_animate_queue()
-        self.driver.fill(r, g, b)
+    def fill(self, r: int, g: int, b: int) -> bool:
+        if self.companion_is_active():
+            return False
+        self._cancel_animations()
+        with self._frame_lock:
+            self.driver.fill(r, g, b)
+        return True
 
     def fill_segment(self, name: str, r: int, g: int, b: int) -> bool:
+        if self.companion_is_active():
+            return False
         bounds = self._segment_bounds(name)
         if bounds is None:
             return False
+        self._cancel_animations()
         start, end = bounds
-        for i in range(start, end):
-            self.driver.set(i, r, g, b)
-        self.driver.show()
+        with self._frame_lock:
+            for i in range(start, end):
+                self.driver.set(i, r, g, b)
+            self.driver.show()
         return True
 
     def clear_segment(self, name: str) -> bool:
@@ -248,46 +336,52 @@ class NeoRunner:
         return None
 
     def apply_preset(self, name: str) -> bool:
+        if self.companion_is_active():
+            return False
         preset = self._presets.get(str(name))
         if not isinstance(preset, dict):
             return False
+        self._cancel_animations()
+        animations: list[tuple[str, tuple[int, int, int] | None, str]] = []
         for seg_name, spec in preset.items():
             if not isinstance(spec, dict):
                 continue
             color = self._parse_color(spec.get("color"))
             effect = spec.get("effect")
             if isinstance(effect, str) and effect:
-                self.animate(effect, color=color, segment=str(seg_name))
+                animations.append((effect, color, str(seg_name)))
                 continue
             if color is not None:
-                self.fill_segment(str(seg_name), color[0], color[1], color[2])
+                bounds = self._segment_bounds(str(seg_name))
+                if bounds is None:
+                    continue
+                start, end = bounds
+                with self._frame_lock:
+                    for idx in range(start, end):
+                        self.driver.set(idx, *color)
+                    self.driver.show()
+        for effect, color, segment in animations:
+            self.animate(effect, color=color, segment=segment, coalesce=False)
         return True
 
-    def rainbow(self, wait: float = 0.02, cycles: int = 3) -> None:
-        n = self.driver.num_leds
-        for j in range(256 * cycles):
-            for i in range(n):
-                r, g, b = wheel((i * 256 // n + j) & 255)
-                self.driver.set(i, r, g, b)
-            self.driver.show()
-            time.sleep(wait)
+    def rainbow(self, wait: float = 0.02, cycles: int = 3) -> bool:
+        return self.animate("RAINBOW", iterations=cycles)
 
-    def theater_chase(self, r: int = 255, g: int = 0, b: int = 0, wait: float = 0.05, cycles: int = 10) -> None:
-        n = self.driver.num_leds
-        for _ in range(cycles):
-            for phase in range(3):
-                for i in range(n):
-                    if (i + phase) % 3 == 0:
-                        self.driver.set(i, r, g, b)
-                    else:
-                        self.driver.set(i, 0, 0, 0)
-                self.driver.show()
-                time.sleep(wait)
+    def theater_chase(
+        self,
+        r: int = 255,
+        g: int = 0,
+        b: int = 0,
+        wait: float = 0.05,
+        cycles: int = 10,
+    ) -> bool:
+        return self.animate("THEATER_CHASE", color=(r, g, b), iterations=cycles)
 
     # --- Emotions ---
-    def show_color(self, r: int, g: int, b: int, duration: float = 0.3, clear_after: bool = False) -> None:
+    def show_color(self, r: int, g: int, b: int, duration: float = 0.3, clear_after: bool = False) -> bool:
         # Immediate visual update; do not block the caller waiting for duration.
-        self.fill(r, g, b)
+        if not self.fill(r, g, b):
+            return False
         if duration > 0:
             import threading
 
@@ -301,6 +395,7 @@ class NeoRunner:
 
             t = threading.Thread(target=_clear_after, daemon=True)
             t.start()
+        return True
 
     def _get_store(self):
         if self._emotion_store is None:
@@ -331,10 +426,15 @@ class NeoRunner:
         iterations: int | None = None,
         color: tuple[int, int, int] | None = None,
         segment: str | None = None,
+        generation: int | None = None,
     ) -> None:
         """Synchronous implementation of animation (may block)."""
-        if self.companion_is_active():
+        if generation is None:
+            with self._animation_lock:
+                generation = self._animation_generation
+        if not self._animation_is_current(generation):
             return
+        animation_driver = _AnimationDriver(self, generation)
         name_lower = name.lower().strip()
         cols = self._colors_from_emotions(emotions)
         c1 = color if color is not None else (cols[0] if cols else None)
@@ -345,21 +445,21 @@ class NeoRunner:
             bounds = self._segment_bounds(segment)
             if bounds is not None:
                 start, end = bounds
-                view = _SegmentView(self.driver, start, end)
+                view = _SegmentView(animation_driver, start, end)
                 if not self._run_named_animation(name, view, cols, c1, iterations):
                     fill = c1 if c1 is not None else (255, 255, 255)
                     view.fill(*fill)
                 return
             # Unknown segment name: degrade to whole-strip behaviour below.
 
-        if not self._run_named_animation(name, self.driver, cols, c1, iterations):
+        if not self._run_named_animation(name, animation_driver, cols, c1, iterations):
             # Unknown animation name: try backend-native animation first.
             r, g, b = c1 if c1 else (255, 255, 255)
-            if self.driver.animate(name_lower, r, g, b, iterations or 0, 50):
+            if animation_driver.animate(name_lower, r, g, b, iterations or 0, 50):
                 return
             # last-resort fallback simple fill
             if c1:
-                self.fill(*c1)
+                animation_driver.fill(*c1)
 
     def _dispatch_animation(self, name: str, driver: Any, cols: list, c1: tuple | None, c2: tuple | None, iterations: int | None) -> bool:
         _ANIM_MAP = {
@@ -407,10 +507,16 @@ class NeoRunner:
         while True:
             item = self._animate_queue.get()
             try:
+                with self._animation_lock:
+                    self._active_animation = str(item[0])
                 self._animate_sync(*item)
+            except _AnimationCancelled:
+                pass
             except Exception:
                 pass
             finally:
+                with self._animation_lock:
+                    self._active_animation = ""
                 self._animate_queue.task_done()
 
     def companion_set_mode(self, mode: str) -> bool:
@@ -418,14 +524,15 @@ class NeoRunner:
             return False
         active = str(mode or "").strip().lower() not in {"", "off"}
         if active:
-            self._drain_animate_queue()
+            self._cancel_animations()
+        ok = self._companion.set_mode(mode)
+        if active and ok:
             try:
-                self.driver.clear()
-                self.driver.show()
+                with self._frame_lock:
+                    self.driver.clear()
             except Exception:
                 pass
-        self._companion.set_mode(mode)
-        return True
+        return bool(ok)
 
     def companion_set_vu_level(self, level: float, *, right: Optional[float] = None) -> bool:
         if self._companion is None:
@@ -447,7 +554,16 @@ class NeoRunner:
     def companion_status(self) -> dict[str, Any]:
         if self._companion is None:
             return {"enabled": False, "mode": "off"}
-        return {"enabled": True, "mode": self._companion.mode}
+        with self._animation_lock:
+            generation = self._animation_generation
+            active_animation = self._active_animation
+        return {
+            "enabled": True,
+            **self._companion.status(),
+            "animation_generation": generation,
+            "active_animation": active_animation,
+            "animation_queue_size": self._animate_queue.qsize(),
+        }
 
     def animate(
         self,
@@ -458,22 +574,22 @@ class NeoRunner:
         segment: str | None = None,
         *,
         coalesce: bool = True,
-    ) -> None:
+    ) -> bool:
         """Queue animations so only one runs at a time; drop pending when coalesce=True."""
         if self.companion_is_active():
-            return
-        payload = (name, emotions, iterations, color, segment)
+            return False
         if coalesce:
-            try:
-                while True:
-                    self._animate_queue.get_nowait()
-                    self._animate_queue.task_done()
-            except queue.Empty:
-                pass
+            generation = self._cancel_animations()
+        else:
+            with self._animation_lock:
+                generation = self._animation_generation
+        payload = (name, emotions, iterations, color, segment, generation)
         try:
             self._animate_queue.put_nowait(payload)
+            return True
         except Exception:
             try:
                 self._animate_sync(*payload)
+                return True
             except Exception:
-                pass
+                return False
