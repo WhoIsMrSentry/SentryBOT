@@ -113,14 +113,14 @@ rules:
     cooldown_ms: 600
   - id: speech_end
     when: { event: speech.end }
-    action: { effect: { name: COMET, duration_ms: 600 } }
-    priority: medium
+    action: {}
+    priority: low
     cooldown_ms: 1000
 
   - id: arduino_disconnected
     when: { arduino_connected: false }
     action: { base: { name: THEATER_CHASE, color: "#FF00FF" } }
-    priority: high
+    priority: low
 
   - id: error_ping
     when: { event: error }

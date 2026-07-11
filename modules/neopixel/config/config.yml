@@ -43,7 +43,7 @@ companion:
   vu:
     attack: 0.78
     decay: 0.22
-    min_level: 0.03
+    min_level: 0.02
   wake_spin:
     duration_ms: 1200
     wait_ms: 45

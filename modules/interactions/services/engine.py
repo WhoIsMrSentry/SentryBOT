@@ -375,6 +375,14 @@ class InteractionEngine:
             chosen.stamp()
         return True
 
+    def _companion_controls_leds(self) -> bool:
+        try:
+            if hasattr(self.neo, "companion_is_active"):
+                return bool(self.neo.companion_is_active())
+        except Exception:
+            pass
+        return False
+
     def _render_idle_base(self, now: float) -> None:
         if now < self._active_effect_until:
             return
@@ -407,20 +415,21 @@ class InteractionEngine:
             manual_effect = self._manual_effect
             self._manual_effect = None
             chosen = self._evaluate_rules()
+            companion_leds = self._companion_controls_leds()
 
             rendered = False
-            if manual_effect and now >= self._active_effect_until:
+            if manual_effect and now >= self._active_effect_until and not companion_leds:
                 rendered = self._render_manual_effect(now, manual_effect)
-            elif manual_base and now >= self._active_effect_until:
+            elif manual_base and now >= self._active_effect_until and not companion_leds:
                 rendered = self._render_manual_base(now, manual_base)
             elif chosen:
                 act = chosen.action or {}
                 if "companion" in act:
                     rendered = self._render_rule_companion(act, chosen)
-                else:
+                elif not companion_leds:
                     rendered = self._render_rule_effect(now, act, chosen) or self._render_rule_base(now, act, chosen)
 
-            if not rendered:
+            if not rendered and not companion_leds:
                 self._render_idle_base(now)
 
             self._ctx.pop("event", None)

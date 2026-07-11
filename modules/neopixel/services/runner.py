@@ -452,6 +452,8 @@ class NeoRunner:
         coalesce: bool = True,
     ) -> None:
         """Queue animations so only one runs at a time; drop pending when coalesce=True."""
+        if self.companion_is_active():
+            return
         payload = (name, emotions, iterations, color, segment)
         if coalesce:
             try:

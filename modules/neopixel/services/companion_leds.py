@@ -273,7 +273,7 @@ class CompanionLedController:
             if idx >= self._driver.num_leds:
                 break
             if i < lit:
-                pos = i / max(1, lit - 1) if lit > 1 else 0.5
+                pos = i / max(1, stick.count - 1)
                 self._driver.set(idx, *_get_gradient_color_safe(self._vu_gradient, self._vu_bar, pos))
             else:
                 self._driver.set(idx, *self._vu_bg)
@@ -388,7 +388,6 @@ class CompanionLedController:
             ratio = sin_val / 255.0
             self._driver.set(idx, int(r * ratio), int(g * ratio), int(b * ratio))
         self._driver.show()
-        time.sleep(max(0.02, self._wake_spin_wait_ms / 1000.0))
         return False
 
     def _render_wake_chase_frame(self) -> None:
