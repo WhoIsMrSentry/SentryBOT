@@ -140,6 +140,7 @@ class CompanionLedController:
         self._eye_phase = 0.0
         self._wake_spin_started = 0.0
         self._wake_spin_position = 0
+        self._wake_spin_frame_tick = 0
 
     @property
     def mode(self) -> str:
@@ -158,7 +159,7 @@ class CompanionLedController:
     def set_mode(self, mode: str) -> None:
         mode = str(mode or "off").strip().lower()
         with self._lock:
-            if mode == self._mode:
+            if mode == self._mode and mode != "wake_spin":
                 return
             if self._mode == "wake_spin" and mode in {"listen_vu", "vu", "listen"}:
                 return
@@ -166,6 +167,7 @@ class CompanionLedController:
             self._think_phase = 0
             self._eye_phase = 0.0
             self._wake_spin_position = 0
+            self._wake_spin_frame_tick = 0
             if mode == "wake_spin":
                 self._wake_spin_started = time.monotonic()
             if mode in {"off", "wake_spin"}:
@@ -186,15 +188,25 @@ class CompanionLedController:
             targets = [level, max(0.0, min(1.0, float(right)))]
         with self._lock:
             self._vu_targets = targets
+            if self._mode == "wake_spin":
+                return
+            peak = max(targets)
             if self._mode in {"vu", "listen", "listen_vu"}:
                 self._mode = "listen_vu"
+            elif peak >= self._vu_min:
+                self._mode = "listen_vu"
+                self._ensure_thread_unlocked()
 
-    def _ensure_thread(self) -> None:
+    def _ensure_thread_unlocked(self) -> None:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, name="CompanionLeds", daemon=True)
         self._thread.start()
+
+    def _ensure_thread(self) -> None:
+        with self._lock:
+            self._ensure_thread_unlocked()
 
     def _maybe_stop_thread(self) -> None:
         with self._lock:
@@ -377,9 +389,15 @@ class CompanionLedController:
         self._clear_sticks()
         r, g, b = color
         n = self._jewel_count
-        position += 1
+        steps_per_advance = max(1, int(self._wake_spin_wait_ms / max(1.0, self._tick_ms)))
         with self._lock:
-            self._wake_spin_position = position
+            self._wake_spin_frame_tick += 1
+            if self._wake_spin_frame_tick >= steps_per_advance:
+                self._wake_spin_frame_tick = 0
+                position += 1
+                self._wake_spin_position = position
+            else:
+                position = self._wake_spin_position
         for rel in range(n):
             idx = self._jewel_start + rel
             if idx >= self._driver.num_leds:

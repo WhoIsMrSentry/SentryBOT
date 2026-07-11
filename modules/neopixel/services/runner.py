@@ -333,6 +333,8 @@ class NeoRunner:
         segment: str | None = None,
     ) -> None:
         """Synchronous implementation of animation (may block)."""
+        if self.companion_is_active():
+            return
         name_lower = name.lower().strip()
         cols = self._colors_from_emotions(emotions)
         c1 = color if color is not None else (cols[0] if cols else None)
@@ -414,8 +416,14 @@ class NeoRunner:
     def companion_set_mode(self, mode: str) -> bool:
         if self._companion is None:
             return False
-        if str(mode or "").strip().lower() not in {"", "off"}:
+        active = str(mode or "").strip().lower() not in {"", "off"}
+        if active:
             self._drain_animate_queue()
+            try:
+                self.driver.clear()
+                self.driver.show()
+            except Exception:
+                pass
         self._companion.set_mode(mode)
         return True
 

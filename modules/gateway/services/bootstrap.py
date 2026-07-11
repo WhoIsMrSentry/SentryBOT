@@ -869,8 +869,34 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
     _wire_vlm_autonomy(started)
     _wire_onsensor_vlm(started)
     _wire_interactions_piservo(started)
+    _wire_wakeword_interactions(started)
+    _wire_speech_interactions(started, cfg)
 
     return started
+
+
+def _wire_wakeword_interactions(started: Dict[str, object]) -> None:
+    wakeword = started.get("wakeword")
+    interactions = started.get("interactions")
+    if wakeword is None or interactions is None:
+        return
+    actions = getattr(wakeword, "actions", None)
+    if actions is not None:
+        actions._interactions_engine = interactions
+        logger.info("wakeword wired to interactions engine (in-process events)")
+
+
+def _wire_speech_interactions(started: Dict[str, object], cfg: Dict[str, Any]) -> None:
+    interactions = started.get("interactions")
+    if interactions is None:
+        return
+    try:
+        from modules.speech.api.router import set_interactions_engine  # type: ignore
+
+        set_interactions_engine(interactions)
+        logger.info("speech wired to interactions engine (in-process events)")
+    except Exception as exc:
+        logger.debug("speech interactions wiring skipped: %s", exc)
 
 
 def _wire_arduino_neopixel(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:

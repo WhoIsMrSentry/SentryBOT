@@ -79,6 +79,8 @@ class InteractionEngine:
 
                 def set_base(self, name: str, color: Optional[str | tuple[int, int, int]] = None, speed: Optional[str] = None) -> None:
                     try:
+                        if hasattr(self._runner, "companion_is_active") and self._runner.companion_is_active():
+                            return
                         rgb = self._engine._normalize_color(color)
                         if rgb is not None:
                             self._runner.animate(name, color=rgb)
@@ -95,6 +97,8 @@ class InteractionEngine:
                     emotions: Optional[list[str]] = None,
                 ) -> None:
                     try:
+                        if hasattr(self._runner, "companion_is_active") and self._runner.companion_is_active():
+                            return
                         rgb = self._engine._normalize_color(color)
                         kwargs: Dict[str, Any] = {}
                         if rgb is not None:
@@ -108,6 +112,8 @@ class InteractionEngine:
                         def _restore_idle():
                             try:
                                 time.sleep(max(0.0, duration_ms / 1000.0))
+                                if hasattr(self._runner, "companion_is_active") and self._runner.companion_is_active():
+                                    return
                                 idle = (self._engine.defaults or {}).get("idle", {}).get("base", {})
                                 base_name = str(idle.get("name", "BREATHE"))
                                 base_color = idle.get("color")
@@ -167,7 +173,7 @@ class InteractionEngine:
         self._lock = threading.Lock()
         self._last_base: Optional[Tuple[str, Optional[str | tuple[int, int, int]]]] = None
         self._active_effect_until: float = 0.0
-        self._ctx: Dict[str, Any] = {"arduino_connected": False}
+        self._ctx: Dict[str, Any] = {"arduino_connected": True}
         self._event_counts: Dict[str, int] = {}
         self._last_net_burst: float = 0.0
         self.monitor_cfg = dict(cfg.get("monitor", {}))
@@ -209,6 +215,7 @@ class InteractionEngine:
                 handler(evt, data or {})
             except Exception:
                 pass
+        self._dispatch_companion_for_event(evt)
         if evt == "speech.audio_level" and isinstance(data, dict):
             left = data.get("left")
             right = data.get("right")
@@ -341,8 +348,28 @@ class InteractionEngine:
         eye = comp.get("eye_color")
         if hasattr(self.neo, "companion_mode"):
             self.neo.companion_mode(mode, eye_color=eye)
+        with self._lock:
+            self._last_base = None
         chosen.stamp()
         return True
+
+    def _dispatch_companion_for_event(self, evt: str) -> None:
+        if not evt:
+            return
+        with self._lock:
+            snapshot = dict(self._ctx)
+            snapshot["event"] = evt
+        chosen: Optional[Rule] = None
+        for rule in self.rules:
+            act = rule.action or {}
+            if "companion" not in act:
+                continue
+            if not eval_condition(rule.when, snapshot) or not rule.ready():
+                continue
+            if chosen is None or priority_rank(rule.priority) > priority_rank(chosen.priority):
+                chosen = rule
+        if chosen is not None:
+            self._render_rule_companion(chosen.action, chosen)
 
     def _render_rule_effect(self, now: float, act: dict, chosen: Rule) -> bool:
         if "effect" not in act or now < self._active_effect_until:

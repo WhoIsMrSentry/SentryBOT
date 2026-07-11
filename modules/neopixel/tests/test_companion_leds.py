@@ -115,6 +115,24 @@ def test_companion_wake_spin_jewel_only_golden():
     assert all(driver.buf[i] == (5, 16, 24) for i in range(7, 23))
 
 
+def test_vu_level_from_off_enters_listen_vu():
+    driver = _FakeDriver(23)
+    ctrl = CompanionLedController(driver, _layout_cfg(vu={"attack": 1.0, "decay": 1.0, "min_level": 0.02}))
+    assert ctrl.mode == "off"
+    ctrl.set_vu_level(0.5, right=0.3)
+    assert ctrl.mode == "listen_vu"
+
+
+def test_wake_spin_can_retrigger():
+    driver = _FakeDriver(23)
+    ctrl = CompanionLedController(driver, _layout_cfg())
+    ctrl.set_mode("wake_spin")
+    first_started = ctrl._wake_spin_started
+    ctrl.set_mode("wake_spin")
+    assert ctrl.mode == "wake_spin"
+    assert ctrl._wake_spin_started >= first_started
+
+
 def test_wake_spin_blocks_external_listen_vu_until_done():
     driver = _FakeDriver(23)
     ctrl = CompanionLedController(driver, _layout_cfg())

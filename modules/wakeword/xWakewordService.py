@@ -6,7 +6,7 @@ from pathlib import Path
 import threading
 import time
 from threading import Event, Lock
-from typing import Optional
+from typing import Any, Optional
 
 try:
     import requests  # type: ignore
@@ -110,6 +110,7 @@ class WakewordActions:
         self.agent_interrupt_url = str(
             cfg.get("agent_interrupt_url", "http://localhost:8080/agent/speech/interrupt")
         )
+        self._interactions_engine: Any | None = None
 
     def interrupt_robot_speech(self) -> None:
         _post_json(self.speak_stop_url)
@@ -122,6 +123,13 @@ class WakewordActions:
         _post_json(self.speech_stop_url)
 
     def emit_event(self, event_type: str, wakeword: str) -> None:
+        engine = self._interactions_engine
+        if engine is not None and hasattr(engine, "push_event"):
+            try:
+                engine.push_event(event_type, {"wakeword": wakeword})
+                return
+            except Exception:
+                pass
         if not self.interactions_event_url:
             return
         _post_json(self.interactions_event_url, {"type": event_type, "wakeword": wakeword})

@@ -119,7 +119,7 @@ rules:
 
   - id: arduino_disconnected
     when: { arduino_connected: false }
-    action: { base: { name: THEATER_CHASE, color: "#FF00FF" } }
+    action: {}
     priority: low
 
   - id: error_ping

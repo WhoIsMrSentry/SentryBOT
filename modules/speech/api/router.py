@@ -5,7 +5,7 @@ import threading
 import logging
 import time
 from threading import Timer, Lock
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from modules.speech.services.wake_phrase import contains_wakeword, strip_wakewords
 
@@ -15,6 +15,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger("speech.api")
 
 _GATEWAY_BASE = "http://127.0.0.1:8080"
+_INTERACTIONS_ENGINE: Any | None = None
+
+
+def set_interactions_engine(engine: Any | None) -> None:
+    global _INTERACTIONS_ENGINE
+    _INTERACTIONS_ENGINE = engine
 
 
 def _gw(path: str) -> str:
@@ -48,6 +54,13 @@ def _notify_autonomy(text: str = "", language: str = ""):
 
 
 def _push_interaction_event(event_type: str, data: dict | None = None):
+    engine = _INTERACTIONS_ENGINE
+    if engine is not None and hasattr(engine, "push_event"):
+        try:
+            engine.push_event(event_type, data or {})
+            return
+        except Exception:
+            pass
     try:
         requests.post(
             _gw("/interactions/event"),
