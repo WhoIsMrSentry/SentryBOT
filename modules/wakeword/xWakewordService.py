@@ -305,8 +305,6 @@ class WakewordService:
             self._last_trigger_ts = now
             self._active_window = True
         self.actions.interrupt_robot_speech()
-        # Trigger wake_chase mode on NeoPixel
-        self.actions.neopixel_set_mode("wake_chase")
         logger.info("wakeword candidate: %s at %f (barge-in)", wakeword, now)
         threading.Thread(target=self._command_window, args=(wakeword,), daemon=True).start()
 
@@ -324,13 +322,8 @@ class WakewordService:
                 else self.actions.min_listen_before_final_sec
             )
             grace_until = window_started_ts + max(0.0, min_listen)
-            
-            # During listening window, feed VU level from audio capture
+
             while _now() < deadline:
-                # Get audio level from shared capture
-                rms_level = self.capture.get_rms_level()
-                self.actions.neopixel_set_vu_level(rms_level)
-                
                 if (
                     _now() >= grace_until
                     and self.actions.stop_on_final
@@ -339,8 +332,6 @@ class WakewordService:
                     break
                 time.sleep(max(0.05, self.actions.poll_interval_ms / 1000.0))
             self.actions.stop_speech()
-            # Return to eye mode after listening window
-            self.actions.neopixel_set_mode("eye")
         finally:
             with self._lock:
                 self._active_window = False
