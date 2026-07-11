@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from modules.neopixel.services.companion_leds import CompanionLedController, _interpolate_gradient
 
 
@@ -139,3 +141,67 @@ def test_wake_spin_blocks_external_listen_vu_until_done():
     ctrl.set_mode("wake_spin")
     ctrl.set_mode("listen_vu")
     assert ctrl.mode == "wake_spin"
+
+
+def test_wake_spin_defers_other_modes_until_animation_finishes():
+    driver = _FakeDriver(23)
+    ctrl = CompanionLedController(
+        driver,
+        _layout_cfg(wake_spin={"duration_ms": 5000, "wait_ms": 1}),
+    )
+    ctrl.set_mode("wake_spin")
+    ctrl.set_mode("thinking")
+    assert ctrl.mode == "wake_spin"
+    assert ctrl.status()["pending_mode"] == "thinking"
+    ctrl._stop.set()
+    if ctrl._thread:
+        ctrl._thread.join(timeout=0.2)
+    ctrl._wake_spin_started -= 10.0
+    assert ctrl._render_wake_spin_frame() is True
+    ctrl._complete_wake_spin()
+    assert ctrl.mode == "thinking"
+
+
+def test_companion_renderer_survives_off_then_restarts():
+    driver = _FakeDriver(23)
+    ctrl = CompanionLedController(
+        driver,
+        _layout_cfg(
+            tick_ms=5,
+            wake_spin={"duration_ms": 100, "wait_ms": 5},
+            colors={"wake_spin": "#FFD700"},
+        ),
+    )
+    ctrl.set_mode("eye")
+    time.sleep(0.03)
+    ctrl.set_mode("off")
+    shows_after_off = driver.shows
+    ctrl.set_mode("wake_spin")
+    time.sleep(0.03)
+    ctrl._stop.set()
+    assert driver.shows > shows_after_off
+    assert any(driver.buf[i] != (0, 0, 0) for i in range(7))
+
+
+def test_stale_vu_input_decays_to_zero():
+    driver = _FakeDriver(23)
+    ctrl = CompanionLedController(
+        driver,
+        _layout_cfg(
+            vu={"attack": 1.0, "decay": 1.0, "min_level": 0.0, "stale_ms": 50},
+        ),
+    )
+    ctrl.set_mode("listen_vu")
+    ctrl.set_vu_level(1.0, right=1.0)
+    ctrl._render_vu_frame()
+    assert any(driver.buf[i] != (5, 16, 24) for i in range(7, 23))
+    ctrl._last_vu_ts -= 1.0
+    ctrl._render_vu_frame()
+    assert all(driver.buf[i] == (5, 16, 24) for i in range(7, 23))
+
+
+def test_unknown_companion_mode_is_rejected():
+    driver = _FakeDriver(23)
+    ctrl = CompanionLedController(driver, _layout_cfg())
+    assert ctrl.set_mode("random_mode") is False
+    assert ctrl.mode == "off"

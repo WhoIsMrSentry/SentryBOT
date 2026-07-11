@@ -68,8 +68,16 @@ class _StickSegment:
 class CompanionLedController:
     """Background renderer for jewel + stick companion animations."""
 
-    def __init__(self, driver: Any, cfg: Optional[Dict[str, Any]] = None) -> None:
+    VALID_MODES = {"off", "listen_vu", "thinking", "eye", "wake_spin", "wake_chase"}
+
+    def __init__(
+        self,
+        driver: Any,
+        cfg: Optional[Dict[str, Any]] = None,
+        frame_lock: Optional[threading.RLock] = None,
+    ) -> None:
         self._driver = driver
+        self._frame_lock = frame_lock or threading.RLock()
         self._cfg = cfg if isinstance(cfg, dict) else {}
         layout = self._cfg.get("layout", {}) if isinstance(self._cfg.get("layout"), dict) else {}
         self._jewel_start = int(layout.get("jewel_start", 0))
@@ -122,6 +130,7 @@ class CompanionLedController:
         self._vu_attack = float(vu.get("attack", vu.get("smoothing", 0.75)))
         self._vu_decay = float(vu.get("decay", 0.18))
         self._vu_min = float(vu.get("min_level", 0.04))
+        self._vu_stale_s = max(0.05, float(vu.get("stale_ms", 180)) / 1000.0)
         self._tick_ms = float(self._cfg.get("tick_ms", 25))
 
         wake_spin = self._cfg.get("wake_spin", {}) if isinstance(self._cfg.get("wake_spin"), dict) else {}
@@ -141,6 +150,8 @@ class CompanionLedController:
         self._wake_spin_started = 0.0
         self._wake_spin_position = 0
         self._wake_spin_frame_tick = 0
+        self._pending_mode = ""
+        self._last_vu_ts = 0.0
 
     @property
     def mode(self) -> str:
@@ -152,17 +163,37 @@ class CompanionLedController:
         with self._lock:
             return self._mode not in {"", "off"}
 
+    def status(self) -> Dict[str, Any]:
+        with self._lock:
+            age_ms = None
+            if self._last_vu_ts > 0.0:
+                age_ms = max(0, int((time.monotonic() - self._last_vu_ts) * 1000.0))
+            return {
+                "mode": self._mode,
+                "pending_mode": self._pending_mode,
+                "vu_levels": list(self._vu_levels),
+                "vu_targets": list(self._vu_targets),
+                "vu_age_ms": age_ms,
+                "renderer_alive": bool(self._thread and self._thread.is_alive()),
+            }
+
     def set_eye_color(self, color: Color) -> None:
         with self._lock:
             self._eye_color = color
 
-    def set_mode(self, mode: str) -> None:
+    def set_mode(self, mode: str) -> bool:
         mode = str(mode or "off").strip().lower()
+        aliases = {"vu": "listen_vu", "listen": "listen_vu", "": "off"}
+        mode = aliases.get(mode, mode)
+        if mode not in self.VALID_MODES:
+            logger.warning("unknown companion mode ignored: %s", mode)
+            return False
         with self._lock:
             if mode == self._mode and mode != "wake_spin":
-                return
-            if self._mode == "wake_spin" and mode in {"listen_vu", "vu", "listen"}:
-                return
+                return True
+            if self._mode == "wake_spin" and mode not in {"off", "wake_spin"}:
+                self._pending_mode = mode
+                return True
             self._mode = mode
             self._think_phase = 0
             self._eye_phase = 0.0
@@ -170,15 +201,20 @@ class CompanionLedController:
             self._wake_spin_frame_tick = 0
             if mode == "wake_spin":
                 self._wake_spin_started = time.monotonic()
+                self._pending_mode = ""
             if mode in {"off", "wake_spin"}:
                 self._vu_levels = [0.0, 0.0]
+                self._vu_targets = [0.0, 0.0]
+                self._last_vu_ts = 0.0
             if mode == "off":
+                self._pending_mode = ""
                 self._vu_targets = [0.0, 0.0]
         if mode == "off":
-            self._clear_companion_range()
-            self._maybe_stop_thread()
+            with self._frame_lock:
+                self._clear_companion_range()
         else:
             self._ensure_thread()
+        return True
 
     def set_vu_level(self, level: float, *, right: Optional[float] = None) -> None:
         level = max(0.0, min(1.0, float(level)))
@@ -188,6 +224,7 @@ class CompanionLedController:
             targets = [level, max(0.0, min(1.0, float(right)))]
         with self._lock:
             self._vu_targets = targets
+            self._last_vu_ts = time.monotonic()
             if self._mode == "wake_spin":
                 return
             peak = max(targets)
@@ -208,35 +245,35 @@ class CompanionLedController:
         with self._lock:
             self._ensure_thread_unlocked()
 
-    def _maybe_stop_thread(self) -> None:
-        with self._lock:
-            if self._mode != "off":
-                return
-        self._stop.set()
-
     def _loop(self) -> None:
         interval = max(0.015, self._tick_ms / 1000.0)
         while not self._stop.is_set():
             with self._lock:
                 mode = self._mode
             if mode == "off":
-                break
+                self._stop.wait(interval)
+                continue
             try:
-                if mode in {"vu", "listen", "listen_vu"}:
-                    self._render_vu_frame()
-                elif mode == "thinking":
-                    self._render_thinking_frame()
-                elif mode == "eye":
-                    self._render_eye_frame()
-                elif mode == "wake_spin":
-                    if self._render_wake_spin_frame():
-                        with self._lock:
-                            self._mode = self._wake_spin_next_mode or "listen_vu"
-                elif mode == "wake_chase":
-                    self._render_wake_chase_frame()
+                with self._frame_lock:
+                    if mode == "listen_vu":
+                        self._render_vu_frame()
+                    elif mode == "thinking":
+                        self._render_thinking_frame()
+                    elif mode == "eye":
+                        self._render_eye_frame()
+                    elif mode == "wake_spin":
+                        if self._render_wake_spin_frame():
+                            self._complete_wake_spin()
+                    elif mode == "wake_chase":
+                        self._render_wake_chase_frame()
             except Exception as exc:
                 logger.debug("companion frame failed: %s", exc)
-            time.sleep(interval)
+            self._stop.wait(interval)
+
+    def _complete_wake_spin(self) -> None:
+        with self._lock:
+            self._mode = self._pending_mode or self._wake_spin_next_mode or "listen_vu"
+            self._pending_mode = ""
 
     def _companion_indices(self) -> range:
         end = self._jewel_start + self._jewel_count
@@ -266,6 +303,8 @@ class CompanionLedController:
         return _lerp_color(gradient_colors[segment], gradient_colors[segment + 1], segment_t)
 
     def _smooth_vu_levels(self) -> List[float]:
+        if self._last_vu_ts <= 0.0 or (time.monotonic() - self._last_vu_ts) >= self._vu_stale_s:
+            self._vu_targets = [0.0, 0.0]
         out: List[float] = []
         for idx in range(2):
             current = self._vu_levels[idx]

@@ -44,6 +44,7 @@ companion:
     attack: 0.78
     decay: 0.22
     min_level: 0.02
+    stale_ms: 180
   wake_spin:
     duration_ms: 1200
     wait_ms: 45
