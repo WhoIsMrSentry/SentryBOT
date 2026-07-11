@@ -130,12 +130,20 @@ class InteractionEngine:
                     except Exception:
                         pass
 
-                def companion_vu(self, level: float) -> None:
+                def companion_vu(self, level: float, right: Optional[float] = None) -> None:
                     try:
                         if hasattr(self._runner, "companion_set_vu_level"):
-                            self._runner.companion_set_vu_level(float(level))
+                            self._runner.companion_set_vu_level(float(level), right=right)
                     except Exception:
                         pass
+
+                def companion_is_active(self) -> bool:
+                    try:
+                        if hasattr(self._runner, "companion_is_active"):
+                            return bool(self._runner.companion_is_active())
+                    except Exception:
+                        pass
+                    return False
 
             self.neo = _LocalNeoAdapter(provided, self)
         else:
@@ -202,10 +210,15 @@ class InteractionEngine:
             except Exception:
                 pass
         if evt == "speech.audio_level" and isinstance(data, dict):
+            left = data.get("left")
+            right = data.get("right")
             level = data.get("level")
-            if level is not None and hasattr(self.neo, "companion_vu"):
+            if hasattr(self.neo, "companion_vu"):
                 try:
-                    self.neo.companion_vu(float(level))
+                    if left is not None and right is not None:
+                        self.neo.companion_vu(float(left), right=float(right))
+                    elif level is not None:
+                        self.neo.companion_vu(float(level))
                 except Exception:
                     pass
 
@@ -364,6 +377,8 @@ class InteractionEngine:
 
     def _render_idle_base(self, now: float) -> None:
         if now < self._active_effect_until:
+            return
+        if hasattr(self.neo, "companion_is_active") and self.neo.companion_is_active():
             return
         idle = self.defaults.get("idle", {}).get("base", {})
         name = str(idle.get("name", "BREATHE"))

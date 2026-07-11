@@ -13,10 +13,11 @@ monitor:
     timeout_s: 0.4
 
 hardware:
-  num_leds: 23  # 7 jewel + 16 stick (tek sıra)
+  num_leds: 23
   segments:
     - { name: jewel, start: 0, count: 7, reverse: false }
-    - { name: stick, start: 7, count: 16, reverse: false }
+    - { name: stick_left, start: 7, count: 8, reverse: false }
+    - { name: stick_right, start: 15, count: 8, reverse: false }
 
 tick_interval_ms: 800
 
@@ -67,15 +68,14 @@ rules:
   - id: wakeword_detected
     when: { event: wakeword.detected }
     action:
-      companion: { mode: vu, eye_color: "#30E3CA" }
+      companion: { mode: wake_spin, eye_color: "#FFD700" }
     priority: critical
     cooldown_ms: 800
 
   - id: speech_listen_start
     when: { event: speech.listen.start }
-    action:
-      companion: { mode: vu, eye_color: "#30E3CA" }
-    priority: critical
+    action: {}
+    priority: low
     cooldown_ms: 400
 
   - id: agent_processing_start
@@ -95,15 +95,21 @@ rules:
   - id: speech_end_companion
     when: { event: speech.end }
     action:
-      companion: { mode: off }
+      companion: { mode: eye }
     priority: high
     cooldown_ms: 300
 
+  - id: speech_listen_end_companion
+    when: { event: speech.listen.end }
+    action:
+      companion: { mode: eye }
+    priority: high
+    cooldown_ms: 200
+
   - id: speech_start
     when: { event: speech.start }
-    action:
-      companion: { mode: vu, eye_color: "#30E3CA" }
-    priority: high
+    action: {}
+    priority: low
     cooldown_ms: 600
   - id: speech_end
     when: { event: speech.end }
