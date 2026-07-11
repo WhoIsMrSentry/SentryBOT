@@ -46,12 +46,14 @@ class EmotionsResponse(BaseModel):
 
 
 class CompanionModeRequest(BaseModel):
-    mode: str = Field(..., description="off | vu | listen | thinking | eye | wake_chase")
+    mode: str = Field(..., description="off | vu | listen | listen_vu | thinking | eye | wake_spin | wake_chase")
     eye_color: Optional[str] = Field(None, description='Optional "#RRGGBB" for center eye')
 
 
 class CompanionVuRequest(BaseModel):
-    level: float = Field(..., ge=0.0, le=1.0, description="Audio level 0..1 for stick VU meter")
+    level: Optional[float] = Field(None, ge=0.0, le=1.0, description="Mono level 0..1 (both sticks)")
+    left: Optional[float] = Field(None, ge=0.0, le=1.0, description="Left channel level 0..1")
+    right: Optional[float] = Field(None, ge=0.0, le=1.0, description="Right channel level 0..1")
 
 
 def _pretty(name: str) -> str:
@@ -306,7 +308,17 @@ def get_router(runner: NeoRunner) -> APIRouter:
 
     @r.post("/companion/vu")
     def companion_vu(body: CompanionVuRequest = Body(...)):
-        ok = runner.companion_set_vu_level(body.level)
-        return {"ok": ok, "level": body.level}
+        left = body.left
+        right = body.right
+        if left is None and right is None:
+            if body.level is None:
+                return {"ok": False, "error": "level or left/right required"}
+            left = right = body.level
+        elif left is None:
+            left = right
+        elif right is None:
+            right = left
+        ok = runner.companion_set_vu_level(float(left), right=float(right))
+        return {"ok": ok, "left": left, "right": right}
 
     return r

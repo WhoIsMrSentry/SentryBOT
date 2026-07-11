@@ -1,7 +1,6 @@
-"""Companion LED modes: VU-meter strip, jewel thinking ring, center eye, wake chase.
+"""Companion LED modes: VU-meter strips, jewel thinking ring, center eye, wake spin.
 
-Layout (config-driven, default): indices 0-6 = NeoPixel Jewel (0 = center eye),
-indices 7+ = straight strip for audio level display.
+Layout (config-driven): jewel indices + one or two stick segments for stereo VU.
 """
 
 from __future__ import annotations
@@ -32,7 +31,6 @@ def _parse_hex_color(raw: Any, default: Color) -> Color:
 
 
 def _lerp_color(c1: Color, c2: Color, t: float) -> Color:
-    """Linear interpolation between two colors."""
     return (
         int(c1[0] + (c2[0] - c1[0]) * t),
         int(c1[1] + (c2[1] - c1[1]) * t),
@@ -41,7 +39,6 @@ def _lerp_color(c1: Color, c2: Color, t: float) -> Color:
 
 
 def _interpolate_gradient(gradient: List[Color], pos: float) -> Color:
-    """Interpolate color from gradient at position pos (0.0 to 1.0)."""
     if not gradient:
         return (255, 255, 255)
     if pos <= 0.0:
@@ -59,6 +56,15 @@ def _interpolate_gradient(gradient: List[Color], pos: float) -> Color:
     return _lerp_color(gradient[idx], gradient[idx + 1], t)
 
 
+class _StickSegment:
+    __slots__ = ("start", "count", "channel")
+
+    def __init__(self, start: int, count: int, channel: int = 0) -> None:
+        self.start = start
+        self.count = count
+        self.channel = channel
+
+
 class CompanionLedController:
     """Background renderer for jewel + stick companion animations."""
 
@@ -69,16 +75,39 @@ class CompanionLedController:
         self._jewel_start = int(layout.get("jewel_start", 0))
         self._jewel_count = int(layout.get("jewel_count", 7))
         self._center_rel = int(layout.get("jewel_center_index", 0))
-        self._stick_start = int(layout.get("stick_start", 7))
-        self._stick_count = int(layout.get("stick_count", max(0, int(getattr(driver, "num_leds", 23)) - 7)))
+
+        sticks_raw = layout.get("sticks")
+        if isinstance(sticks_raw, list) and sticks_raw:
+            self._sticks: List[_StickSegment] = []
+            for item in sticks_raw:
+                if not isinstance(item, dict):
+                    continue
+                self._sticks.append(
+                    _StickSegment(
+                        int(item.get("start", 0)),
+                        int(item.get("count", 0)),
+                        int(item.get("channel", 0)),
+                    )
+                )
+        else:
+            stick_start = int(layout.get("stick_start", 7))
+            stick_count = int(layout.get("stick_count", max(0, int(getattr(driver, "num_leds", 23)) - 7)))
+            half = stick_count // 2
+            if half > 0 and stick_count >= 2:
+                self._sticks = [
+                    _StickSegment(stick_start, half, 0),
+                    _StickSegment(stick_start + half, stick_count - half, 1),
+                ]
+            else:
+                self._sticks = [_StickSegment(stick_start, stick_count, 0)]
 
         colors = self._cfg.get("colors", {}) if isinstance(self._cfg.get("colors"), dict) else {}
         self._thinking_color = _parse_hex_color(colors.get("thinking", "#0066CC"), (0, 102, 204))
         self._eye_color = _parse_hex_color(colors.get("eye_default", "#30E3CA"), (48, 227, 202))
         self._vu_bar = _parse_hex_color(colors.get("vu_bar", "#00AAFF"), (0, 170, 255))
         self._vu_bg = _parse_hex_color(colors.get("vu_bg", "#051018"), (5, 16, 24))
+        self._wake_spin_color = _parse_hex_color(colors.get("wake_spin", "#FFD700"), (255, 215, 0))
 
-        # VU gradient colors (green -> yellow -> red)
         vu_gradient_raw = colors.get("vu_gradient")
         if isinstance(vu_gradient_raw, list) and vu_gradient_raw:
             self._vu_gradient = [_parse_hex_color(c, (255, 255, 255)) for c in vu_gradient_raw]
@@ -90,34 +119,37 @@ class CompanionLedController:
         eye = self._cfg.get("eye", {}) if isinstance(self._cfg.get("eye"), dict) else {}
         self._eye_breathe_ms = float(eye.get("breathe_ms", 800))
         vu = self._cfg.get("vu", {}) if isinstance(self._cfg.get("vu"), dict) else {}
-        self._vu_smoothing = float(vu.get("smoothing", 0.35))
+        self._vu_attack = float(vu.get("attack", vu.get("smoothing", 0.75)))
+        self._vu_decay = float(vu.get("decay", 0.18))
         self._vu_min = float(vu.get("min_level", 0.04))
-        self._tick_ms = float(self._cfg.get("tick_ms", 50))
+        self._tick_ms = float(self._cfg.get("tick_ms", 25))
 
-        # Wake chase config
-        wake_chase = self._cfg.get("wake_chase", {}) if isinstance(self._cfg.get("wake_chase"), dict) else {}
-        self._wake_chase_speed_ms = float(wake_chase.get("speed_ms", 80))
-        self._wake_chase_direction_cw = bool(wake_chase.get("direction_cw", True))
-        self._wake_chase_pair_gap = int(wake_chase.get("pair_gap", 1))
+        wake_spin = self._cfg.get("wake_spin", {}) if isinstance(self._cfg.get("wake_spin"), dict) else {}
+        self._wake_spin_duration_ms = float(wake_spin.get("duration_ms", 1200))
+        self._wake_spin_wait_ms = float(wake_spin.get("wait_ms", 45))
+        self._wake_spin_loops = int(wake_spin.get("loops", 2))
+        self._wake_spin_next_mode = str(wake_spin.get("next_mode", "listen_vu")).strip().lower()
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._mode = "off"
-        self._vu_level = 0.0
-        self._vu_target = 0.0
+        self._vu_levels = [0.0, 0.0]
+        self._vu_targets = [0.0, 0.0]
         self._think_phase = 0
         self._eye_phase = 0.0
-        
-        # Wake chase state
-        self._wake_chase_phase = 0
-        self._wake_chase_direction = 1  # 1 for CW, -1 for CCW
-        self._wake_chase_tick = 0
+        self._wake_spin_started = 0.0
+        self._wake_spin_position = 0
 
     @property
     def mode(self) -> str:
         with self._lock:
             return self._mode
+
+    @property
+    def is_active(self) -> bool:
+        with self._lock:
+            return self._mode not in {"", "off"}
 
     def set_eye_color(self, color: Color) -> None:
         with self._lock:
@@ -128,26 +160,34 @@ class CompanionLedController:
         with self._lock:
             if mode == self._mode:
                 return
+            if self._mode == "wake_spin" and mode in {"listen_vu", "vu", "listen"}:
+                return
             self._mode = mode
             self._think_phase = 0
             self._eye_phase = 0.0
-            self._wake_chase_phase = 0
-            self._wake_chase_tick = 0
+            self._wake_spin_position = 0
+            if mode == "wake_spin":
+                self._wake_spin_started = time.monotonic()
+            if mode in {"off", "wake_spin"}:
+                self._vu_levels = [0.0, 0.0]
             if mode == "off":
-                self._vu_level = 0.0
-                self._vu_target = 0.0
+                self._vu_targets = [0.0, 0.0]
         if mode == "off":
             self._clear_companion_range()
             self._maybe_stop_thread()
         else:
             self._ensure_thread()
 
-    def set_vu_level(self, level: float) -> None:
+    def set_vu_level(self, level: float, *, right: Optional[float] = None) -> None:
         level = max(0.0, min(1.0, float(level)))
+        if right is None:
+            targets = [level, level]
+        else:
+            targets = [level, max(0.0, min(1.0, float(right)))]
         with self._lock:
-            self._vu_target = level
-            if self._mode in {"vu", "listen"}:
-                self._mode = "vu"
+            self._vu_targets = targets
+            if self._mode in {"vu", "listen", "listen_vu"}:
+                self._mode = "listen_vu"
 
     def _ensure_thread(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -163,79 +203,92 @@ class CompanionLedController:
         self._stop.set()
 
     def _loop(self) -> None:
-        interval = max(0.02, self._tick_ms / 1000.0)
+        interval = max(0.015, self._tick_ms / 1000.0)
         while not self._stop.is_set():
             with self._lock:
                 mode = self._mode
             if mode == "off":
                 break
             try:
-                if mode in {"vu", "listen"}:
+                if mode in {"vu", "listen", "listen_vu"}:
                     self._render_vu_frame()
                 elif mode == "thinking":
                     self._render_thinking_frame()
                 elif mode == "eye":
                     self._render_eye_frame()
+                elif mode == "wake_spin":
+                    if self._render_wake_spin_frame():
+                        with self._lock:
+                            self._mode = self._wake_spin_next_mode or "listen_vu"
                 elif mode == "wake_chase":
                     self._render_wake_chase_frame()
             except Exception as exc:
                 logger.debug("companion frame failed: %s", exc)
             time.sleep(interval)
 
+    def _companion_indices(self) -> range:
+        end = self._jewel_start + self._jewel_count
+        for stick in self._sticks:
+            end = max(end, stick.start + stick.count)
+        return range(self._jewel_start, min(end, self._driver.num_leds))
+
     def _clear_companion_range(self) -> None:
-        end = self._stick_start + self._stick_count
-        for i in range(self._jewel_start, min(end, self._driver.num_leds)):
+        for i in self._companion_indices():
             self._driver.set(i, 0, 0, 0)
         self._driver.show()
 
-    def _lerp_color(self, c1: Color, c2: Color, t: float) -> Color:
-        return (
-            int(c1[0] + (c2[0] - c1[0]) * t),
-            int(c1[1] + (c2[1] - c1[1]) * t),
-            int(c1[2] + (c2[2] - c1[2]) * t),
-        )
+    def _clear_sticks(self) -> None:
+        for stick in self._sticks:
+            for i in range(stick.count):
+                idx = stick.start + i
+                if idx < self._driver.num_leds:
+                    self._driver.set(idx, *self._vu_bg)
 
     def _get_gradient_color(self, position: float) -> Color:
-        """Get color from vu_gradient based on position (0.0 - 1.0)."""
-        with self._lock:
-            gradient_colors = getattr(self, '_vu_gradient', None)
-            if not gradient_colors or len(gradient_colors) < 2:
-                return self._vu_bar
-        
-        # Find which segment of the gradient we're in
+        gradient_colors = self._vu_gradient
+        if not gradient_colors or len(gradient_colors) < 2:
+            return self._vu_bar
         num_segments = len(gradient_colors) - 1
         segment = min(int(position * num_segments), num_segments - 1)
         segment_t = (position * num_segments) - segment
-        
-        c1 = gradient_colors[segment]
-        c2 = gradient_colors[segment + 1]
-        return self._lerp_color(c1, c2, segment_t)
+        return _lerp_color(gradient_colors[segment], gradient_colors[segment + 1], segment_t)
 
-    def _render_vu_frame(self) -> None:
-        with self._lock:
-            self._vu_level += (self._vu_target - self._vu_level) * self._vu_smoothing
-            level = self._vu_level
-            eye = self._eye_color
+    def _smooth_vu_levels(self) -> List[float]:
+        out: List[float] = []
+        for idx in range(2):
+            current = self._vu_levels[idx]
+            target = self._vu_targets[idx]
+            rate = self._vu_attack if target >= current else self._vu_decay
+            out.append(current + (target - current) * rate)
+        self._vu_levels = out
+        return out
 
-        # Stick VU meter with gradient colors
-        lit = int(round(level * self._stick_count))
-        lit = max(0, min(self._stick_count, lit))
-        for i in range(self._stick_count):
-            idx = self._stick_start + i
+    def _render_stick_vu(self, stick: _StickSegment, level: float) -> None:
+        if level < self._vu_min:
+            level = 0.0
+        lit = int(round(level * stick.count))
+        lit = max(0, min(stick.count, lit))
+        for i in range(stick.count):
+            idx = stick.start + i
             if idx >= self._driver.num_leds:
                 break
             if i < lit:
-                # Use gradient color based on position in the lit portion
-                if lit > 0:
-                    pos = i / max(1, lit - 1) if lit > 1 else 0.5
-                else:
-                    pos = 0.0
-                color = self._get_gradient_color(pos)
-                self._driver.set(idx, *color)
+                pos = i / max(1, lit - 1) if lit > 1 else 0.5
+                self._driver.set(idx, *_get_gradient_color_safe(self._vu_gradient, self._vu_bar, pos))
             else:
                 self._driver.set(idx, *self._vu_bg)
 
-        # Jewel ring dim + center eye pulse while listening
+    def _render_vu_frame(self) -> None:
+        with self._lock:
+            levels = self._smooth_vu_levels()
+            eye = self._eye_color
+            sticks = list(self._sticks)
+
+        self._clear_sticks()
+        for stick in sticks:
+            ch = stick.channel if stick.channel in (0, 1) else 0
+            self._render_stick_vu(stick, levels[ch])
+
         self._eye_phase += self._tick_ms / max(200.0, self._eye_breathe_ms)
         pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(self._eye_phase * 2 * math.pi))
         er = int(eye[0] * pulse)
@@ -274,7 +327,6 @@ class CompanionLedController:
                     int(eye[2] * pulse),
                 )
                 continue
-            # Opposing / alternating pattern on jewel ring (1 on, 1 off, rotating)
             ring_pos = ring_indices.index(rel) if rel in ring_indices else 0
             on = (ring_pos + phase) % 2 == 0
             if on:
@@ -282,19 +334,21 @@ class CompanionLedController:
             else:
                 self._driver.set(idx, int(tc[0] * 0.08), int(tc[1] * 0.08), int(tc[2] * 0.12))
 
-        # Stick: subtle blue breathe while thinking
-        for i in range(self._stick_count):
-            idx = self._stick_start + i
-            if idx >= self._driver.num_leds:
-                break
-            fade = 0.12 + 0.08 * math.sin((self._eye_phase + i * 0.2) * math.pi)
-            self._driver.set(idx, int(tc[0] * fade), int(tc[1] * fade), int(tc[2] * fade))
+        self._clear_sticks()
+        for stick in self._sticks:
+            for i in range(stick.count):
+                idx = stick.start + i
+                if idx >= self._driver.num_leds:
+                    break
+                fade = 0.12 + 0.08 * math.sin((self._eye_phase + i * 0.2) * math.pi)
+                self._driver.set(idx, int(tc[0] * fade), int(tc[1] * fade), int(tc[2] * fade))
         self._driver.show()
         time.sleep(max(0.02, self._think_step_ms / 1000.0))
 
     def _render_eye_frame(self) -> None:
         with self._lock:
             eye = self._eye_color
+        self._clear_sticks()
         self._eye_phase += self._tick_ms / max(200.0, self._eye_breathe_ms)
         pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(self._eye_phase * 2 * math.pi))
         for rel in range(self._jewel_count):
@@ -308,73 +362,55 @@ class CompanionLedController:
                 self._driver.set(idx, *dim)
         self._driver.show()
 
+    def _render_wake_spin_frame(self) -> bool:
+        """Golden RUNNING_LIGHTS on jewel only. Returns True when spin is complete."""
+        with self._lock:
+            started = self._wake_spin_started
+            duration_s = self._wake_spin_duration_ms / 1000.0
+            color = self._wake_spin_color
+            position = self._wake_spin_position
+
+        if (time.monotonic() - started) >= duration_s:
+            self._clear_sticks()
+            return True
+
+        self._clear_sticks()
+        r, g, b = color
+        n = self._jewel_count
+        position += 1
+        with self._lock:
+            self._wake_spin_position = position
+        for rel in range(n):
+            idx = self._jewel_start + rel
+            if idx >= self._driver.num_leds:
+                continue
+            sin_val = math.sin((rel + position) * 1.0) * 127 + 128
+            ratio = sin_val / 255.0
+            self._driver.set(idx, int(r * ratio), int(g * ratio), int(b * ratio))
+        self._driver.show()
+        time.sleep(max(0.02, self._wake_spin_wait_ms / 1000.0))
+        return False
+
     def _render_wake_chase_frame(self) -> None:
-        """Wake word chase animation on jewel ring (indices 1-6).
-        
-        Ring has 6 LEDs (1-6): 3 top (1,2,3) and 3 bottom (4,5,6).
-        Opposite pairs: (1,4), (2,5), (3,6) chase each other.
-        Direction alternates CW/CCB based on config.
-        Center (index 0) pulses subtly.
-        """
+        """Legacy wake chase — kept for API compatibility."""
         with self._lock:
             eye = self._eye_color
-            chase_color = eye  # Use eye color for chase
-            speed_ms = self._wake_chase_speed_ms
-            direction_cw = self._wake_chase_direction_cw
-            pair_gap = self._wake_chase_pair_gap
 
-        # Determine direction (can be toggled externally if needed)
-        self._wake_chase_tick += 1
-        
-        # Update phase based on speed
-        if self._wake_chase_tick >= max(1, int(speed_ms / self._tick_ms)):
-            self._wake_chase_tick = 0
-            self._wake_chase_phase = (self._wake_chase_phase + (1 if direction_cw else -1)) % 6
-
-        # Ring LED indices (relative to jewel_start): 1,2,3,4,5,6
-        # Opposite pairs: (1,4), (2,5), (3,6)
-        pairs = [(1, 4), (2, 5), (3, 6)]
-        
-        # Center eye pulse
+        self._clear_sticks()
         self._eye_phase += self._tick_ms / max(200.0, self._eye_breathe_ms)
-        pulse = 0.3 + 0.4 * (0.5 + 0.5 * math.sin(self._eye_phase * 2 * math.pi))
+        pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(self._eye_phase * 2 * math.pi))
         center_idx = self._jewel_start + self._center_rel
         if center_idx < self._driver.num_leds:
-            self._driver.set(center_idx, 
-                           int(eye[0] * pulse), 
-                           int(eye[1] * pulse), 
-                           int(eye[2] * pulse))
-
-        # Chase animation on pairs
-        for pair_idx, (top, bottom) in enumerate(pairs):
-            # Each pair activates in sequence with a gap
-            active_pair = (self._wake_chase_phase // (pair_gap + 1)) % len(pairs)
-            is_active = (pair_idx == active_pair)
-            
-            if is_active:
-                # Active pair: both LEDs on (bright)
-                for rel in (top, bottom):
-                    idx = self._jewel_start + rel
-                    if idx < self._driver.num_leds:
-                        self._driver.set(idx, *chase_color)
-            else:
-                # Inactive: dim
-                for rel in (top, bottom):
-                    idx = self._jewel_start + rel
-                    if idx < self._driver.num_leds:
-                        dim = tuple(int(c * 0.1) for c in chase_color)
-                        self._driver.set(idx, *dim)
-
-        # Stick: subtle ambient glow
-        for i in range(self._stick_count):
-            idx = self._stick_start + i
-            if idx >= self._driver.num_leds:
-                break
-            # Gentle wave along stick
-            wave = 0.05 + 0.05 * math.sin((self._wake_chase_phase + i * 0.5) * math.pi / 3)
-            self._driver.set(idx, 
-                           int(chase_color[0] * wave),
-                           int(chase_color[1] * wave),
-                           int(chase_color[2] * wave))
-        
+            self._driver.set(center_idx, int(eye[0] * pulse), int(eye[1] * pulse), int(eye[2] * pulse))
+        for rel in range(1, self._jewel_count):
+            idx = self._jewel_start + rel
+            if idx < self._driver.num_leds:
+                dim = tuple(int(c * 0.2) for c in eye)
+                self._driver.set(idx, *dim)
         self._driver.show()
+
+
+def _get_gradient_color_safe(gradient: List[Color], fallback: Color, position: float) -> Color:
+    if not gradient or len(gradient) < 2:
+        return fallback
+    return _interpolate_gradient(gradient, position)

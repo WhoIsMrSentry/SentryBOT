@@ -414,14 +414,21 @@ class NeoRunner:
     def companion_set_mode(self, mode: str) -> bool:
         if self._companion is None:
             return False
+        if str(mode or "").strip().lower() not in {"", "off"}:
+            self._drain_animate_queue()
         self._companion.set_mode(mode)
         return True
 
-    def companion_set_vu_level(self, level: float) -> bool:
+    def companion_set_vu_level(self, level: float, *, right: Optional[float] = None) -> bool:
         if self._companion is None:
             return False
-        self._companion.set_vu_level(level)
+        self._companion.set_vu_level(level, right=right)
         return True
+
+    def companion_is_active(self) -> bool:
+        if self._companion is None:
+            return False
+        return self._companion.is_active
 
     def companion_set_eye_color(self, r: int, g: int, b: int) -> bool:
         if self._companion is None:
