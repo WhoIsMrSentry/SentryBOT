@@ -97,6 +97,7 @@ class WakewordActions:
         self.speech_stop_url = str(cfg.get("speech_stop_url", ""))
         self.speech_last_url = str(cfg.get("speech_last_url", ""))
         self.interactions_event_url = str(cfg.get("interactions_event_url", ""))
+        self.neopixel_url = str(cfg.get("neopixel_url", ""))
         self.listen_window_sec = float(cfg.get("listen_window_sec", 8.0))
         self.min_listen_before_final_sec = float(cfg.get("min_listen_before_final_sec", 1.5))
         self.min_listen_before_final_sec_vad = float(
@@ -143,6 +144,24 @@ class WakewordActions:
         if _is_wakeword_only(text, wakeword):
             return False
         return True
+
+    def _neopixel_post(self, endpoint: str, payload: dict | None = None) -> None:
+        """POST to neopixel API endpoint."""
+        if not self.neopixel_url or requests is None:
+            return
+        try:
+            url = f"{self.neopixel_url.rstrip('/')}/{endpoint.lstrip('/')}"
+            requests.post(url, json=payload or {}, timeout=0.2)
+        except Exception as exc:
+            logger.debug("neopixel http post failed: %s", exc)
+
+    def neopixel_set_mode(self, mode: str) -> None:
+        """Set neopixel companion mode."""
+        self._neopixel_post("companion/mode", {"mode": mode})
+
+    def neopixel_set_vu_level(self, level: float) -> None:
+        """Set VU meter level (0.0 - 1.0)."""
+        self._neopixel_post("companion/vu", {"level": max(0.0, min(1.0, float(level)))})
 
 
 class WakewordService:
@@ -286,6 +305,8 @@ class WakewordService:
             self._last_trigger_ts = now
             self._active_window = True
         self.actions.interrupt_robot_speech()
+        # Trigger wake_chase mode on NeoPixel
+        self.actions.neopixel_set_mode("wake_chase")
         logger.info("wakeword candidate: %s at %f (barge-in)", wakeword, now)
         threading.Thread(target=self._command_window, args=(wakeword,), daemon=True).start()
 
@@ -303,7 +324,13 @@ class WakewordService:
                 else self.actions.min_listen_before_final_sec
             )
             grace_until = window_started_ts + max(0.0, min_listen)
+            
+            # During listening window, feed VU level from audio capture
             while _now() < deadline:
+                # Get audio level from shared capture
+                rms_level = self.capture.get_rms_level()
+                self.actions.neopixel_set_vu_level(rms_level)
+                
                 if (
                     _now() >= grace_until
                     and self.actions.stop_on_final
@@ -312,6 +339,8 @@ class WakewordService:
                     break
                 time.sleep(max(0.05, self.actions.poll_interval_ms / 1000.0))
             self.actions.stop_speech()
+            # Return to eye mode after listening window
+            self.actions.neopixel_set_mode("eye")
         finally:
             with self._lock:
                 self._active_window = False
