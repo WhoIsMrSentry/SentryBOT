@@ -46,7 +46,7 @@ class EmotionsResponse(BaseModel):
 
 
 class CompanionModeRequest(BaseModel):
-    mode: str = Field(..., description="off | vu | listen | thinking | eye")
+    mode: str = Field(..., description="off | vu | listen | thinking | eye | wake_chase")
     eye_color: Optional[str] = Field(None, description='Optional "#RRGGBB" for center eye')
 
 

@@ -28,6 +28,11 @@ companion:
     eye_default: "#30E3CA"
     vu_bar: "#00AAFF"
     vu_bg: "#051018"
+    # VU gradient: green (quiet) -> yellow (mid) -> red (loud)
+    vu_gradient:
+      - "#00FF00"
+      - "#FFFF00"
+      - "#FF0000"
   thinking:
     step_ms: 120
   eye:
@@ -35,6 +40,10 @@ companion:
   vu:
     smoothing: 0.35
     min_level: 0.04
+  wake_chase:
+    speed_ms: 80
+    direction_cw: true
+    pair_gap: 1
 
 # Pi5-specific driver hint
 pi5neo:
