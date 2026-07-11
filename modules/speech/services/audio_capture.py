@@ -3,8 +3,14 @@ import logging
 import queue
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional, Any
+
+try:
+    import audioop
+except Exception:
+    audioop = None
 
 try:
     import sounddevice as sd
@@ -20,6 +26,32 @@ logger = logging.getLogger("speech.audio")
 # GLOBAL SINGLETON for all audio capture to ensure zero contention
 _SINGLE_CAPTURE_INSTANCE: Optional["AudioCapture"] = None
 _INSTANCE_LOCK = threading.Lock()
+
+# RMS sliding window settings
+_RMS_WINDOW_MS = 100
+_RMS_MAX_SAMPLES = 1000
+
+
+def _is_alsa_device_name(device: Any) -> bool:
+    if device is None:
+        return False
+    text = str(device).strip().lower()
+    if not text or text in {"null", "none", "default"}:
+        return False
+    if text.isdigit():
+        return False
+    return text.startswith(("plughw:", "hw:", "alsa:", "surround")) or "," in text
+
+
+def _portaudio_device(device: Any) -> Any:
+    if device is None:
+        return None
+    if isinstance(device, int):
+        return device
+    text = str(device).strip()
+    if text.isdigit():
+        return int(text)
+    return device
 
 def get_shared_capture(cfg: Dict) -> "AudioCapture":
     """Shared mic for wakeword + speech. Later callers may upgrade device/rate if unset."""
@@ -61,6 +93,10 @@ class AudioCapture:
         self._alsa_thread = None
         self._pcm = None
 
+        # RMS level tracking (sliding window)
+        self._rms_window: deque[int] = deque(maxlen=_RMS_MAX_SAMPLES)
+        self._rms_lock = threading.Lock()
+
     def merge_config(self, cfg: Dict) -> None:
         """Apply non-default audio fields from a later module (e.g. wakeword plughw)."""
         if not isinstance(cfg, dict):
@@ -69,17 +105,63 @@ class AudioCapture:
         if not isinstance(audio, dict):
             return
         dev = audio.get("device")
-        if dev is not None and str(dev).strip():
-            self.cfg.device = dev
+        # YAML `null` or empty string must not wipe a device set by wakeword bootstrap.
+        if dev is not None and str(dev).strip().lower() not in {"", "null", "none"}:
+            new_dev = dev
+            if new_dev != self.cfg.device and (self._stream is not None or self._alsa_thread is not None):
+                logger.info("audio device changed %s -> %s; restarting capture", self.cfg.device, new_dev)
+                self.stop()
+            self.cfg.device = new_dev
         if audio.get("samplerate") is not None:
             self.cfg.samplerate = int(audio.get("samplerate", self.cfg.samplerate))
         if audio.get("channels") is not None:
             self.cfg.channels = int(audio.get("channels", self.cfg.channels))
 
-    def _callback(self, indata, frames, time, status):
+    def _compute_rms(self, data: bytes) -> int:
+        """Compute RMS level from raw PCM int16 data. Returns 0-32767."""
+        if not data:
+            return 0
+        try:
+            if audioop is not None:
+                # audioop.rms expects bytes, width=2 for int16
+                return audioop.rms(data, 2)
+            # Fallback: simple RMS calculation without audioop
+            # Convert bytes to int16 samples
+            import struct
+            samples = struct.unpack(f"<{len(data)//2}h", data)
+            if not samples:
+                return 0
+            sum_sq = sum(s * s for s in samples)
+            return int((sum_sq / len(samples)) ** 0.5)
+        except Exception:
+            return 0
+
+    def _update_rms(self, data: bytes) -> None:
+        rms = self._compute_rms(data)
+        with self._rms_lock:
+            self._rms_window.append(rms)
+
+    def get_rms_level(self) -> float:
+        """Get normalized RMS level (0.0 - 1.0) over the sliding window."""
+        with self._rms_lock:
+            if not self._rms_window:
+                return 0.0
+            # Use max of recent window for VU meter responsiveness
+            max_rms = max(self._rms_window)
+            return min(1.0, max_rms / 32767.0)
+
+    def get_rms_raw(self) -> int:
+        """Get raw max RMS value (0-32767) over the sliding window."""
+        with self._rms_lock:
+            if not self._rms_window:
+                return 0
+            return max(self._rms_window)
+
+    def _callback(self, indata, frames, time_info, status):
         if status:
             logger.warning("Audio status: %s", status)
         data = bytes(indata)
+        self._update_rms(data)
         with self._lock:
             for q in self._subscribers:
                 try:
@@ -87,76 +169,102 @@ class AudioCapture:
                 except queue.Full:
                     pass
 
+    def _start_alsa(self, blocksize: int) -> bool:
+        if alsaaudio is None:
+            return False
+        try:
+            fmt = alsaaudio.PCM_FORMAT_S16_LE if self.cfg.dtype == "int16" else alsaaudio.PCM_FORMAT_S32_LE
+            dev_name = str(self.cfg.device) if self.cfg.device is not None else "default"
+
+            self._pcm = alsaaudio.PCM(
+                type=alsaaudio.PCM_CAPTURE,
+                device=dev_name,
+                channels=self.cfg.channels,
+                rate=self.cfg.samplerate,
+                format=fmt,
+                periodsize=max(64, blocksize),
+            )
+
+            def _alsa_reader():
+                self._stopped = False
+                try:
+                    while not self._stopped:
+                        length, data = self._pcm.read()
+                        if length > 0 and data:
+                            b_data = bytes(data)
+                            self._update_rms(b_data)
+                            with self._lock:
+                                for q in self._subscribers:
+                                    try:
+                                        q.put_nowait(b_data)
+                                    except queue.Full:
+                                        pass
+                finally:
+                    if self._pcm:
+                        self._pcm.close()
+                        self._pcm = None
+
+            self._alsa_thread = threading.Thread(target=_alsa_reader, daemon=True)
+            self._alsa_thread.start()
+            logger.info(
+                "Audio capture started (ALSA): %s @ %d Hz, %d ch",
+                dev_name,
+                self.cfg.samplerate,
+                self.cfg.channels,
+            )
+            return True
+        except Exception as exc:
+            logger.warning("ALSA capture failed for device %s: %s", self.cfg.device, exc)
+            self._pcm = None
+            self._alsa_thread = None
+            return False
+
+    def _start_portaudio(self, blocksize: int) -> bool:
+        if sd is None:
+            return False
+        devs_to_try = [_portaudio_device(self.cfg.device)]
+        if self.cfg.device is not None:
+            devs_to_try.append(None)
+        for dev in devs_to_try:
+            try:
+                self._stream = sd.InputStream(
+                    device=dev,
+                    channels=self.cfg.channels,
+                    samplerate=self.cfg.samplerate,
+                    dtype=self.cfg.dtype,
+                    callback=self._callback,
+                    blocksize=blocksize,
+                )
+                self._stream.start()
+                self._stopped = False
+                logger.info(
+                    "Audio capture started (portaudio): %s @ %d Hz, %d ch",
+                    dev if dev is not None else "default",
+                    self.cfg.samplerate,
+                    self.cfg.channels,
+                )
+                return True
+            except Exception as exc:
+                logger.warning("sounddevice attempt failed for device %s: %s", dev, exc)
+                self._stream = None
+        return False
+
     def start(self):
         with self._lock:
             if self._stream is not None or self._alsa_thread is not None:
                 return
 
+            self._stopped = False
             blocksize = int(self.cfg.samplerate * self.cfg.frame_ms / 1000)
-            
-            # Try sounddevice (PortAudio)
-            if sd is not None:
-                # 1. Try explicit device
-                devs_to_try = [self.cfg.device, None] # Try configured, then default
-                for dev in devs_to_try:
-                    try:
-                        # Convert numeric string to int
-                        actual_dev = dev
-                        if isinstance(dev, str) and dev.isdigit():
-                            actual_dev = int(dev)
-                        
-                        self._stream = sd.InputStream(
-                            device=actual_dev,
-                            channels=self.cfg.channels,
-                            samplerate=self.cfg.samplerate,
-                            dtype=self.cfg.dtype,
-                            callback=self._callback,
-                            blocksize=blocksize,
-                        )
-                        self._stream.start()
-                        self._stopped = False
-                        logger.info("Audio capture started (portaudio): %s @ %d Hz", actual_dev if actual_dev is not None else "default", self.cfg.samplerate)
-                        return
-                    except Exception as exc:
-                        logger.warning("sounddevice attempt failed for device %s: %s", dev, exc)
 
-            # Fallback: pyalsaaudio
-            if alsaaudio is not None:
-                try:
-                    fmt = alsaaudio.PCM_FORMAT_S16_LE if self.cfg.dtype == 'int16' else alsaaudio.PCM_FORMAT_S32_LE
-                    dev_name = str(self.cfg.device) if self.cfg.device is not None else "default"
-                    
-                    self._pcm = alsaaudio.PCM(
-                        type=alsaaudio.PCM_CAPTURE,
-                        device=dev_name,
-                        channels=self.cfg.channels,
-                        rate=self.cfg.samplerate,
-                        format=fmt,
-                        periodsize=max(64, blocksize)
-                    )
-
-                    def _alsa_reader():
-                        self._stopped = False
-                        try:
-                            while not self._stopped:
-                                length, data = self._pcm.read()
-                                if length > 0 and data:
-                                    b_data = bytes(data)
-                                    with self._lock:
-                                        for q in self._subscribers:
-                                            try: q.put_nowait(b_data)
-                                            except: pass
-                        finally:
-                            if self._pcm:
-                                self._pcm.close()
-                                self._pcm = None
-
-                    self._alsa_thread = threading.Thread(target=_alsa_reader, daemon=True)
-                    self._alsa_thread.start()
-                    logger.info("Audio capture started (ALSA fallback): %s @ %d Hz", dev_name, self.cfg.samplerate)
+            # ALSA device strings (plughw:0,0) are invalid for PortAudio; use ALSA directly.
+            if _is_alsa_device_name(self.cfg.device):
+                if self._start_alsa(blocksize):
                     return
-                except Exception as exc:
-                    logger.warning("ALSA fallback failed: %s", exc)
+            elif self._start_portaudio(blocksize):
+                return
+            elif self._start_alsa(blocksize):
+                return
 
             raise RuntimeError("No working audio backend could be started.")
 

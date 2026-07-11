@@ -286,12 +286,44 @@ speak:
       chars_per_second: 16
       force: false
 
+wakeword:
+  audio:
+    device: plughw:0,0
+    samplerate: 16000
+    channels: 2
+    dtype: int16
+    frame_ms: 30
+  wakeword:
+    engine: openwakeword
+    words:
+      - "hey mycroft"
+      - "mycroft"
+    trigger_on_partial: true
+    min_confidence: 0.0
+    cooldown_sec: 3.0
+  openwakeword:
+    pretrained_models:
+      - hey_mycroft
+    inference_framework: onnx
+    threshold: 0.25
+    smooth_window: 3
+    input_gain: 3.0
+    input_channels: 2
+    auto_calibration:
+      enabled: true
+      duration_sec: 12.0
+      min_samples: 120
+      percentile: 99.5
+      margin: 0.0007
+      min_threshold: 0.20
+      max_threshold: 0.40
+
 speech:
   server:
     host: 0.0.0.0
     port: 8082
   audio:
-    device: null
+    device: plughw:0,0
     samplerate: 16000
     channels: 2
     dtype: int16
@@ -303,6 +335,7 @@ speech:
     auto_language: true
     auto_switch_model: true
     dual_decode_margin: 0.35
+    dual_decode_languages: [tr, en]
     utterance_buffer_sec: 20
     model_path: null
     language_models:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-WAKE_PHRASES = ("hey sentrybot", "hey sentry", "sentrybot", "sentry")
+WAKE_PHRASES = ("hey mycroft", "mycroft", "hey sentrybot", "hey sentry", "sentrybot", "sentry")
 
 
 def contains_wakeword(text: str) -> bool:
