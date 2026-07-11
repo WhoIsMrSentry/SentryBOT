@@ -116,17 +116,29 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
 
     def _cb(r):
         nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text, last_vu_emit_ts
+        now = time.time()
         if hasattr(service, "is_stt_suppressed") and service.is_stt_suppressed():
             return
         text = (r.text or "").strip()
         language = getattr(service, "source_language", "tr")
         if r.is_final and hasattr(service, "finalize_stt"):
             text, language = service.finalize_stt(text or last_nonempty_text)
-        level = float(getattr(service, "_last_audio_level", 0.0) or 0.0)
-        now = time.time()
-        if service.listening and (now - last_vu_emit_ts) >= 0.06:
+        if service.listening and (now - last_vu_emit_ts) >= 0.04:
             last_vu_emit_ts = now
-            _emit_speech_event("speech.audio_level", {"level": level})
+            left, right = (0.0, 0.0)
+            capture = getattr(service, "capture", None)
+            if capture is not None and hasattr(capture, "get_rms_levels"):
+                try:
+                    left, right = capture.get_rms_levels()
+                except Exception:
+                    pass
+            else:
+                mono = float(getattr(service, "_last_audio_level", 0.0) or 0.0)
+                left = right = mono
+            _emit_speech_event(
+                "speech.audio_level",
+                {"left": left, "right": right, "level": max(left, right)},
+            )
         if text:
             last_nonempty_text = text
         if text and contains_wakeword(text):

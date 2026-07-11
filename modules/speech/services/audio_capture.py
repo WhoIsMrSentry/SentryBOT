@@ -29,7 +29,7 @@ _INSTANCE_LOCK = threading.Lock()
 
 # RMS sliding window settings
 _RMS_WINDOW_MS = 100
-_RMS_MAX_SAMPLES = 1000
+_RMS_MAX_SAMPLES = 8
 
 
 def _is_alsa_device_name(device: Any) -> bool:
@@ -93,8 +93,10 @@ class AudioCapture:
         self._alsa_thread = None
         self._pcm = None
 
-        # RMS level tracking (sliding window)
+        # RMS level tracking (short sliding window per channel)
         self._rms_window: deque[int] = deque(maxlen=_RMS_MAX_SAMPLES)
+        self._rms_left_window: deque[int] = deque(maxlen=_RMS_MAX_SAMPLES)
+        self._rms_right_window: deque[int] = deque(maxlen=_RMS_MAX_SAMPLES)
         self._rms_lock = threading.Lock()
 
     def merge_config(self, cfg: Dict) -> None:
@@ -123,10 +125,7 @@ class AudioCapture:
             return 0
         try:
             if audioop is not None:
-                # audioop.rms expects bytes, width=2 for int16
                 return audioop.rms(data, 2)
-            # Fallback: simple RMS calculation without audioop
-            # Convert bytes to int16 samples
             import struct
             samples = struct.unpack(f"<{len(data)//2}h", data)
             if not samples:
@@ -136,19 +135,63 @@ class AudioCapture:
         except Exception:
             return 0
 
+    def _compute_stereo_rms(self, data: bytes) -> tuple[int, int]:
+        if not data or self.cfg.channels < 2:
+            mono = self._compute_rms(data)
+            return mono, mono
+        try:
+            import struct
+            samples = struct.unpack(f"<{len(data)//2}h", data)
+            if len(samples) < 2:
+                mono = self._compute_rms(data)
+                return mono, mono
+            left_sq = 0.0
+            right_sq = 0.0
+            n = 0
+            for i in range(0, len(samples) - 1, 2):
+                l = float(samples[i])
+                r = float(samples[i + 1])
+                left_sq += l * l
+                right_sq += r * r
+                n += 1
+            if n <= 0:
+                return 0, 0
+            return int((left_sq / n) ** 0.5), int((right_sq / n) ** 0.5)
+        except Exception:
+            mono = self._compute_rms(data)
+            return mono, mono
+
     def _update_rms(self, data: bytes) -> None:
-        rms = self._compute_rms(data)
-        with self._rms_lock:
-            self._rms_window.append(rms)
+        if self.cfg.channels >= 2:
+            left, right = self._compute_stereo_rms(data)
+            with self._rms_lock:
+                self._rms_left_window.append(left)
+                self._rms_right_window.append(right)
+                self._rms_window.append(max(left, right))
+        else:
+            rms = self._compute_rms(data)
+            with self._rms_lock:
+                self._rms_window.append(rms)
+                self._rms_left_window.append(rms)
+                self._rms_right_window.append(rms)
+
+    def _normalized_peak(self, window: deque[int]) -> float:
+        if not window:
+            return 0.0
+        peak = max(window)
+        return min(1.0, peak / 32767.0)
 
     def get_rms_level(self) -> float:
         """Get normalized RMS level (0.0 - 1.0) over the sliding window."""
         with self._rms_lock:
-            if not self._rms_window:
-                return 0.0
-            # Use max of recent window for VU meter responsiveness
-            max_rms = max(self._rms_window)
-            return min(1.0, max_rms / 32767.0)
+            return self._normalized_peak(self._rms_window)
+
+    def get_rms_levels(self) -> tuple[float, float]:
+        """Get normalized stereo RMS (left, right) over the short sliding window."""
+        with self._rms_lock:
+            left = self._normalized_peak(self._rms_left_window)
+            right = self._normalized_peak(self._rms_right_window)
+            return left, right
 
     def get_rms_raw(self) -> int:
         """Get raw max RMS value (0-32767) over the sliding window."""
