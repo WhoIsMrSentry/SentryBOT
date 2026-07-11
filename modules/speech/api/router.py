@@ -92,6 +92,45 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
     last_vu_emit_ts = 0.0
     speaking = False
     speaking_lock = Lock()
+    vu_stop = threading.Event()
+    vu_thread: threading.Thread | None = None
+
+    def _emit_vu_levels() -> None:
+        capture = getattr(service, "capture", None)
+        left, right = (0.0, 0.0)
+        if capture is not None and hasattr(capture, "get_rms_levels"):
+            try:
+                left, right = capture.get_rms_levels()
+            except Exception:
+                pass
+        else:
+            mono = float(getattr(service, "_last_audio_level", 0.0) or 0.0)
+            left = right = mono
+        _emit_speech_event(
+            "speech.audio_level",
+            {"left": left, "right": right, "level": max(left, right)},
+        )
+
+    def _vu_monitor_loop() -> None:
+        nonlocal last_vu_emit_ts
+        while not vu_stop.is_set():
+            if service.listening:
+                now = time.time()
+                if (now - last_vu_emit_ts) >= 0.04:
+                    last_vu_emit_ts = now
+                    _emit_vu_levels()
+            vu_stop.wait(0.02)
+
+    def _start_vu_monitor() -> None:
+        nonlocal vu_thread
+        vu_stop.clear()
+        if vu_thread is not None and vu_thread.is_alive():
+            return
+        vu_thread = threading.Thread(target=_vu_monitor_loop, name="SpeechVuMonitor", daemon=True)
+        vu_thread.start()
+
+    def _stop_vu_monitor() -> None:
+        vu_stop.set()
 
     def _mark_speaking(active: bool) -> bool:
         nonlocal speaking
@@ -123,22 +162,6 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         language = getattr(service, "source_language", "tr")
         if r.is_final and hasattr(service, "finalize_stt"):
             text, language = service.finalize_stt(text or last_nonempty_text)
-        if service.listening and (now - last_vu_emit_ts) >= 0.04:
-            last_vu_emit_ts = now
-            left, right = (0.0, 0.0)
-            capture = getattr(service, "capture", None)
-            if capture is not None and hasattr(capture, "get_rms_levels"):
-                try:
-                    left, right = capture.get_rms_levels()
-                except Exception:
-                    pass
-            else:
-                mono = float(getattr(service, "_last_audio_level", 0.0) or 0.0)
-                left = right = mono
-            _emit_speech_event(
-                "speech.audio_level",
-                {"left": left, "right": right, "level": max(left, right)},
-            )
         if text:
             last_nonempty_text = text
         if text and contains_wakeword(text):
@@ -185,6 +208,7 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         if hasattr(service, "clear_utterance_buffer"):
             service.clear_utterance_buffer()
         service.start_background(on_result=_cb)
+        _start_vu_monitor()
         logger.info("speech start handled (listening=%s)", service.listening)
         if not was_listening:
             _emit_speech_event("speech.listen.start")
@@ -192,6 +216,7 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
 
     @router.post("/speech/stop")
     async def stop():
+        _stop_vu_monitor()
         service.stop()
         _emit_speech_event("speech.listen.end")
         if _mark_speaking(False):
