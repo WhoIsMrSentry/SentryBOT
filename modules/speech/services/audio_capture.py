@@ -3,8 +3,14 @@ import logging
 import queue
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional, Any
+
+try:
+    import audioop
+except Exception:
+    audioop = None
 
 try:
     import sounddevice as sd
@@ -20,6 +26,10 @@ logger = logging.getLogger("speech.audio")
 # GLOBAL SINGLETON for all audio capture to ensure zero contention
 _SINGLE_CAPTURE_INSTANCE: Optional["AudioCapture"] = None
 _INSTANCE_LOCK = threading.Lock()
+
+# RMS sliding window settings
+_RMS_WINDOW_MS = 100
+_RMS_MAX_SAMPLES = 1000
 
 
 def _is_alsa_device_name(device: Any) -> bool:
@@ -83,6 +93,10 @@ class AudioCapture:
         self._alsa_thread = None
         self._pcm = None
 
+        # RMS level tracking (sliding window)
+        self._rms_window: deque[int] = deque(maxlen=_RMS_MAX_SAMPLES)
+        self._rms_lock = threading.Lock()
+
     def merge_config(self, cfg: Dict) -> None:
         """Apply non-default audio fields from a later module (e.g. wakeword plughw)."""
         if not isinstance(cfg, dict):
@@ -103,10 +117,51 @@ class AudioCapture:
         if audio.get("channels") is not None:
             self.cfg.channels = int(audio.get("channels", self.cfg.channels))
 
-    def _callback(self, indata, frames, time, status):
+    def _compute_rms(self, data: bytes) -> int:
+        """Compute RMS level from raw PCM int16 data. Returns 0-32767."""
+        if not data:
+            return 0
+        try:
+            if audioop is not None:
+                # audioop.rms expects bytes, width=2 for int16
+                return audioop.rms(data, 2)
+            # Fallback: simple RMS calculation without audioop
+            # Convert bytes to int16 samples
+            import struct
+            samples = struct.unpack(f"<{len(data)//2}h", data)
+            if not samples:
+                return 0
+            sum_sq = sum(s * s for s in samples)
+            return int((sum_sq / len(samples)) ** 0.5)
+        except Exception:
+            return 0
+
+    def _update_rms(self, data: bytes) -> None:
+        rms = self._compute_rms(data)
+        with self._rms_lock:
+            self._rms_window.append(rms)
+
+    def get_rms_level(self) -> float:
+        """Get normalized RMS level (0.0 - 1.0) over the sliding window."""
+        with self._rms_lock:
+            if not self._rms_window:
+                return 0.0
+            # Use max of recent window for VU meter responsiveness
+            max_rms = max(self._rms_window)
+            return min(1.0, max_rms / 32767.0)
+
+    def get_rms_raw(self) -> int:
+        """Get raw max RMS value (0-32767) over the sliding window."""
+        with self._rms_lock:
+            if not self._rms_window:
+                return 0
+            return max(self._rms_window)
+
+    def _callback(self, indata, frames, time_info, status):
         if status:
             logger.warning("Audio status: %s", status)
         data = bytes(indata)
+        self._update_rms(data)
         with self._lock:
             for q in self._subscribers:
                 try:
@@ -137,6 +192,7 @@ class AudioCapture:
                         length, data = self._pcm.read()
                         if length > 0 and data:
                             b_data = bytes(data)
+                            self._update_rms(b_data)
                             with self._lock:
                                 for q in self._subscribers:
                                     try:
