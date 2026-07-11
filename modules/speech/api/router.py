@@ -72,6 +72,9 @@ def _push_interaction_event(event_type: str, data: dict | None = None):
 
 
 def _emit_speech_event(name: str, data: dict | None = None):
+    if _INTERACTIONS_ENGINE is not None:
+        _push_interaction_event(name, data)
+        return
     threading.Thread(target=_push_interaction_event, args=(name, data), daemon=True).start()
 
 
