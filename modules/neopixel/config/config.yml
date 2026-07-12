@@ -9,23 +9,26 @@ hardware:
   num_leds: 23
   segments:
     - { name: jewel, start: 0, count: 7 }
-    - { name: stick, start: 7, count: 16 }
+    - { name: stick_left, start: 7, count: 8 }
+    - { name: stick_right, start: 15, count: 8 }
   speed_khz: 800
   ws2812_spi_khz: 2400
   order: "GRB"
 
 companion:
   enabled: true
-  tick_ms: 50
+  tick_ms: 25
   layout:
     jewel_start: 0
     jewel_count: 7
     jewel_center_index: 0
-    stick_start: 7
-    stick_count: 16
+    sticks:
+      - { start: 7, count: 8, channel: 0 }
+      - { start: 15, count: 8, channel: 1 }
   colors:
     thinking: "#0066CC"
     eye_default: "#30E3CA"
+    wake_spin: "#FFD700"
     vu_bar: "#00AAFF"
     vu_bg: "#051018"
     # VU gradient: green (quiet) -> yellow (mid) -> red (loud)
@@ -38,12 +41,14 @@ companion:
   eye:
     breathe_ms: 800
   vu:
-    smoothing: 0.35
-    min_level: 0.04
-  wake_chase:
-    speed_ms: 80
-    direction_cw: true
-    pair_gap: 1
+    attack: 0.78
+    decay: 0.22
+    min_level: 0.02
+    stale_ms: 180
+  wake_spin:
+    duration_ms: 1200
+    wait_ms: 45
+    next_mode: listen_vu
 
 # Pi5-specific driver hint
 pi5neo:

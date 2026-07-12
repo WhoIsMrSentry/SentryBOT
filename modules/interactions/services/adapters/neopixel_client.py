@@ -95,8 +95,14 @@ class NeoHttpClient:
                 payload["eye_color"] = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
         self._post("/companion/mode", json=payload)
 
-    def companion_vu(self, level: float) -> None:
-        self._post("/companion/vu", json={"level": float(level)})
+    def companion_vu(self, level: float, right: Optional[float] = None) -> None:
+        payload: Dict[str, Any] = {}
+        if right is None:
+            payload["level"] = float(level)
+        else:
+            payload["left"] = float(level)
+            payload["right"] = float(right)
+        self._post("/companion/vu", json=payload)
 
 
 class NoOpNeoClient:

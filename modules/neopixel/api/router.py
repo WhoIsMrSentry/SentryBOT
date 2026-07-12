@@ -46,12 +46,14 @@ class EmotionsResponse(BaseModel):
 
 
 class CompanionModeRequest(BaseModel):
-    mode: str = Field(..., description="off | vu | listen | thinking | eye | wake_chase")
+    mode: str = Field(..., description="off | vu | listen | listen_vu | thinking | eye | wake_spin | wake_chase")
     eye_color: Optional[str] = Field(None, description='Optional "#RRGGBB" for center eye')
 
 
 class CompanionVuRequest(BaseModel):
-    level: float = Field(..., ge=0.0, le=1.0, description="Audio level 0..1 for stick VU meter")
+    level: Optional[float] = Field(None, ge=0.0, le=1.0, description="Mono level 0..1 (both sticks)")
+    left: Optional[float] = Field(None, ge=0.0, le=1.0, description="Left channel level 0..1")
+    right: Optional[float] = Field(None, ge=0.0, le=1.0, description="Right channel level 0..1")
 
 
 def _pretty(name: str) -> str:
@@ -143,9 +145,11 @@ def get_router(runner: NeoRunner) -> APIRouter:
 
     @r.post("/preset/apply")
     def apply_preset(name: str = Query(..., description="preset name")):
+        if runner.get_preset(name) is None:
+            return {"ok": False, "error": "unknown preset", "name": name}
         ok = runner.apply_preset(name)
         if not ok:
-            return {"ok": False, "error": "unknown preset", "name": name}
+            return {"ok": False, "error": "companion mode is active", "name": name}
         return {"ok": True, "name": name}
 
     @r.get("/preset/get")
@@ -177,8 +181,8 @@ def get_router(runner: NeoRunner) -> APIRouter:
 
     @r.post("/clear")
     def clear():
-        runner.clear()
-        return {"ok": True}
+        ok = runner.clear()
+        return {"ok": ok, "error": None if ok else "companion mode is active"}
 
     @r.post("/fill")
     def fill(r_: int = 0, g: int = 0, b: int = 0, segment: Optional[str] = None):
@@ -187,40 +191,44 @@ def get_router(runner: NeoRunner) -> APIRouter:
             if not ok:
                 return {"ok": False, "error": "unknown segment", "segment": segment}
         else:
-            runner.fill(r_, g, b)
+            ok = runner.fill(r_, g, b)
+            if not ok:
+                return {"ok": False, "error": "companion mode is active"}
         return {"ok": True}
 
     @r.post("/segment/clear")
     def clear_segment(name: str = Query(..., description="segment name")):
         ok = runner.clear_segment(name)
         if not ok:
-            return {"ok": False, "error": "unknown segment", "segment": name}
+            exists = any(seg["name"] == name.strip().lower() for seg in runner.list_segments())
+            error = "companion mode is active" if exists else "unknown segment"
+            return {"ok": False, "error": error, "segment": name}
         return {"ok": True}
 
     @r.post("/rainbow")
     def rainbow(wait: float = 0.02, cycles: int = 3):
-        runner.rainbow(wait=wait, cycles=cycles)
-        return {"ok": True}
+        ok = runner.rainbow(wait=wait, cycles=cycles)
+        return {"ok": ok, "error": None if ok else "companion mode is active"}
 
     @r.post("/theater_chase")
     def theater_chase(r_: int = 255, g: int = 0, b: int = 0, wait: float = 0.05, cycles: int = 10):
-        runner.theater_chase(r_, g, b, wait=wait, cycles=cycles)
-        return {"ok": True}
+        ok = runner.theater_chase(r_, g, b, wait=wait, cycles=cycles)
+        return {"ok": ok, "error": None if ok else "companion mode is active"}
 
     @r.post("/effect")
     def run_effect(name: str = Query(..., description="effect name: rainbow|theater_chase|fill|clear")):
         name = name.lower()
         if name == "clear":
-            runner.clear()
+            ok = runner.clear()
         elif name == "fill":
-            runner.fill(255, 255, 255)
+            ok = runner.fill(255, 255, 255)
         elif name == "rainbow":
-            runner.rainbow()
+            ok = runner.rainbow()
         elif name == "theater_chase":
-            runner.theater_chase()
+            ok = runner.theater_chase()
         else:
             return {"ok": False, "error": "unknown effect"}
-        return {"ok": True}
+        return {"ok": ok, "error": None if ok else "companion mode is active"}
 
     # Emote: parse text or list of emotions and show colors
     @r.post("/emote")
@@ -257,11 +265,17 @@ def get_router(runner: NeoRunner) -> APIRouter:
             from ..emotions.loader import EmotionStore  # type: ignore
         store = EmotionStore()
         chosen = []
+        applied = True
         for emo in seq:
             entry = store.random_entry(emo)
             chosen.append({"emotion": emo, "name": entry.name, "rgb": entry.color})
-            runner.show_color(*entry.color, duration=duration, clear_after=False)
-        return {"ok": True, "emotions": seq, "chosen": chosen}
+            applied = runner.show_color(*entry.color, duration=duration, clear_after=False) and applied
+        return {
+            "ok": applied,
+            "error": None if applied else "companion mode is active",
+            "emotions": seq,
+            "chosen": chosen,
+        }
 
     @r.post("/emote_named")
     def emote_named(emotion: str, name: str, duration: float = 0.25):
@@ -273,15 +287,22 @@ def get_router(runner: NeoRunner) -> APIRouter:
         entry = store.get_by_name(emotion, name)
         if not entry:
             return {"ok": False, "error": "not found"}
-        runner.show_color(*entry.color, duration=duration, clear_after=False)
-        return {"ok": True, "emotion": emotion, "name": entry.name, "rgb": entry.color}
+        ok = runner.show_color(*entry.color, duration=duration, clear_after=False)
+        return {
+            "ok": ok,
+            "error": None if ok else "companion mode is active",
+            "emotion": emotion,
+            "name": entry.name,
+            "rgb": entry.color,
+        }
 
     @r.post("/animate")
     def animate(body: AnimateRequest = Body(...)):
         color = _parse_color_fields(body)
-        runner.animate(body.name, emotions=body.emotions, iterations=body.iterations, color=color, segment=body.segment)
+        ok = runner.animate(body.name, emotions=body.emotions, iterations=body.iterations, color=color, segment=body.segment)
         return {
-            "ok": True,
+            "ok": ok,
+            "error": None if ok else "companion mode is active",
             "name": body.name,
             "emotions": body.emotions,
             "color": color,
@@ -306,7 +327,17 @@ def get_router(runner: NeoRunner) -> APIRouter:
 
     @r.post("/companion/vu")
     def companion_vu(body: CompanionVuRequest = Body(...)):
-        ok = runner.companion_set_vu_level(body.level)
-        return {"ok": ok, "level": body.level}
+        left = body.left
+        right = body.right
+        if left is None and right is None:
+            if body.level is None:
+                return {"ok": False, "error": "level or left/right required"}
+            left = right = body.level
+        elif left is None:
+            left = right
+        elif right is None:
+            right = left
+        ok = runner.companion_set_vu_level(float(left), right=float(right))
+        return {"ok": ok, "left": left, "right": right}
 
     return r
