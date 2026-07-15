@@ -58,7 +58,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          timeout 420s python -m pytest --collect-only -vv tests 2>&1 | tee pytest_collect_output.txt
+          timeout 420s python -m pytest --collect-only -vv modules 2>&1 | tee pytest_collect_output.txt
           code=${PIPESTATUS[0]}
           set -e
           if [ "$code" = "124" ]; then
@@ -74,7 +74,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          timeout 1800s python -m pytest -q tests \
+          timeout 1800s python -m pytest -q modules \
             --maxfail=1 \
             --durations=20 \
             2>&1 | tee pytest_output.txt
@@ -128,7 +128,7 @@ jobs:
           import subprocess
           import sys
 
-          dirs = sorted(path for path in glob.glob("tests/modules/*") if os.path.isdir(path))
+          dirs = sorted(path for path in glob.glob("modules/*/tests") if os.path.isdir(path))
           print(f"[ci-diag] test_dir_count={len(dirs)}", flush=True)
 
           abort_hit = ""
