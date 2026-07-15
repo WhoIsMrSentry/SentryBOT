@@ -23,7 +23,7 @@ def _write_json(path: Path, data: dict) -> None:
 @pytest.fixture()
 def migrate(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Patch the migrator to point at a temporary project root."""
-    import tools.social_db_migrate as migrate_mod
+    import scripts.migrations.social_db_migrate as migrate_mod
 
     monkeypatch.setattr(migrate_mod, "_ROOT", tmp_path)
     return migrate_mod
