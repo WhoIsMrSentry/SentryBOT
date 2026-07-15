@@ -14,7 +14,7 @@ import json
 import threading
 import time
 
-from modules.arduino_serial.tests.fake_transport_sim import FakeTransportSim
+from .fake_transport_sim import FakeTransportSim
 from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService
 
 

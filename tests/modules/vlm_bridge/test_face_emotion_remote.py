@@ -21,7 +21,9 @@ def test_remote_fer_uses_http_response():
     mock_resp.headers = {"content-type": "application/json"}
     mock_resp.json.return_value = {"emotion": "happy", "confidence": 0.82}
 
-    with patch("requests.post", return_value=mock_resp):
+    with patch.object(est, "_encode_face_b64", return_value="ZmFrZQ=="), patch(
+        "requests.post", return_value=mock_resp
+    ):
         out = est.estimate(face)
     assert out["emotion"] == "joy"
     assert out["backend"] == "remote"

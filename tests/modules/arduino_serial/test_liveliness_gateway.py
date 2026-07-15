@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from modules.arduino_serial.api.router import get_router
 from modules.arduino_serial.contract import build_liveliness_cmd
-from modules.arduino_serial.tests.fake_transport_sim import FakeTransportSim
+from .fake_transport_sim import FakeTransportSim
 from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService
 
 
