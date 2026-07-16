@@ -42,10 +42,9 @@ wakeword_data/negative   # other speech/noise (16kHz, mono WAV)
 
 2) Train verifier locally (PC):
 
-```powershell
-# Activate virtualenv then run:
-C:/path/to/venv/Scripts/python.exe -m pip install openwakeword
-C:/path/to/venv/Scripts/python.exe modules/wakeword/tools/train_verifier.py --positive wakeword_data/positive --negative wakeword_data/negative --out modules/wakeword/models/verifier.joblib --base-model alexa
+```bash
+python3 -m pip install openwakeword
+python3 modules/wakeword/tools/train_verifier.py --positive wakeword_data/positive --negative wakeword_data/negative --out modules/wakeword/models/verifier.joblib --base-model alexa
 ```
 
 3) Configure wakeword module to use verifier:
