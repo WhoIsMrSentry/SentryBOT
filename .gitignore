@@ -36,3 +36,5 @@ _codeql_detected_source_root
 !.codebase-memory/graph.db.zst
 !.codebase-memory/artifact.json
 vendor/
+*.ps1
+safe_places.json
