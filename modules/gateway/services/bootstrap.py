@@ -1,4 +1,7 @@
 from __future__ import annotations
+GATEWAY_EVENT_REGISTRATION_COMPATIBILITY_CONTRACT = True
+GATEWAY_EVENT_REGISTRATION_ROLE = "fastapi_startup_shutdown_compatibility_adapter"
+
 from typing import Dict, Any, Optional
 import os
 
@@ -7,7 +10,7 @@ import logging
 from fastapi import FastAPI
 import warnings
 
-# Suppress specific FastAPI deprecation about on_event (we prefer add_event_handler when available)
+# Compatibility: suppress FastAPI on_event deprecation noise when older event APIs are the only available path.
 warnings.filterwarnings("ignore", message=".*on_event is deprecated.*", category=DeprecationWarning)
 
 logger = logging.getLogger("gateway.bootstrap")
@@ -193,38 +196,42 @@ def _register_imx500_keys(registry: Any, imx_runner: Any) -> None:
         return
 
     def _apply_imx500_enabled(value: Any) -> Optional[Dict[str, Any]]:
-        if imx_runner is None:
-            return {"ok": False, "error": "no_runner"}
         try:
-            from modules.camera.services import imx500_runner as imx_mod
-
             imx_runner.cfg.enabled = bool(value)
-            imx_runner._available = bool(value) and bool(getattr(imx_mod, "IMX500_AVAILABLE", False))
-            if imx_runner.available and imx_runner.cfg.enabled:
-                imx_runner.start()
-            else:
-                imx_runner.stop()
-            return {"ok": True, "enabled": imx_runner.cfg.enabled}
+            if imx_runner.cfg.enabled:
+                started = bool(imx_runner.start())
+                return {"ok": started, "enabled": True, "status": imx_runner.status()}
+            imx_runner.stop()
+            return {"ok": True, "enabled": False, "status": imx_runner.status()}
         except Exception as exc:
             logger.warning("IMX500 hot toggle failed: %s", exc)
             return {"ok": False, "error": str(exc)}
 
     def _apply_imx500_conf(value: Any) -> Optional[Dict[str, Any]]:
-        if imx_runner is None:
-            return {"ok": False, "error": "no_runner"}
         try:
             imx_runner.cfg.confidence = float(value)
             return {"ok": True, "confidence": imx_runner.cfg.confidence}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    registry.register("camera", "imx500.enabled", type="bool",
-                      default=bool(getattr(getattr(imx_runner, "cfg", None), "enabled", False)),
-                      description="Toggle IMX500 on-sensor inference loop.", apply_fn=_apply_imx500_enabled)
-    registry.register("camera", "imx500.confidence", type="float",
-                      default=float(getattr(getattr(imx_runner, "cfg", None), "confidence", 0.45)),
-                      minimum=0.05, maximum=1.0,
-                      description="Confidence threshold forwarded to SSD post-filter.", apply_fn=_apply_imx500_conf)
+    registry.register(
+        "camera",
+        "imx500.enabled",
+        type="bool",
+        default=bool(getattr(getattr(imx_runner, "cfg", None), "enabled", False)),
+        description="Toggle IMX500 on-sensor inference.",
+        apply_fn=_apply_imx500_enabled,
+    )
+    registry.register(
+        "camera",
+        "imx500.confidence",
+        type="float",
+        default=float(getattr(getattr(imx_runner, "cfg", None), "confidence", 0.50)),
+        minimum=0.05,
+        maximum=1.0,
+        description="IMX500 object detection confidence threshold.",
+        apply_fn=_apply_imx500_conf,
+    )
 
 
 def _register_state_manager_keys(registry: Any, state_manager: Any) -> None:
@@ -426,6 +433,27 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
     app.include_router(get_inter_router(eng))
 
 
+
+
+def _include_expression(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
+    from modules.expression.api.router import get_router as get_expression_router  # type: ignore
+    from modules.expression.config_loader import load_config as load_expression_cfg  # type: ignore
+    from modules.expression.services.state import SemanticExpressionEngine  # type: ignore
+
+    ecfg = _merge_with_agent_section(load_expression_cfg(None), "expression")
+    engine = SemanticExpressionEngine(ecfg)
+    started["expression"] = engine
+    app.include_router(get_expression_router(engine))
+
+    interactions = started.get("interactions")
+    if interactions is not None and hasattr(interactions, "register_event_handler"):
+        try:
+            interactions.register_event_handler(engine.on_interaction_event)
+            logger.info("interactions -> semantic expression state bridge mounted")
+        except Exception as exc:
+            logger.warning("semantic expression bridge mount failed: %s", exc)
+
+    logger.info("module expression mounted")
 def _include_speak(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.gateway.url import gateway_url  # type: ignore
     from modules.speak.xSpeakService import SpeakService  # type: ignore
@@ -447,17 +475,22 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
     svc = SpeechService()
     started["speech"] = svc
     try:
-        from pathlib import Path
+        import os
 
-        model_dir = Path(__file__).resolve().parents[2] / "speech" / "models" / "vosk-tr"
-        if not model_dir.is_dir():
-            logger.error(
-                "Vosk TR model missing at %s — speech/STT will not work after wakeword. "
-                "Run: python tools/install_vosk_tr.py",
-                model_dir,
+        stt_status = svc.stt_status() if hasattr(svc, "stt_status") else {}
+        if not stt_status.get("available", False):
+            primary = stt_status.get("primary", {}) if isinstance(stt_status.get("primary"), dict) else {}
+            pc_test = str(os.environ.get("SENTRYBOT_PC_TEST") or os.environ.get("SENTRYBOT_PROFILE") or "").strip().lower() in {"1", "true", "yes", "pc", "pc-test", "test"}
+            message = (
+                "Speech/STT unavailable: primary Vosk model directory missing at %s; "
+                "speech will not start after wakeword. Run: python tools/install_vosk_tr.py"
             )
-    except Exception:
-        pass
+            if pc_test:
+                logger.warning("PC TEST: " + message, primary.get("model_path"))
+            else:
+                logger.error(message, primary.get("model_path"))
+    except Exception as exc:
+        logger.debug("speech stt status check failed: %s", exc)
     # If gateway config requests speech to start listening on boot, start it.
     try:
         # cfg is passed to bootstrap and available in outer scope; read flag if present
@@ -523,59 +556,79 @@ def _include_logs(app: FastAPI, started: Dict[str, object]) -> None:
 
 
 def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.camera.api import get_router as get_cam_router  # type: ignore
     from modules.camera.config_loader import load_config as load_cam_cfg  # type: ignore
-    from modules.camera.services.capture import CameraCapture, FramePublisher, CaptureConfig  # type: ignore
+    from modules.camera.services.capture import CameraCapture, CaptureConfig, FramePublisher  # type: ignore
     from modules.camera.services.imx500_runner import Imx500Config, Imx500Runner  # type: ignore
     from modules.camera.services.onsensor_bus import get_default_bus  # type: ignore
-    from modules.camera.api import get_router as get_cam_router  # type: ignore
+
     ccfg = _merge_with_agent_section(load_cam_cfg(None), "camera")
-    camera_enabled = bool(ccfg.get("enabled", False))
-    cap_cfg = CaptureConfig(
-        backend=ccfg.get("backend", "auto"),
-        source=ccfg.get("source", 0),
-        resolution=(int(ccfg.get("resolution", {}).get("width", 1280)), int(ccfg.get("resolution", {}).get("height", 720))),
-        fps_target=int(ccfg.get("fps_target", 30)),
-        jpeg_quality=int(ccfg.get("jpeg_quality", 80)),
-        opencv_fourcc=str(ccfg.get("opencv", {}).get("fourcc", "MJPG")),
-        opencv_buffer_size=int(ccfg.get("opencv", {}).get("buffer_size", 1)),
-        picam_size=(int(ccfg.get("picamera2", {}).get("size", {}).get("width", 1920)), int(ccfg.get("picamera2", {}).get("size", {}).get("height", 1080))),
-        picam_format=str(ccfg.get("picamera2", {}).get("format", "RGB888")),
-        picam_frame_rate=int(ccfg.get("picamera2", {}).get("frame_rate", 30)),
-        picam_af_mode=int(ccfg.get("picamera2", {}).get("af_mode", 2)),
-        flip=str(ccfg.get("flip", "none")),
-        opencv_max_open_attempts=int(ccfg.get("opencv", {}).get("max_open_attempts", 5)),
-        opencv_retry_interval_s=float(ccfg.get("opencv", {}).get("retry_interval_s", 1.0)),
+    camera_enabled = bool(ccfg.get("enabled", True))
+    picam_raw = ccfg.get("picamera2", {}) if isinstance(ccfg.get("picamera2"), dict) else {}
+    size_raw = picam_raw.get("size", {}) if isinstance(picam_raw.get("size"), dict) else {}
+    imx_raw = ccfg.get("imx500", {}) if isinstance(ccfg.get("imx500"), dict) else {}
+    tracker_raw = imx_raw.get("tracker", {}) if isinstance(imx_raw.get("tracker"), dict) else {}
+    target_raw = imx_raw.get("target", {}) if isinstance(imx_raw.get("target"), dict) else {}
+
+    bus = get_default_bus()
+    runner = Imx500Runner(
+        Imx500Config(
+            enabled=bool(imx_raw.get("enabled", True)),
+            model_path=str(imx_raw.get("model_path", "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")),
+            labels_path=str(imx_raw.get("labels_path", "")),
+            confidence=float(imx_raw.get("confidence", 0.50)),
+            iou=float(imx_raw.get("iou", 0.65)),
+            max_detections=int(imx_raw.get("max_detections", 20)),
+            publish_interval_s=float(imx_raw.get("publish_interval_s", 0.05)),
+            inference_rate=int(imx_raw["inference_rate"]) if imx_raw.get("inference_rate") is not None else None,
+            preserve_aspect_ratio=bool(imx_raw.get("preserve_aspect_ratio", True)),
+            classes_of_interest=tuple(imx_raw.get("classes_of_interest", []) or []),
+            tracker_iou_threshold=float(tracker_raw.get("iou_threshold", 0.30)),
+            tracker_max_missed=int(tracker_raw.get("max_missed", 8)),
+            target_label=str(target_raw.get("label", "person")),
+            target_strategy=str(target_raw.get("strategy", "largest")),
+        ),
+        bus=bus,
     )
-    publisher = FramePublisher()
-    capture = CameraCapture(cap_cfg, publisher)
+    if camera_enabled:
+        runner.prepare()
+
+    capture = CameraCapture(
+        CaptureConfig(
+            size=(int(size_raw.get("width", 1280)), int(size_raw.get("height", 720))),
+            pixel_format=str(picam_raw.get("format", "RGB888")),
+            frame_rate=int(picam_raw.get("frame_rate", ccfg.get("fps_target", 30))),
+            jpeg_quality=int(ccfg.get("jpeg_quality", 80)),
+            flip=str(ccfg.get("flip", "none")),
+            camera_num=runner.camera_num,
+        ),
+        FramePublisher(),
+    )
+
     if camera_enabled and _should_autostart_services():
         capture.start()
+        runner.attach_camera(capture.picam, capture)
+        runner.start()
     elif not camera_enabled:
-        logger.info("camera capture disabled (config enabled=false)")
+        logger.info("camera disabled")
     else:
-        logger.info("camera auto-start skipped (autostart disabled)")
-    app.include_router(get_cam_router(capture, cap_cfg.fps_target, enabled=camera_enabled), prefix="/camera", tags=["camera"])
-    started["camera"] = capture
-    started["onsensor_bus"] = get_default_bus()
+        logger.info("camera auto-start skipped")
 
-    imx_cfg_raw = ccfg.get("imx500", {}) if isinstance(ccfg.get("imx500", {}), dict) else {}
-    imx_cfg = Imx500Config(
-        enabled=bool(imx_cfg_raw.get("enabled", False)),
-        model_path=str(imx_cfg_raw.get("model_path", "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk")),
-        labels_path=str(imx_cfg_raw.get("labels_path", "/usr/share/imx500-models/coco_labels.txt")),
-        confidence=float(imx_cfg_raw.get("confidence", 0.45)),
-        publish_metadata=bool(imx_cfg_raw.get("publish_metadata", True)),
-        publish_interval_s=float(imx_cfg_raw.get("publish_interval_s", 0.05)),
-        classes_of_interest=tuple(imx_cfg_raw.get("classes_of_interest", []) or []),
-    )
-    runner = Imx500Runner(imx_cfg, bus=started["onsensor_bus"], picam=getattr(capture, "_picam", None))
-    if imx_cfg.enabled and camera_enabled and _should_autostart_services():
-        try:
-            runner.start()
-        except Exception as exc:
-            logger.warning("IMX500 runner failed to start: %s", exc)
+    started["camera"] = capture
+    started["onsensor_bus"] = bus
     started["imx500_runner"] = runner
-    logger.info("module camera mounted (imx500_enabled=%s, available=%s)", imx_cfg.enabled, runner.available)
+    app.include_router(
+        get_cam_router(
+            capture,
+            int(ccfg.get("fps_target", 30)),
+            enabled=camera_enabled,
+            imx500_runner=runner,
+            onsensor_bus=bus,
+        ),
+        prefix="/camera",
+        tags=["camera"],
+    )
+    logger.info("module camera mounted (imx500_enabled=%s, available=%s)", runner.cfg.enabled, runner.available)
 
 
 def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
@@ -683,7 +736,7 @@ def _include_notifier(app: FastAPI, started: Dict[str, object]) -> None:
             app.add_event_handler("startup", _start_bot)
             app.add_event_handler("shutdown", _stop_bot)
         elif hasattr(app, "on_event"):
-            # `on_event` is deprecated in newer FastAPI versions; suppress the deprecation
+            # Compatibility path for older FastAPI apps; suppress the deprecation
             # warning when falling back so logs are not noisy on older platforms.
             try:
                 with warnings.catch_warnings():
@@ -832,6 +885,7 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         "vlm_bridge": lambda: _include_vlm_bridge(app, started, cfg),
         "neopixel": lambda: _include_neopixel(app, started),
         "interactions": lambda: _include_interactions(app, started, cfg),
+        "expression": lambda: _include_expression(app, started, cfg),
         "speak": lambda: _include_speak(app, started),
         "wakeword": lambda: _include_wakeword(app, started),
         "speech": lambda: _include_speech(app, started),
