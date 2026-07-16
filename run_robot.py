@@ -1,316 +1,99 @@
 from __future__ import annotations
-"""
-SentryBOT ana başlatıcı
-- Merkezi loglama
-- Gateway app oluşturma
-- Uvicorn ile servis başlatma
-"""
+
 import inspect
+import logging
 import os
 import signal
 import sys
-import logging
 import threading
+
 import uvicorn  # type: ignore
 
-# Proje kökünü PYTHONPATH'e ekle (script doğrudan çalıştığında).
-# Not: modules/<mod>/ alt dizinlerini sys.path'e eklemeyin; bu,
-# "from modules.gateway.xGatewayService" gibi importları bozar.
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 logger = logging.getLogger("run_robot")
-
-_GATEWAY_SERVICE_FILE = os.path.join(ROOT, "modules", "gateway", "xGatewayService.py")
 _FORCE_EXIT_SECONDS = 4.0
 
 
 def _stop_started_services(app) -> None:
     started = getattr(getattr(app, "state", None), "started", None) or {}
-    for name, svc in list(started.items()):
-        if name in ("notifier_bot", "notifier_polling_enabled"):
+    for name, service in list(started.items()):
+        if name in {"notifier_bot", "notifier_polling_enabled"}:
             continue
         for method_name in ("stop_stream_processing", "stop", "shutdown", "close"):
-            method = getattr(svc, method_name, None)
+            method = getattr(service, method_name, None)
             if not callable(method):
                 continue
             try:
-                res = method()
-                if inspect.isawaitable(res):
-                    logger.debug("skip async %s on %s during sync shutdown", method_name, name)
+                result = method()
+                if inspect.isawaitable(result):
+                    logger.debug("async shutdown skipped for %s.%s", name, method_name)
             except Exception as exc:
-                logger.debug("shutdown %s.%s failed: %s", name, method_name, exc)
+                logger.debug("shutdown failed for %s.%s: %s", name, method_name, exc)
             break
 
 
-def _prompt_bluetooth_connection() -> None:
-    try:
-        import shutil
-        import subprocess
-        import re
-        import time
-
-        if not shutil.which("bluetoothctl"):
-            return
-
-        print("\n" + "="*50)
-        print(" SentryBOT Bluetooth Quick-Connect ")
-        print("="*50)
-        print("[s] Scan & Connect to a Bluetooth Speaker/Device")
-        print("[p] View and Connect to paired Bluetooth devices")
-        print("[ENTER] Skip to Audio Output Selection")
-        
-        choice = input("\nChoice: ").strip().lower()
-        if not choice:
-            return
-
-        discovered = {}
-
-        if choice == 's':
-            print("\nPowering on Bluetooth and starting scan (6 seconds)...")
-            subprocess.run(["bluetoothctl", "power", "on"], capture_output=True, text=True)
-            
-            # Start scanning
-            scan_proc = subprocess.Popen(
-                ["bluetoothctl", "scan", "on"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            time.sleep(6)
-            
-            # Stop scanning
-            subprocess.run(["bluetoothctl", "scan", "off"], capture_output=True, text=True)
-            scan_proc.terminate()
-            try:
-                stdout_data, _ = scan_proc.communicate(timeout=2)
-                for line in stdout_data.splitlines():
-                    if "Device" in line:
-                        mac_match = re.search(r"([0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2})", line)
-                        if mac_match:
-                            mac = mac_match.group(1)
-                            name = "Unknown Device"
-                            if "Name:" in line:
-                                name = line.split("Name:", 1)[1].strip()
-                            elif mac in line:
-                                parts = line.split(mac, 1)
-                                if len(parts) > 1 and parts[1].strip():
-                                    name = parts[1].strip()
-                            discovered[mac] = name
-            except Exception:
-                pass
-
-        elif choice == 'p':
-            print("\nFetching paired Bluetooth devices...")
-        else:
-            return
-
-        # Add devices from "bluetoothctl devices"
-        res = subprocess.run(["bluetoothctl", "devices"], capture_output=True, text=True)
-        for line in res.stdout.splitlines():
-            match = re.match(r"^Device\s+([0-9A-Fa-f:]+)\s+(.+)$", line.strip())
-            if match:
-                mac, name = match.groups()
-                discovered[mac] = name
-
-        if choice == 'p':
-            # Filter only paired/known devices
-            paired_res = subprocess.run(["bluetoothctl", "paired-devices"], capture_output=True, text=True)
-            paired_macs = set()
-            for line in paired_res.stdout.splitlines():
-                match = re.match(r"^Device\s+([0-9A-Fa-f:]+)\s+(.+)$", line.strip())
-                if match:
-                    paired_macs.add(match.group(1))
-            # Keep only paired devices in discovered
-            discovered = {k: v for k, v in discovered.items() if k in paired_macs}
-
-        if not discovered:
-            print("No Bluetooth devices found.")
-            time.sleep(1)
-            return
-
-        device_list = list(discovered.items())
-        print("\nAvailable Bluetooth Devices:")
-        for idx, (mac, name) in enumerate(device_list):
-            print(f"[{idx}] {name} ({mac})")
-
-        print("\nEnter device index to connect (or ENTER to cancel):")
-        dev_choice = input("Index: ").strip()
-        if not dev_choice:
-            return
-
-        try:
-            dev_idx = int(dev_choice)
-            if 0 <= dev_idx < len(device_list):
-                mac, name = device_list[dev_idx]
-                print(f"\nTrusting, pairing and connecting to {name} ({mac})...")
-                
-                # Trust
-                subprocess.run(["bluetoothctl", "trust", mac], capture_output=True, text=True)
-                # Pair
-                subprocess.run(["bluetoothctl", "pair", mac], capture_output=True, text=True)
-                # Connect
-                connect_res = subprocess.run(["bluetoothctl", "connect", mac], capture_output=True, text=True)
-                
-                if connect_res.returncode == 0 or "Connection successful" in connect_res.stdout:
-                    print(f"Successfully connected to {name}!")
-                    print("Waiting 3 seconds for audio system to register the device...")
-                    time.sleep(3)
-                else:
-                    print(f"Connection output: {connect_res.stdout.strip()}")
-            else:
-                print("Invalid index.")
-        except Exception as e:
-            print(f"Connection failed: {e}")
-        
-        time.sleep(1)
-    except Exception as e:
-        logger.warning("Bluetooth connection menu failed: %s", e)
-
-
-def _prompt_audio_device() -> None:
-    try:
-        # Prompt Bluetooth connection first
-        _prompt_bluetooth_connection()
-
-        import sounddevice as sd
-        import yaml
-        devices = sd.query_devices()
-        has_outputs = any(d['max_output_channels'] > 0 for d in devices)
-        if not has_outputs:
-            return
-
-        print("\n" + "="*50)
-        print(" SentryBOT Audio Output Selection ")
-        print("="*50)
-        for i, d in enumerate(devices):
-            if d['max_output_channels'] > 0:
-                print(f"[{i}] {d['name']}")
-        
-        print("\nPress ENTER to skip, or type the device index (e.g. for BT Speaker):")
-        choice = input("Device Index: ").strip()
-        if not choice:
-            return
-            
-        idx = int(choice)
-        device_name = devices[idx]['name']
-        
-        cfg_path = os.path.join(ROOT, "config", "agent.yaml")
-        if os.path.exists(cfg_path):
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg = yaml.safe_load(f) or {}
-            
-            if "speak" not in cfg:
-                cfg["speak"] = {}
-            if "audio_out" not in cfg["speak"]:
-                cfg["speak"]["audio_out"] = {}
-            cfg["speak"]["audio_out"]["device"] = device_name
-            
-            with open(cfg_path, "w", encoding="utf-8") as f:
-                yaml.dump(cfg, f, allow_unicode=True, sort_keys=False)
-            
-            logger.info("Audio output device set to: %s in config/agent.yaml", device_name)
-    except Exception as e:
-        logger.warning("Audio device selection failed/skipped: %s", e)
-
 def main() -> None:
-    # Logları erken başlat (opsiyonel hatalarda devam et)
+    from modules.common.runtime_target import assert_raspberry_pi
+
+    target = assert_raspberry_pi()
+
     try:
         from modules.logwrapper import init_logging  # type: ignore
+
         init_logging()
     except Exception as exc:
         logger.debug("init_logging skipped: %s", exc)
 
-    # Robot başlatılırken çıkış cihazı sor
-    if sys.stdin.isatty():
-        _prompt_audio_device()
-
-    if not os.path.isfile(_GATEWAY_SERVICE_FILE):
-        raise SystemExit(
-            f"Missing gateway entrypoint: {_GATEWAY_SERVICE_FILE}\n"
-            "Repo incomplete — on the Pi run: git fetch origin dev && git reset --hard origin/dev"
-        )
-
-    # Gateway app'i oluştur (repo kökünden çalıştırın: python run_robot.py)
-    from modules.gateway.xGatewayService import create_app  # type: ignore
-    from modules.gateway.config_loader import load_config  # type: ignore
-    # Ayrıca autonomy konfigunu okuyup startup durumunu run_robot log'una yazalım
-    try:
-        from modules.autonomy.config_loader import load_config as load_autonomy_config  # type: ignore
-        aut_cfg = load_autonomy_config()
-    except Exception:
-        aut_cfg = None
+    from modules.gateway.config_loader import load_config
+    from modules.gateway.xGatewayService import create_app
 
     cfg = load_config()
     app = create_app()
-
-    try:
-        logger.info("Loaded gateway config: host=%s port=%s", cfg["server"]["host"], cfg["server"]["port"])
-    except Exception:
-        logger.info("Loaded gateway config")
-
-    try:
-        modules_dir = os.path.join(ROOT, "modules")
-        modules_list = sorted([d for d in os.listdir(modules_dir) if os.path.isdir(os.path.join(modules_dir, d))])
-        logger.info("Available modules: %s", ", ".join(modules_list))
-    except Exception:
-        logger.debug("Could not list modules directory")
-
-    if aut_cfg:
-        owner_cfg = aut_cfg.get("owner", {})
-        logger.info(
-            "Autonomy owner: enabled=%s require_presence=%s polite_message=%s",
-            owner_cfg.get("enabled"),
-            owner_cfg.get("require_presence"),
-            owner_cfg.get("polite_message"),
-        )
-
     host = str(cfg["server"]["host"])
     port = int(cfg["server"]["port"])
-    uvicorn_config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        log_level="info",
-        timeout_graceful_shutdown=3,
+
+    logger.info("SentryBOT starting on %s", target.model)
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level="warning",
+            timeout_graceful_shutdown=3,
+            access_log=False,
+            log_config=None,
+        )
     )
-    server = uvicorn.Server(uvicorn_config)
 
     shutdown_count = 0
     force_timer: threading.Timer | None = None
 
-    def _force_exit() -> None:
-        logger.warning("Shutdown timeout — forcing exit")
+    def force_exit() -> None:
         _stop_started_services(app)
         os._exit(0)
 
-    def _request_shutdown(signum: int, _frame) -> None:
+    def request_shutdown(signum: int, _frame) -> None:
         nonlocal shutdown_count, force_timer
         shutdown_count += 1
         if shutdown_count >= 2:
-            logger.warning("Second interrupt — forcing exit now")
-            _force_exit()
+            force_exit()
             return
-        print(f"\nShutdown signal ({signum}); stopping...", file=sys.stderr, flush=True)
-        logger.info("Shutdown signal received (%s); stopping services...", signum)
-        sys.stdout.flush()
-        sys.stderr.flush()
+        logger.info("shutdown signal received: %s", signum)
         server.should_exit = True
         _stop_started_services(app)
         if force_timer is not None:
             force_timer.cancel()
-        force_timer = threading.Timer(_FORCE_EXIT_SECONDS, _force_exit)
+        force_timer = threading.Timer(_FORCE_EXIT_SECONDS, force_exit)
         force_timer.daemon = True
         force_timer.start()
 
-    signal.signal(signal.SIGINT, _request_shutdown)
-    signal.signal(signal.SIGTERM, _request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
+    signal.signal(signal.SIGTERM, request_shutdown)
 
-    logger.info(
-        "Press Ctrl+C once to stop (%ss max). Press twice to force quit.",
-        int(_FORCE_EXIT_SECONDS),
-    )
     try:
         server.run()
     finally:

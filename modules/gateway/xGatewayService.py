@@ -38,12 +38,25 @@ def _client_is_loopback(request) -> bool:
     return host in {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
+def _root_agent_security_cfg() -> dict:
+    try:
+        from modules.config_center.agent_yaml_loader import load_agent_config  # type: ignore
+
+        loaded = load_agent_config(None)
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:
+        return {}
+
+
 def _check_insecure_defaults(cfg: dict) -> list[str]:
     """Check for insecure default credentials and return list of warnings."""
     warnings = []
+    root_cfg = _root_agent_security_cfg()
     
     # Check agent.yaml auth_token
-    agent_cfg = cfg.get("agent", {}) if isinstance(cfg.get("agent", {}), dict) else {}
+    local_agent_cfg = cfg.get("agent")
+    agent_cfg = local_agent_cfg if isinstance(local_agent_cfg, dict) and local_agent_cfg else root_cfg.get("agent", {})
+    agent_cfg = agent_cfg if isinstance(agent_cfg, dict) else {}
     auth_token = str(agent_cfg.get("auth_token", "") or "").strip()
     if auth_token in ("", "changeme", "your-auth-token", "replace_me"):
         warnings.append("SECURITY WARNING: agent.auth_token is using default/empty value 'changeme' - please set a strong token in config/agent.yaml")
@@ -57,7 +70,9 @@ def _check_insecure_defaults(cfg: dict) -> list[str]:
         warnings.append("SECURITY WARNING: esp_link WiFi password equals SSID ('SentryBOT') - please set a strong unique password in modules/esp_link/config/config.yml")
     
     # Check vlm_bridge auth_token
-    vlm_cfg = cfg.get("vlm_bridge", {}) if isinstance(cfg.get("vlm_bridge", {}), dict) else {}
+    local_vlm_cfg = cfg.get("vlm_bridge")
+    vlm_cfg = local_vlm_cfg if isinstance(local_vlm_cfg, dict) and local_vlm_cfg else root_cfg.get("vlm_bridge", {})
+    vlm_cfg = vlm_cfg if isinstance(vlm_cfg, dict) else {}
     remote_cfg = vlm_cfg.get("remote", {}) if isinstance(vlm_cfg.get("remote", {}), dict) else {}
     vlm_auth = str(remote_cfg.get("auth_token", "") or "").strip()
     if vlm_auth in ("", "changeme", "your-auth-token", "replace_me"):
