@@ -12,6 +12,9 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger("interactions.neopixel_client")
 
+NEOPIXEL_SAFE_DEGRADED_CLIENT_CONTRACT = True
+NOOP_NEOPIXEL_CLIENT_ROLE = "safe_degraded_output_adapter"
+
 
 def _normalize_color(color: Any) -> Optional[tuple[int, int, int]]:
     if isinstance(color, (list, tuple)) and len(color) >= 3:
@@ -106,6 +109,11 @@ class NeoHttpClient:
 
 
 class NoOpNeoClient:
+    """Safe degraded LED adapter.
+
+    Used when NeoPixel output is disabled or unavailable. It absorbs
+    optional visual-output calls without claiming that real LED hardware ran.
+    """
     def clear(self) -> None:  # pragma: no cover
         pass
 
@@ -132,3 +140,12 @@ class NoOpNeoClient:
         emotions: Optional[list[str]] = None,
     ) -> None:  # pragma: no cover
         pass
+    def companion_mode(self, mode: str, **kwargs):
+        # Safe degraded adapter: optional companion LED mode is ignored when
+        # NeoPixel output is disabled or unavailable.
+        return None
+
+    def companion_vu(self, level: float, **kwargs):
+        # Safe degraded adapter: optional VU meter update is ignored when
+        # NeoPixel output is disabled or unavailable.
+        return None

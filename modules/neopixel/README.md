@@ -96,7 +96,7 @@ Ortam değişkenleri:
 
 Arduino üzerinden sürme (özet):
 - `hardware.backend: arduino`
-- `hardware.device: AUTO` veya `COM3`/`/dev/ttyUSB0` gibi Arduino portu
+- `hardware.device: AUTO`, `/dev/serial/by-id/...`, `/dev/ttyACM0` veya `/dev/ttyUSB0` gibi Linux/Pi Arduino portu
 
 Raspberry Pi 5 için tipik ayar (Pi native driver):
 - `hardware.backend: pi`

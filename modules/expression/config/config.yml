@@ -1,0 +1,47 @@
+server:
+  host: 0.0.0.0
+  port: 8111
+
+state:
+  default_emotion: neutral
+  default_arousal: low
+  default_attention: idle
+  default_energy: normal
+  max_history: 120
+
+mappings:
+  colors:
+    neutral: "#4060ff"
+    curious: "#00bcd4"
+    happy: "#00ff88"
+    sleepy: "#101522"
+    alert: "#ffb000"
+    sad: "#2050ff"
+    thinking: "#7a5cff"
+    listening: "#00aaff"
+    speaking: "#00ffcc"
+  oled_moods:
+    neutral: neutral
+    curious: curious
+    happy: happy
+    sleepy: sleepy
+    alert: alert
+    sad: sad
+    thinking: thinking
+  led_modes:
+    idle: eye
+    user: listen
+    sound: pulse
+    object: eye
+    sleep: off
+    internal: thinking
+    camera: eye
+
+output_bridge:
+  enabled: true
+  gateway_url: "http://127.0.0.1:8080"
+  timeout_s: 0.8
+  endpoints:
+    neopixel: "/neopixel/companion/mode"
+    oled_faces: "/oled_faces/event"
+    piservo: "/piservo/gesture"

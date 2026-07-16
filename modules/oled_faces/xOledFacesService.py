@@ -1,4 +1,7 @@
 from __future__ import annotations
+OLED_FACE_SERVICE_COMPATIBILITY_CONTRACT = True
+OLED_FACE_SERVICE_ROLE = "gateway_runtime_oled_face_compatibility_service"
+
 
 import threading
 import time

@@ -3,6 +3,9 @@ from dataclasses import dataclass
 import time
 from typing import List, Tuple, Protocol
 
+NEOPIXEL_SAFE_DEGRADED_DRIVER_CONTRACT = True
+NEOPIXEL_SIMULATOR_BACKEND_ROLE = "safe_degraded_memory_only_led_buffer"
+
 
 class _StripProto(Protocol):
     def set_led_color(self, idx: int, r: int, g: int, b: int) -> None: ...
@@ -26,7 +29,7 @@ class _SimStrip:
             self.buf[idx] = (r, g, b)
 
     def update_strip(self) -> None:
-        # No-op; in real use we could log or visualize
+        # Safe degraded simulator update; no physical LED hardware is touched.
         pass
 
     def clear_strip(self) -> None:
@@ -47,7 +50,7 @@ class NeoDriverConfig:
     # backend selection: auto | pi | arduino | sim
     # - `pi`     : Raspberry Pi native driver (pi5neo)
     # - `arduino`: Arduino attached over serial will drive the LEDs (preferred for this project)
-    # - `sim`    : software simulator / no-op
+    # - `sim`    : software simulator / safe degraded memory-only LED buffer
     backend: str = "auto"
     # When using Arduino backend the `device` may be a serial port or 'AUTO'
     ws2812_spi_khz: int = 2400
@@ -86,7 +89,7 @@ class NeoDriver:
             from pi5neo import Pi5Neo  # type: ignore
             self._strip = Pi5Neo(cfg.device, num_leds=cfg.num_leds, spi_speed_khz=cfg.speed_khz)
         except Exception:
-            # Fallback to simulator when pi5neo not available
+            # Safe degraded fallback to simulator when pi5neo is not available
             self._strip = _SimStrip(cfg.num_leds)
 
     # Basic primitives
