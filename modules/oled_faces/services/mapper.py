@@ -1,4 +1,7 @@
 from __future__ import annotations
+OLED_FACE_MAPPER_COMPATIBILITY_CONTRACT = True
+OLED_FACE_MAPPER_ROLE = "face_state_event_alias_mapper"
+
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
