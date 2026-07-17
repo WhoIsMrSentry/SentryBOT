@@ -1,4 +1,7 @@
 from __future__ import annotations
+SPEAK_CONFIG_COMPATIBILITY_CONTRACT = True
+SPEAK_CONFIG_COMPATIBILITY_ROLE = "agent_yaml_shorthand_alias_normalizer"
+
 import os
 from copy import deepcopy
 from pathlib import Path
@@ -45,14 +48,14 @@ def _resolve_piper_paths(piper: Dict[str, Any]) -> Dict[str, Any]:
 def _normalize_speak_section(section: Dict[str, Any]) -> Dict[str, Any]:
     """Keep agent.yaml as single source, with small compatibility aliases.
 
-    Supports legacy shorthand keys like `speak.engine` by mapping them into
+    Supports compatibility shorthand keys like `speak.engine` by mapping them into
     `speak.tts.engine` when present.
     """
     out = deepcopy(section)
     tts = out.get("tts") if isinstance(out.get("tts"), dict) else {}
     out["tts"] = dict(tts)
 
-    # Compatibility: allow `speak.engine: xtts` as shorthand.
+    # Compatibility alias: allow `speak.engine: xtts` as shorthand.
     shorthand_engine = str(out.get("engine", "")).strip()
     if shorthand_engine:
         out["tts"]["engine"] = shorthand_engine
