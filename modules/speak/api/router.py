@@ -1,161 +1,157 @@
 from __future__ import annotations
-from fastapi import APIRouter
-from typing import TYPE_CHECKING
+
 import asyncio
+import base64
 import logging
 import re
 import time
 import uuid
+from typing import TYPE_CHECKING, Any, Dict
+
+from fastapi import APIRouter
+
+from modules.common.latency_trace import latency_trace
 
 if TYPE_CHECKING:
     from modules.speak.xSpeakService import SpeakService
 
-
 logger = logging.getLogger("speak.api")
+
+
+def _split_text_chunks(text: str, max_chars: int = 180) -> list[str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    parts = [part.strip() for part in re.split(r"(?<=[.!?…])\s+", raw) if part.strip()]
+    chunks: list[str] = []
+    for part in parts:
+        words = part.split()
+        buffer: list[str] = []
+        for word in words:
+            candidate = " ".join(buffer + [word])
+            if buffer and len(candidate) > max_chars:
+                chunks.append(" ".join(buffer))
+                buffer = [word]
+            else:
+                buffer.append(word)
+        if buffer:
+            chunks.append(" ".join(buffer))
+    return chunks
+
 
 def get_router(service: SpeakService) -> APIRouter:
     router = APIRouter()
-    stream_jobs: dict[str, dict] = {}
-
-    def _split_text_chunks(text: str, max_chars: int = 180) -> list[str]:
-        raw = str(text or "").strip()
-        if not raw:
-            return []
-        parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", raw) if p.strip()]
-        chunks: list[str] = []
-        for part in parts:
-            if len(part) <= max_chars:
-                chunks.append(part)
-                continue
-            # Long sentence fallback: hard wrap by words.
-            words = part.split()
-            buf = []
-            for w in words:
-                candidate = (" ".join(buf + [w])).strip()
-                if len(candidate) > max_chars and buf:
-                    chunks.append(" ".join(buf))
-                    buf = [w]
-                else:
-                    buf.append(w)
-            if buf:
-                chunks.append(" ".join(buf))
-        return chunks
+    stream_jobs: Dict[str, Dict[str, Any]] = {}
 
     @router.get("/speak/status")
-    async def status():
-        return {"ready": getattr(service, "tts", None) is not None}
+    async def status() -> Dict[str, Any]:
+        health = service.tts.health()
+        return {"ready": bool(health.get("available", False)), "tts": health}
+
+    @router.get("/speak/latency/latest")
+    async def latest_latency() -> Dict[str, Any]:
+        trace = latency_trace.latest()
+        return {"ok": trace is not None, "trace": trace}
+
+    @router.get("/speak/latency/{trace_id}")
+    async def latency(trace_id: str) -> Dict[str, Any]:
+        trace = latency_trace.get(trace_id)
+        return {"ok": trace is not None, "trace": trace}
 
     @router.post("/speak/stop")
-    async def stop():
-        """Stop in-progress TTS playback immediately."""
-        try:
-            return await asyncio.to_thread(service.stop_speaking)
-        except Exception as e:
-            logger.exception("/speak/stop failed")
-            return {"ok": False, "error": repr(e)}
+    async def stop() -> Dict[str, Any]:
+        return await asyncio.to_thread(service.stop_speaking)
 
     @router.post("/speak/say")
-    async def say(payload: dict):
+    async def say(payload: dict) -> Dict[str, Any]:
         text = str(payload.get("text", "")).strip()
-        engine = payload.get("engine")
-        tone = payload.get("tone")
-        speaker_wav = payload.get("speaker_wav")
-        language = payload.get("language")
         if not text:
             return {"ok": False, "error": "text is empty"}
-        
-        logger.info("TTS >>> %s (engine=%s)", text, engine or "default")
+        trace_id = str(payload.get("trace_id") or uuid.uuid4().hex[:16])
         try:
-            # Offload blocking TTS to thread to avoid event loop freeze
             return await asyncio.to_thread(
                 service.speak,
                 text,
-                engine=engine,
-                tone=tone,
-                speaker_wav=speaker_wav,
-                language=language,
+                engine=payload.get("engine"),
+                tone=payload.get("tone"),
+                speaker_wav=payload.get("speaker_wav"),
+                language=payload.get("language"),
+                trace_id=trace_id,
             )
-        except Exception as e:
+        except Exception as exc:
             logger.exception("/speak/say failed")
-            return {"ok": False, "error": repr(e)}
+            latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
+            return {"ok": False, "trace_id": trace_id, "error": repr(exc)}
 
     @router.post("/speak/say_stream")
-    async def say_stream(payload: dict):
-        """Start clause-chunked TTS in background for lower perceived latency."""
+    async def say_stream(payload: dict) -> Dict[str, Any]:
         text = str(payload.get("text", "")).strip()
-        engine = payload.get("engine")
-        tone = payload.get("tone")
-        speaker_wav = payload.get("speaker_wav")
-        language = payload.get("language")
-        max_chars = int(payload.get("max_chunk_chars", 180) or 180)
         if not text:
             return {"ok": False, "error": "text is empty"}
-
-        chunks = _split_text_chunks(text, max_chars=max_chars)
+        chunks = _split_text_chunks(text, max_chars=max(40, int(payload.get("max_chunk_chars", 180))))
         if not chunks:
             return {"ok": False, "error": "text has no speakable chunks"}
 
         job_id = uuid.uuid4().hex[:12]
+        trace_id = str(payload.get("trace_id") or uuid.uuid4().hex[:16])
+        latency_trace.ensure(trace_id, {"component": "speak.stream", "chunks": len(chunks)})
         stream_jobs[job_id] = {
             "status": "running",
             "created_at": time.time(),
             "done_chunks": 0,
             "total_chunks": len(chunks),
+            "trace_id": trace_id,
             "error": "",
         }
 
-        async def _run():
+        async def run() -> None:
             try:
                 from modules.speak.services.player import _play_stop
 
-                for idx, chunk in enumerate(chunks, start=1):
+                for index, chunk in enumerate(chunks, start=1):
                     if _play_stop.is_set():
-                        job = stream_jobs.get(job_id)
-                        if job is not None:
-                            job["status"] = "interrupted"
+                        stream_jobs[job_id]["status"] = "interrupted"
+                        latency_trace.finish(trace_id, "interrupted")
                         return
-                    await asyncio.to_thread(
+                    latency_trace.mark(trace_id, "tts.chunk_start", {"index": index})
+                    result = await asyncio.to_thread(
                         service.speak,
                         chunk,
-                        engine=engine,
-                        tone=tone,
-                        speaker_wav=speaker_wav,
-                        language=language,
+                        engine=payload.get("engine"),
+                        tone=payload.get("tone"),
+                        speaker_wav=payload.get("speaker_wav"),
+                        language=payload.get("language"),
+                        trace_id=trace_id,
                     )
-                    job = stream_jobs.get(job_id)
-                    if job is not None:
-                        job["done_chunks"] = idx
+                    if not result.get("ok"):
+                        raise RuntimeError(str(result.get("detail") or result.get("error") or "TTS failed"))
+                    stream_jobs[job_id]["done_chunks"] = index
+                stream_jobs[job_id]["status"] = "done"
             except Exception as exc:
-                job = stream_jobs.get(job_id)
-                if job is not None:
-                    job["status"] = "failed"
-                    job["error"] = repr(exc)
-                return
+                stream_jobs[job_id]["status"] = "failed"
+                stream_jobs[job_id]["error"] = repr(exc)
+                latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
 
-            job = stream_jobs.get(job_id)
-            if job is not None:
-                job["status"] = "done"
-
-        asyncio.create_task(_run())
-        return {"ok": True, "job_id": job_id, "chunks": len(chunks)}
+        asyncio.create_task(run())
+        return {"ok": True, "job_id": job_id, "trace_id": trace_id, "chunks": len(chunks)}
 
     @router.get("/speak/jobs/{job_id}")
-    async def job_status(job_id: str):
+    async def job_status(job_id: str) -> Dict[str, Any]:
         job = stream_jobs.get(str(job_id))
-        if not job:
-            return {"ok": False, "error": "job not found"}
-        return {"ok": True, "job": job}
+        return {"ok": job is not None, "job": job}
 
     @router.post("/speak/play")
-    async def play(payload: dict):
-        import base64
+    async def play(payload: dict) -> Dict[str, Any]:
         data_b64 = payload.get("data")
         if not data_b64:
             return {"ok": False, "error": "data (base64 WAV) is required"}
         try:
-            buf = base64.b64decode(data_b64)
-            return service.play_wav(buf)
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+            return await asyncio.to_thread(
+                service.play_wav,
+                base64.b64decode(data_b64),
+                trace_id=payload.get("trace_id"),
+            )
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     return router

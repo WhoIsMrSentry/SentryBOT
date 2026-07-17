@@ -95,10 +95,14 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
 
     @router.get("/speech/status")
     async def status():
+        stt = service.stt_status() if hasattr(service, "stt_status") else {}
         return {
+            "ok": bool(stt.get("available", False)),
             "listening": service.listening,
-            "model_ready": getattr(service, "recognizer", None) is not None,
+            "model_ready": bool(stt.get("available", False)),
+            "stt_available": bool(stt.get("available", False)),
             "stt_suppressed": bool(getattr(service, "is_stt_suppressed", lambda: False)()),
+            "stt": stt,
         }
 
     last: dict | None = {"text": None, "language": getattr(service, "source_language", "tr"), "ts": 0.0}
@@ -221,6 +225,14 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
     async def start():
         was_listening = service.listening
         logger.info("speech start requested (was_listening=%s)", was_listening)
+        stt = service.stt_status() if hasattr(service, "stt_status") else {}
+        if not stt.get("available", False):
+            logger.warning(
+                "speech start rejected: stt unavailable primary_language=%s reason=%s",
+                stt.get("primary_language"),
+                stt.get("reason"),
+            )
+            return {"ok": False, "listening": False, "reason": "stt_unavailable", "stt": stt}
         if hasattr(service, "clear_utterance_buffer"):
             service.clear_utterance_buffer()
         service.start_background(on_result=_cb)
@@ -228,7 +240,7 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         logger.info("speech start handled (listening=%s)", service.listening)
         if not was_listening:
             _emit_speech_event("speech.listen.start")
-        return {"ok": True, "listening": service.listening}
+        return {"ok": True, "listening": service.listening, "stt": stt}
 
     @router.post("/speech/stop")
     async def stop():
