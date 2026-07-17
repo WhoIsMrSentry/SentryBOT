@@ -55,7 +55,24 @@ def _pick_model(agent_cfg: Dict[str, Any], llm_cfg: Dict[str, Any], ollama_cfg: 
 
 
 def _normalize_base_url(raw: Any) -> str:
-    return str(raw or "").strip().rstrip("/")
+    value = str(raw or "").strip().rstrip("/")
+    env_override = str(os.getenv("SENTRYBOT_OLLAMA_BASE_URL") or os.getenv("OLLAMA_BASE_URL") or "").strip().rstrip("/")
+    if env_override:
+        value = env_override
+    lowered = value.lower()
+    # The gateway usually runs on 8080. It is not the Ollama daemon.
+    # Accidentally probing http://127.0.0.1:8080/api/tags creates false 404/self-call failures.
+    if (
+        not value
+        or "@gateway" in lowered
+        or lowered in {"http://127.0.0.1:8080", "http://localhost:8080"}
+        or lowered.startswith("http://127.0.0.1:8080/")
+        or lowered.startswith("http://localhost:8080/")
+        or lowered.endswith("/ollama")
+        or lowered.endswith("/ollama/chat")
+    ):
+        return "http://127.0.0.1:11434"
+    return value
 
 
 def load_config(config_path: str | None = None) -> Dict[str, Any]:
@@ -98,6 +115,8 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
                 "base_url": _normalize_base_url(
                     agent_cfg.get("ollama_base_url")
                     or ollama_global.get("base_url")
+                    or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
+                    or os.getenv("OLLAMA_BASE_URL")
                     or os.getenv("AGENT_OLLAMA_BASE_URL")
                     or "http://127.0.0.1:11434"
                 ),
@@ -116,6 +135,8 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
             agent_cfg.get("ollama_base_url")
             or llm_cfg.get("base_url")
             or ollama_global.get("base_url")
+            or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
+            or os.getenv("OLLAMA_BASE_URL")
             or os.getenv("AGENT_OLLAMA_BASE_URL")
             or "http://127.0.0.1:11434"
         )

@@ -38,9 +38,25 @@ def _sanitize_google_api_key(raw_value: Any) -> str:
     return value
 
 
+def _normalize_ollama_daemon_base_url(raw: Any) -> str:
+    value = str(raw or "").strip().rstrip("/")
+    lowered = value.lower()
+    if (
+        not value
+        or "@gateway" in lowered
+        or lowered in {"http://127.0.0.1:8080", "http://localhost:8080"}
+        or lowered.startswith("http://127.0.0.1:8080/")
+        or lowered.startswith("http://localhost:8080/")
+        or lowered.endswith("/ollama")
+        or lowered.endswith("/ollama/chat")
+    ):
+        return "http://127.0.0.1:11434"
+    return value
+
+
 class OllamaClient:
     def __init__(self, base_url: str, model: str, request_timeout: float = 60.0) -> None:
-        self.base_url = base_url.rstrip("/")
+        self.base_url = _normalize_ollama_daemon_base_url(base_url)
         self.model = model
         self.timeout = request_timeout
 
