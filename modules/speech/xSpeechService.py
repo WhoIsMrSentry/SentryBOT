@@ -131,12 +131,21 @@ class SpeechService:
                 alt_cfg["language"] = lang_key
                 alt_cfg.pop("model_path", None)
                 try:
-                    self._extra_recognizers[lang] = Recognizer(alt_cfg)
-                    try:
-                        self._extra_recognizers[lang]._ensure_model()
-                        logger.info("%s Vosk model pre-loaded for dual-decode STT", lang.upper())
-                    except Exception as warm_exc:
-                        logger.warning("%s Vosk model pre-warm failed (will lazy-load): %s", lang.upper(), warm_exc)
+                    alt_recognizer = Recognizer(alt_cfg)
+                    self._extra_recognizers[lang] = alt_recognizer
+                    alt_status = alt_recognizer.status()
+                    if alt_status.get("ok"):
+                        try:
+                            alt_recognizer._ensure_model()
+                            logger.info("%s Vosk model pre-loaded for dual-decode STT", lang.upper())
+                        except Exception as warm_exc:
+                            logger.warning("%s Vosk model pre-warm failed: %s", lang.upper(), warm_exc)
+                    else:
+                        logger.info(
+                            "%s Vosk model not installed; dual-decode disabled until model exists: %s",
+                            lang.upper(),
+                            alt_status.get("model_path"),
+                        )
                 except Exception as exc:
                     logger.warning("%s Vosk model unavailable for auto STT: %s", lang.upper(), exc)
             # Backward-compatible single secondary pointer (first extra)
@@ -164,6 +173,52 @@ class SpeechService:
         with self._stt_suppress_lock:
             return bool(self._stt_suppressed)
 
+    def stt_status(self) -> dict:
+        """Return truthful STT model/package readiness without opening the microphone."""
+        primary = self.recognizer.status() if self.recognizer is not None else {"ok": False, "error": "recognizer missing"}
+        languages: dict[str, dict] = {}
+        rec_cfg = self.cfg.get("recognition", {}) if isinstance(self.cfg.get("recognition", {}), dict) else {}
+        language_models = rec_cfg.get("language_models") if isinstance(rec_cfg.get("language_models"), dict) else {}
+        primary_lang = str(primary.get("language") or rec_cfg.get("language") or self.source_language or "tr").split("-", 1)[0].lower()
+        languages[primary_lang] = primary
+        for lang, recognizer in self._extra_recognizers.items():
+            try:
+                languages[str(lang).split("-", 1)[0].lower()] = recognizer.status()
+            except Exception as exc:
+                languages[str(lang).split("-", 1)[0].lower()] = {"ok": False, "error": str(exc)}
+        for lang in language_models.keys():
+            key = str(lang).split("-", 1)[0].lower()
+            if key in languages:
+                continue
+            cfg = copy.deepcopy(rec_cfg)
+            cfg["language"] = lang
+            cfg.pop("model_path", None)
+            try:
+                languages[key] = Recognizer(cfg).status()
+            except Exception as exc:
+                languages[key] = {"ok": False, "language": key, "error": str(exc)}
+        ready_languages = sorted([lang for lang, st in languages.items() if st.get("ok")])
+        missing_languages = sorted([lang for lang, st in languages.items() if not st.get("ok")])
+        available = bool(primary.get("ok"))
+        return {
+            "available": available,
+            "model_ready": available,
+            "listening": self.listening,
+            "suppressed": self.is_stt_suppressed(),
+            "primary_language": primary_lang,
+            "default_language": self._default_language,
+            "auto_language": bool(self._auto_language),
+            "auto_switch_model": bool(self._auto_switch_model),
+            "primary": primary,
+            "languages": languages,
+            "ready_languages": ready_languages,
+            "missing_languages": missing_languages,
+            "reason": "ready" if available else (primary.get("error") or "primary model unavailable"),
+        }
+
+    def is_stt_available(self) -> bool:
+        return bool(self.stt_status().get("available"))
+
     def start(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         """Start capturing and recognition in the same thread using a generator pipeline.
 
@@ -178,6 +233,16 @@ class SpeechService:
                 self._on_result_cb = on_result
         self._stop_event.clear()
         try:
+            stt_status = self.stt_status()
+            if not stt_status.get("available"):
+                primary = stt_status.get("primary", {}) if isinstance(stt_status.get("primary"), dict) else {}
+                logger.warning(
+                    "speech stt unavailable: primary_language=%s model_path=%s reason=%s",
+                    stt_status.get("primary_language"),
+                    primary.get("model_path"),
+                    stt_status.get("reason"),
+                )
+                return
             stream: Iterable[bytes] = self.capture.stream()
             for result in self.recognizer.run(self._direction_wrapper(stream)):
                 if self.is_stt_suppressed():
