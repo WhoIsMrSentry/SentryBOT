@@ -13,6 +13,9 @@ Recognition levels:
 """
 
 from __future__ import annotations
+VLM_PERSON_IDENTITY_COMPATIBILITY_CONTRACT = True
+VLM_PERSON_IDENTITY_ROLE = "social_db_primary_person_json_compatibility_store"
+
 
 import json
 import logging
@@ -77,7 +80,7 @@ class PersonIdentityManager:
 
     When a :class:`modules.social_db.SocialDB` instance is supplied (or registered
     as the process default), writes are persisted to the shared SQLite store
-    instead of the legacy JSON file. The in-memory cache mirrors the database
+    instead of the compatibility JSON file. The in-memory cache mirrors the database
     rows for fast reads.
     """
 

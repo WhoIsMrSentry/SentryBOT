@@ -1,4 +1,7 @@
 from __future__ import annotations
+VLM_LLM_LEGACY_ENDPOINT_COMPATIBILITY_CONTRACT = True
+VLM_LLM_LEGACY_ENDPOINT_ROLE = "ollama_generate_to_chat_compatibility_adapter"
+
 
 import logging
 import os

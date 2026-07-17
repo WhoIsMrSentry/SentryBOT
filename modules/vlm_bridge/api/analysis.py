@@ -41,9 +41,13 @@ def get_analysis_router(processor: Any, base_url: str) -> APIRouter:
             try:
                 answer = processor.vlm_client.ask_about_scene(frame, question, force=True)
                 if answer:
-                    if hasattr(processor, "refresh_visual_context"):
-                        processor.refresh_visual_context(question=question)
-                    return {"ok": True, "answer": answer}
+                    gate = getattr(processor, "vision_request_gate", None)
+                    if gate is not None:
+                        try:
+                            gate.record_manual_event("user_question", ok=True)
+                        except Exception:
+                            pass
+                    return {"ok": True, "answer": answer, "source": "direct_vlm", "duplicate_refresh": False}
             except Exception:
                 pass
 
