@@ -1,119 +1,105 @@
-# Agent Core Konfigurasyon Dosyası
-# Bu dosya sadece Agent Core modülünün ayarlarını içerir.
-# Diğer modüller kendi config.yml dosyalarını kullanır.
-
 server:
-  host: "0.0.0.0"
+  host: 0.0.0.0
   port: 8120
-
 agent:
-  model: "qwen3.5:9b"
+  model: qwen3.5:9b
   temperature: 0.15
   num_ctx: 4096
-  num_predict: 100      # sub-agent / tool-loop response budget
-  cooldown_s: 0.2       # LLM çağrıları arasındaki minimum süre (saniye)
-  request_timeout: 20   # Ollama HTTP timeout (s)
+  num_predict: 100
+  cooldown_s: 0.1
+  request_timeout: 30
   status_interval_s: 1.0
   waiting_messages:
-    - "Beklemedeyim..."
-    - "Islem suruyor..."
-    - "Hala isliyorum..."
-  ollama_base_url: "http://127.0.0.1:11434"
-  max_steps: 6          # Legacy native tool loop maksimum adımı
-  max_tool_loops: 3     # Geriye uyumluluk için tutulur
-
+  - Beklemedeyim...
+  - Islem suruyor...
+  - Hala isliyorum...
+  ollama_base_url: http://127.0.0.1:11434
+  max_steps: 4
+  max_tool_loops: 3
 llm:
-  provider: "ollama"   # ollama | google_ai_studio
+  provider: ollama
   clm_fallback_enabled: false
-  clm_fallback_model: ""
+  clm_fallback_model: ''
   fallback_on_missing_model: false
   fallback_on_error: false
-
+  think: false
+  keep_alive: -1
 tri_layer:
   enabled: true
   api_native_tools: true
-  # Kısa istekler tri-layer'ı atlar: tüm tool'larla tek LLM turu (düşük gecikme,
-  # doğrudan donanım komutları için güvenilir tool-calling).
   fast_path:
     enabled: true
-    max_chars: 140
+    max_chars: 180
     num_predict: 96
+    max_steps: 2
   router:
     max_subagents: 2
     default_modules:
-      - autonomy
-      - agent_core
+    - autonomy
+    - agent_core
   subagent:
     max_steps: 2
   persona:
     num_predict: 180
-    # Ollama'da persona yanıtı token-stream edilir; tamamlanan her cümle anında
-    # TTS kuyruğuna girer (algılanan gecikmeyi düşürür).
     stream: true
-    system_prompt: |
-      Sen SentryBOT companion robotusun. Kullanıcı duygu veya yüz/ışık ifadesi istediğinde
-      (ör. sinirlen, mutlu ol, kızgın konuş, yüzünü değiştir, kırmızı yan) uygun aracı kullan:
+    system_prompt: 'Sen SentryBOT companion robotusun. Kullanıcı duygu veya yüz/ışık
+      ifadesi istediğinde
+
+      (ör. sinirlen, mutlu ol, kızgın konuş, yüzünü değiştir, kırmızı yan) uygun aracı
+      kullan:
+
       set_emotion (tam duygu), oled_face (yüz), set_lights (LED efekt+renk).
-      "Şunu söyle X" dendiğinde speak aracıyla X'i aynen seslendir.
+
+      "Şunu söyle X" dendiğinde speak aracıyla X''i aynen seslendir.
+
       Fiziksel eylem istendiğinde önce aracı çağır, sonra tek cümleyle teyit et.
+
       Duygusal cevap verirken tonunu duyguya uydur.
 
+      '
 safety:
   max_servo_angle: 180
   min_servo_angle: 0
   max_stepper_speed: 100
   laser_max_duration_s: 2.0
-
 sensor_loop:
-  poll_hz: 5.0           # Sensör okuma hızı (Hz)
+  poll_hz: 2.0
   enabled: true
-
-# Living Vision Agent configuration
+  hardware_interval_s: 2.0
+  vision_results_interval_s: 5.0
+  visual_context_interval_s: 10.0
+  skip_hardware_on_pc: true
 action_arbiter:
   default_cooldown_s: 0.5
   dedup_window_s: 2.0
-
 speech_arbiter:
   max_queue_size: 10
   dedup_window_s: 5.0
-
 progress:
   enabled: true
-  # Mesajlar config/progress_messages.yml kataloğundan gelir (çok dilli).
-  # persona_start ("yanıtı hazırlıyorum") ancak istek bu süreden uzun sürdüyse seslendirilir.
   persona_start_min_elapsed_s: 4.0
-
 tool_execution:
-  timeout_s: 22.0        # VLM calls: keep responsive with fallback
+  timeout_s: 22.0
   retry_on_timeout: true
   max_retries: 1
-
 idle:
   enabled: true
-  breathe_interval_s: 15.0     # "Yaşam belirtisi" ışık aralığı
-
+  breathe_interval_s: 15.0
 memory:
-  db_name: "memory.db"         # data/ klasörü altında oluşturulur
+  db_name: memory.db
   consolidation:
-    enabled: true              # mine durable facts from dialogue after each turn
-    fact_importance: 8         # episodic importance for consolidated facts
-
+    enabled: true
+    fact_importance: 8
 slam:
-  map_file: "map.json"         # data/ klasörü altında oluşturulur
-
-# ─── Realtime Performance Profile ───────────────────────────────────────────
-# Remote GPU: 24GB VRAM, models are Q4 quantized.
-# Switch between "fast" (low-latency, short output) and "normal" (balanced).
-# Toggle via POST /agent/profile/switch (body: {"mode":"fast"}) or ?mode=fast
+  map_file: map.json
 realtime_profile:
-  active: "fast"               # fast | normal | rich
-
+  active: fast
   fast:
-    num_predict_chat: 100      # Ollama sohbet max token (kısa cevap)
-    num_predict_persona: 120   # Agent persona sentezi max token
-    num_predict_vlm: 256       # VLM scene analysis max token (JSON)
-    num_predict_vlm_bridge: 100  # vlm_bridge llm_client kısa yorum
-    num_ctx: 3072              # Daha küçük context = daha hızlı prefill
+    num_predict_chat: 100
+    num_predict_persona: 120
+    num_predict_vlm: 256
+    num_predict_vlm_bridge: 100
+    num_ctx: 3072
     temperature: 0.1
     request_timeout_s: 15
     ollama_chat_timeout_s: 12
@@ -121,7 +107,6 @@ realtime_profile:
     max_subagents: 1
     subagent_workers: 1
     subagent_max_steps: 2
-
   normal:
     num_predict_chat: 180
     num_predict_persona: 180
@@ -135,7 +120,6 @@ realtime_profile:
     max_subagents: 2
     subagent_workers: 2
     subagent_max_steps: 3
-
   rich:
     num_predict_chat: 240
     num_predict_persona: 260
