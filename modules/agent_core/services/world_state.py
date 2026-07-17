@@ -1,3 +1,10 @@
+# --- SentryBOT memory/world boundary contract ---
+MEMORY_WORLD_COMPATIBILITY = True
+MEMORY_WORLD_BOUNDARY_ROLE = 'agent_core_compat_world_state'
+MEMORY_WORLD_RUNTIME_OWNER = 'modules.autonomy.services.world_memory'
+MEMORY_WORLD_BOUNDARY_REASON = 'WorldState is still used by AgentOrchestrator, ToolRegistry, SensorFeedbackLoop, and /world_state endpoint; keep as compatibility state surface.'
+# --- End SentryBOT memory/world boundary contract ---
+
 import json
 from datetime import datetime
 from typing import Dict, Any

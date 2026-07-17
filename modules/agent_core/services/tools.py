@@ -1,3 +1,10 @@
+# --- SentryBOT safety/action boundary contract ---
+SAFETY_ACTION_COMPATIBILITY = True
+SAFETY_ACTION_BOUNDARY_ROLE = 'agent_core_compat_llm_tool_registry'
+SAFETY_ACTION_RUNTIME_OWNER = 'robot-runtime capabilities and execution: modules.autonomy'
+SAFETY_ACTION_BOUNDARY_REASON = 'ToolRegistry remains an LLM-facing proposal surface. Physical actions must still pass through action/safety/capability paths.'
+# --- End SentryBOT safety/action boundary contract ---
+
 import json
 import logging
 from typing import Any, Callable, Dict, List, Optional

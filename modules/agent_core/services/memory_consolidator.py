@@ -9,6 +9,13 @@ bridging the previously disconnected episodic and social memory silos.
 
 from __future__ import annotations
 
+# --- SentryBOT memory/world boundary contract ---
+MEMORY_WORLD_COMPATIBILITY = True
+MEMORY_WORLD_BOUNDARY_ROLE = 'agent_core_compat_memory_consolidator'
+MEMORY_WORLD_RUNTIME_OWNER = 'modules.autonomy.services.world_memory'
+MEMORY_WORLD_BOUNDARY_REASON = 'MemoryConsolidator is still used by AgentOrchestrator; keep it as compatibility/bridge until consolidation is migrated.'
+# --- End SentryBOT memory/world boundary contract ---
+
 import logging
 from typing import Any, Dict, List, Optional
 
