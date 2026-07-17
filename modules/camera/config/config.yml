@@ -1,32 +1,33 @@
-# Camera module configuration (defaults)
-enabled: false          # set true when hardware is attached
-backend: auto           # auto | picamera2 | opencv | gstreamer
-source: 0               # device index or RTSP/HTTP URL for OpenCV
+enabled: true
+backend: picamera2
 resolution:
   width: 1280
   height: 720
-fps_target: 30          # target send fps for MJPEG stream
-jpeg_quality: 80        # 1-100
-flip: none             # none | h | v | hv | 90 | 180 | 270
-opencv:
-  fourcc: MJPG          # MJPG preferred on Windows webcams
-  buffer_size: 1        # minimize latency
-  max_open_attempts: 5  # stop retrying when no camera attached
-  retry_interval_s: 1.0
+fps_target: 30
+jpeg_quality: 80
+flip: none
 picamera2:
   size:
-    width: 1536
-    height: 864
+    width: 1280
+    height: 720
   format: RGB888
-  frame_rate: 120
-  af_mode: 2
+  frame_rate: 30
 imx500:
-  enabled: false
+  enabled: true
   model_path: "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
-  labels_path: "/usr/share/imx500-models/coco_labels.txt"
-  confidence: 0.45
-  publish_metadata: true
+  labels_path: ""
+  confidence: 0.50
+  iou: 0.65
+  max_detections: 20
   publish_interval_s: 0.05
+  inference_rate: 30
+  preserve_aspect_ratio: true
+  tracker:
+    iou_threshold: 0.30
+    max_missed: 8
+  target:
+    label: person
+    strategy: largest
   classes_of_interest:
     - person
     - cat

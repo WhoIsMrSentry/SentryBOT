@@ -35,7 +35,9 @@ Default: `http://0.0.0.0:8091`
 ## Endpoints
 
 - `GET /healthz`
-- `POST /vision/analyze`
+- `POST /vision/analyze` (legacy compatible)
+- `POST /vision/analyze/cheap` (objects/people/faces/hazards; never wakes Qwen)
+- `POST /vision/analyze/semantic` (explicit semantic VLM budget; may wake Qwen)
 - `POST /vision/register_face`
 
 ## Environment Variables
@@ -80,6 +82,8 @@ For your selected profile (`balanced`) with Qwen + OpenCV:
 remote_multimodal:
   enabled: true
   endpoint: "http://PC_IP:8091/vision/analyze"
+  cheap_endpoint: "http://PC_IP:8091/vision/analyze/cheap"
+  semantic_endpoint: "http://PC_IP:8091/vision/analyze/semantic"
   timeout_s: 6.0
   auth_token: "YOUR_TOKEN"
 ```

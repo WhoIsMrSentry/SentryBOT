@@ -45,13 +45,46 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
                 "qwen_timeout_s": cfg.qwen_timeout_s,
                 "enable_advanced_caption": cfg.enable_advanced_caption,
                 "advanced_caption_model": cfg.advanced_caption_model,
+                "task_split_endpoints": True,
+                "cheap_endpoint": "/vision/analyze/cheap",
+                "semantic_endpoint": "/vision/analyze/semantic",
             },
         }
 
     @app.post("/vision/analyze")
     def analyze(req: AnalyzeRequest, x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
         _require_auth(x_auth_token)
-        return engine.analyze(req.image_b64, requested_tasks=req.requested_tasks)
+        return engine.analyze(
+            req.image_b64,
+            requested_tasks=req.requested_tasks,
+            run_semantic_vlm=req.run_semantic_vlm,
+            semantic_reason=req.semantic_reason or "",
+            request_id=req.request_id or "",
+            question=req.question or "",
+            task_mode=req.mode or "legacy",
+        )
+
+    @app.post("/vision/analyze/cheap")
+    def analyze_cheap(req: AnalyzeRequest, x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        _require_auth(x_auth_token)
+        return engine.analyze_cheap(
+            req.image_b64,
+            requested_tasks=req.requested_tasks,
+            semantic_reason=req.semantic_reason or "cheap_poll",
+            request_id=req.request_id or "",
+            question=req.question or "",
+        )
+
+    @app.post("/vision/analyze/semantic")
+    def analyze_semantic(req: AnalyzeRequest, x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        _require_auth(x_auth_token)
+        return engine.analyze_semantic(
+            req.image_b64,
+            requested_tasks=req.requested_tasks,
+            semantic_reason=req.semantic_reason or "semantic_request",
+            request_id=req.request_id or "",
+            question=req.question or "",
+        )
 
     @app.post("/vision/register_face")
     def register_face(req: RegisterFaceRequest, x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:

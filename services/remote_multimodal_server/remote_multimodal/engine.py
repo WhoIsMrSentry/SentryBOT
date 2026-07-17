@@ -273,24 +273,47 @@ class MultiModalEngine:
             return {"ok": False, "error": str(exc), "text": "", "lines": []}
         return {"ok": False, "error": "unsupported_backend", "text": "", "lines": []}
 
-    def analyze(self, image_b64: str, requested_tasks: Optional[List[str]] = None) -> Dict[str, Any]:
+    @staticmethod
+    def _should_run_qwen(allow: set[str], run_semantic_vlm: Optional[bool]) -> bool:
+        if run_semantic_vlm is not None:
+            return bool(run_semantic_vlm)
+        # Legacy behavior for old clients that do not send the semantic flag.
+        return (not allow) or ("semantic_scene" in allow) or ("hazards" in allow)
+
+    def analyze(
+        self,
+        image_b64: str,
+        requested_tasks: Optional[List[str]] = None,
+        run_semantic_vlm: Optional[bool] = None,
+        semantic_reason: str = "",
+        request_id: str = "",
+        question: str = "",
+        task_mode: str = "",
+    ) -> Dict[str, Any]:
         """Analyse a frame, honouring an optional ``requested_tasks`` allowlist.
 
         ``requested_tasks`` may include any of ``objects``, ``faces``, ``people``,
         ``ocr``, ``hazards``, ``semantic_scene``. When omitted or empty, the
         engine runs every available pipeline (legacy behaviour).
+
+        ``run_semantic_vlm`` is the explicit budget flag used by SentryBOT.
+        False means keep cheap CV/object/face/hazard checks but do not call
+        Qwen. True means this request is allowed to spend semantic VLM budget.
         """
         frame = self.decode_image(image_b64)
         h, w = frame.shape[:2]
         allow = {str(t).strip().lower() for t in (requested_tasks or []) if str(t).strip()}
+        mode = str(task_mode or "").strip().lower()
         run_objects = (not allow) or ("objects" in allow) or ("hazards" in allow)
         run_faces = (not allow) or ("faces" in allow) or ("people" in allow)
         run_ocr = ("ocr" in allow) if allow else False
-        run_qwen = (not allow) or ("semantic_scene" in allow) or ("hazards" in allow)
+        run_qwen = self._should_run_qwen(allow, run_semantic_vlm)
+        if mode not in {"cheap", "semantic", "legacy"}:
+            mode = "semantic" if run_qwen else ("cheap" if allow else "legacy")
         objects = self.detect_objects(frame) if run_objects else []
         faces = self.detect_faces(frame) if run_faces else []
         motion, scene_change = self.motion_scene_change(frame)
-        qwen_out = self.qwen.analyze_frame(frame) if run_qwen else {"ok": False}
+        qwen_out = self.qwen.analyze_frame(frame) if (run_qwen and self.cfg.enable_qwen_vlm) else {"ok": False}
         ocr_payload: Dict[str, Any] = {"ok": False}
         if run_ocr:
             ocr_payload = self.ocr_frame(frame)
@@ -364,7 +387,7 @@ class MultiModalEngine:
             "motion": {"score": round(motion, 3), "detected": motion > self.cfg.motion_threshold},
             "scene_change": {"score": round(scene_change, 3), "changed": scene_change > self.cfg.scene_change_threshold},
             "interesting_events": ["scene_changed"] if scene_change > self.cfg.scene_change_threshold else [],
-            "recommended_focus": {"type": focus_type, "reason": "hybrid_cv_qwen"},
+            "recommended_focus": {"type": focus_type, "reason": "hybrid_cv_qwen" if qwen_out.get("ok") else "cheap_cv"},
             "importance_score": round(min(1.0, max(0.0, importance)), 3),
             "frame_size": {"w": int(w), "h": int(h)},
             "ocr": ocr_payload,
@@ -376,9 +399,57 @@ class MultiModalEngine:
                 "advanced_caption": bool(self.backends.caption_pipe is not None),
                 "qwen_vlm": bool(qwen_out.get("ok")),
                 "qwen_model": qwen_out.get("model", ""),
+                "semantic_vlm_requested": bool(run_qwen),
+                "semantic_reason": str(semantic_reason or ""),
+                "request_id": str(request_id or ""),
+                "question": bool(str(question or "").strip()),
+                "task_mode": mode,
+                "semantic_endpoint": mode == "semantic",
+                "cheap_endpoint": mode == "cheap",
                 "ocr": self.backends.ocr_backend_name,
             },
         }
+
+
+    def analyze_cheap(
+        self,
+        image_b64: str,
+        requested_tasks: Optional[List[str]] = None,
+        semantic_reason: str = "",
+        request_id: str = "",
+        question: str = "",
+    ) -> Dict[str, Any]:
+        tasks = requested_tasks or ["objects", "people", "faces", "hazards"]
+        return self.analyze(
+            image_b64,
+            requested_tasks=tasks,
+            run_semantic_vlm=False,
+            semantic_reason=semantic_reason or "cheap_poll",
+            request_id=request_id,
+            question=question,
+            task_mode="cheap",
+        )
+
+    def analyze_semantic(
+        self,
+        image_b64: str,
+        requested_tasks: Optional[List[str]] = None,
+        semantic_reason: str = "",
+        request_id: str = "",
+        question: str = "",
+    ) -> Dict[str, Any]:
+        base = list(requested_tasks or ["objects", "people", "faces", "hazards", "semantic_scene"])
+        if "semantic_scene" not in {str(t).strip().lower() for t in base}:
+            base.append("semantic_scene")
+        return self.analyze(
+            image_b64,
+            requested_tasks=base,
+            run_semantic_vlm=True,
+            semantic_reason=semantic_reason or "semantic_request",
+            request_id=request_id,
+            question=question,
+            task_mode="semantic",
+        )
 
     def register_face(self, name: str, image_b64: str) -> Dict[str, Any]:
         fr = self.backends.face_recognition

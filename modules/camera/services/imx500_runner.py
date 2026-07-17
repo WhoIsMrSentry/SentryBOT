@@ -1,17 +1,3 @@
-"""Sony IMX500 (Raspberry Pi AI Camera) on-sensor inference runner.
-
-This module wires the on-sensor SSD MobileNet network (or any user provided
-``.rpk`` model) into the SentryBOT pipeline. The runner stays *inert* when the
-optional ``picamera2`` package or the IMX500 device is not available, so it can
-be safely imported on developer machines without breaking startup.
-
-Whenever the IMX500 emits detections, the runner translates them into
-:class:`OnSensorSnapshot` objects and forwards them through the shared
-:class:`OnSensorEventBus`. The VLM bridge processor subscribes to the bus and
-can therefore replace its Haar face detector with the IMX500 results when the
-backend is active.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -19,221 +5,309 @@ import os
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from .onsensor_bus import OnSensorDetection, OnSensorEventBus, OnSensorSnapshot, get_default_bus
+from .tracking import DetectionTracker
 
 logger = logging.getLogger("camera.imx500_runner")
-
 
 IMX500_AVAILABLE = False
 IMX500_IMPORT_ERROR: Optional[str] = None
 
 try:
-    from picamera2 import Picamera2  # type: ignore  # noqa: F401
-    from picamera2.devices.imx500 import IMX500, NetworkIntrinsics  # type: ignore
+    from picamera2.devices import IMX500  # type: ignore
+    from picamera2.devices.imx500 import NetworkIntrinsics, postprocess_nanodet_detection  # type: ignore
+
     IMX500_AVAILABLE = True
-except Exception as exc:  # pragma: no cover - device specific path
+except Exception as exc:
     IMX500 = None  # type: ignore
     NetworkIntrinsics = None  # type: ignore
+    postprocess_nanodet_detection = None  # type: ignore
     IMX500_IMPORT_ERROR = repr(exc)
 
 
 @dataclass
 class Imx500Config:
-    enabled: bool = False
+    enabled: bool = True
     model_path: str = "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
-    labels_path: str = "/usr/share/imx500-models/coco_labels.txt"
-    confidence: float = 0.45
-    publish_metadata: bool = True
+    labels_path: str = ""
+    confidence: float = 0.50
+    iou: float = 0.65
+    max_detections: int = 20
     publish_interval_s: float = 0.05
+    inference_rate: Optional[int] = None
+    preserve_aspect_ratio: bool = True
     classes_of_interest: Sequence[str] = ()
+    tracker_iou_threshold: float = 0.30
+    tracker_max_missed: int = 8
+    target_label: str = "person"
+    target_strategy: str = "largest"
 
 
 class Imx500Runner:
-    """Manages the IMX500 inference loop and publishes detections to the bus."""
-
-    def __init__(
-        self,
-        cfg: Imx500Config,
-        bus: Optional[OnSensorEventBus] = None,
-        picam: Optional[Any] = None,
-    ) -> None:
+    def __init__(self, cfg: Imx500Config, bus: Optional[OnSensorEventBus] = None) -> None:
         self.cfg = cfg
         self.bus = bus or get_default_bus()
-        self._picam = picam
+        self.tracker = DetectionTracker(cfg.tracker_iou_threshold, cfg.tracker_max_missed)
+        self.tracker.select(cfg.target_label, cfg.target_strategy)
         self._device: Optional[Any] = None
         self._intrinsics: Optional[Any] = None
-        self._labels: List[str] = []
-        self._stop = threading.Event()
+        self._picam: Optional[Any] = None
+        self._metadata_source: Optional[Any] = None
+        self._unsubscribe: Optional[Callable[[], None]] = None
         self._thread: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        self._running = False
         self._frame_id = 0
         self._last_publish_ts = 0.0
-        self._available = bool(cfg.enabled) and IMX500_AVAILABLE
-
-        if cfg.enabled and not IMX500_AVAILABLE:
-            logger.info(
-                "IMX500 requested but picamera2/IMX500 unavailable (%s); runner stays inert.",
-                IMX500_IMPORT_ERROR,
-            )
-
-    # -- Public lifecycle ------------------------------------------------
+        self._last_error = ""
+        self._lock = threading.RLock()
 
     @property
     def available(self) -> bool:
-        return self._available
+        return bool(self.cfg.enabled and IMX500_AVAILABLE and os.path.exists(self.cfg.model_path))
+
+    @property
+    def running(self) -> bool:
+        return bool(self._running)
+
+    @property
+    def camera_num(self) -> int:
+        if self._device is None:
+            return 0
+        return int(getattr(self._device, "camera_num", 0))
+
+    @property
+    def inference_rate(self) -> Optional[int]:
+        if self.cfg.inference_rate is not None:
+            return int(self.cfg.inference_rate)
+        value = getattr(self._intrinsics, "inference_rate", None)
+        return int(value) if value is not None else None
+
+    def prepare(self) -> bool:
+        if not self.available:
+            return False
+        if self._device is not None:
+            return True
+        if IMX500 is None:
+            return False
+        self._device = IMX500(self.cfg.model_path)
+        self._intrinsics = getattr(self._device, "network_intrinsics", None)
+        if self._intrinsics is None and NetworkIntrinsics is not None:
+            self._intrinsics = NetworkIntrinsics()
+            self._intrinsics.task = "object detection"
+        if self._intrinsics is not None:
+            if str(getattr(self._intrinsics, "task", "object detection")) != "object detection":
+                raise RuntimeError("IMX500 model is not an object detection model")
+            labels = self._load_labels()
+            if labels:
+                self._intrinsics.labels = labels
+            if self.cfg.inference_rate is not None:
+                self._intrinsics.inference_rate = int(self.cfg.inference_rate)
+            if hasattr(self._intrinsics, "preserve_aspect_ratio"):
+                self._intrinsics.preserve_aspect_ratio = bool(self.cfg.preserve_aspect_ratio)
+            if hasattr(self._intrinsics, "update_with_defaults"):
+                self._intrinsics.update_with_defaults()
+        if bool(self.cfg.preserve_aspect_ratio) and hasattr(self._device, "set_auto_aspect_ratio"):
+            self._device.set_auto_aspect_ratio()
+        if hasattr(self._device, "show_network_fw_progress_bar"):
+            self._device.show_network_fw_progress_bar()
+        return True
+
+    def attach_camera(self, picam: Any, metadata_source: Optional[Any] = None) -> None:
+        self._picam = picam
+        self._metadata_source = metadata_source
 
     def start(self) -> bool:
-        """Initialise the device and start the background loop.
-
-        Returns ``True`` when the runner is actually running, ``False`` when it
-        is skipped (disabled or library missing).
-        """
-        if not self._available:
-            return False
-        if self._thread is not None and self._thread.is_alive():
+        if self.running:
             return True
-        try:
-            self._init_device()
-        except Exception as exc:  # pragma: no cover - hardware specific
-            logger.warning("IMX500 init failed (%s); runner disabled.", exc)
-            self._available = False
+        if not self.prepare() or self._picam is None:
             return False
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="imx500-runner", daemon=True)
+        if self._metadata_source is not None and hasattr(self._metadata_source, "subscribe_metadata"):
+            self._unsubscribe = self._metadata_source.subscribe_metadata(self._on_metadata)
+            self._running = True
+            return True
+        self._thread = threading.Thread(target=self._metadata_loop, name="imx500-inference", daemon=True)
         self._thread.start()
-        logger.info("IMX500 runner started (model=%s).", self.cfg.model_path)
+        self._running = True
         return True
 
     def stop(self) -> None:
         self._stop.set()
+        if self._unsubscribe is not None:
+            try:
+                self._unsubscribe()
+            except Exception:
+                pass
+        self._unsubscribe = None
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         self._thread = None
+        self._running = False
 
-    # -- Internals -------------------------------------------------------
+    def select_target(self, label: str = "person", strategy: str = "largest", track_id: Optional[int] = None) -> dict[str, Any]:
+        return self.tracker.select(label, strategy, track_id)
 
-    def _init_device(self) -> None:
-        if IMX500 is None:  # pragma: no cover
-            raise RuntimeError("IMX500 library not loaded")
-        model_path = self.cfg.model_path
-        if not model_path or not os.path.exists(model_path):
-            raise FileNotFoundError(f"IMX500 model_path not found: {model_path}")
+    def target(self) -> dict[str, Any]:
+        target = self.tracker.target()
+        return {"ok": target is not None, "selection": self.tracker.selection(), "target": target.to_dict() if target else None}
 
-        self._device = IMX500(model_path)
-        try:
-            self._intrinsics = self._device.network_intrinsics
-        except Exception:
-            self._intrinsics = None
+    def tracks(self) -> dict[str, Any]:
+        tracks = self.tracker.tracks()
+        return {"ok": True, "count": len(tracks), "tracks": tracks, "selection": self.tracker.selection()}
 
-        labels_path = self.cfg.labels_path
-        if labels_path and os.path.exists(labels_path):
-            try:
-                with open(labels_path, "r", encoding="utf-8") as fh:
-                    self._labels = [line.strip() for line in fh.readlines() if line.strip()]
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("Failed to read IMX500 labels file: %s", exc)
+    def status(self) -> dict[str, Any]:
+        return {
+            "enabled": bool(self.cfg.enabled),
+            "available": self.available,
+            "running": self.running,
+            "reason": self._status_reason(),
+            "model_path": self.cfg.model_path,
+            "model_exists": os.path.exists(self.cfg.model_path),
+            "confidence": self.cfg.confidence,
+            "inference_rate": self.inference_rate,
+            "camera_num": self.camera_num,
+            "frame_id": self._frame_id,
+            "last_publish_age_s": max(0.0, time.time() - self._last_publish_ts) if self._last_publish_ts else None,
+            "last_error": self._last_error,
+            "import_error": IMX500_IMPORT_ERROR,
+            "tracking": self.target(),
+        }
+
+    def _status_reason(self) -> str:
+        if not self.cfg.enabled:
+            return "disabled"
+        if not IMX500_AVAILABLE:
+            return "library_unavailable"
+        if not os.path.exists(self.cfg.model_path):
+            return "model_missing"
+        if self.running:
+            return "running"
+        if self._picam is None:
+            return "camera_not_attached"
+        return "ready"
+
+    def _load_labels(self) -> List[str]:
+        if self.cfg.labels_path and os.path.exists(self.cfg.labels_path):
+            with open(self.cfg.labels_path, "r", encoding="utf-8") as handle:
+                return [line.strip() for line in handle if line.strip()]
+        labels = getattr(self._intrinsics, "labels", None)
+        return [str(label) for label in labels] if labels else []
 
     def _label_for(self, class_id: int) -> str:
-        if 0 <= class_id < len(self._labels):
-            return self._labels[class_id]
+        labels = getattr(self._intrinsics, "labels", None) or []
+        if bool(getattr(self._intrinsics, "ignore_dash_labels", False)):
+            labels = [label for label in labels if label and label != "-"]
+        if 0 <= class_id < len(labels):
+            return str(labels[class_id])
         return f"class_{class_id}"
 
-    def _should_emit(self, label: str) -> bool:
-        wanted = set(s.strip().lower() for s in self.cfg.classes_of_interest or [])
-        if not wanted:
-            return True
-        return label.strip().lower() in wanted
-
-    def _loop(self) -> None:
-        device = self._device
-        if device is None:
-            return
-        interval = max(0.0, float(self.cfg.publish_interval_s or 0.05))
+    def _metadata_loop(self) -> None:
         while not self._stop.is_set():
             try:
-                snapshot = self._fetch_snapshot()
-            except Exception as exc:
-                logger.debug("IMX500 fetch failed: %s", exc)
-                snapshot = None
-            if snapshot is not None:
-                now = time.time()
-                if (now - self._last_publish_ts) >= interval:
-                    self.bus.publish(snapshot)
-                    self._last_publish_ts = now
-            time.sleep(min(interval, 0.05))
-
-    def _fetch_snapshot(self) -> Optional[OnSensorSnapshot]:
-        device = self._device
-        if device is None:
-            return None
-        metadata = None
-        if self._picam is not None and hasattr(self._picam, "capture_metadata"):
-            try:
                 metadata = self._picam.capture_metadata()
-            except Exception:
-                metadata = None
-        if not metadata:
-            return None
-        outputs = None
+                self._on_metadata(dict(metadata or {}))
+            except Exception as exc:
+                self._last_error = str(exc)
+                logger.debug("IMX500 metadata capture failed: %s", exc)
+            time.sleep(0.01)
+
+    def _on_metadata(self, metadata: dict[str, Any]) -> None:
+        now = time.time()
+        if now - self._last_publish_ts < max(0.01, float(self.cfg.publish_interval_s)):
+            return
         try:
-            outputs = device.get_outputs(metadata)
-        except Exception:
-            outputs = None
+            snapshot = self._parse(metadata)
+            if snapshot is not None:
+                self.bus.publish(snapshot)
+                self._last_publish_ts = now
+                self._last_error = ""
+        except Exception as exc:
+            self._last_error = str(exc)
+            logger.debug("IMX500 inference failed: %s", exc)
+
+    def _parse(self, metadata: dict[str, Any]) -> Optional[OnSensorSnapshot]:
+        if self._device is None:
+            return None
+        outputs = self._device.get_outputs(metadata, add_batch=True)
         if outputs is None:
             return None
+        boxes, scores, classes = self._unpack(outputs)
         detections: List[OnSensorDetection] = []
-        boxes, scores, classes = self._unpack_outputs(outputs)
-        for bbox, score, class_id in zip(boxes, scores, classes):
-            if float(score) < float(self.cfg.confidence):
+        width, height = self._frame_size()
+        wanted = {str(label).strip().lower() for label in self.cfg.classes_of_interest if str(label).strip()}
+        for box, score, class_id in zip(boxes, scores, classes):
+            score_value = float(score)
+            if score_value < float(self.cfg.confidence):
                 continue
             label = self._label_for(int(class_id))
-            if not self._should_emit(label):
+            if wanted and label.lower() not in wanted:
                 continue
-            x1, y1, x2, y2 = [float(v) for v in bbox]
             detections.append(
                 OnSensorDetection(
                     class_id=int(class_id),
                     label=label,
-                    score=float(score),
-                    bbox_xyxy_norm=(x1, y1, x2, y2),
+                    score=score_value,
+                    bbox_xyxy_norm=self._normalise_box(box, metadata, width, height),
                 )
             )
+        tracked = self.tracker.update(detections)
+        target = self.tracker.target()
         self._frame_id += 1
-        width = int(metadata.get("ScalerCrop", [0, 0, 0, 0])[2]) if isinstance(metadata.get("ScalerCrop"), (list, tuple)) else 0
-        height = int(metadata.get("ScalerCrop", [0, 0, 0, 0])[3]) if isinstance(metadata.get("ScalerCrop"), (list, tuple)) else 0
         return OnSensorSnapshot(
             ts=time.time(),
             frame_id=self._frame_id,
             width=width,
             height=height,
-            detections=detections,
+            detections=tracked,
             backend="imx500",
+            target_track_id=target.track_id if target else None,
+            target_label=target.label if target else "",
         )
 
-    def _unpack_outputs(self, outputs: Any) -> Tuple[List[List[float]], List[float], List[int]]:
-        boxes: List[List[float]] = []
-        scores: List[float] = []
-        classes: List[int] = []
+    def _unpack(self, outputs: Any) -> Tuple[Any, Any, Any]:
+        if str(getattr(self._intrinsics, "postprocess", "")) == "nanodet" and postprocess_nanodet_detection is not None:
+            boxes, scores, classes = postprocess_nanodet_detection(
+                outputs=outputs[0],
+                conf=float(self.cfg.confidence),
+                iou_thres=float(self.cfg.iou),
+                max_out_dets=int(self.cfg.max_detections),
+            )[0]
+            try:
+                from picamera2.devices.imx500.postprocess import scale_boxes  # type: ignore
+
+                input_w, input_h = self._device.get_input_size()
+                boxes = scale_boxes(boxes, 1, 1, input_h, input_w, False, False)
+            except Exception:
+                pass
+            return boxes, scores, classes
+        return outputs[0][0], outputs[1][0], outputs[2][0]
+
+    def _normalise_box(self, box: Any, metadata: dict[str, Any], width: int, height: int) -> Tuple[float, float, float, float]:
+        values = [float(value) for value in box]
+        if bool(getattr(self._intrinsics, "bbox_normalization", False)):
+            _, input_h = self._device.get_input_size()
+            values = [value / float(input_h) for value in values]
+        if str(getattr(self._intrinsics, "bbox_order", "yx")) == "xy":
+            values = [values[1], values[0], values[3], values[2]]
+        if hasattr(self._device, "convert_inference_coords") and self._picam is not None:
+            x, y, box_width, box_height = self._device.convert_inference_coords(values, metadata, self._picam)
+            return self._clamp_box((x / width, y / height, (x + box_width) / width, (y + box_height) / height))
+        y1, x1, y2, x2 = values
+        return self._clamp_box((x1, y1, x2, y2))
+
+    def _frame_size(self) -> Tuple[int, int]:
         try:
-            if isinstance(outputs, (list, tuple)) and outputs:
-                first = outputs[0]
-                if isinstance(first, dict):
-                    raw_boxes = first.get("boxes") or first.get("bboxes") or []
-                    raw_scores = first.get("scores") or []
-                    raw_classes = first.get("classes") or first.get("class_ids") or []
-                    boxes = [list(b) for b in raw_boxes]
-                    scores = [float(s) for s in raw_scores]
-                    classes = [int(c) for c in raw_classes]
-                else:
-                    if len(outputs) >= 3:
-                        raw_boxes, raw_scores, raw_classes = outputs[:3]
-                        boxes = [list(b) for b in raw_boxes]
-                        scores = [float(s) for s in raw_scores]
-                        classes = [int(c) for c in raw_classes]
+            size = self._picam.camera_config["main"]["size"]
+            return int(size[0]), int(size[1])
         except Exception:
-            pass
-        return boxes, scores, classes
+            return 1280, 720
+
+    @staticmethod
+    def _clamp_box(box: Tuple[float, float, float, float]) -> Tuple[float, float, float, float]:
+        return tuple(max(0.0, min(1.0, float(value))) for value in box)  # type: ignore[return-value]
 
 
 __all__ = ["Imx500Config", "Imx500Runner", "IMX500_AVAILABLE", "IMX500_IMPORT_ERROR"]

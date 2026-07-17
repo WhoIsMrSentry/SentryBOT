@@ -1,4 +1,7 @@
 from __future__ import annotations
+VLM_PEOPLE_MEMORY_COMPATIBILITY_CONTRACT = True
+VLM_PEOPLE_MEMORY_ROLE = "social_db_primary_json_backward_compatibility_store"
+
 import json
 import os
 import time
@@ -9,7 +12,7 @@ class PeopleMemory:
 
     Single-responsibility wrapper. When a :class:`modules.social_db.SocialDB`
     instance is registered as the process default (or supplied via constructor),
-    writes go through the shared SQLite store; otherwise the legacy JSON path
+    writes go through the shared SQLite store; otherwise the compatibility JSON path
     is used for backward compatibility.
     """
 

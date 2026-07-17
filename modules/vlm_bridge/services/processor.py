@@ -1,11 +1,14 @@
 from __future__ import annotations
+VLM_PROCESSOR_LEGACY_COMPATIBILITY_CONTRACT = True
+VLM_PROCESSOR_LEGACY_COMPATIBILITY_ROLE = "opencv_api_and_cached_context_compatibility"
+
 
 import logging
 import os
 import threading
 import time
 import base64
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Generator, List, Optional, Tuple
 
 try:
@@ -13,6 +16,10 @@ try:
 except ImportError:
     cv2 = None  # type: ignore
 import requests
+
+
+def _utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 try:
     from .face_manager import FaceManager
@@ -78,6 +85,14 @@ except Exception:
     VisionSampler = None  # type: ignore
 
 try:
+    from .vision_request_gate import VisionRequestGate
+except Exception:
+    try:
+        from modules.vlm_bridge.services.vision_request_gate import VisionRequestGate
+    except Exception:
+        VisionRequestGate = None  # type: ignore
+
+try:
     from .face_emotion import FaceEmotionEstimator
 except Exception:
     try:
@@ -132,6 +147,8 @@ def _create_csrt_tracker() -> Optional[Any]:
             return cv2.TrackerCSRT_create()
         except Exception:
             pass
+    # OpenCV exposes CSRT tracker in different namespaces across versions.
+    # The `legacy` namespace is an active compatibility path, not dead code.
     legacy = getattr(cv2, "legacy", None)
     if legacy is not None and hasattr(legacy, "TrackerCSRT_create"):
         try:
@@ -289,6 +306,10 @@ class VisionProcessor:
         mm_cfg = config.get("remote_multimodal", {}) if isinstance(config.get("remote_multimodal", {}), dict) else {}
         self.remote_mm_enabled = bool(mm_cfg.get("enabled", False))
         self.remote_mm_endpoint = str(mm_cfg.get("endpoint", "http://127.0.0.1:8091/vision/analyze")).strip()
+        default_cheap_endpoint = self.remote_mm_endpoint.replace("/vision/analyze", "/vision/analyze/cheap") if self.remote_mm_endpoint else ""
+        default_semantic_endpoint = self.remote_mm_endpoint.replace("/vision/analyze", "/vision/analyze/semantic") if self.remote_mm_endpoint else ""
+        self.remote_mm_cheap_endpoint = str(mm_cfg.get("cheap_endpoint", default_cheap_endpoint)).strip()
+        self.remote_mm_semantic_endpoint = str(mm_cfg.get("semantic_endpoint", default_semantic_endpoint)).strip()
         self.remote_mm_timeout_s = float(mm_cfg.get("timeout_s", 6.0))
         self.remote_mm_auth_token = str(mm_cfg.get("auth_token", "")).strip()
         default_ocr_endpoint = self.remote_mm_endpoint.replace("/vision/analyze", "/vision/ocr") if self.remote_mm_endpoint else ""
@@ -306,6 +327,13 @@ class VisionProcessor:
         enabled = bool(actions_cfg.get("default_apply", False))
         self.action_dispatcher = VisionActionDispatcher(endpoint=endpoint, timeout=timeout, enabled=enabled)
         self.vision_sampler = VisionSampler(vlm_cfg) if VisionSampler is not None else None
+        gate_cfg = config.get("vision_request_gate", {}) if isinstance(config.get("vision_request_gate", {}), dict) else {}
+        self.vision_request_gate = (
+            VisionRequestGate(gate_cfg, context_max_age_s=self._context_max_age_s)
+            if VisionRequestGate is not None
+            else None
+        )
+        self.vision_semantic_budget = self._init_semantic_budget(config)
         self.event_bus = VisionEventBus() if VisionEventBus is not None else None
         self.head_arbiter = HeadControlArbiter(self._follow_cfg) if HeadControlArbiter is not None else None
         if self.head_arbiter is not None:
@@ -876,6 +904,116 @@ class VisionProcessor:
                 return True
         return False
 
+    def _vlm_scene_key(self, parsed_results: List[Dict[str, Any]]) -> str:
+        parts: List[str] = []
+        for item in parsed_results or []:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or item.get("name") or "unknown").strip().lower()
+            name = str(item.get("name") or "").strip().lower()
+            bbox = item.get("bbox") or []
+            box_key = ""
+            if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                try:
+                    box_key = ":".join(str(int(float(x) / 32)) for x in bbox[:4])
+                except Exception:
+                    box_key = ""
+            parts.append(f"{label}:{name}:{box_key}")
+        if not parts:
+            return "empty"
+        return "|".join(sorted(parts)[:24])
+
+    def _vlm_reason_from_signals(
+        self,
+        *,
+        score: float,
+        owner_seen: bool,
+        new_person: bool,
+        hazard: bool,
+        sudden_motion: bool,
+        is_bored: bool,
+    ) -> Tuple[str, str]:
+        if hazard:
+            return "hazard", "high"
+        if new_person:
+            return "new_person", "normal"
+        if owner_seen:
+            return "owner_seen", "normal"
+        if sudden_motion:
+            return "sudden_motion", "normal"
+        sampler = getattr(self, "vision_sampler", None)
+        threshold = getattr(sampler, "scene_change_threshold", 0.35)
+        if score >= threshold:
+            return "scene_change", "normal"
+        if is_bored:
+            return "boredom", "low"
+        return "idle_refresh", "low"
+
+    @staticmethod
+    def _init_semantic_budget(config: Dict[str, Any]) -> Dict[str, Any]:
+        raw = config.get("vision_semantic_budget", {}) if isinstance(config, dict) else {}
+        raw = raw if isinstance(raw, dict) else {}
+        default_reasons = {
+            "user_question": True,
+            "manual_refresh": True,
+            "hazard": True,
+            "new_person": True,
+            "owner_seen": False,
+            "scene_change": False,
+            "sudden_motion": False,
+            "boredom": False,
+            "idle_refresh": False,
+            "background_refresh": False,
+        }
+        reasons_raw = raw.get("semantic_reasons", default_reasons)
+        reasons: Dict[str, bool] = dict(default_reasons)
+        if isinstance(reasons_raw, dict):
+            for key, value in reasons_raw.items():
+                reasons[str(key)] = bool(value)
+        elif isinstance(reasons_raw, (list, tuple, set)):
+            reasons = {key: False for key in default_reasons}
+            for key in reasons_raw:
+                reasons[str(key)] = True
+        return {
+            "enabled": bool(raw.get("enabled", True)),
+            "log_decisions": bool(raw.get("log_decisions", True)),
+            "semantic_reasons": reasons,
+        }
+
+    def _semantic_budget_allows(self, *, question: str = "", reason: str = "", force: Optional[bool] = None) -> bool:
+        if force is not None:
+            return bool(force)
+        cfg = getattr(self, "vision_semantic_budget", {}) or {}
+        if not bool(cfg.get("enabled", True)):
+            return False
+        if str(question or "").strip():
+            return True
+        reason_key = str(reason or "background_refresh")
+        reasons = cfg.get("semantic_reasons", {}) if isinstance(cfg.get("semantic_reasons", {}), dict) else {}
+        return bool(reasons.get(reason_key, False))
+
+    def _visual_context_cache_state(self) -> Tuple[bool, Optional[float]]:
+        cache = getattr(self, "visual_context_cache", None)
+        if cache is None:
+            return False, None
+        try:
+            age = float(getattr(cache, "age_s", 999999.0))
+            latest = cache.get_latest() if hasattr(cache, "get_latest") else None
+            return latest is not None and age <= float(getattr(self, "_context_max_age_s", 45.0)), age
+        except Exception:
+            return False, None
+
+    def get_vision_gate_stats(self) -> Dict[str, Any]:
+        gate = getattr(self, "vision_request_gate", None)
+        if gate is None:
+            return {"available": False}
+        try:
+            stats = gate.get_stats()
+            stats["available"] = True
+            return stats
+        except Exception as exc:
+            return {"available": False, "error": str(exc)}
+
     def _maybe_sample_vlm(self, parsed_results: List[Dict[str, Any]]) -> None:
         sampler = getattr(self, "vision_sampler", None)
         if sampler is None:
@@ -902,19 +1040,74 @@ class VisionProcessor:
             return
         if not should:
             return
+
+        reason, priority = self._vlm_reason_from_signals(
+            score=score,
+            owner_seen=owner_seen,
+            new_person=new_person,
+            hazard=hazard,
+            sudden_motion=sudden_motion,
+            is_bored=is_bored,
+        )
+        request_id = ""
+        gate = getattr(self, "vision_request_gate", None)
+        if gate is not None:
+            has_cache, cache_age_s = self._visual_context_cache_state()
+            try:
+                decision = gate.decide(
+                    reason=reason,
+                    priority=priority,
+                    scene_key=self._vlm_scene_key(parsed_results),
+                    force=False,
+                    has_cache=has_cache,
+                    cache_age_s=cache_age_s,
+                )
+            except Exception as exc:
+                logger.debug("VLM gate decision failed: %s", exc)
+                decision = None
+            if decision is not None and not decision.allowed:
+                logger.debug(
+                    "VLM gate skipped reason=%s mode=%s wait_s=%.1f use_cache=%s",
+                    decision.reason,
+                    decision.mode,
+                    float(decision.wait_s or 0.0),
+                    bool(decision.use_cache),
+                )
+                return
+            if decision is not None:
+                request_id = decision.request_id
+                try:
+                    gate.mark_start(request_id, reason=reason, priority=priority)
+                except Exception:
+                    pass
+                logger.info("VLM gate approved reason=%s priority=%s request_id=%s", reason, priority, request_id)
+
         sampler.record_call()
         self._vlm_refresh_inflight = True
-        threading.Thread(target=self._background_context_refresh, daemon=True).start()
+        threading.Thread(target=self._background_context_refresh, args=(reason, request_id), daemon=True).start()
 
-    def _background_context_refresh(self) -> None:
+    def _background_context_refresh(self, reason: str = "background_refresh", request_id: str = "") -> None:
+        ok = False
         try:
-            context = self.refresh_visual_context()
+            try:
+                context = self.refresh_visual_context(semantic_reason=reason, semantic_request_id=request_id)
+            except TypeError:
+                # Backward compatibility for tests/extensions that monkeypatch
+                # refresh_visual_context(question="") with the older signature.
+                context = self.refresh_visual_context()
+            ok = context is not None
             if context is not None and self.event_bus is not None:
-                self.event_bus.publish(EVENT_SCENE_CHANGED, {"context": context})
-                self.event_bus.publish(EVENT_VLM_RESULT_READY, {"context": context})
-        except Exception:
-            pass
+                self.event_bus.publish(EVENT_SCENE_CHANGED, {"context": context, "reason": reason})
+                self.event_bus.publish(EVENT_VLM_RESULT_READY, {"context": context, "reason": reason})
+        except Exception as exc:
+            logger.debug("VLM background context refresh failed: %s", exc)
         finally:
+            gate = getattr(self, "vision_request_gate", None)
+            if gate is not None and request_id:
+                try:
+                    gate.mark_finish(request_id, ok=ok)
+                except Exception:
+                    pass
             self._vlm_refresh_inflight = False
 
     # -----------------------------------------------------------------
@@ -1461,35 +1654,69 @@ class VisionProcessor:
         data.setdefault("ok", True)
         return data
 
-    def _remote_requested_tasks(self) -> List[str]:
+    def _remote_requested_tasks(self, run_semantic_vlm: bool = False) -> List[str]:
         remote = self.mode_categories.get("remote", {})
         tasks: List[str] = []
         for key in ("objects", "people", "faces", "ocr", "hazards", "semantic_scene", "depth"):
+            if key == "semantic_scene" and not run_semantic_vlm:
+                continue
+            if key == "semantic_scene" and not run_semantic_vlm:
+                continue
             if bool(remote.get(key, False)):
                 tasks.append(key)
         return tasks
 
-    def _call_remote_multimodal(self, frame: Any) -> Optional[Dict[str, Any]]:
+    def _remote_multimodal_endpoint_for(self, run_semantic_vlm: bool = False) -> str:
+        if bool(run_semantic_vlm):
+            return getattr(self, "remote_mm_semantic_endpoint", "") or getattr(self, "remote_mm_endpoint", "")
+        return getattr(self, "remote_mm_cheap_endpoint", "") or getattr(self, "remote_mm_endpoint", "")
+
+    def _call_remote_multimodal(
+        self,
+        frame: Any,
+        *,
+        run_semantic_vlm: bool = False,
+        semantic_reason: str = "",
+        request_id: str = "",
+        question: str = "",
+    ) -> Optional[Dict[str, Any]]:
         if not self.remote_mm_enabled or not self.remote_mm_endpoint:
+            return None
+        endpoint = self._remote_multimodal_endpoint_for(bool(run_semantic_vlm))
+        if not endpoint:
             return None
         try:
             ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
             if not ok:
                 return None
             image_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
-            payload: Dict[str, Any] = {"image_b64": image_b64}
-            requested = self._remote_requested_tasks()
+            payload: Dict[str, Any] = {
+                "image_b64": image_b64,
+                "run_semantic_vlm": bool(run_semantic_vlm),
+                "semantic_reason": str(semantic_reason or ""),
+                "request_id": str(request_id or ""),
+                "question": str(question or ""),
+                "mode": "semantic" if bool(run_semantic_vlm) else "cheap",
+            }
+            requested = self._remote_requested_tasks(run_semantic_vlm=bool(run_semantic_vlm))
             if requested:
                 payload["requested_tasks"] = requested
             headers = {}
             if self.remote_mm_auth_token:
                 headers["X-Auth-Token"] = self.remote_mm_auth_token
             resp = requests.post(
-                self.remote_mm_endpoint,
+                endpoint,
                 json=payload,
                 headers=headers,
                 timeout=self.remote_mm_timeout_s,
             )
+            if resp.status_code in (404, 405) and endpoint != self.remote_mm_endpoint:
+                resp = requests.post(
+                    self.remote_mm_endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.remote_mm_timeout_s,
+                )
             if resp.status_code != 200:
                 return None
             data = resp.json()
@@ -1507,7 +1734,7 @@ class VisionProcessor:
         interpretation = str(mm.get("persona_interpretation", "")).strip() or summary
         importance = float(mm.get("importance_score", 0.55 if hazards else 0.4))
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": _utc_iso(),
             "summary": summary,
             "objects": objects,
             "people": people,
@@ -1527,17 +1754,37 @@ class VisionProcessor:
             return None
         ctx = self.visual_context_cache.get_latest()
         if ctx is None:
-            fallback = self._build_context_from_results(self.latest_results)
-            if fallback is None:
+            compatibility_context = self._build_context_from_results(self.latest_results)
+            if compatibility_context is None:
                 return None
-            self.update_visual_context(fallback)
+            self.update_visual_context(compatibility_context)
             ctx = self.visual_context_cache.get_latest()
             if ctx is None:
                 return None
         return ctx.to_dict()
 
-    def refresh_visual_context(self, question: str = "") -> Optional[Dict[str, Any]]:
-        """Capture/refresh the latest context using VLM when possible."""
+    def refresh_visual_context(
+        self,
+        question: str = "",
+        *,
+        semantic_reason: str = "",
+        semantic_request_id: str = "",
+        force_semantic: Optional[bool] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Capture/refresh context, spending semantic VLM budget only when allowed."""
+        semantic_reason = "user_question" if str(question or "").strip() else (semantic_reason or "manual_refresh")
+        run_semantic_vlm = self._semantic_budget_allows(
+            question=question,
+            reason=semantic_reason,
+            force=force_semantic,
+        )
+        if bool((getattr(self, "vision_semantic_budget", {}) or {}).get("log_decisions", True)):
+            logger.info(
+                "VLM semantic budget reason=%s run=%s request_id=%s",
+                semantic_reason,
+                bool(run_semantic_vlm),
+                semantic_request_id or "-",
+            )
         frame = None
         with self._frame_lock:
             if self._latest_raw_frame is not None:
@@ -1571,11 +1818,11 @@ class VisionProcessor:
                 if latest is not None:
                     return latest
 
-        if frame is not None and self.vlm_client is not None:
+        if frame is not None and self.vlm_client is not None and run_semantic_vlm:
             vlm_result = self.vlm_client.analyze_frame(frame, force=bool(question))
             if isinstance(vlm_result, dict):
                 context = {
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": _utc_iso(),
                     "summary": str(vlm_result.get("summary", "")),
                     "objects": list(vlm_result.get("objects", []) or []),
                     "people": list(vlm_result.get("people", []) or []),
@@ -1591,9 +1838,9 @@ class VisionProcessor:
                 if latest is not None:
                     return latest
 
-        fallback = self._build_context_from_results(self.latest_results)
-        if fallback is not None:
-            self.update_visual_context(fallback, is_user_question=bool(question))
+        compatibility_context = self._build_context_from_results(self.latest_results)
+        if compatibility_context is not None:
+            self.update_visual_context(compatibility_context, is_user_question=bool(question))
             return self.get_latest_visual_context()
         return None
 
@@ -1615,7 +1862,7 @@ class VisionProcessor:
                         "bbox": list(item.get("bbox", [0, 0, 0, 0])),
                         "distance_m": item.get("distance_m"),
                         "gaze_priority": 0.4,
-                        "last_seen": datetime.utcnow().isoformat(),
+                        "last_seen": _utc_iso(),
                         "is_follow_target": bool(item.get("tracked", False)),
                         "appearance_notes": "",
                         "emotion": str(item.get("emotion", "") or "").strip(),
@@ -1625,7 +1872,7 @@ class VisionProcessor:
                 objects.append(item)
         summary = f"{len(people)} kişi ve {len(objects)} nesne algılandı."
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": _utc_iso(),
             "summary": summary,
             "objects": objects,
             "people": people,

@@ -10,6 +10,15 @@ from pydantic import BaseModel
 class AnalyzeRequest(BaseModel):
     image_b64: str
     requested_tasks: Optional[List[str]] = None
+    # Explicit semantic budget controls. When omitted, the server keeps
+    # legacy behavior for older clients. New SentryBOT clients always set
+    # run_semantic_vlm so cheap object/person polling does not wake Qwen.
+    run_semantic_vlm: Optional[bool] = None
+    semantic_reason: Optional[str] = None
+    request_id: Optional[str] = None
+    question: Optional[str] = None
+    # Optional client-visible task mode: cheap | semantic | legacy.
+    mode: Optional[str] = None
 
 
 class RegisterFaceRequest(BaseModel):
