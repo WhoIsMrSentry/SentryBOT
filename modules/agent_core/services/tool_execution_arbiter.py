@@ -9,6 +9,13 @@ Prevents conflicting tool executions:
 
 from __future__ import annotations
 
+# --- SentryBOT safety/action boundary contract ---
+SAFETY_ACTION_COMPATIBILITY = True
+SAFETY_ACTION_BOUNDARY_ROLE = 'agent_core_compat_tool_execution_arbiter'
+SAFETY_ACTION_RUNTIME_OWNER = 'robot-runtime action execution gate: modules.autonomy'
+SAFETY_ACTION_BOUNDARY_REASON = 'ToolExecutionArbiter is still passed into AgentOrchestrator progress/tool flow. Keep stable as an LLM tool conflict gate.'
+# --- End SentryBOT safety/action boundary contract ---
+
 import logging
 import threading
 import time

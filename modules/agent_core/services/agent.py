@@ -19,6 +19,7 @@ from .action_arbiter import ActionArbiter
 from .tool_execution_arbiter import ToolExecutionArbiter
 from .vision_arbiter import VisionArbiter
 from .expression_arbiter import ExpressionArbiter
+from modules.common.latency_trace import latency_trace
 
 logger = logging.getLogger("agent.orchestrator")
 
@@ -84,6 +85,8 @@ class AgentOrchestrator:
         self.clm_fallback_model = str(llm_cfg.get("clm_fallback_model", agent_cfg.get("clm_fallback_model", ""))).strip()
         self.fallback_on_missing_model = bool(llm_cfg.get("fallback_on_missing_model", True))
         self.fallback_on_error = bool(llm_cfg.get("fallback_on_error", True))
+        self.ollama_think = llm_cfg.get("think", False)
+        self.ollama_keep_alive = llm_cfg.get("keep_alive", -1)
         self.request_timeout = self._safe_float(
             agent_cfg.get("request_timeout", agent_cfg.get("ollama_request_timeout", 60.0)), fallback=60.0, minimum=1.0,
         )
@@ -154,7 +157,17 @@ class AgentOrchestrator:
         )
 
     def _init_background_threads(self):
-        self.sensor_loop = SensorFeedbackLoop(self.world_state, client=self.autonomy_client)
+        sensor_cfg = self.config.get("sensor_loop", {}) if isinstance(self.config.get("sensor_loop", {}), dict) else {}
+        self.sensor_loop = SensorFeedbackLoop(
+            self.world_state,
+            client=self.autonomy_client,
+            enabled=bool(sensor_cfg.get("enabled", True)),
+            poll_hz=self._safe_float(sensor_cfg.get("poll_hz", 2.0), fallback=2.0, minimum=0.1),
+            hardware_interval_s=self._safe_float(sensor_cfg.get("hardware_interval_s", 2.0), fallback=2.0, minimum=0.2),
+            vision_results_interval_s=self._safe_float(sensor_cfg.get("vision_results_interval_s", 5.0), fallback=5.0, minimum=0.5),
+            visual_context_interval_s=self._safe_float(sensor_cfg.get("visual_context_interval_s", 10.0), fallback=10.0, minimum=1.0),
+            skip_hardware_on_pc=bool(sensor_cfg.get("skip_hardware_on_pc", True)),
+        )
         self.idle_system = IdleBehaviorSystem(self, client=self.autonomy_client)
         if self.autonomy_client and hasattr(self.autonomy_client, "set_stt_suppressed"):
             self.speech_arbiter.set_tts_state_callback(lambda active: self.autonomy_client.set_stt_suppressed(bool(active)))
@@ -189,6 +202,7 @@ class AgentOrchestrator:
         self.fast_path_enabled = bool(fast_cfg.get("enabled", True))
         self.fast_path_max_chars = self._safe_int(fast_cfg.get("max_chars", 140), fallback=140, minimum=20)
         self.fast_path_num_predict = self._safe_int(fast_cfg.get("num_predict", 96), fallback=96, minimum=32)
+        self.fast_path_max_steps = self._safe_int(fast_cfg.get("max_steps", 2), fallback=2, minimum=1)
         self.subagent_max_steps = self._safe_int(subagent_cfg.get("max_steps", 2), fallback=2, minimum=1)
         self.subagent_workers = self._safe_int(subagent_cfg.get("workers", 2), fallback=2, minimum=1)
         self.persona_system_prompt = str(persona_cfg.get("system_prompt", "")).strip()
@@ -220,6 +234,37 @@ class AgentOrchestrator:
         except Exception:
             social_db = None
         return MemoryConsolidator(memory=self.memory, social_db=social_db)
+
+    def _get_world_memory_context(self, user_prompt: str, limit: int = 8) -> str:
+        if not self.autonomy_client or not hasattr(self.autonomy_client, "world_memory_context"):
+            return ""
+        try:
+            result = self.autonomy_client.world_memory_context(user_prompt, limit=limit)
+            if isinstance(result, dict):
+                return str(result.get("context") or "").strip()
+        except Exception:
+            logger.debug("world memory context lookup failed", exc_info=True)
+        return ""
+
+    def _observe_world_memory_dialogue(self, user_prompt: str, final_text: str) -> None:
+        if not self.autonomy_client or not hasattr(self.autonomy_client, "world_memory_observe"):
+            return
+        text = str(user_prompt or "").strip()
+        reply = str(final_text or "").strip()
+        if not text and not reply:
+            return
+        try:
+            self.autonomy_client.world_memory_observe({
+                "kind": "episode",
+                "name": "dialogue",
+                "summary": ("User: " + text + " | Robot: " + reply)[:800],
+                "confidence": 0.62,
+                "salience": 0.55,
+                "tags": ["dialogue", "conversation"],
+                "details": {"user": text, "assistant": reply, "speaker": self._current_speaker()},
+            })
+        except Exception:
+            logger.debug("dialogue world memory write failed", exc_info=True)
 
     def _current_speaker(self):
         """Best-effort identity of who is currently talking (or None)."""
@@ -458,10 +503,13 @@ class AgentOrchestrator:
         if vlm_auth in ("", "changeme", "your-auth-token", "replace_me"):
             warnings.append("SECURITY WARNING: vlm_bridge.remote.auth_token is using default/empty value 'changeme' - please set a strong token in config/agent.yaml")
         
-        # Check speak remote auth_token
+        # Check speak remote auth_token. The current config stores it under
+        # speak.tts.remote.auth_token; older configs may also use speak.remote.
         speak_cfg = config.get("speak", {}) if isinstance(config.get("speak", {}), dict) else {}
         remote_speak = speak_cfg.get("remote", {}) if isinstance(speak_cfg.get("remote", {}), dict) else {}
-        speak_auth = str(remote_speak.get("auth_token", "") or "").strip()
+        tts_cfg = speak_cfg.get("tts", {}) if isinstance(speak_cfg.get("tts", {}), dict) else {}
+        tts_remote = tts_cfg.get("remote", {}) if isinstance(tts_cfg.get("remote", {}), dict) else {}
+        speak_auth = str(remote_speak.get("auth_token", "") or tts_remote.get("auth_token", "") or "").strip()
         if speak_auth in ("", "changeme", "your-auth-token", "replace_me"):
             warnings.append("SECURITY WARNING: speak.tts.remote.auth_token is using default/empty value - please set a strong token in config/agent.yaml")
         
@@ -777,57 +825,72 @@ class AgentOrchestrator:
             }
         return {"message": {"content": content}}
 
+    def _call_ollama_chat(self, kwargs: Dict[str, Any]):
+        call = self.ollama_client.chat if self.ollama_client is not None else ollama.chat
+        request = dict(kwargs)
+        request["think"] = self.ollama_think
+        request["keep_alive"] = self.ollama_keep_alive
+        try:
+            return call(**request)
+        except TypeError:
+            request.pop("think", None)
+            try:
+                return call(**request)
+            except TypeError:
+                request.pop("keep_alive", None)
+                return call(**request)
+
     def _chat(
         self,
         model: str,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
         options: Optional[Dict[str, Any]] = None,
+        trace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        kwargs: Dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-        }
+        kwargs: Dict[str, Any] = {"model": self._pick_runtime_model(model), "messages": messages}
         if tools is not None:
             kwargs["tools"] = tools
         if options is not None:
             kwargs["options"] = options
 
-        selected_model = self._pick_runtime_model(model)
-        kwargs["model"] = selected_model
-
-        if self.llm_provider != "ollama":
-            if self.provider_client is None:
-                raise RuntimeError(
-                    f"Provider '{self.llm_provider}' selected but client is not initialized"
-                )
-            return self._chat_via_provider(selected_model, messages, tools, options)
-
-        if self.ollama_client is None and ollama is None:
-            raise RuntimeError("Ollama provider selected but ollama client is unavailable")
-
+        selected_model = str(kwargs["model"])
+        started = time.monotonic()
+        if trace_id:
+            latency_trace.mark(trace_id, "llm.request", {"model": selected_model, "stream": False})
         try:
-            if self.ollama_client is not None:
-                return self.ollama_client.chat(**kwargs)
-            return ollama.chat(**kwargs)
+            if self.llm_provider != "ollama":
+                if self.provider_client is None:
+                    raise RuntimeError(f"Provider '{self.llm_provider}' selected but client is not initialized")
+                response = self._chat_via_provider(selected_model, messages, tools, options)
+            else:
+                if self.ollama_client is None and ollama is None:
+                    raise RuntimeError("Ollama provider selected but ollama client is unavailable")
+                response = self._call_ollama_chat(kwargs)
+            if trace_id:
+                latency_trace.mark(
+                    trace_id,
+                    "llm.response",
+                    {"model": selected_model, "duration_ms": round((time.monotonic() - started) * 1000.0, 2)},
+                )
+            return response
         except Exception as exc:
             fallback = str(self.clm_fallback_model or "").strip()
             if (
-                self.clm_fallback_enabled
+                self.llm_provider == "ollama"
+                and self.clm_fallback_enabled
                 and self.fallback_on_error
                 and fallback
                 and fallback != selected_model
             ):
-                logger.warning(
-                    "Primary model '%s' failed (%s). Retrying with fallback '%s'.",
-                    selected_model,
-                    exc,
-                    fallback,
-                )
+                logger.warning("Primary model '%s' failed (%s). Retrying with fallback '%s'.", selected_model, exc, fallback)
                 kwargs["model"] = fallback
-                if self.ollama_client is not None:
-                    return self.ollama_client.chat(**kwargs)
-                return ollama.chat(**kwargs)
+                response = self._call_ollama_chat(kwargs)
+                if trace_id:
+                    latency_trace.mark(trace_id, "llm.response", {"model": fallback, "fallback": True})
+                return response
+            if trace_id:
+                latency_trace.mark(trace_id, "llm.error", {"detail": repr(exc)})
             raise
 
     def _chat_maybe_stream(
@@ -837,82 +900,85 @@ class AgentOrchestrator:
         tools: Optional[List[Dict[str, Any]]],
         options: Optional[Dict[str, Any]],
         on_sentence: Optional[Callable[[str, int], None]] = None,
+        trace_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Blocking chat with optional Ollama token-stream → sentence TTS hooks."""
         if not (
             on_sentence
             and self.persona_stream_enabled
             and self.llm_provider == "ollama"
             and self.ollama_client is not None
         ):
-            return self._chat(model, messages, tools, options)
+            return self._chat(model, messages, tools, options, trace_id=trace_id)
 
         import re as _re
 
         if AgentOrchestrator._SENTENCE_END_RE is None:
             AgentOrchestrator._SENTENCE_END_RE = _re.compile(r"(?<=[.!?…])\s+")
-        sent_re = AgentOrchestrator._SENTENCE_END_RE
-
         selected_model = self._pick_runtime_model(model)
-        kwargs: Dict[str, Any] = {
-            "model": selected_model,
-            "messages": messages,
-            "stream": True,
-        }
+        kwargs: Dict[str, Any] = {"model": selected_model, "messages": messages, "stream": True}
         if tools is not None:
             kwargs["tools"] = tools
         if options is not None:
             kwargs["options"] = options
 
+        started = time.monotonic()
+        if trace_id:
+            latency_trace.mark(trace_id, "llm.request", {"model": selected_model, "stream": True})
         try:
-            stream = self.ollama_client.chat(**kwargs)
+            stream = self._call_ollama_chat(kwargs)
         except Exception as exc:
             logger.warning("Streaming chat failed, falling back to blocking: %s", exc)
-            return self._chat(model, messages, tools, options)
+            return self._chat(model, messages, tools, options, trace_id=trace_id)
 
         buffer = ""
         pieces: List[str] = []
         tool_calls: List[Dict[str, Any]] = []
-        idx = 0
-
+        sentence_index = 0
+        first_token = True
         for chunk in stream:
-            msg = chunk.get("message", {}) or {}
-            chunk_tools = msg.get("tool_calls")
+            message = chunk.get("message", {}) or {}
+            chunk_tools = message.get("tool_calls")
             if chunk_tools:
                 tool_calls.extend(chunk_tools)
-            piece = str(msg.get("content", ""))
+            piece = str(message.get("content", ""))
             if not piece:
                 continue
+            if first_token and trace_id:
+                first_token = False
+                latency_trace.mark(
+                    trace_id,
+                    "llm.first_token",
+                    {"duration_ms": round((time.monotonic() - started) * 1000.0, 2)},
+                )
             pieces.append(piece)
             if tool_calls:
                 continue
             buffer += piece
             while True:
-                match = sent_re.search(buffer)
+                match = AgentOrchestrator._SENTENCE_END_RE.search(buffer)
                 if not match:
                     break
                 sentence = buffer[: match.end()].strip()
                 buffer = buffer[match.end() :]
                 if sentence:
-                    try:
-                        on_sentence(sentence, idx)
-                    except Exception:
-                        logger.debug("on_sentence callback failed", exc_info=True)
-                    idx += 1
+                    if trace_id:
+                        latency_trace.mark(trace_id, "llm.sentence", {"index": sentence_index, "chars": len(sentence)})
+                    on_sentence(sentence, sentence_index)
+                    sentence_index += 1
 
         full_content = "".join(pieces).strip()
-        if tool_calls:
-            return {"message": {"content": full_content, "tool_calls": tool_calls}}
-
-        tail = buffer.strip()
-        if tail:
-            try:
-                on_sentence(tail, idx)
-            except Exception:
-                logger.debug("on_sentence callback failed", exc_info=True)
-            if not full_content:
-                full_content = tail
-        return {"message": {"content": full_content}}
+        if not tool_calls and buffer.strip():
+            sentence = buffer.strip()
+            if trace_id:
+                latency_trace.mark(trace_id, "llm.sentence", {"index": sentence_index, "chars": len(sentence)})
+            on_sentence(sentence, sentence_index)
+        if trace_id:
+            latency_trace.mark(
+                trace_id,
+                "llm.response",
+                {"model": selected_model, "duration_ms": round((time.monotonic() - started) * 1000.0, 2)},
+            )
+        return {"message": {"content": full_content, "tool_calls": tool_calls}} if tool_calls else {"message": {"content": full_content}}
 
     _SENTENCE_END_RE = None  # compiled lazily below
 
@@ -934,8 +1000,8 @@ class AgentOrchestrator:
             AgentOrchestrator._SENTENCE_END_RE = _re.compile(r"(?<=[.!?…])\s+")
         sent_re = AgentOrchestrator._SENTENCE_END_RE
 
-        stream = self.ollama_client.chat(
-            model=model, messages=messages, options=options, stream=True,
+        stream = self._call_ollama_chat(
+            {"model": model, "messages": messages, "options": options, "stream": True}
         )
         buffer = ""
         pieces: List[str] = []
@@ -987,76 +1053,57 @@ class AgentOrchestrator:
         *,
         num_predict: Optional[int] = None,
         on_sentence: Optional[Callable[[str, int], None]] = None,
+        max_steps: Optional[int] = None,
+        trace_id: Optional[str] = None,
     ) -> Tuple[str, int]:
         tools = self.tool_registry.get_tool_schema()
         final_text = ""
-        step_idx = 0
+        steps_used = 0
         predict_budget = int(num_predict if num_predict is not None else self.chat_num_predict)
+        step_limit = max(1, int(max_steps if max_steps is not None else self.max_steps))
 
-        for step_idx in range(self.max_steps):
+        for step_index in range(step_limit):
+            steps_used = step_index + 1
             try:
                 response = self._chat_maybe_stream(
                     active_model,
                     messages,
                     tools,
-                    {
-                        "temperature": self.temperature,
-                        "num_ctx": self.num_ctx,
-                        "num_predict": predict_budget,
-                    },
+                    {"temperature": self.temperature, "num_ctx": self.num_ctx, "num_predict": predict_budget},
                     on_sentence=on_sentence,
+                    trace_id=trace_id,
                 )
             except Exception as exc:
                 logger.error("LLM tool loop crashed: %s", exc)
                 final_text = "System fault during cognitive cycle."
                 break
 
-            msg = response.get("message", {})
-            messages.append(msg)
-
-            tool_calls = msg.get("tool_calls")
+            message = response.get("message", {})
+            messages.append(message)
+            tool_calls = message.get("tool_calls")
             if tool_calls:
-                log_tc = [
-                    {
-                        "name": t.get("function", {}).get("name"),
-                        "args": t.get("function", {}).get("arguments"),
-                    }
-                    for t in tool_calls
-                ]
-                logger.info("Agent Loop [%s/%s] Using tools: %s", step_idx + 1, self.max_steps, log_tc)
-                self._append_history("assistant", msg.get("content", ""), tool_calls=tool_calls)
-
+                self._append_history("assistant", message.get("content", ""), tool_calls=tool_calls)
                 for tool in tool_calls:
                     fn_name = str(tool.get("function", {}).get("name", ""))
                     fn_args = self._extract_tool_arguments(tool.get("function", {}).get("arguments", {}))
-
-                    tool_result_str = self.tool_registry.execute(fn_name, fn_args)
+                    if trace_id:
+                        latency_trace.mark(trace_id, "tool.start", {"tool": fn_name, "step": steps_used})
+                    tool_result = self.tool_registry.execute(fn_name, fn_args)
+                    if trace_id:
+                        latency_trace.mark(trace_id, "tool.done", {"tool": fn_name, "step": steps_used})
                     if actions_out is not None:
-                        actions_out.append(
-                            {
-                                "tool": fn_name,
-                                "args": fn_args,
-                                "result": str(tool_result_str)[:200],
-                            }
-                        )
-                    tool_msg = {
-                        "role": "tool",
-                        "content": tool_result_str,
-                        "name": fn_name,
-                    }
-                    messages.append(tool_msg)
-                    self._append_history("tool", tool_result_str, tool_name=fn_name)
+                        actions_out.append({"tool": fn_name, "args": fn_args, "result": str(tool_result)[:200]})
+                    messages.append({"role": "tool", "content": tool_result, "name": fn_name})
+                    self._append_history("tool", tool_result, tool_name=fn_name)
                 continue
 
-            final_text = str(msg.get("content", ""))
+            final_text = str(message.get("content", ""))
             self._append_history("assistant", final_text)
-            logger.info("Agent Final Response: %s", final_text)
             break
 
         if not final_text:
             final_text = "Task completed using internal tools."
-
-        return final_text, step_idx + 1
+        return final_text, steps_used
 
     @staticmethod
     def _enqueue_sentences(text: str, on_sentence: Callable[[str, int], None]) -> None:
@@ -1478,14 +1525,22 @@ class AgentOrchestrator:
         language: Optional[str] = None,
         speaker: Optional[str] = None,
         native_tools: bool = False,
+        trace_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         now = time.time()
         if now - self.last_run < self.cooldown or self.is_busy or not user_prompt:
             return None
         self.last_run = now
-
         self.is_busy = True
         previous_hook = self.tool_registry.status_hook
+        trace_id = latency_trace.ensure(trace_id, {"component": "agent_core", "language": language or ""})
+        latency_trace.mark(trace_id, "agent.request", {"chars": len(user_prompt), "native_tools": native_tools})
+
+        if self.autonomy_client and hasattr(self.autonomy_client, "set_expression_event"):
+            try:
+                self.autonomy_client.set_expression_event("agent.thinking", {"trace_id": trace_id})
+            except Exception:
+                pass
 
         if speaker and str(speaker).strip().lower() not in {"unknown", "none", ""}:
             try:
@@ -1496,72 +1551,91 @@ class AgentOrchestrator:
         session_language = self._normalize_session_language(language)
         progress_token = self.progress_manager.new_request(language=session_language)
         self._active_progress_token = progress_token
-        cb = self._build_progress_callback(progress_token, progress_cb)
-        self.tool_registry.status_hook = cb
+        callback = self._build_progress_callback(progress_token, progress_cb)
+        self.tool_registry.status_hook = callback
 
         try:
             use_fast_path = self._should_fast_path(user_prompt, native_tools=native_tools)
             self.progress_manager.emit_ack(progress_token, speak=not use_fast_path)
-
+            latency_trace.mark(trace_id, "agent.context_start")
             survival_override = self.check_survival_drives()
             world_context = self.world_state.inject_world_state("")
-            lang_rule = self._language_directive(session_language)
-            full_prompt = f"{user_prompt}\n\n[{lang_rule}]\n\n[World State]\n{world_context}"
+            memory_context = self._get_world_memory_context(user_prompt)
+            if memory_context:
+                world_context = f"{world_context}\n\n[World Memory]\n{memory_context}"
+            language_rule = self._language_directive(session_language)
+            full_prompt = f"{user_prompt}\n\n[{language_rule}]\n\n[World State]\n{world_context}"
             if survival_override:
                 full_prompt += f"\n\n{survival_override}"
-
             self._append_history("user", full_prompt)
             active_model = self._get_active_persona_model()
+            latency_trace.mark(trace_id, "agent.context_done", {"model": active_model})
 
-            provider_err = self._check_provider_availability()
-            if provider_err:
-                return provider_err
+            provider_error = self._check_provider_availability()
+            if provider_error:
+                latency_trace.finish(trace_id, "provider_unavailable")
+                return {**provider_error, "trace_id": trace_id}
 
             final_text = ""
             total_steps = 0
             subagent_reports: List[Dict[str, Any]] = []
             executed_actions: List[Dict[str, Any]] = []
-
-            # Streamed sentences go straight to the speech queue; the caller
-            # then skips its own enqueue (speech_handled flag below).
             stream_state = {"spoken": 0}
             on_sentence: Optional[Callable[[str, int], None]] = None
             if self.speech_arbiter._speak_fn is not None:
-                def _speak_sentence(sentence: str, index: int) -> None:
+                def speak_sentence(sentence: str, index: int) -> None:
                     item_id = self.speech_arbiter.enqueue_final_chunk(
-                        sentence, index=index, language=session_language,
+                        sentence,
+                        index=index,
+                        language=session_language,
+                        trace_id=trace_id,
                     )
                     if item_id:
                         stream_state["spoken"] += 1
-
-                on_sentence = _speak_sentence
+                on_sentence = speak_sentence
 
             if self.tri_layer_enabled and not use_fast_path:
                 final_text, total_steps, subagent_reports = self._run_tri_layer(
-                    user_prompt, world_context, survival_override, active_model,
-                    session_language, progress_token, cb, on_sentence=on_sentence,
+                    user_prompt,
+                    world_context,
+                    survival_override,
+                    active_model,
+                    session_language,
+                    progress_token,
+                    callback,
+                    on_sentence=on_sentence,
                 )
                 executed_actions = self._summarize_actions(subagent_reports)
             else:
-                if use_fast_path:
-                    if native_tools:
-                        logger.info("Voice native-tools path engaged (LLM tool loop, any language).")
-                    else:
-                        logger.info("Fast-path engaged (prompt <= %s chars).", self.fast_path_max_chars)
                 messages = self._native_loop_messages(session_language)
                 final_text, total_steps = self._run_native_history_loop(
-                    active_model, messages, actions_out=executed_actions,
+                    active_model,
+                    messages,
+                    actions_out=executed_actions,
                     num_predict=self.fast_path_num_predict if use_fast_path else None,
                     on_sentence=on_sentence,
+                    max_steps=self.fast_path_max_steps if use_fast_path else self.max_steps,
+                    trace_id=trace_id,
                 )
 
             self.progress_manager.emit_final(progress_token)
             self.memory.remember("dialogue", f"User: {user_prompt} | Bot: {final_text}")
             try:
+                self._observe_world_memory_dialogue(user_prompt, final_text)
+            except Exception:
+                logger.debug("world memory dialogue observation failed", exc_info=True)
+            try:
                 self.memory_consolidator.consolidate(user_prompt, speaker=self._current_speaker())
             except Exception:
                 logger.debug("memory consolidation failed", exc_info=True)
 
+            latency_trace.mark(
+                trace_id,
+                "agent.done",
+                {"steps": total_steps, "speech_handled": stream_state["spoken"] > 0},
+            )
+            if self.speech_arbiter._speak_fn is None:
+                latency_trace.finish(trace_id, "done")
             return {
                 "text": final_text,
                 "thoughts": f"Agent executed {total_steps} internal steps.",
@@ -1570,9 +1644,15 @@ class AgentOrchestrator:
                 "route": self.last_routed_subagents,
                 "subagents": subagent_reports,
                 "speech_handled": stream_state["spoken"] > 0,
+                "trace_id": trace_id,
+                "latency": latency_trace.get(trace_id),
             }
+        except Exception as exc:
+            latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
+            raise
         finally:
             self.progress_manager.emit_final(progress_token)
             self.tool_registry.status_hook = previous_hook
             self._active_progress_token = ""
             self.is_busy = False
+

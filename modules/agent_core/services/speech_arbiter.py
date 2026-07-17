@@ -1,10 +1,3 @@
-"""Speech arbitration for SentryBOT.
-
-Ensures only one TTS utterance plays at a time, manages a priority queue,
-cancels stale progress messages when final response arrives, and sets an
-echo-guard flag so Vosk can pause during TTS playback.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -16,43 +9,31 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("agent.speech_arbiter")
-
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
 
 
 def split_sentences(text: str, max_chars: int = 160, max_chunks: int = 8) -> List[str]:
-    """Split text into sentence chunks so TTS can start on the first sentence.
-
-    Long sentences are hard-wrapped by words; output is capped at *max_chunks*
-    (the tail is merged into the last chunk) to protect the speech queue.
-    """
     raw = str(text or "").strip()
     if not raw:
         return []
-    parts = [p.strip() for p in _SENTENCE_SPLIT_RE.split(raw) if p.strip()]
     chunks: List[str] = []
-    for part in parts:
-        if len(part) <= max_chars:
-            chunks.append(part)
-            continue
+    for part in [item.strip() for item in _SENTENCE_SPLIT_RE.split(raw) if item.strip()]:
         words = part.split()
-        buf: List[str] = []
-        for w in words:
-            if len(" ".join(buf + [w])) > max_chars and buf:
-                chunks.append(" ".join(buf))
-                buf = [w]
+        buffer: List[str] = []
+        for word in words:
+            candidate = " ".join(buffer + [word])
+            if buffer and len(candidate) > max_chars:
+                chunks.append(" ".join(buffer))
+                buffer = [word]
             else:
-                buf.append(w)
-        if buf:
-            chunks.append(" ".join(buf))
+                buffer.append(word)
+        if buffer:
+            chunks.append(" ".join(buffer))
     if len(chunks) > max_chunks:
-        head = chunks[: max_chunks - 1]
-        head.append(" ".join(chunks[max_chunks - 1 :]))
-        chunks = head
+        chunks = chunks[: max_chunks - 1] + [" ".join(chunks[max_chunks - 1 :])]
     return chunks
 
 
-# ── Priority tiers ────────────────────────────────────────────────────
 class SpeechPriority:
     SAFETY = 95
     FINAL_RESPONSE = 60
@@ -62,17 +43,16 @@ class SpeechPriority:
 
 @dataclass
 class SpeechItem:
-    """A single TTS utterance submitted to the arbiter."""
-
     text: str
     priority: int = SpeechPriority.PROGRESS
-    category: str = "progress"  # progress | final | safety | idle
+    category: str = "progress"
     cancel_token: str = ""
     item_id: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
     created_at: float = field(default_factory=time.time)
-    max_age_s: float = 10.0  # auto-expire if queued too long
+    max_age_s: float = 10.0
     language: str = ""
     tone: Optional[Dict[str, Any]] = None
+    trace_id: str = ""
 
     @property
     def expired(self) -> bool:
@@ -80,65 +60,34 @@ class SpeechItem:
 
 
 class SpeechArbiter:
-    """Thread-safe TTS arbitration layer.
-
-    Usage::
-
-        arbiter = SpeechArbiter(speak_fn=my_tts_function)
-        arbiter.start()
-
-        # Submit speech items
-        arbiter.enqueue("Bakıyorum...", priority=SpeechPriority.PROGRESS,
-                        category="progress", cancel_token="req_123")
-
-        # When final answer arrives, cancel stale progress and speak final
-        arbiter.cancel_by_token("req_123")
-        arbiter.enqueue("İşte sonuç...", priority=SpeechPriority.FINAL_RESPONSE,
-                        category="final")
-    """
-
-    def __init__(
-        self,
-        speak_fn: Optional[Callable[..., Any]] = None,
-        max_queue_size: int = 10,
-    ) -> None:
+    def __init__(self, speak_fn: Optional[Callable[..., Any]] = None, max_queue_size: int = 10) -> None:
         self._speak_fn = speak_fn
         self._max_queue = max(3, int(max_queue_size))
-
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._queue: List[SpeechItem] = []
         self._processing = threading.Event()
         self._stop_event = threading.Event()
+        self._interrupt_flag = threading.Event()
         self._worker: Optional[threading.Thread] = None
-
-        # Echo guard: set True while TTS is playing so Vosk can pause
-        self.tts_active = threading.Event()
-
-        # Dedup: last spoken text hash within window
-        self._recent_texts: Dict[str, float] = {}
-        self._dedup_window_s = 5.0
-
-        # Currently speaking item (for external query)
         self._current_item: Optional[SpeechItem] = None
         self._tts_state_callback: Optional[Callable[[bool], Any]] = None
         self._stop_playback_fn: Optional[Callable[[], Any]] = None
-        self._interrupt_flag = threading.Event()
+        self._recent_texts: Dict[str, float] = {}
+        self._dedup_window_s = 5.0
+        self.tts_active = threading.Event()
 
-    # ── Lifecycle ─────────────────────────────────────────────────────
     def start(self) -> None:
         if self._worker and self._worker.is_alive():
             return
         self._stop_event.clear()
         self._worker = threading.Thread(target=self._run, daemon=True, name="speech_arbiter")
         self._worker.start()
-        logger.info("SpeechArbiter started.")
 
     def stop(self) -> None:
         self._stop_event.set()
-        self._processing.set()  # wake up worker
+        self._processing.set()
         if self._worker:
             self._worker.join(timeout=2.0)
-        logger.info("SpeechArbiter stopped.")
 
     def set_speak_fn(self, fn: Callable[..., Any]) -> None:
         self._speak_fn = fn
@@ -150,27 +99,18 @@ class SpeechArbiter:
         self._stop_playback_fn = fn
 
     def interrupt_all(self) -> int:
-        """Cancel queued TTS and stop current speaker output (wakeword barge-in)."""
         self._interrupt_flag.set()
         cleared = self.clear_queue()
-        self.cancel_progress()
-        if self._stop_playback_fn is not None:
+        if self._stop_playback_fn:
             try:
                 self._stop_playback_fn()
-            except Exception as exc:
-                logger.debug("stop_playback_fn failed: %s", exc)
+            except Exception:
+                logger.debug("stop playback failed", exc_info=True)
+        self._set_tts_active(False)
         with self._lock:
             self._current_item = None
-        self.tts_active.clear()
-        if self._tts_state_callback is not None:
-            try:
-                self._tts_state_callback(False)
-            except Exception:
-                pass
-        logger.info("SpeechArbiter interrupted (cleared=%d)", cleared)
         return cleared
 
-    # ── Submit ────────────────────────────────────────────────────────
     def enqueue(
         self,
         text: str,
@@ -180,45 +120,34 @@ class SpeechArbiter:
         language: str = "",
         tone: Optional[Dict[str, Any]] = None,
         max_age_s: float = 10.0,
+        trace_id: str = "",
     ) -> Optional[str]:
-        """Add a speech item to the queue. Returns item_id or None if rejected."""
-        text = str(text or "").strip()
-        if not text:
+        value = str(text or "").strip()
+        if not value:
             return None
-
-        # Dedup check
         now = time.time()
-        text_key = text[:80].lower()
+        key = value[:80].lower()
         with self._lock:
-            last = self._recent_texts.get(text_key, 0.0)
-            if now - last < self._dedup_window_s:
+            if now - self._recent_texts.get(key, 0.0) < self._dedup_window_s:
                 return None
-
-        item = SpeechItem(
-            text=text,
-            priority=priority,
-            category=category,
-            cancel_token=cancel_token,
-            language=language,
-            tone=tone,
-            max_age_s=max_age_s,
-        )
-
-        with self._lock:
-            # Drop expired items
-            self._queue = [i for i in self._queue if not i.expired]
-
-            # Enforce max queue size – drop lowest priority
+            self._queue = [item for item in self._queue if not item.expired]
+            item = SpeechItem(
+                text=value,
+                priority=int(priority),
+                category=str(category),
+                cancel_token=str(cancel_token or ""),
+                language=str(language or ""),
+                tone=dict(tone) if isinstance(tone, dict) else None,
+                max_age_s=float(max_age_s),
+                trace_id=str(trace_id or ""),
+            )
             if len(self._queue) >= self._max_queue:
-                self._queue.sort(key=lambda x: x.priority)
-                if item.priority <= self._queue[0].priority:
-                    return None  # reject
-                self._queue.pop(0)  # drop lowest
-
+                lowest = min(self._queue, key=lambda queued: queued.priority)
+                if item.priority <= lowest.priority:
+                    return None
+                self._queue.remove(lowest)
             self._queue.append(item)
-            self._queue.sort(key=lambda x: -x.priority)  # highest first
-
-        self._processing.set()  # wake worker
+        self._processing.set()
         return item.item_id
 
     def enqueue_progress(
@@ -226,93 +155,83 @@ class SpeechArbiter:
         text: str,
         cancel_token: str = "",
         language: str = "",
+        trace_id: str = "",
     ) -> Optional[str]:
-        """Convenience: enqueue a progress-level message."""
         return self.enqueue(
-            text=text,
+            text,
             priority=SpeechPriority.PROGRESS,
             category="progress",
             cancel_token=cancel_token,
             language=language,
             max_age_s=8.0,
+            trace_id=trace_id,
         )
 
-    def enqueue_final(self, text: str, language: str = "", tone: Optional[Dict] = None) -> Optional[str]:
-        """Convenience: enqueue a final-response-level message.
-
-        The answer is split into sentence chunks so playback starts on the
-        first sentence while the rest waits in the queue (streaming feel even
-        with a blocking TTS backend).
-        """
-        # Final answer should preempt stale progress chatter.
+    def enqueue_final(
+        self,
+        text: str,
+        language: str = "",
+        tone: Optional[Dict[str, Any]] = None,
+        trace_id: str = "",
+    ) -> Optional[str]:
         self.cancel_progress()
-        text = str(text or "").strip()
-        if not text:
-            return None
-
-        chunks = split_sentences(text) or [text]
+        chunks = split_sentences(text)
         first_id: Optional[str] = None
-        for idx, chunk in enumerate(chunks):
-            item_id = self.enqueue(
-                text=chunk,
-                priority=SpeechPriority.FINAL_RESPONSE - min(idx, 20),
-                category="final",
+        for index, chunk in enumerate(chunks):
+            item_id = self.enqueue_final_chunk(
+                chunk,
+                index=index,
                 language=language,
                 tone=tone,
-                max_age_s=45.0,
+                trace_id=trace_id,
             )
-            if first_id is None:
-                first_id = item_id
+            first_id = first_id or item_id
         return first_id
 
-    def enqueue_final_chunk(self, text: str, index: int = 0, language: str = "", tone: Optional[Dict] = None) -> Optional[str]:
-        """Enqueue one incremental final chunk (for streaming LLM output).
-
-        Call with increasing *index* so earlier chunks keep higher priority.
-        The first chunk (index 0) cancels stale progress messages.
-        """
-        if index == 0:
-            self.cancel_progress()
+    def enqueue_final_chunk(
+        self,
+        text: str,
+        index: int = 0,
+        language: str = "",
+        tone: Optional[Dict[str, Any]] = None,
+        trace_id: str = "",
+    ) -> Optional[str]:
         return self.enqueue(
-            text=text,
-            priority=SpeechPriority.FINAL_RESPONSE - min(int(index), 20),
+            text,
+            priority=SpeechPriority.FINAL_RESPONSE,
             category="final",
+            cancel_token=f"final:{trace_id}:{index}" if trace_id else f"final:{index}",
             language=language,
             tone=tone,
             max_age_s=45.0,
+            trace_id=trace_id,
         )
 
-    def enqueue_safety(self, text: str) -> Optional[str]:
-        """Convenience: enqueue a safety-level message (highest priority)."""
+    def enqueue_safety(self, text: str, trace_id: str = "") -> Optional[str]:
+        self.interrupt_all()
+        self._interrupt_flag.clear()
         return self.enqueue(
-            text=text,
+            text,
             priority=SpeechPriority.SAFETY,
             category="safety",
-            max_age_s=15.0,
+            max_age_s=20.0,
+            trace_id=trace_id,
         )
 
-    # ── Cancel ────────────────────────────────────────────────────────
     def cancel_by_token(self, cancel_token: str) -> int:
-        """Cancel all queued items with the given cancel_token."""
-        if not cancel_token:
+        token = str(cancel_token or "")
+        if not token:
             return 0
-        count = 0
         with self._lock:
             before = len(self._queue)
-            self._queue = [i for i in self._queue if i.cancel_token != cancel_token]
-            count = before - len(self._queue)
-        if count:
-            logger.debug("Cancelled %d speech items with token '%s'", count, cancel_token)
-        return count
+            self._queue = [item for item in self._queue if item.cancel_token != token]
+            return before - len(self._queue)
 
     def cancel_progress(self) -> int:
-        """Cancel all queued progress messages."""
-        count = 0
         with self._lock:
             before = len(self._queue)
-            self._queue = [i for i in self._queue if i.category != "progress"]
-            count = before - len(self._queue)
-        return count
+            self._queue = [item for item in self._queue if item.category != "progress"]
+            return before - len(self._queue)
 
     def clear_queue(self) -> int:
         with self._lock:
@@ -320,7 +239,6 @@ class SpeechArbiter:
             self._queue.clear()
             return count
 
-    # ── Query ─────────────────────────────────────────────────────────
     def is_speaking(self) -> bool:
         return self.tts_active.is_set()
 
@@ -330,18 +248,22 @@ class SpeechArbiter:
 
     def get_status(self) -> Dict[str, Any]:
         with self._lock:
+            current = self._current_item
             return {
                 "speaking": self.tts_active.is_set(),
                 "queue_size": len(self._queue),
-                "current": self._current_item.text[:60] if self._current_item else None,
+                "current": {
+                    "item_id": current.item_id,
+                    "category": current.category,
+                    "trace_id": current.trace_id,
+                    "text": current.text[:80],
+                } if current else None,
             }
 
-    # ── Worker ────────────────────────────────────────────────────────
     def _run(self) -> None:
         while not self._stop_event.is_set():
-            self._processing.wait(timeout=1.0)
+            self._processing.wait(timeout=0.5)
             self._processing.clear()
-
             while not self._stop_event.is_set():
                 item = self._pop_next()
                 if item is None:
@@ -350,59 +272,53 @@ class SpeechArbiter:
 
     def _pop_next(self) -> Optional[SpeechItem]:
         with self._lock:
-            # Remove expired
-            self._queue = [i for i in self._queue if not i.expired]
+            self._queue = [item for item in self._queue if not item.expired]
             if not self._queue:
                 return None
-            # Already sorted by priority (highest first)
+            self._queue.sort(key=lambda item: (-item.priority, item.created_at))
             return self._queue.pop(0)
 
+    def _set_tts_active(self, active: bool) -> None:
+        if active:
+            self.tts_active.set()
+        else:
+            self.tts_active.clear()
+        if self._tts_state_callback:
+            try:
+                self._tts_state_callback(active)
+            except Exception:
+                logger.debug("tts state callback failed", exc_info=True)
+
     def _dispatch(self, item: SpeechItem) -> None:
+        if item.expired or not self._speak_fn:
+            return
         if self._interrupt_flag.is_set():
             self._interrupt_flag.clear()
             return
-        if not self._speak_fn:
-            logger.debug("No speak_fn set, dropping: %s", item.text[:40])
-            return
 
-        # Record for dedup
-        text_key = item.text[:80].lower()
+        key = item.text[:80].lower()
         with self._lock:
-            self._recent_texts[text_key] = time.time()
+            self._recent_texts[key] = time.time()
             self._current_item = item
-            # GC old dedup entries
-            if len(self._recent_texts) > 50:
-                cutoff = time.time() - self._dedup_window_s * 2
-                self._recent_texts = {
-                    k: v for k, v in self._recent_texts.items() if v > cutoff
-                }
+            cutoff = time.time() - self._dedup_window_s * 2
+            self._recent_texts = {text: ts for text, ts in self._recent_texts.items() if ts > cutoff}
 
-        self.tts_active.set()
-        if self._tts_state_callback is not None:
-            try:
-                self._tts_state_callback(True)
-            except Exception:
-                pass
+        self._set_tts_active(True)
         try:
-            if self._interrupt_flag.is_set():
-                return
             kwargs: Dict[str, Any] = {"text": item.text}
             if item.tone:
                 kwargs["tone"] = item.tone
             if item.language:
                 kwargs["language"] = item.language
+            if item.trace_id:
+                kwargs["trace_id"] = item.trace_id
             self._speak_fn(**kwargs)
-        except Exception as exc:
-            logger.warning("TTS dispatch failed: %s", exc)
+        except Exception:
+            logger.warning("TTS dispatch failed", exc_info=True)
         finally:
-            self.tts_active.clear()
-            if self._tts_state_callback is not None:
-                try:
-                    self._tts_state_callback(False)
-                except Exception:
-                    pass
+            self._set_tts_active(False)
             with self._lock:
                 self._current_item = None
 
 
-__all__ = ["SpeechArbiter", "SpeechItem", "SpeechPriority"]
+__all__ = ["SpeechArbiter", "SpeechItem", "SpeechPriority", "split_sentences"]

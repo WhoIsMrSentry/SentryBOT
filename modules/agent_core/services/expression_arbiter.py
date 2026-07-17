@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+# --- SentryBOT expression/idle boundary contract ---
+EXPRESSION_IDLE_COMPATIBILITY = True
+EXPRESSION_IDLE_BOUNDARY_ROLE = 'agent_core_compat_expression_arbiter'
+EXPRESSION_IDLE_RUNTIME_OWNER = 'central state/output: modules.expression; semantic intent: modules.autonomy'
+EXPRESSION_IDLE_BOUNDARY_REASON = 'ExpressionArbiter is still constructed by AgentOrchestrator and gateway bootstrap. Keep as compatibility arbitration helper until callers are migrated.'
+# --- End SentryBOT expression/idle boundary contract ---
+
 import threading
 from typing import Dict, Any
 
