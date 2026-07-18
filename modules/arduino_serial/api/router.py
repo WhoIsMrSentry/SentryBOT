@@ -105,6 +105,7 @@ def get_router(svc: xArduinoSerialService) -> APIRouter:
     def cute_catalog():
         return _safe_call(svc.get_cute_catalog)
 
+
     @r.get("/metrics")
     def metrics():
         return _safe_call(lambda: svc._metrics)

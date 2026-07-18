@@ -35,8 +35,8 @@ svc.start_background(on_result=lambda r: print(r))
 ```
 
 ### CLI
-```powershell
-python -m modules.speech.xSpeechService --listen-once
+```bash
+python3 -m modules.speech.xSpeechService --listen-once
 # veya API
 python -m modules.speech.xSpeechService --api --config config/agent.yaml
 ```

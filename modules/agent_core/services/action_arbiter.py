@@ -12,6 +12,13 @@ is submitted here as an ``ActionRequest``.  The arbiter enforces:
 
 from __future__ import annotations
 
+# --- SentryBOT safety/action boundary contract ---
+SAFETY_ACTION_COMPATIBILITY = True
+SAFETY_ACTION_BOUNDARY_ROLE = 'agent_core_compat_action_arbiter'
+SAFETY_ACTION_RUNTIME_OWNER = 'robot-runtime execution and capability approval: modules.autonomy'
+SAFETY_ACTION_BOUNDARY_REASON = 'ActionArbiter is still used by AgentOrchestrator and agent_core action API as an LLM/tool proposal arbitration surface. Keep stable until callers are migrated.'
+# --- End SentryBOT safety/action boundary contract ---
+
 import hashlib
 import json
 import logging

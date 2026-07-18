@@ -70,6 +70,44 @@ class Recognizer:
         }
         return mapping.get(lang, mapping.get("en", "models/vosk-en"))
 
+    def resolved_model_path(self) -> str:
+        """Return the absolute model path that this recognizer would load."""
+        model_path = self._resolve_model_path()
+        if not os.path.isabs(model_path):
+            module_root = Path(__file__).resolve().parents[1]
+            model_path = str((module_root / model_path).resolve())
+        return str(model_path)
+
+    def status(self) -> dict:
+        """Cheap readiness check; never loads the heavy Vosk model."""
+        model_path = self.resolved_model_path()
+        vosk_available = True
+        vosk_error = ""
+        try:
+            import vosk  # type: ignore  # noqa: F401
+        except Exception as exc:
+            vosk_available = False
+            vosk_error = str(exc)
+        model_exists = os.path.isdir(model_path)
+        error_parts = []
+        if not vosk_available:
+            error_parts.append("vosk package unavailable")
+        if not model_exists:
+            error_parts.append("model directory missing")
+        return {
+            "ok": bool(vosk_available and model_exists),
+            "language": self.cfg.language or "tr",
+            "model_path": model_path,
+            "model_exists": bool(model_exists),
+            "model_loaded": bool(self._model is not None),
+            "vosk_available": bool(vosk_available),
+            "vosk_error": vosk_error,
+            "error": "; ".join(error_parts),
+        }
+
+    def is_available(self) -> bool:
+        return bool(self.status().get("ok"))
+
     def _ensure_model(self):
         global Model, KaldiRecognizer, webrtcvad
         if Model is None or KaldiRecognizer is None:
@@ -82,11 +120,7 @@ class Recognizer:
             Model = _Model
             KaldiRecognizer = _KaldiRecognizer
         if self._model is None:
-            model_path = self._resolve_model_path()
-            # resolve relative to module root
-            if not os.path.isabs(model_path):
-                module_root = Path(__file__).resolve().parents[1]
-                model_path = str((module_root / model_path).resolve())
+            model_path = self.resolved_model_path()
             if not os.path.isdir(model_path):
                 raise FileNotFoundError(f"Vosk model directory not found: {model_path}")
             self._model = Model(model_path)

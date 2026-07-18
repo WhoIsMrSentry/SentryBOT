@@ -1,25 +1,31 @@
 from __future__ import annotations
+
 import argparse
 import logging
 import re
-from typing import Any, Dict, Optional
+import threading
+import time
+import uuid
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover
     requests = None  # type: ignore
 
-from modules.speak.config_loader import load_config
-from modules.speak.services.tts import TextToSpeech
-from modules.speak.services.player import AudioPlayer
 from fastapi import FastAPI
-from typing import TYPE_CHECKING
+
+from modules.common.latency_trace import latency_trace
+from modules.speak.config_loader import load_config
+from modules.speak.services.player import AudioPlayer
+from modules.speak.services.tts import TextToSpeech, TTSUnavailableError
 
 if TYPE_CHECKING:
     from modules.speak.api import get_router  # type: ignore
 
 try:
     from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
+
     _init_global_logging()
 except Exception:
     pass
@@ -29,274 +35,82 @@ logger = logging.getLogger("speak")
 _TONE_PRESETS: Dict[str, Dict[str, float]] = {
     "neutral": {"rate": 170, "volume": 0.85},
     "joy": {"rate": 190, "volume": 1.0},
+    "happy": {"rate": 190, "volume": 1.0},
     "fast": {"rate": 190, "volume": 1.0},
-    "calm": {"rate": 170, "volume": 0.7},
+    "calm": {"rate": 160, "volume": 0.72},
     "excited": {"rate": 200, "volume": 1.0},
     "sadness": {"rate": 150, "volume": 0.75},
     "sad": {"rate": 150, "volume": 0.75},
     "curiosity": {"rate": 185, "volume": 0.9},
+    "curious": {"rate": 185, "volume": 0.9},
     "tired": {"rate": 140, "volume": 0.65},
     "fear": {"rate": 200, "volume": 0.9},
 }
 
 
 class SpeakService:
-    """Metni sese dönüştürüp MAX98357A üzerinden çalar."""
-
-    def __init__(self, config_path: Optional[str] = None):
-        import random
-
+    def __init__(self, config_path: Optional[str] = None) -> None:
         self.cfg = load_config(config_path)
         self.tts = TextToSpeech(self.cfg.get("tts", {}))
         self.player = AudioPlayer(self.cfg.get("audio_out", {}))
         self._liveliness_cfg = self.cfg.get("liveliness", {}) or {}
-        self._naturalness_cfg = self.cfg.get("naturalness", {}) or {}
-        self._rng = random.Random()
+        self._speech_lock = threading.RLock()
 
     @staticmethod
-    def _coerce_tone(tone: Any) -> Optional[dict]:
-        """Accept dict overrides or named presets (e.g. quiet-hours ``tone: calm``)."""
+    def _coerce_tone(tone: Any) -> Optional[Dict[str, Any]]:
         if tone is None:
             return None
         if isinstance(tone, dict):
             return dict(tone)
         if isinstance(tone, str):
-            key = tone.strip().lower()
-            if not key or key in {"default", "none"}:
-                return None
-            preset = _TONE_PRESETS.get(key)
-            if preset:
-                return dict(preset)
-            logger.debug("unknown tone label %r, ignoring", tone)
-            return None
-        logger.warning("unsupported tone type %s, ignoring", type(tone).__name__)
+            return dict(_TONE_PRESETS.get(tone.strip().lower(), {})) or None
         return None
 
     @staticmethod
-    def _pool_key_for_tone(tone: Any) -> str:
-        """Pick a filler-pool key from a tone (string emotion or rate/volume dict)."""
-        if isinstance(tone, str) and tone.strip():
-            try:
-                from modules.common.emotion_vocab import get_vocab
-
-                return get_vocab().canonical(tone)
-            except Exception:
-                return tone.strip().lower()
-        if isinstance(tone, dict):
-            rate = tone.get("rate")
-            if isinstance(rate, (int, float)):
-                if rate >= 195:
-                    return "excitement"
-                if rate <= 150:
-                    return "sadness"
-        return "default"
-
-    def _filler_pool(self, tone: Any) -> list:
-        cfg = getattr(self, "_naturalness_cfg", {}) or {}
-        pools = cfg.get("fillers", {}) if isinstance(cfg, dict) else {}
-        if not isinstance(pools, dict):
-            return []
-        key = self._pool_key_for_tone(tone)
-        pool = pools.get(key)
-        if isinstance(pool, list) and pool:
-            return list(pool)
-        return list(pools.get("default", []) or [])
-
-    def _enrich_text_for_speech(self, text: str, tone: Any = None, rng=None) -> str:
-        """Optionally prepend a natural filler so speech sounds less scripted.
-
-        Runs *after* :meth:`_clean_text_for_speech`, so fillers like "Hmm,"
-        are not stripped as meta-reasoning. Best-effort and probabilistic.
-        """
-        cfg = getattr(self, "_naturalness_cfg", {})
-        cfg = cfg if isinstance(cfg, dict) else {}
-        if not cfg.get("enabled", False):
-            return text
-        body = (text or "").strip()
-        if len(body) < int(cfg.get("min_chars", 12)):
-            return text
-        # Don't stack fillers if the line already opens with one.
-        first_word = re.match(r"^[^\W\d_]+", body, re.UNICODE)
-        if first_word and first_word.group(0).lower() in {"hmm", "şey", "sey", "yani", "eh", "of", "aa"}:
-            return text
-        pool = self._filler_pool(tone)
-        if not pool:
-            return text
-        roll = (rng or self._rng).random()
-        if roll >= float(cfg.get("filler_probability", 0.2)):
-            return text
-        filler = (rng or self._rng).choice(pool)
-        return f"{filler} {body}"
-
-    @staticmethod
-    def _tone_to_piper(tone: Optional[dict]) -> Optional[dict]:
-        """Translate a rate/volume tone into Piper prosody knobs.
-
-        Piper ignores pyttsx3-style ``rate``/``volume``; the only way emotion
-        actually colours Piper audio is via ``length_scale`` (pace) and
-        ``noise_w`` (expressiveness/variability). Baseline rate is 170.
-        """
+    def _tone_to_piper(tone: Optional[Dict[str, Any]]) -> Optional[Dict[str, float]]:
         if not isinstance(tone, dict):
             return None
         rate = tone.get("rate")
         if not isinstance(rate, (int, float)) or rate <= 0:
             return None
-        # Faster speech -> shorter length_scale. Clamp to a natural range.
-        length_scale = max(0.6, min(1.6, 170.0 / float(rate)))
-        # Livelier (faster) speech gets a touch more variability.
-        noise_w = max(0.4, min(1.1, 0.8 * (float(rate) / 170.0)))
-        return {
-            "length_scale": round(length_scale, 3),
-            "noise_w": round(noise_w, 3),
-        }
+        length_scale = max(0.62, min(1.55, 170.0 / float(rate)))
+        noise_w = max(0.45, min(1.05, 0.78 * (float(rate) / 170.0)))
+        return {"length_scale": round(length_scale, 3), "noise_w": round(noise_w, 3)}
 
-    def _post_interactions(self, endpoint: str, payload: dict) -> None:
-        if requests is None:
+    @staticmethod
+    def _clean_text_for_speech(text: str) -> str:
+        raw = str(text or "").strip()
+        if not raw:
+            return ""
+        raw = re.sub(r"```.*?```", " ", raw, flags=re.DOTALL)
+        raw = re.sub(r"`([^`]*)`", r"\1", raw)
+        clean: list[str] = []
+        for line in raw.splitlines():
+            value = line.strip()
+            if not value or re.match(r"^[#>*•-]\s*", value):
+                continue
+            low = value.lower()
+            if low.startswith(("analysis:", "reasoning:", "thinking:", "internal state:", "tool_call:")):
+                continue
+            clean.append(value.replace("*", ""))
+        return re.sub(r"\s+", " ", " ".join(clean)).strip()
+
+    def _expression_event(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
+        if requests is None or not bool(self._liveliness_cfg.get("enabled", True)):
             return
-        base = str(self._liveliness_cfg.get("interactions_base_url", "")).strip().rstrip("/")
+        base = str(self._liveliness_cfg.get("expression_base_url", "")).strip().rstrip("/")
         if not base:
             return
         try:
-            requests.post(f"{base}{endpoint}", json=payload, timeout=0.5)
-        except Exception:
-            pass
-
-    def _estimate_effect_duration_ms(self, text: str, tone: Optional[dict]) -> int:
-        cfg = (self._liveliness_cfg.get("speech_effect") or {}) if isinstance(self._liveliness_cfg, dict) else {}
-        cps = float(cfg.get("chars_per_second", 16.0))
-        min_ms = int(cfg.get("min_duration_ms", 400))
-        max_ms = int(cfg.get("max_duration_ms", 7000))
-        text_len = max(1, len((text or "").strip()))
-        duration_ms = int((text_len / max(1.0, cps)) * 1000.0)
-        if tone and isinstance(tone, dict):
-            rate = tone.get("rate")
-            if isinstance(rate, (int, float)) and rate > 0:
-                # 170 ~= neutral baseline in this project.
-                duration_ms = int(duration_ms * (170.0 / float(rate)))
-        return max(min_ms, min(max_ms, duration_ms))
-
-    @staticmethod
-    def _resolve_tone_key(tone: Optional[dict]) -> str:
-        if not isinstance(tone, dict):
-            return "neutral"
-        rate = tone.get("rate")
-        volume = tone.get("volume")
-        if isinstance(rate, (int, float)):
-            if rate >= 190:
-                return "fast"
-            if rate <= 145:
-                return "tired"
-        if isinstance(volume, (int, float)) and float(volume) <= 0.7:
-            return "calm"
-        return "neutral"
-
-    def _resolve_effect_name_for_tone(self, tone: Optional[dict]) -> str:
-        cfg = self._liveliness_cfg.get("speech_effect", {}) or {}
-        tone_map = cfg.get("tone_effect_map", {}) if isinstance(cfg.get("tone_effect_map", {}), dict) else {}
-        key = self._resolve_tone_key(tone)
-        return str(tone_map.get(key, cfg.get("name", "PULSE")))
-
-    def _emit_speech_liveliness_start(self, text: str, tone: Optional[dict]) -> None:
-        if not bool(self._liveliness_cfg.get("enabled", False)):
-            return
-        tone_key = self._resolve_tone_key(tone)
-        exclamations = str(text or "").count("!")
-        questions = str(text or "").count("?")
-        self._post_interactions(
-            "/event",
-            {
-                "type": "speech.start",
-                "data": {
-                    "text_len": len(text or ""),
-                    "tone_key": tone_key,
-                    "exclamations": exclamations,
-                    "questions": questions,
-                },
-            },
-        )
-        effect_cfg = self._liveliness_cfg.get("speech_effect", {}) or {}
-        force = bool(effect_cfg.get("force", False))
-        if not bool(self._liveliness_cfg.get("event_driven_effects", False)):
-            effect_name = self._resolve_effect_name_for_tone(tone)
-            duration_ms = self._estimate_effect_duration_ms(text, tone)
-            self._post_interactions(
-                "/effect",
-                {"name": effect_name, "duration_ms": duration_ms, "force": force},
+            requests.post(
+                f"{base}/event",
+                json={"type": event_type, "data": dict(data or {})},
+                timeout=float(self._liveliness_cfg.get("event_timeout_s", 0.35)),
             )
-        if bool(effect_cfg.get("stack_emphasis_effects", False)):
-            self._emit_speech_rhythm_beats(text, force=force)
-            emph_map = effect_cfg.get("emphasis_effect_map", {}) if isinstance(effect_cfg.get("emphasis_effect_map", {}), dict) else {}
-            if exclamations > 0:
-                name = str(emph_map.get("exclamation", "COMET"))
-                self._post_interactions("/effect", {"name": name, "duration_ms": 260, "force": force})
-            if questions > 0:
-                name = str(emph_map.get("question", "TWINKLE"))
-                self._post_interactions("/effect", {"name": name, "duration_ms": 240, "force": force})
+        except Exception:
+            logger.debug("expression event failed: %s", event_type, exc_info=True)
 
-    def _emit_speech_rhythm_beats(self, text: str, force: bool = False) -> None:
-        effect_cfg = self._liveliness_cfg.get("speech_effect", {}) or {}
-        rhythm = effect_cfg.get("rhythm", {}) if isinstance(effect_cfg.get("rhythm", {}), dict) else {}
-        if not bool(rhythm.get("enabled", False)):
-            return
-        raw_text = str(text or "")
-        words = len([w for w in raw_text.split() if w.strip()])
-        clauses = max(1, len([p for p in re.split(r"[,;:.!?]+", raw_text) if p.strip()]))
-        if words <= 0 and clauses <= 0:
-            return
-
-        mode = str(rhythm.get("mode", "words")).strip().lower()
-        words_per_beat = max(1, int(rhythm.get("words_per_beat", 3)))
-        clauses_per_beat = max(1, int(rhythm.get("clauses_per_beat", 1)))
-        max_beats = max(0, int(rhythm.get("max_beats", 4)))
-        if mode == "clauses":
-            beat_count = min(max_beats, max(0, clauses // clauses_per_beat))
-        else:
-            beat_count = min(max_beats, max(0, words // words_per_beat))
-        if beat_count <= 0:
-            return
-        beat_name = str(rhythm.get("effect", "PULSE"))
-        beat_duration_ms = max(80, int(rhythm.get("duration_ms", 160)))
-        for _ in range(beat_count):
-            self._post_interactions("/effect", {"name": beat_name, "duration_ms": beat_duration_ms, "force": force})
-
-        pause_map = rhythm.get("pause_effect_map", {}) if isinstance(rhythm.get("pause_effect_map", {}), dict) else {}
-        if not pause_map:
-            return
-        max_pause_marks = max(0, int(rhythm.get("max_pause_marks", 4)))
-        if max_pause_marks <= 0:
-            return
-        punctuation_counts = {
-            ",": raw_text.count(","),
-            ";": raw_text.count(";"),
-            ":": raw_text.count(":"),
-            ".": raw_text.count("."),
-        }
-        used = 0
-        for mark, count in punctuation_counts.items():
-            if count <= 0:
-                continue
-            effect_name = str(pause_map.get(mark, "")).strip()
-            if not effect_name:
-                continue
-            emit_count = min(count, max_pause_marks - used)
-            if emit_count <= 0:
-                break
-            for _ in range(emit_count):
-                self._post_interactions(
-                    "/effect",
-                    {"name": effect_name, "duration_ms": max(80, beat_duration_ms - 30), "force": force},
-                )
-            used += emit_count
-            if used >= max_pause_marks:
-                break
-
-    def _emit_speech_liveliness_end(self, duration_sec: float) -> None:
-        if not bool(self._liveliness_cfg.get("enabled", False)):
-            return
-        self._post_interactions("/event", {"type": "speech.end", "data": {"duration_sec": duration_sec}})
-
-    def stop_speaking(self) -> dict:
-        """Interrupt current TTS playback (wakeword barge-in)."""
+    def stop_speaking(self) -> Dict[str, Any]:
         try:
             from modules.speak.services.tts import cancel_synthesis
 
@@ -304,190 +118,139 @@ class SpeakService:
         except Exception:
             pass
         self.player.stop_playback()
+        self._expression_event("speak.finished", {"interrupted": True})
         return {"ok": True, "stopped": True}
-
-    # ── Meta-reasoning line starters to filter from TTS ──────────────
-    _THINK_STARTERS = (
-        "draft", "selection", "alternative", "let's ", "let me ",
-        "actually", "wait,", "wait ", "must be", "check ",
-        "checking", "final choice", "constraint", "role:",
-        "internal state", "happiness is", "boredom is", "energy is",
-        "time is", "happiness:", "energy:", "boredom:",
-        "last interaction:", "time:", "feeling:", "note:",
-        "option", "hmm", "analysis:", "sub-agent", "sub_agent",
-        "battery", "voltage", "temperature:", "sensor",
-        "i need to", "i should", "i'll ", "i will ",
-        "thinking", "reasoning", "approach:", "ldr:", "rssi:",
-        "cpu:", "memory:", "disk:", "uptime:", "current:",
-    )
-
-    _TELEMETRY_LABELS = frozenset({
-        "battery", "voltage", "current", "temperature",
-        "humidity", "distance", "ldr", "rssi", "status",
-        "cpu", "memory", "disk", "uptime", "level",
-    })
-
-    def _clean_text_for_speech(self, text: str) -> str:
-        """Remove LLM chain-of-thought, telemetry and formatting before TTS."""
-        if not text or not text.strip():
-            return ""
-
-        raw = str(text).strip()
-
-        # Fast path: single-line, no reasoning markers
-        if "\n" not in raw and not raw.startswith(("*", "-", ">", "#")):
-            return raw.replace("*", "").strip()
-
-        lines = raw.splitlines()
-        clean_lines: list[str] = []
-
-        for line in lines:
-            stripped = line.strip()
-            if not stripped:
-                continue
-
-            low = stripped.lower()
-
-            # ── Bullet points / list items ──
-            if re.match(r'^[\*\-\•\·\>\#]\s', stripped):
-                continue
-            # Indented bullets
-            if line != line.lstrip() and re.match(r'^\s+[\*\-\•]', line):
-                continue
-
-            # ── Meta-reasoning starters ──
-            if low.startswith(self._THINK_STARTERS):
-                continue
-
-            # ── Lines with word counts: (N words) ──
-            if re.search(r'\(\d+\s+words?\)', stripped):
-                continue
-
-            # ── Full-line evaluation in parens: (Strong, reflects...) ──
-            if re.match(r'^\(.*\)\.?$', stripped):
-                continue
-
-            # ── Fully-quoted draft lines ──
-            trimmed = stripped.rstrip(".").rstrip()
-            if len(trimmed) > 2 and trimmed[0] == '"' and trimmed[-1] == '"':
-                continue
-            if len(trimmed) > 2 and trimmed[0] == "'" and trimmed[-1] == "'":
-                continue
-
-            # ── Telemetry label: value lines ──
-            colon_match = re.match(r'^([A-Za-z][A-Za-z_ ]{0,25}):\s*(.*)$', stripped)
-            if colon_match:
-                label = colon_match.group(1).strip().lower()
-                value = colon_match.group(2).strip()
-                if label in self._TELEMETRY_LABELS:
-                    continue
-                # Short numeric values are likely telemetry
-                if len(value) < 15 and re.match(r'^[\d\.]+', value):
-                    continue
-
-            clean_lines.append(stripped)
-
-        # Fallback: take the last non-bullet, non-empty line
-        if not clean_lines:
-            for line in reversed(lines):
-                s = line.strip()
-                if s and not re.match(r'^[\*\-\>\#\•]', s):
-                    s = s.strip('"').strip("'").replace("*", "")
-                    s = re.sub(r'\(\d+\s+words?\)', '', s).strip()
-                    if s and len(s) > 3:
-                        clean_lines = [s]
-                        break
-
-        if not clean_lines:
-            return ""
-
-        # Remove asterisks and collapse whitespace
-        result = " ".join(clean_lines)
-        result = result.replace("*", "")
-        result = re.sub(r" +", " ", result).strip()
-        return result
 
     def speak(
         self,
         text: str,
         engine: Optional[str] = None,
-        tone: Optional[dict] | str = None,
+        tone: Optional[Dict[str, Any]] | str = None,
         speaker_wav: Optional[str] = None,
         language: Optional[str] = None,
-    ) -> dict:
-        """Metni sentezleyip oynatır; sonuç bilgisi döner.
-        engine: 'pyttsx3' | 'piper' | 'xtts' | None (config default)
-        """
-        if not text or not text.strip():
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not str(text or "").strip():
             raise ValueError("text is empty")
 
+        trace_id = latency_trace.ensure(trace_id, {"component": "speak", "language": language or ""})
+        latency_trace.mark(trace_id, "tts.request_received", {"chars": len(str(text))})
         cleaned_text = self._clean_text_for_speech(text)
-        if not cleaned_text or not cleaned_text.strip():
-            logger.info("Speech text is empty after cleaning thoughts/markdown. Skipping.")
-            return {"ok": True, "engine": engine or "default", "duration_sec": 0.0, "samplerate": 22050}
+        if not cleaned_text:
+            latency_trace.finish(trace_id, "skipped", {"reason": "empty_after_cleaning"})
+            return {"ok": True, "trace_id": trace_id, "duration_sec": 0.0, "skipped": True}
 
-        cleaned_text = self._enrich_text_for_speech(cleaned_text, tone=tone)
         tone_dict = self._coerce_tone(tone)
-        overrides = dict(tone_dict or {})
+        overrides: Dict[str, Any] = dict(tone_dict or {})
         if engine:
             overrides["engine"] = engine
         if speaker_wav:
             overrides["speaker_wav"] = speaker_wav
         if language:
             overrides["language"] = language
-        # Shape Piper audio from the emotion tone (rate/volume don't reach Piper).
-        active_engine = str(engine or self.cfg.get("tts", {}).get("engine", "")).strip().lower()
+
+        active_engine = str(engine or self.cfg.get("tts", {}).get("engine", "piper")).strip().lower()
         if active_engine == "piper":
-            piper_prosody = self._tone_to_piper(tone_dict)
-            if piper_prosody:
-                overrides["piper"] = {**overrides.get("piper", {}), **piper_prosody}
-        self._emit_speech_liveliness_start(cleaned_text, tone_dict)
-        try:
-            from modules.speak.services.tts import clear_synthesis_cancel
+            piper_tone = self._tone_to_piper(tone_dict)
+            if piper_tone:
+                overrides["piper"] = piper_tone
 
-            clear_synthesis_cancel()
-        except Exception:
-            pass
-        wav = self.tts.synthesize(cleaned_text, overrides=overrides or None)
-        dur = self.player.play_blocking(wav)
-        self._emit_speech_liveliness_end(dur)
         used_engine = overrides.get("engine") or self.cfg.get("tts", {}).get("engine")
-        return {"ok": True, "engine": used_engine, "duration_sec": dur, "samplerate": wav.samplerate}
+        with self._speech_lock:
+            try:
+                from modules.speak.services.tts import clear_synthesis_cancel
 
-    def play_wav(self, data: bytes) -> dict:
-        dur = self.player.play_wav_bytes(data)
-        return {"ok": True, "duration_sec": dur}
+                clear_synthesis_cancel()
+                synth_started = time.monotonic()
+                latency_trace.mark(trace_id, "tts.synthesis_start", {"engine": used_engine})
+                pcm = self.tts.synthesize(cleaned_text, overrides=overrides or None)
+                synthesis_ms = round((time.monotonic() - synth_started) * 1000.0, 2)
+                latency_trace.mark(
+                    trace_id,
+                    "tts.synthesis_done",
+                    {"engine": used_engine, "duration_ms": synthesis_ms, "samplerate": pcm.samplerate},
+                )
+            except TTSUnavailableError as exc:
+                latency_trace.finish(trace_id, "tts_unavailable", {"detail": str(exc)})
+                logger.warning("speech skipped: %s", exc)
+                return {
+                    "ok": False,
+                    "trace_id": trace_id,
+                    "engine": used_engine,
+                    "error": "tts_unavailable",
+                    "detail": str(exc),
+                    "duration_sec": 0.0,
+                }
+            except Exception as exc:
+                latency_trace.finish(trace_id, "tts_failed", {"detail": repr(exc)})
+                raise
+
+            self._expression_event(
+                "speak.started",
+                {"trace_id": trace_id, "tone": tone if isinstance(tone, str) else "", "chars": len(cleaned_text)},
+            )
+            latency_trace.mark(trace_id, "audio.play_start")
+            try:
+                duration_sec = self.player.play_blocking(pcm)
+            finally:
+                latency_trace.mark(trace_id, "audio.play_done")
+                self._expression_event("speak.finished", {"trace_id": trace_id})
+
+        latency_trace.finish(trace_id, "done", {"duration_sec": duration_sec})
+        snapshot = latency_trace.get(trace_id) or {}
+        return {
+            "ok": True,
+            "trace_id": trace_id,
+            "engine": used_engine,
+            "duration_sec": duration_sec,
+            "samplerate": pcm.samplerate,
+            "latency_ms": snapshot.get("elapsed_ms", 0.0),
+        }
+
+    def play_wav(self, data: bytes, trace_id: Optional[str] = None) -> Dict[str, Any]:
+        trace_id = latency_trace.ensure(trace_id, {"component": "speak.play_wav"})
+        self._expression_event("speak.started", {"trace_id": trace_id})
+        latency_trace.mark(trace_id, "audio.play_start")
+        try:
+            duration_sec = self.player.play_wav_bytes(data)
+        finally:
+            latency_trace.mark(trace_id, "audio.play_done")
+            self._expression_event("speak.finished", {"trace_id": trace_id})
+        latency_trace.finish(trace_id, "done", {"duration_sec": duration_sec})
+        return {"ok": True, "trace_id": trace_id, "duration_sec": duration_sec}
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
     service = SpeakService(config_path)
     app = FastAPI()
-    from modules.speak.api import get_router  # local import to avoid circular
+    from modules.speak.api import get_router
+
     app.include_router(get_router(service))
     return app
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Speech output (TTS) service")
-    parser.add_argument("--config", type=str, default=None, help="Path to config.yml")
-    parser.add_argument("--api", action="store_true", help="Run FastAPI server using config server.host/port")
-    parser.add_argument("text", nargs="*", help="Text to speak (omit to start API)")
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Speech output service")
+    parser.add_argument("--config", type=str, default=None)
+    parser.add_argument("--api", action="store_true")
+    parser.add_argument("text", nargs="*")
     args = parser.parse_args()
-
     logging.basicConfig(level=logging.INFO)
 
     if args.api or not args.text:
         import uvicorn  # type: ignore
+
         cfg = load_config(args.config)
-        host = str(cfg.get("server", {}).get("host", "0.0.0.0"))
-        port = int(cfg.get("server", {}).get("port", 8083))
-        uvicorn.run(create_app(args.config), host=host, port=port, log_config=None)
+        server = cfg.get("server", {})
+        uvicorn.run(
+            create_app(args.config),
+            host=str(server.get("host", "0.0.0.0")),
+            port=int(server.get("port", 8083)),
+            log_config=None,
+        )
         return
 
-    service = SpeakService(args.config)
-    txt = " ".join(args.text)
-    res = service.speak(txt)
-    print(res)
+    print(SpeakService(args.config).speak(" ".join(args.text)))
 
 
 if __name__ == "__main__":

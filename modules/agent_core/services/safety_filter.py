@@ -1,3 +1,10 @@
+# --- SentryBOT safety/action boundary contract ---
+SAFETY_ACTION_COMPATIBILITY = True
+SAFETY_ACTION_BOUNDARY_ROLE = 'agent_core_compat_argument_safety_filter'
+SAFETY_ACTION_RUNTIME_OWNER = 'robot-runtime safety policy and capability map: modules.autonomy'
+SAFETY_ACTION_BOUNDARY_REASON = 'ActionSafetyFilter still clamps action handler arguments inside AgentOrchestrator. Keep stable as a local argument clamp helper.'
+# --- End SentryBOT safety/action boundary contract ---
+
 import logging
 from typing import Dict, Any
 

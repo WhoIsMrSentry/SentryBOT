@@ -10,6 +10,13 @@ CONFLICT RESOLUTION:
      is truly idle AND AutonomyBrain's own idle planner isn't active.
   2. It defers to AutonomyBrain for all LLM-driven idle decisions.
 """
+# --- SentryBOT expression/idle boundary contract ---
+EXPRESSION_IDLE_COMPATIBILITY = True
+EXPRESSION_IDLE_BOUNDARY_ROLE = 'agent_core_compat_idle_heartbeat'
+EXPRESSION_IDLE_RUNTIME_OWNER = 'semantic idle decisions: modules.autonomy.services.idle_behaviors; expression output: modules.expression'
+EXPRESSION_IDLE_BOUNDARY_REASON = 'IdleBehaviorSystem is still constructed by AgentOrchestrator and provides only a lightweight life-sign heartbeat while deferring semantic idle decisions to autonomy.'
+# --- End SentryBOT expression/idle boundary contract ---
+
 import logging
 import time
 import threading

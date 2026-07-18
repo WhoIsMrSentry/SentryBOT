@@ -1,3 +1,10 @@
+# --- SentryBOT memory/world boundary contract ---
+MEMORY_WORLD_COMPATIBILITY = True
+MEMORY_WORLD_BOUNDARY_ROLE = 'agent_core_compat_memory'
+MEMORY_WORLD_RUNTIME_OWNER = 'modules.autonomy.services.world_memory'
+MEMORY_WORLD_BOUNDARY_REASON = 'EpisodicMemory is still imported by AgentOrchestrator and agent_core public exports; keep as compatibility layer while autonomy owns runtime robot memory.'
+# --- End SentryBOT memory/world boundary contract ---
+
 import sqlite3
 import logging
 from datetime import datetime

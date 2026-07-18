@@ -331,11 +331,13 @@ class ServiceClient:
             return start_m <= now < end_m
         return now >= start_m or now < end_m
 
-    def speak(self, text, tone=None, engine=None, language=None):
-        payload = self._build_speak_payload(text, tone=tone, engine=engine, language=language)
+    def speak(self, text, tone=None, engine=None, language=None, trace_id=None):
+        payload = self._build_speak_payload(
+            text, tone=tone, engine=engine, language=language, trace_id=trace_id,
+        )
         return self._post("speak", "/say", payload)
 
-    def _build_speak_payload(self, text, tone=None, engine=None, language=None):
+    def _build_speak_payload(self, text, tone=None, engine=None, language=None, trace_id=None):
         text_value = str(text or "")
         if self._quiet_hours_active():
             max_chars = int(self.speech_quiet_cfg.get("max_chars", 120))
@@ -353,11 +355,15 @@ class ServiceClient:
             payload["engine"] = engine
         if language:
             payload["language"] = str(language)
+        if trace_id:
+            payload["trace_id"] = str(trace_id)
         return payload
 
-    def speak_stream(self, text, tone=None, engine=None, language=None, max_chunk_chars=None):
+    def speak_stream(self, text, tone=None, engine=None, language=None, max_chunk_chars=None, trace_id=None):
         """Chunked TTS via /speak/say_stream; blocks until the stream job finishes."""
-        payload = self._build_speak_payload(text, tone=tone, engine=engine, language=language)
+        payload = self._build_speak_payload(
+            text, tone=tone, engine=engine, language=language, trace_id=trace_id,
+        )
         if not str(payload.get("text", "")).strip():
             return {"ok": False, "error": "text is empty"}
         if max_chunk_chars is not None:
@@ -368,7 +374,7 @@ class ServiceClient:
         start_timeout = float(self.request_timeouts.get("speak_stream_start_s", 4.0))
         resp = self._post("speak", "/say_stream", payload, timeout_s=start_timeout)
         if not resp or not resp.get("ok"):
-            return self.speak(text, tone=tone, engine=engine, language=language)
+            return self.speak(text, tone=tone, engine=engine, language=language, trace_id=trace_id)
 
         job_id = str(resp.get("job_id") or "").strip()
         if not job_id:
@@ -389,10 +395,12 @@ class ServiceClient:
             time.sleep(poll_s)
         return {"ok": False, "error": "stream_timeout", "job_id": job_id}
 
-    def speak_preferred(self, text, tone=None, engine=None, language=None):
+    def speak_preferred(self, text, tone=None, engine=None, language=None, trace_id=None):
         if bool(self.speech_stream_cfg.get("use_stream_tts", False)):
-            return self.speak_stream(text, tone=tone, engine=engine, language=language)
-        return self.speak(text, tone=tone, engine=engine, language=language)
+            return self.speak_stream(
+                text, tone=tone, engine=engine, language=language, trace_id=trace_id,
+            )
+        return self.speak(text, tone=tone, engine=engine, language=language, trace_id=trace_id)
 
     def chat(self, query, apply_actions: bool | None = None, source_lang: str | None = None, response_lang: str | None = None):
         # apply_actions=None leaves the decision to the ollama service config
@@ -447,6 +455,9 @@ class ServiceClient:
         if color is not None:
             payload["color"] = color
         return self._post("interactions", "/base", payload)
+
+    def set_expression_event(self, event_type, data=None):
+        return self._post("expression", "/event", {"type": str(event_type), "data": data or {}})
 
     def set_speech_tracking(self, enabled):
         endpoint = "/track/start" if enabled else "/track/stop"
@@ -644,6 +655,18 @@ class ServiceClient:
         except Exception as e:
             logger.debug(f"Failed to queue action {action_type}: {e}")
             return None
+
+    def world_memory_context(self, query: str, limit: int = 8):
+        return self._get("autonomy", "/memory/context", params={"q": str(query or ""), "limit": int(limit or 8)}, timeout_s=1.0)
+
+    def world_memory_recall(self, query: str, limit: int = 8):
+        return self._get("autonomy", "/memory/search", params={"q": str(query or ""), "limit": int(limit or 8)}, timeout_s=1.0)
+
+    def world_memory_observe(self, payload: dict | None = None):
+        return self._post("autonomy", "/memory/observe", json=payload or {}, timeout_s=1.0)
+
+    def execute_rest_corner(self, payload: dict | None = None):
+        return self._post("autonomy", "/navigation/rest-corner", json=payload or {}, timeout_s=1.5)
 
     def emit_agent_event(self, event_type: str, payload: dict | None = None):
         if payload is None:

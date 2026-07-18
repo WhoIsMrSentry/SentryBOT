@@ -1,4 +1,4 @@
-server:
+﻿server:
   host: 0.0.0.0
   port: 8080
 include:
@@ -8,11 +8,12 @@ include:
   vlm_bridge: true
   neopixel: true
   interactions: true
+  expression: true
   speak: true
   speech: true
   wakeword: true
   ollama: true
-  camera: false
+  camera: true
   logs: true
   animate: true
   piservo: true

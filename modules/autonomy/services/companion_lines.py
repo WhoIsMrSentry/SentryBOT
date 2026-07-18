@@ -39,6 +39,13 @@ class CompanionLineGenerator:
         lang = str(ctx.get("language") or self.default_language)
         try:
             resp = self.client.chat(prompt, response_lang=lang)
+            if isinstance(resp, dict) and resp.get("ok") is False:
+                self._last_llm_ts = time.time()
+                logger.info(
+                    "companion LLM unavailable; using template fallback: %s",
+                    resp.get("error") or resp.get("reason") or "unavailable",
+                )
+                return None
             text = ""
             if isinstance(resp, dict):
                 text = str(resp.get("answer") or resp.get("text") or "").strip()
@@ -50,6 +57,7 @@ class CompanionLineGenerator:
             self._last_llm_ts = time.time()
             return text
         except Exception as exc:
+            self._last_llm_ts = time.time()
             logger.debug("companion LLM line failed: %s", exc)
             return None
 

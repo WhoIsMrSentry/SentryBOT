@@ -75,7 +75,7 @@ def _get_json(url: str, timeout: float = 0.2) -> dict:
 
 def _resolve_model_paths(rec_cfg: dict) -> dict:
     cfg = dict(rec_cfg or {})
-    module_root = Path(__file__).resolve().parent
+    module_root = Path(__file__).resolve().parents[1] / "speech"
     model_path = cfg.get("model_path")
     if model_path and not os.path.isabs(str(model_path)):
         cfg["model_path"] = str((module_root / str(model_path)).resolve())
@@ -350,15 +350,26 @@ class WakewordService:
             return self._listening
 
     def status(self) -> dict:
+        recognizer_status = None
+        if self._recognizer is not None and hasattr(self._recognizer, "status"):
+            try:
+                recognizer_status = self._recognizer.status()
+            except Exception as exc:
+                recognizer_status = {"ok": False, "error": str(exc)}
+        engine_ready = bool(self._openwakeword is not None or (recognizer_status or {}).get("ok"))
         with self._lock:
             return {
+                "ok": bool(engine_ready and not self._degraded_reason),
                 "listening": self._listening,
                 "active_window": self._active_window,
                 "last_trigger_ts": self._last_trigger_ts,
                 "wakewords": list(self.detector.cfg.words),
                 "engine": self.engine,
+                "engine_ready": bool(engine_ready),
                 "degraded": bool(self._degraded_reason),
                 "degraded_reason": self._degraded_reason,
+                "recognizer": recognizer_status,
+                "openwakeword_ready": bool(self._openwakeword is not None),
             }
 
 

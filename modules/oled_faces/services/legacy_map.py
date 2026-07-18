@@ -1,5 +1,8 @@
-"""Map legacy Irisoled / SentryBOT face names to Pip eye-engine actions."""
+"""Active compatibility map from older face names to Pip eye-engine actions."""
 from __future__ import annotations
+OLED_LEGACY_COMPATIBILITY_CONTRACT = True
+OLED_LEGACY_COMPATIBILITY_ROLE = "active_face_name_alias_adapter"
+
 
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
@@ -8,7 +11,7 @@ from .eyes.activities import ACTIVITIES
 from .eyes.gestures import BLINKS, GESTURES_FN
 from .eyes.moods import MOODS
 
-# Legacy bitmap labels still emitted by emotion_vocab / config.
+# Compatibility bitmap labels still emitted by emotion_vocab / config.
 _MOOD_ALIASES: Dict[str, str] = {
     "normal": "neutral",
     "chill": "chill",
@@ -39,7 +42,7 @@ _MOOD_ALIASES: Dict[str, str] = {
     "warning": "alert",
 }
 
-# Legacy JSON animation names -> (kind, target) where kind is mood|gesture|activity.
+# Compatibility JSON animation names -> (kind, target) where kind is mood|gesture|activity.
 _LEGACY_ANIMATIONS: Dict[str, Tuple[str, str]] = {
     "scan": ("activity", "scanning"),
     "emotive": ("activity", "listening"),

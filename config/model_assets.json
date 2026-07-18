@@ -1,0 +1,49 @@
+{
+  "assets": {
+    "piper_tr": {
+      "kind": "file_pair",
+      "required": true,
+      "model_path": "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx",
+      "config_path": "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json",
+      "source_model_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/tr/tr_TR/dfki/medium/tr_TR-dfki-medium.onnx",
+      "source_config_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/tr/tr_TR/dfki/medium/tr_TR-dfki-medium.onnx.json",
+      "purpose": "Turkish Piper TTS voice"
+    },
+    "vosk_tr": {
+      "kind": "directory",
+      "required": true,
+      "path": "modules/speech/models/vosk-tr",
+      "source_url": "https://alphacephei.com/vosk/models/vosk-model-small-tr-0.3.zip",
+      "purpose": "Primary Turkish STT model"
+    },
+    "vosk_en": {
+      "kind": "directory",
+      "required": false,
+      "path": "modules/speech/models/vosk-en",
+      "source_url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
+      "purpose": "Optional English STT model"
+    },
+    "imx500_object_model": {
+      "kind": "file",
+      "required": true,
+      "path": "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk",
+      "purpose": "Raspberry Pi AI Camera IMX500 object detection model"
+    }
+  },
+  "python_modules": {
+    "picamera2": {"required": true, "purpose": "Raspberry Pi camera pipeline"},
+    "numpy": {"required": true, "purpose": "Audio and vision processing"},
+    "cv2": {"required": true, "purpose": "OpenCV processing"},
+    "vosk": {"required": true, "purpose": "Speech recognition"},
+    "openwakeword": {"required": false, "purpose": "Wakeword engine"},
+    "piper": {"required": false, "purpose": "Piper runtime"},
+    "fastapi": {"required": true, "purpose": "Gateway API"},
+    "uvicorn": {"required": true, "purpose": "Gateway server"}
+  },
+  "commands": {
+    "rpicam-hello": {"required": true, "purpose": "Camera stack smoke test"},
+    "aplay": {"required": true, "purpose": "Audio playback"},
+    "arecord": {"required": true, "purpose": "Audio capture"},
+    "ollama": {"required": false, "purpose": "Local LLM runtime"}
+  }
+}

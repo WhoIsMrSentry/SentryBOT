@@ -45,6 +45,38 @@ except Exception:  # pragma: no cover
     serial = None  # pyserial optional until installed
 
 
+
+_PI_SERIAL_CANDIDATE_GLOBS = (
+    "/dev/serial/by-id/*",
+    "/dev/ttyACM*",
+    "/dev/ttyUSB*",
+)
+
+
+def _existing_device_from_globs(patterns: tuple[str, ...] = _PI_SERIAL_CANDIDATE_GLOBS) -> str | None:
+    # Pi/Linux robot runtime should prefer stable by-id serial paths, then ACM/USB.
+    from glob import glob
+
+    for pattern in patterns:
+        matches = sorted(glob(pattern))
+        if matches:
+            return matches[0]
+    return None
+
+
+def _default_serial_device() -> str:
+    # PC remains a dev host; Pi/Linux remains the robot target.
+    #
+    # Explicit env always wins. This keeps deployment configurable without making
+    # COM ports or Windows paths robot defaults.
+    env_device = (os.getenv("SENTRYBOT_SERIAL_DEVICE") or os.getenv("SENTRYBOT_ARDUINO_DEVICE") or "").strip()
+    if env_device:
+        return env_device
+    if os.name == "nt":
+        return "COM3"
+    return _existing_device_from_globs() or "/dev/serial0"
+
+
 class SerialTransport:
     """Thin wrapper around pyserial for dependency injection in tests."""
 
@@ -923,7 +955,7 @@ class xArduinoSerialService:
                 return first
         if fallback:
             return fallback
-        return "COM3" if os.name == "nt" else "/dev/serial0"
+        return _default_serial_device()
 
     def _writer_loop(self) -> None:
         while not self._stop.is_set():

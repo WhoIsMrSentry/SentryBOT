@@ -3,8 +3,8 @@ server:
   port: 8101
 
 vision:
-  processing_mode: remote  # local | remote — remote until camera attached
-  hybrid_local_capture: false
+  processing_mode: local
+  hybrid_local_capture: true
   # camera_source can be device index (0) or gateway camera stream URL
   camera_source: "http://127.0.0.1:8080/camera/video"  # Gateway camera MJPEG feed (Pi camera safe path)
   max_camera_wait_attempts: 5  # stop polling gateway camera when unavailable
@@ -21,7 +21,7 @@ vision:
     remote_timeout_s: 2.5
     remote_fallback: heuristic
   follow:
-    enabled: false
+    enabled: true
     track_interval_s: 0.12
     pan_gain_deg: 50
     tilt_gain_deg: 32
@@ -61,7 +61,7 @@ vision:
       semantic_scene: true
       depth: false                 # heavy model, keep disabled by default
     onsensor:
-      tiny_detect: false           # SSD MobileNet on IMX500
+      tiny_detect: true            # SSD MobileNet on IMX500
       tiny_pose: false             # PoseNet on IMX500 (optional)
   # Optional shorthand for the triple routing layers (merged into mode_categories)
   local_modes:
@@ -122,7 +122,7 @@ person_identity:
   owner_name: ""  # Will be set by remember_person tool
 
 remote:
-  auth_token: "changeme"  # Set a secure token in production or override
+  auth_token: "sb-vlm-wiXKZjxkyBZ_AbFd_aW3MCKi2kJhtKFo"
   accept_results: true     # Allow POST /vlm/results ingestion
 
 remote_multimodal:
@@ -131,7 +131,7 @@ remote_multimodal:
   ocr_endpoint: "http://PC_IP:8091/vision/ocr"  # remote OCR backend
   timeout_s: 6.0
   ocr_timeout_s: 10.0
-  auth_token: "changeme"
+  auth_token: "sb-vlm-wiXKZjxkyBZ_AbFd_aW3MCKi2kJhtKFo"
   ocr_languages: ["en", "tr"]
 
 robot:

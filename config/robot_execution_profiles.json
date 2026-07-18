@@ -1,0 +1,15 @@
+{
+  "schema": "sentrybot.robot_execution_profiles.v2",
+  "active_mode": "raspberry_pi",
+  "profiles": {
+    "raspberry_pi": {
+      "description": "Raspberry Pi 5 robot runtime.",
+      "allow_real_hardware": true,
+      "allowed_risks": ["none", "low", "medium"],
+      "blocked_risks": ["critical"],
+      "max_parallel_actions": 1,
+      "action_timeout_s": 2.0,
+      "stop_on_failure": true
+    }
+  }
+}

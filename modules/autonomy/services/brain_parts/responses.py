@@ -1,5 +1,8 @@
 """LLM çıktı etiketlerini fiziksel aksiyonlara çeviren mixin."""
 from __future__ import annotations
+AUTONOMY_LLM_TAG_COMPATIBILITY_CONTRACT = True
+AUTONOMY_LLM_TAG_COMPATIBILITY_ROLE = "legacy_inline_llm_tag_adapter"
+
 
 import logging
 import re
@@ -47,7 +50,7 @@ class ResponseTagMixin:
 			if action_bundle.get("commands"):
 				self._dispatch_llm_commands(action_bundle.get("commands", []))
 		elif action_bundle is None:
-			# Backward compatibility: parse inline [cmd:*] and [[type key=value]] tags.
+			# Compatibility path: parse older inline [cmd:*] and [[type key=value]] tags.
 			cleaned, legacy_commands, blocks = self._extract_legacy_tags(raw_text or cleaned)
 
 		if legacy_commands:

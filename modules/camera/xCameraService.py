@@ -4,66 +4,82 @@ import logging
 
 from fastapi import FastAPI
 
+from .api import get_router
+from .config_loader import load_config
+from .services.capture import CameraCapture, CaptureConfig, FramePublisher
+from .services.imx500_runner import Imx500Config, Imx500Runner
+from .services.onsensor_bus import get_default_bus
+
 logger = logging.getLogger("camera.service")
-
-# Paket içi importlar, script modunda fallback ile
-try:
-    from .config_loader import load_config
-    from .services.capture import CameraCapture, FramePublisher, CaptureConfig
-    from .api import get_router
-except Exception:  # when run as script without package context
-    from config_loader import load_config  # type: ignore
-    from services.capture import CameraCapture, FramePublisher, CaptureConfig  # type: ignore
-    from api import get_router  # type: ignore
-
-try:
-    # Merkezi loglama (opsiyonel). Başarısız olsa bile modül çalışsın.
-    from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
-
-    _init_global_logging()
-except Exception:
-    pass
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
-    enabled = bool(cfg.get("enabled", False))
+    enabled = bool(cfg.get("enabled", True))
+    picam_cfg = cfg.get("picamera2", {}) if isinstance(cfg.get("picamera2"), dict) else {}
+    size_cfg = picam_cfg.get("size", {}) if isinstance(picam_cfg.get("size"), dict) else {}
+    imx_raw = cfg.get("imx500", {}) if isinstance(cfg.get("imx500"), dict) else {}
+    tracker_raw = imx_raw.get("tracker", {}) if isinstance(imx_raw.get("tracker"), dict) else {}
+    target_raw = imx_raw.get("target", {}) if isinstance(imx_raw.get("target"), dict) else {}
 
-    cap_cfg = CaptureConfig(
-        backend=cfg.get("backend", "auto"),
-        source=cfg.get("source", 0),
-        resolution=(int(cfg.get("resolution", {}).get("width", 1280)), int(cfg.get("resolution", {}).get("height", 720))),
-        fps_target=int(cfg.get("fps_target", 30)),
-        jpeg_quality=int(cfg.get("jpeg_quality", 80)),
-        opencv_fourcc=str(cfg.get("opencv", {}).get("fourcc", "MJPG")),
-        opencv_buffer_size=int(cfg.get("opencv", {}).get("buffer_size", 1)),
-        picam_size=(int(cfg.get("picamera2", {}).get("size", {}).get("width", 1920)), int(cfg.get("picamera2", {}).get("size", {}).get("height", 1080))),
-        picam_format=str(cfg.get("picamera2", {}).get("format", "RGB888")),
-        picam_frame_rate=int(cfg.get("picamera2", {}).get("frame_rate", 30)),
-        picam_af_mode=int(cfg.get("picamera2", {}).get("af_mode", 2)),
-        flip=str(cfg.get("flip", "none")),
-        opencv_max_open_attempts=int(cfg.get("opencv", {}).get("max_open_attempts", 5)),
-        opencv_retry_interval_s=float(cfg.get("opencv", {}).get("retry_interval_s", 1.0)),
+    bus = get_default_bus()
+    runner = Imx500Runner(
+        Imx500Config(
+            enabled=bool(imx_raw.get("enabled", True)),
+            model_path=str(imx_raw.get("model_path", Imx500Config.model_path)),
+            labels_path=str(imx_raw.get("labels_path", "")),
+            confidence=float(imx_raw.get("confidence", 0.50)),
+            iou=float(imx_raw.get("iou", 0.65)),
+            max_detections=int(imx_raw.get("max_detections", 20)),
+            publish_interval_s=float(imx_raw.get("publish_interval_s", 0.05)),
+            inference_rate=int(imx_raw["inference_rate"]) if imx_raw.get("inference_rate") is not None else None,
+            preserve_aspect_ratio=bool(imx_raw.get("preserve_aspect_ratio", True)),
+            classes_of_interest=tuple(imx_raw.get("classes_of_interest", []) or []),
+            tracker_iou_threshold=float(tracker_raw.get("iou_threshold", 0.30)),
+            tracker_max_missed=int(tracker_raw.get("max_missed", 8)),
+            target_label=str(target_raw.get("label", "person")),
+            target_strategy=str(target_raw.get("strategy", "largest")),
+        ),
+        bus=bus,
     )
-
-    publisher = FramePublisher()
-    capture = CameraCapture(cap_cfg, publisher)
+    runner.prepare()
+    capture = CameraCapture(
+        CaptureConfig(
+            size=(int(size_cfg.get("width", 1280)), int(size_cfg.get("height", 720))),
+            pixel_format=str(picam_cfg.get("format", "RGB888")),
+            frame_rate=int(picam_cfg.get("frame_rate", cfg.get("fps_target", 30))),
+            jpeg_quality=int(cfg.get("jpeg_quality", 80)),
+            flip=str(cfg.get("flip", "none")),
+            camera_num=runner.camera_num,
+        ),
+        FramePublisher(),
+    )
     if enabled:
         capture.start()
+        runner.attach_camera(capture.picam, capture)
+        runner.start()
     else:
-        logger.info("camera capture disabled (config enabled=false)")
+        logger.info("camera disabled")
 
     app = FastAPI()
-    app.include_router(get_router(capture, cap_cfg.fps_target, enabled=enabled))
+    app.include_router(
+        get_router(
+            capture,
+            int(cfg.get("fps_target", 30)),
+            enabled=enabled,
+            imx500_runner=runner,
+            onsensor_bus=bus,
+        )
+    )
     return app
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    cfg = load_config()
+    configuration = load_config()
     uvicorn.run(
         create_app(),
-        host=str(cfg.get("server", {}).get("host", "0.0.0.0")),
-        port=int(cfg.get("server", {}).get("port", 8000)),
+        host=str(configuration.get("server", {}).get("host", "0.0.0.0")),
+        port=int(configuration.get("server", {}).get("port", 8000)),
     )

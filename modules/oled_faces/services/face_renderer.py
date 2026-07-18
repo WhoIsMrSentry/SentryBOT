@@ -1,5 +1,8 @@
 """Procedural Pip-style face renderer backed by Pi SSD1306 I2C."""
 from __future__ import annotations
+OLED_FACE_RENDERER_COMPATIBILITY_CONTRACT = True
+OLED_FACE_RENDERER_ROLE = "pip_engine_compatibility_renderer"
+
 
 from typing import Any, Dict, Optional
 

@@ -1,0 +1,34 @@
+# SentryBOT ASCII runtime console defaults.
+# No logo or mascot art is rendered here; only structured status panels.
+mode: dashboard
+colors: true
+show_background_requests: false
+aggregate_repeated_messages: true
+repeat_summary_interval_s: 30
+event_history: 8
+max_message_width: 92
+border: rounded
+
+hidden_paths:
+  - /camera/healthz
+  - /vlm/context/latest
+  - /vlm/results/latest
+  - /telemetry/metrics
+  - /speech/last
+  - /speech/direction
+  - /arduino/healthz
+  - /state/set/emotions
+  - /interactions/event
+  - /interactions/effect
+  - /neopixel/animate
+  - /oled_faces/manual
+
+channels:
+  CORE: [gateway, run_robot, startup, server, scheduler]
+  AUDIO: [speech, wakeword, stt, microphone, audio, alsa, vosk]
+  TTS: [speak, tts, piper, glados, voice]
+  VISION: [camera, vlm, imx500, qwen, vision, face, object]
+  AI: [agent, llm, ollama, google, gemini, tool, planner]
+  FACE: [neopixel, oled, expression, emotion, mood]
+  MOVE: [arduino, servo, stepper, motor, piservo, animate]
+  MEMORY: [memory, rag, recall, relationship, social]

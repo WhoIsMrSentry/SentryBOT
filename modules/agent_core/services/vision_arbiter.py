@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+# --- SentryBOT perception/vision boundary contract ---
+PERCEPTION_VISION_COMPATIBILITY = True
+PERCEPTION_VISION_BOUNDARY_ROLE = 'agent_core_compat_vision_arbiter'
+PERCEPTION_VISION_RUNTIME_OWNER = 'raw VLM request ownership should move toward modules.vlm_bridge or gateway; agent_core keeps compatibility gate for current tool/action flow'
+PERCEPTION_VISION_BOUNDARY_REASON = 'VisionArbiter is still passed through AgentOrchestrator into ProgressManager and ToolRegistry. Keep public behavior stable before moving arbitration.'
+# --- End SentryBOT perception/vision boundary contract ---
+
 import threading
 import time
 from typing import Dict, Any

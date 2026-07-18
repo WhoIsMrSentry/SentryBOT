@@ -7,6 +7,47 @@ import requests
 logger = logging.getLogger("ollama.api")
 
 
+def _safe_llm_exc_text(exc: Exception) -> str:
+    try:
+        from modules.config_center.log_redact import redact_secrets
+
+        return redact_secrets(str(exc))[:500]
+    except Exception:
+        return str(exc)[:500]
+
+
+def _is_llm_not_found(exc: Exception) -> bool:
+    msg = _safe_llm_exc_text(exc).lower()
+    return (
+        "404" in msg
+        or "not found" in msg
+        or "model not found" in msg
+        or "status code: 404" in msg
+    )
+
+
+def _llm_unavailable_payload(
+    *,
+    provider_name: str,
+    model: str,
+    active_persona: str,
+    detail: str,
+    reason: str = "llm_model_unavailable",
+) -> Dict[str, Any]:
+    return {
+        "ok": False,
+        "answer": "",
+        "text": "",
+        "thoughts": "",
+        "persona": active_persona,
+        "model": model,
+        "provider": provider_name,
+        "error": reason,
+        "reason": reason,
+        "detail": detail,
+    }
+
+
 def get_chat_router(
     chat: Any,
     translator: Any,
@@ -69,12 +110,28 @@ def get_chat_router(
         try:
             result = chat.chat(query_en)
         except requests.HTTPError as exc:
-            from modules.config_center.log_redact import redact_secrets
-
-            logger.warning("LLM upstream request failed: %s", redact_secrets(exc))
+            detail = _safe_llm_exc_text(exc)
+            if _is_llm_not_found(exc):
+                logger.info("LLM chat unavailable; using fallback path: %s", detail)
+                return _llm_unavailable_payload(
+                    provider_name=provider_name,
+                    model=model,
+                    active_persona=active_persona,
+                    detail=detail,
+                )
+            logger.warning("LLM upstream request failed: %s", detail)
             raise HTTPException(status_code=502, detail="LLM upstream request failed") from exc
         except Exception as exc:
-            logger.exception("LLM chat failed: %s", exc)
+            detail = _safe_llm_exc_text(exc)
+            if _is_llm_not_found(exc):
+                logger.info("LLM chat unavailable; using fallback path: %s", detail)
+                return _llm_unavailable_payload(
+                    provider_name=provider_name,
+                    model=model,
+                    active_persona=active_persona,
+                    detail=detail,
+                )
+            logger.exception("LLM chat failed: %s", detail)
             raise HTTPException(status_code=500, detail="LLM chat failed") from exc
 
         answer_en = str(result.get("text", ""))

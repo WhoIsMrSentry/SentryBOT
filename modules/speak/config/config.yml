@@ -1,37 +1,32 @@
-# Speak (TTS) module configuration
-
 server:
   host: 0.0.0.0
   port: 8083
-
 audio_out:
-  device: null          # ALSA device (e.g., sysdefault, hw:1,0). For MAX98357A via I2S set the correct ALSA card.
+  device: null
   samplerate: 22050
-  channels: 1           # MAX98357A is mono; driver may expose stereo. Upmix handled in code.
+  channels: 1
   dtype: float32
-
 tts:
-  engine: piper      # pyttsx3 | piper | xtts | dummy
+  engine: piper
+  allow_dummy_fallback: false
   language: tr
-  voice: source         # optional voice id — default olarak kaynak sesi kullanılacak
+  voice: source
   rate: 170
   volume: 1.0
   samplerate: 22050
-  # Piper ayarları
   piper:
-    bin_path: piper
     voice: tr
     auto_language: true
     prefer_text_language: false
     lock_session_language: true
-    # Dil için Piper sesi yoksa bu motorla seslendir (pyttsx3 | xtts | dummy).
-    fallback_engine: pyttsx3
+    fallback_engine: ''
+    preload_voices:
+    - tr
   language_voices:
     tr: tr
     en: glados
   model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
   config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
-  samplerate: 22050
   speaker: null
   length_scale: null
   noise_scale: null
@@ -43,60 +38,14 @@ tts:
     glados:
       model_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx
       config_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx.json
-
-  # XTTS ayarları (ayrı env'de çalışan local HTTP servis)
-  # Örn: PC üzerindeki server_app TTS proxy: http://PC_IP:5000/tts/synthesize
   xtts:
     endpoint: http://192.168.1.100:5000/tts/synthesize
     timeout: 120
     language: tr
-    speaker_wav: null          # ses kopyalama için referans wav yolu (opsiyonel)
-
+    speaker_wav: null
 liveliness:
   enabled: true
-  event_driven_effects: true
-  interactions_base_url: "@gateway/interactions"
-  speech_effect:
-    name: PULSE
-    tone_effect_map:
-      fast: COMET
-      neutral: PULSE
-      calm: BREATHE
-      tired: THEATER_CHASE
-    emphasis_effect_map:
-      exclamation: COMET
-      question: TWINKLE
-    rhythm:
-      enabled: false
-      mode: clauses           # words | clauses
-      effect: PULSE
-      words_per_beat: 3
-      clauses_per_beat: 1
-      max_beats: 4
-      duration_ms: 150
-      max_pause_marks: 4
-      pause_effect_map:
-        ",": TWINKLE
-        ";": TWINKLE
-        ":": BREATHE
-        ".": BREATHE
-    min_duration_ms: 400
-    max_duration_ms: 7000
-    chars_per_second: 16
-    force: false
-
-# Natural speech: light disfluency/filler injection so replies sound less robotic.
+  expression_base_url: '@gateway/expression'
+  event_timeout_s: 0.35
 naturalness:
-  enabled: true
-  filler_probability: 0.22   # chance to prepend a filler to an utterance
-  min_chars: 12              # skip very short replies (e.g. "Evet.")
-  fillers:
-    default: ["Şey,", "Yani,", "Hmm,"]
-    joy: ["Aa,", "Hey,", "Bak,"]
-    excitement: ["Vay,", "Aa,", "Hey,"]
-    curiosity: ["Hmm,", "Bak,", "Şey,"]
-    sadness: ["Eh,", "Şey...", "Hmm,"]
-    tired: ["Of,", "Hmm,", "Şey,"]
-    anger: ["Bak,", "Yani,"]
-
-# note: external compressed audio decoding removed; /speak/play expects base64 WAV
+  enabled: false

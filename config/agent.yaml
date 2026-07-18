@@ -1,52 +1,48 @@
 agent:
-  model: "qwen3.5:9b"
+  auth_token: sb-agent-eWcSuwmD-JgFTAnp9oBVHU9putmn2wX4
+  model: qwen3.5:9b
   temperature: 0.15
   num_ctx: 4096
-  cooldown_s: 0.5  # LLM Rate Limit
-  request_timeout: 60
+  cooldown_s: 0.1
+  request_timeout: 30
   status_interval_s: 1.5
   waiting_messages:
-    - "Beklemedeyim..."
-    - "Islem suruyor..."
-    - "Hala isliyorum..."
-  ollama_base_url: "http://127.0.0.1:11434"
-  max_steps: 6
-
+  - Beklemedeyim...
+  - Islem suruyor...
+  - Hala isliyorum...
+  ollama_base_url: http://127.0.0.1:11434
+  max_steps: 4
 llm:
-  provider: "google_ai_studio"
+  provider: ollama
   single_model_mode: true
-  model: "qwen3.5:9b"
-  primary_model: "qwen3.5:9b"
+  model: qwen3.5:9b
+  primary_model: qwen3.5:9b
   clm_fallback_enabled: false
-  clm_fallback_model: ""
+  clm_fallback_model: ''
   fallback_on_missing_model: false
   fallback_on_error: false
-
+  think: false
+  keep_alive: -1
 ollama:
-  base_url: "http://127.0.0.1:11434"
-  model: "qwen3.5:9b"
+  base_url: http://127.0.0.1:11434
+  model: qwen3.5:9b
   request_timeout: 60
-
 google_ai_studio:
-  api_key: ""   # bos birakilirsa GOOGLE_API_KEY env kullanilir
-  model: "gemma-4-31b-it"
-  base_url: "https://generativelanguage.googleapis.com"
+  api_key: ''
+  model: gemma-4-31b-it
+  base_url: https://generativelanguage.googleapis.com
   request_timeout: 30
-
-# Tek anahtar ile LLM + VLM + ESP URL degistir: active satirini degistir.
 runtime_profile:
-  active: google_ai_studio   # google_ai_studio | remote_ollama
-
+  active: remote_ollama
   profiles:
     google_ai_studio:
       llm:
         provider: google_ai_studio
       agent:
-        model: "gemma-4-31b-it"
+        model: gemma-4-31b-it
         request_timeout: 45
       google_ai_studio:
-        # api_key: profil bos birakir; ustteki google_ai_studio.api_key veya GOOGLE_API_KEY env
-        model: "gemma-4-31b-it"
+        model: gemma-4-31b-it
         request_timeout: 45
       vlm_bridge:
         llm:
@@ -55,42 +51,66 @@ runtime_profile:
           enabled: true
           provider: google_ai_studio
         ollama:
-          endpoint: "@gateway/ollama/chat"
+          endpoint: '@gateway/ollama/chat'
           timeout: 12.0
       arduino_serial:
-        esp_base_url: "http://10.88.255.55:8080"
+        esp_base_url: http://10.88.255.55:8080
       esp_link:
-        base_url: "http://10.88.255.55:8080"
-
+        base_url: http://10.88.255.55:8080
     remote_ollama:
       llm:
         provider: ollama
+        single_model_mode: true
+        model: qwen3.5:9b
+        primary_model: qwen3.5:9b
+        clm_fallback_enabled: false
+        clm_fallback_model: ''
+        fallback_on_missing_model: false
+        fallback_on_error: false
       agent:
-        model: "qwen3.5:9b"
-        ollama_base_url: "http://127.0.0.1:11434"
+        model: qwen3.5:9b
+        ollama_base_url: http://127.0.0.1:11434
         request_timeout: 60
       ollama:
-        base_url: "http://127.0.0.1:11434"
-        model: "qwen3.5:9b"
+        base_url: http://127.0.0.1:11434
+        model: qwen3.5:9b
         request_timeout: 60
       vlm_bridge:
         llm:
           provider: ollama
+          single_model_mode: true
+          model: qwen3.5:9b
+          primary_model: qwen3.5:9b
+          clm_fallback_enabled: false
+          clm_fallback_model: ''
+          fallback_on_missing_model: false
+          fallback_on_error: false
         vision_llm:
           enabled: true
           provider: ollama
-          base_url: "http://127.0.0.1:11434"
-          model: "qwen3-vl:8b"
+          base_url: http://127.0.0.1:11434
+          model: qwen3-vl:8b
           timeout_s: 18
         ollama:
-          endpoint: "@gateway/ollama/chat"
-          model: "qwen3.5:9b"
+          endpoint: '@gateway/ollama/chat'
+          model: qwen3.5:9b
           timeout: 12.0
       arduino_serial:
-        esp_base_url: "http://10.88.255.55:8080"
+        esp_base_url: http://10.88.255.55:8080
       esp_link:
-        base_url: "http://10.88.255.55:8080"
-
+        base_url: http://10.88.255.55:8080
+      ollama_service:
+        llm:
+          provider: ollama
+          single_model_mode: true
+          model: qwen3.5:9b
+          primary_model: qwen3.5:9b
+          fallback_on_missing_model: false
+          fallback_on_error: false
+        ollama:
+          base_url: http://127.0.0.1:11434
+          model: qwen3.5:9b
+          request_timeout: 60
 ollama_service:
   server:
     host: 0.0.0.0
@@ -99,23 +119,33 @@ ollama_service:
     default: sentry
     dir: modules/ollama/config/personalities
   actions:
-    endpoint: "@gateway/autonomy/apply_actions"
+    endpoint: '@gateway/autonomy/apply_actions'
     default_apply: true
     timeout: 1.5
   translation:
-    enabled: false   # Gemini handles Turkish natively; saves API quota
+    enabled: false
     default_source_lang: tr
-    model: ""
+    model: ''
     cache_size: 128
-
+  llm:
+    provider: ollama
+    single_model_mode: true
+    model: qwen3.5:9b
+    primary_model: qwen3.5:9b
+    fallback_on_missing_model: false
+    fallback_on_error: false
+  ollama:
+    base_url: http://127.0.0.1:11434
+    model: qwen3.5:9b
+    request_timeout: 60
 vlm_bridge:
   server:
     host: 0.0.0.0
     port: 8101
   vision:
-    processing_mode: remote
-    hybrid_local_capture: false
-    camera_source: "@gateway/camera/video"
+    processing_mode: local
+    hybrid_local_capture: true
+    camera_source: '@gateway/camera/video'
     context_max_age_s: 45
     confidence_threshold: 0.5
     face_match:
@@ -123,7 +153,7 @@ vlm_bridge:
       min_good_matches: 5
       min_score: 0.08
     follow:
-      enabled: false
+      enabled: true
       track_interval_s: 0.12
       pan_gain_deg: 50
       tilt_gain_deg: 32
@@ -145,57 +175,68 @@ vlm_bridge:
       ocr: false
       hazards: true
       semantic_scene: true
+    mode_categories:
+      onsensor:
+        tiny_detect: true
+        tiny_pose: false
     alerts:
-      classes: ["person"]
+      classes:
+      - person
       distance_threshold_m: 1.2
       announce_interval_s: 8.0
     personalization:
       known_people:
         Alice:
-          greeting: "Hos geldin Alice, seni gordugume sevindim."
+          greeting: Hos geldin Alice, seni gordugume sevindim.
         Bob:
-          greeting: "Selam Bob, bugun nasil hissediyorsun?"
+          greeting: Selam Bob, bugun nasil hissediyorsun?
       greet_cooldown_s: 30
     liveliness:
       heartbeat_interval_s: 30
       idle_lookaround_s: 60
   remote:
-    auth_token: "changeme"
+    auth_token: sb-vlm-wiXKZjxkyBZ_AbFd_aW3MCKi2kJhtKFo
     accept_results: true
   remote_multimodal:
     enabled: false
-    endpoint: "http://192.168.1.100:8102/vision/analyze"
+    endpoint: http://192.168.1.100:8102/vision/analyze
     interval_s: 8.0
     jpeg_quality: 75
-    auth_token: ""
+    auth_token: ''
   robot:
-    host: "localhost"
+    host: localhost
   ollama:
-    endpoint: "@gateway/ollama/chat"
-    model: "qwen3.5:9b"
-    timeout: 8.0
+    endpoint: '@gateway/ollama/chat'
+    model: qwen3.5:9b
+    timeout: 12.0
     num_predict: 160
   llm:
-    provider: "ollama"
+    provider: ollama
     single_model_mode: true
-    primary_model: "qwen3.5:9b"
+    primary_model: qwen3.5:9b
     clm_fallback_enabled: false
-    clm_fallback_model: ""
+    clm_fallback_model: ''
     fallback_on_missing_model: false
     fallback_on_error: false
+    model: qwen3.5:9b
   speak:
-    endpoint: "http://localhost:8083/speak/say"
+    endpoint: http://localhost:8083/speak/say
   translation:
     enabled: false
-    endpoint: "@gateway/ollama/translate"
+    endpoint: '@gateway/ollama/translate'
     source_lang: auto
     target_lang: tr
     timeout: 1.5
   actions:
-    endpoint: "@gateway/autonomy/apply_actions"
+    endpoint: '@gateway/autonomy/apply_actions'
     default_apply: true
     timeout: 1.5
-
+  vision_llm:
+    enabled: true
+    provider: ollama
+    base_url: http://127.0.0.1:11434
+    model: qwen3-vl:8b
+    timeout_s: 18
 speak:
   server:
     host: 0.0.0.0
@@ -207,6 +248,7 @@ speak:
     dtype: float32
   tts:
     engine: piper
+    allow_dummy_fallback: false
     language: tr
     voice: source
     rate: 170
@@ -216,16 +258,13 @@ speak:
       enabled: false
       endpoint: http://192.168.1.100:5000/tts/synthesize
       timeout: 120
-      auth_token: ""
+      auth_token: sb-tts-AtG6w3BNcztOFF64tmXh-Wyi2cksngPO
     piper:
-      bin_path: piper
       voice: tr
       auto_language: true
       prefer_text_language: false
       lock_session_language: true
-      # Dil için Piper sesi yoksa bu motorla seslendir (pyttsx3 | xtts | dummy).
-      # Boş bırakılırsa eski davranış: varsayılan Piper sesi kullanılır.
-      fallback_engine: pyttsx3
+      fallback_engine: ''
       language_voices:
         tr: tr
         en: glados
@@ -249,6 +288,8 @@ speak:
         glados:
           model_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx
           config_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx.json
+      preload_voices:
+      - tr
     xtts:
       endpoint: http://192.168.1.100:5000/tts/synthesize
       timeout: 120
@@ -256,36 +297,10 @@ speak:
       speaker_wav: null
   liveliness:
     enabled: true
-    interactions_base_url: "@gateway/interactions"
-    speech_effect:
-      name: PULSE
-      tone_effect_map:
-        fast: COMET
-        neutral: PULSE
-        calm: BREATHE
-        tired: THEATER_CHASE
-      emphasis_effect_map:
-        exclamation: COMET
-        question: TWINKLE
-      rhythm:
-        enabled: true
-        mode: clauses
-        effect: PULSE
-        words_per_beat: 3
-        clauses_per_beat: 1
-        max_beats: 4
-        duration_ms: 150
-        max_pause_marks: 4
-        pause_effect_map:
-          ",": TWINKLE
-          ";": TWINKLE
-          ":": BREATHE
-          ".": BREATHE
-      min_duration_ms: 400
-      max_duration_ms: 7000
-      chars_per_second: 16
-      force: false
-
+    expression_base_url: '@gateway/expression'
+    event_timeout_s: 0.35
+  naturalness:
+    enabled: false
 wakeword:
   audio:
     device: plughw:0,0
@@ -296,14 +311,14 @@ wakeword:
   wakeword:
     engine: openwakeword
     words:
-      - "hey mycroft"
-      - "mycroft"
+    - hey mycroft
+    - mycroft
     trigger_on_partial: true
     min_confidence: 0.0
     cooldown_sec: 3.0
   openwakeword:
     pretrained_models:
-      - hey_mycroft
+    - hey_mycroft
     inference_framework: onnx
     threshold: 0.25
     smooth_window: 3
@@ -315,9 +330,8 @@ wakeword:
       min_samples: 120
       percentile: 99.5
       margin: 0.0007
-      min_threshold: 0.20
-      max_threshold: 0.40
-
+      min_threshold: 0.2
+      max_threshold: 0.4
 speech:
   server:
     host: 0.0.0.0
@@ -335,7 +349,9 @@ speech:
     auto_language: true
     auto_switch_model: true
     dual_decode_margin: 0.35
-    dual_decode_languages: [tr, en]
+    dual_decode_languages:
+    - tr
+    - en
     utterance_buffer_sec: 20
     model_path: null
     language_models:
@@ -361,29 +377,27 @@ speech:
       smoothing_alpha: 0.3
       slew_deg_per_s: 120.0
       energy_threshold: 1000
-
 actions:
-  gateway_base_url: "http://127.0.0.1:8080"
+  gateway_base_url: http://127.0.0.1:8080
   http_timeout_s: 2.5
-
 tri_layer:
   enabled: true
-  # HTTP /agent/step istekleri de keyword router yerine LLM tool loop kullanır.
   api_native_tools: true
   fast_path:
     enabled: true
-    max_chars: 140
+    max_chars: 180
+    num_predict: 96
+    max_steps: 2
   router:
     max_subagents: 3
     default_modules:
-      - autonomy
-      - agent_core
+    - autonomy
+    - agent_core
   subagent:
     max_steps: 4
   persona:
     num_predict: 384
     stream: true
-
 realtime_profile:
   active: fast
   profiles:
@@ -427,12 +441,63 @@ realtime_profile:
       speak_max_chunk_chars: 380
       vlm_ask_timeout_s: 22
       ollama_chat_timeout_s: 60
-
 safety:
   max_servo_angle: 180
   min_servo_angle: 0
   max_stepper_speed: 100
   laser_max_duration_s: 2.0
-
 camera:
-  enabled: false
+  enabled: true
+  backend: picamera2
+  resolution:
+    width: 1280
+    height: 720
+  fps_target: 30
+  jpeg_quality: 80
+  flip: none
+  picamera2:
+    size:
+      width: 1280
+      height: 720
+    format: RGB888
+    frame_rate: 30
+  imx500:
+    enabled: true
+    model_path: /usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk
+    labels_path: ''
+    confidence: 0.5
+    iou: 0.65
+    max_detections: 20
+    publish_interval_s: 0.05
+    inference_rate: 30
+    preserve_aspect_ratio: true
+    tracker:
+      iou_threshold: 0.3
+      max_missed: 8
+    target:
+      label: person
+      strategy: largest
+    classes_of_interest:
+    - person
+    - cat
+    - dog
+    - chair
+    - bottle
+    - cup
+    - book
+    - laptop
+    - cell phone
+    - tv
+provider_truth:
+  active_provider: ollama
+  runtime_profile: remote_ollama
+  reason: raspberry_pi_runtime_with_configured_ollama_provider
+  llm_model: qwen3.5:9b
+  ollama_base_url: http://127.0.0.1:11434
+  vlm_provider: ollama
+  vlm_model: qwen3-vl:8b
+  remote_multimodal_url: ''
+  updated_by: 37_ssh_tunnel_ollama_profile.ps1
+environment:
+  SENTRYBOT_REMOTE_OLLAMA_URL: http://127.0.0.1:11434
+  SENTRYBOT_OLLAMA_BASE_URL: http://127.0.0.1:11434
