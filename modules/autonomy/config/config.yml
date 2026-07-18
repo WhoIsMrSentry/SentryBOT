@@ -25,56 +25,96 @@ defaults:
         sleep_fill: 35
   body_language:
     profiles:
-      joy: { pan_delta: 6, tilt_delta: 4, event: "autonomy.joy" }
-      curiosity: { pan_delta: 8, tilt_delta: 3, event: "autonomy.curious" }
-      fear: { pan_delta: 10, tilt_delta: 6, event: "autonomy.alert" }
-      tired: { pan_delta: 2, tilt_delta: 2, event: "autonomy.tired" }
-      sadness: { pan_delta: 3, tilt_delta: 5, event: "autonomy.sad" }
-      neutral: { pan_delta: 4, tilt_delta: 3, event: "autonomy.neutral" }
-
+      joy:
+        pan_delta: 6
+        tilt_delta: 4
+        event: autonomy.joy
+      curiosity:
+        pan_delta: 8
+        tilt_delta: 3
+        event: autonomy.curious
+      fear:
+        pan_delta: 10
+        tilt_delta: 6
+        event: autonomy.alert
+      tired:
+        pan_delta: 2
+        tilt_delta: 2
+        event: autonomy.tired
+      sadness:
+        pan_delta: 3
+        tilt_delta: 5
+        event: autonomy.sad
+      neutral:
+        pan_delta: 4
+        tilt_delta: 3
+        event: autonomy.neutral
   lights:
     default_mode: breathe
     palettes:
-      calm_violet: [120, 80, 255]
-      sunset_gold: [255, 170, 60]
-      alert_red: [255, 45, 45]
-      ocean_teal: [30, 180, 255]
-      arctic_white: [255, 255, 255]
-      forest_green: [60, 200, 90]
-      ember_orange: [255, 110, 40]
-      polar_blue: [90, 150, 255]
-
+      calm_violet:
+      - 120
+      - 80
+      - 255
+      sunset_gold:
+      - 255
+      - 170
+      - 60
+      alert_red:
+      - 255
+      - 45
+      - 45
+      ocean_teal:
+      - 30
+      - 180
+      - 255
+      arctic_white:
+      - 255
+      - 255
+      - 255
+      forest_green:
+      - 60
+      - 200
+      - 90
+      ember_orange:
+      - 255
+      - 110
+      - 40
+      polar_blue:
+      - 90
+      - 150
+      - 255
 endpoints:
-  arduino: "@gateway/arduino"
-  neopixel: "@gateway/neopixel"
-  speak: "@gateway/speak"
-  ollama: "@gateway/ollama"
-  speech: "@gateway/speech"
-  interactions: "@gateway/interactions"
-  oled_faces: "@gateway/oled_faces"
-  state_manager: "@gateway/state"
-  animate: "@gateway/animate"
-  vlm: "@gateway/vlm"
-  vision: "@gateway/vlm"
-  camera: "@gateway/camera"
-  notifier: "@gateway/notify"
-  autonomy: "@gateway/autonomy"
-  agent_core: "@gateway/agent"
-
+  arduino: '@gateway/arduino'
+  neopixel: '@gateway/neopixel'
+  speak: '@gateway/speak'
+  ollama: '@gateway/ollama'
+  speech: '@gateway/speech'
+  interactions: '@gateway/interactions'
+  expression: '@gateway/expression'
+  oled_faces: '@gateway/oled_faces'
+  state_manager: '@gateway/state'
+  animate: '@gateway/animate'
+  vlm: '@gateway/vlm'
+  vision: '@gateway/vlm'
+  camera: '@gateway/camera'
+  notifier: '@gateway/notify'
+  autonomy: '@gateway/autonomy'
+  agent_core: '@gateway/agent'
 behaviors:
   idle:
     enabled: true
     actions:
-      - "look_around"
-      - "blink"
-      - "sigh"
-      - "stretch"
-      - "monologue"
+    - look_around
+    - blink
+    - sigh
+    - stretch
+    - monologue
   idle_tree:
     enabled: true
     interval_s: 6
     fallback_to_llm: true
-    path: "modules/autonomy/config/idle_behaviors.yml"
+    path: modules/autonomy/config/idle_behaviors.yml
   curiosity:
     enabled: true
     face_tracking: true
@@ -83,95 +123,93 @@ behaviors:
     enabled: true
     start_hour: 2
     end_hour: 7
-    wake_up_action: "stretch"
-
+    wake_up_action: stretch
 llm:
   enabled: true
-  model: "qwen3.5:9b"
+  model: qwen3.5:9b
   auto_select_persona: false
   warmup_on_start: true
-  prompt_template: |
-    Sen duyguları olan bir robotsun.
-    
+  prompt_template: 'Sen duyguları olan bir robotsun.
+
+
     Şu anki İç Durumun:
+
     - Mutluluk: {happiness}/100 (Düşükse üzgün, yüksekse neşeli)
+
     - Enerji: {energy}/100 (Düşükse uykulu/yorgun)
+
     - Sıkılma: {is_bored} (Evet ise ilgi istiyorsun)
+
     - Son Etkileşim: {last_interaction_ago} saniye önce
+
     - Saat: {time}
 
+
     GÖREV: Bu duruma uygun, çok kısa (maksimum 10 kelime) bir iç ses cümlesi kur.
+
     - Robotik değil, canlı bir karakter gibi konuş.
+
     - Sadece söyleyeceğin cümleyi yaz.
 
+    '
 speech_quiet_hours:
   enabled: true
-  start: "01:00"
-  end: "05:00"
-  tone: "calm"
+  start: 01:00
+  end: 05:00
+  tone: calm
   max_chars: 120
-  prefix: ""
-
-# Natural barge-in: let the user cut off the robot by speaking, not only via
-# wakeword. A wakeword always interrupts; free speech needs `min_words`.
+  prefix: ''
 barge_in:
   enabled: true
   min_words: 2
   cooldown_s: 1.5
-
-# Firmware-native idle liveliness (breathing / micro-motion on the head servos).
-# The brain shapes amplitude/tempo from mood and only resends on change or every
-# refresh_interval_s, so the serial link stays quiet.
 liveliness:
   enabled: true
-  amplitude_deg: 4.0        # base breathing amplitude (degrees)
-  max_amplitude_deg: 12.0   # hard cap after emotion shaping
-  period_ms: 4500           # base breathing period
-  refresh_interval_s: 20.0  # resend keepalive even if params unchanged
-
+  amplitude_deg: 4.0
+  max_amplitude_deg: 12.0
+  period_ms: 4500
+  refresh_interval_s: 20.0
 offline_mode:
   enabled: true
   availability_ttl_s: 5
   fallback_replies:
-    - "Su an baglanti zayif, ama seni dinliyorum."
-    - "Cevap motoruna ulasamiyorum, kisa sure sonra tekrar deneyelim."
-    - "Simdi yerel moddayim, yine de yanindayim."
+  - Su an baglanti zayif, ama seni dinliyorum.
+  - Cevap motoruna ulasamiyorum, kisa sure sonra tekrar deneyelim.
+  - Simdi yerel moddayim, yine de yanindayim.
   persona_replies:
     joy:
-      - "Baglanti yok ama modum yerinde, devam edelim."
-      - "Yerel moddayim ve enerjim yuksek, hazirim."
+    - Baglanti yok ama modum yerinde, devam edelim.
+    - Yerel moddayim ve enerjim yuksek, hazirim.
     curiosity:
-      - "Baglanti kopuk, yine de seni anlamaya devam ediyorum."
-      - "Cevap motoru yok ama merakim acik, devam et."
+    - Baglanti kopuk, yine de seni anlamaya devam ediyorum.
+    - Cevap motoru yok ama merakim acik, devam et.
     tired:
-      - "Biraz yavasim ama buradayim, baglanti gelir gelmez deneriz."
-      - "Yerel moddayim, sakin ve yavas cevap verecegim."
+    - Biraz yavasim ama buradayim, baglanti gelir gelmez deneriz.
+    - Yerel moddayim, sakin ve yavas cevap verecegim.
     fear:
-      - "Sistem baglantisi zayif, simdilik guvenli moddayim."
-      - "Baglanti kararsiz, kontrollu hareket ediyorum."
+    - Sistem baglantisi zayif, simdilik guvenli moddayim.
+    - Baglanti kararsiz, kontrollu hareket ediyorum.
     neutral:
-      - "Su an yerel moddayim, yine de cevap verebilirim."
-      - "Baglanti beklemede, ama ben buradayim."
+    - Su an yerel moddayim, yine de cevap verebilirim.
+    - Baglanti beklemede, ama ben buradayim.
   contextual_replies:
     question:
-      - "Su an ag cevabi alamiyorum, ama sorunu not ettim."
-      - "Bunu cevaplamak istiyorum; baglanti gelir gelmez tekrar deneyeyim."
+    - Su an ag cevabi alamiyorum, ama sorunu not ettim.
+    - Bunu cevaplamak istiyorum; baglanti gelir gelmez tekrar deneyeyim.
     command:
-      - "Komutu duydum, baglanti toparlaninca tam uygulayacagim."
-      - "Simdilik yerel moddayim, temel tepkilerle devam ediyorum."
+    - Komutu duydum, baglanti toparlaninca tam uygulayacagim.
+    - Simdilik yerel moddayim, temel tepkilerle devam ediyorum.
     greeting:
-      - "Merhaba, baglanti olmasa da buradayim."
-      - "Selam, yerel modda da seninleyim."
+    - Merhaba, baglanti olmasa da buradayim.
+    - Selam, yerel modda da seninleyim.
     generic:
-      - "Baglanti gecici olarak yok, ama etkileşim devam ediyor."
-
+    - Baglanti gecici olarak yok, ama etkileşim devam ediyor.
 request_timeouts:
   default_post_s: 1.0
   default_get_s: 0.8
   ollama_chat_s: 18.0
   ollama_warmup_s: 2.5
   speech_min_interval_s: 0.35
-
 agentic:
   enabled: true
   min_interval_s: 45
@@ -181,34 +219,66 @@ agentic:
     stimulation_need: 68
     low_energy: 25
     low_rest: 22
-
 speech_reactions:
   excited_on_speech: false
   excited_on_praise: true
   excited_on_questions: false
-
 visual_state:
   emotion_min_interval_s: 1.8
   default_lock_s: 2.4
   strong_lock_s: 4.8
   state_hold_s: 3.2
-  strong_emotions: ["fear", "angry", "furious"]
+  strong_emotions:
+  - fear
+  - angry
+  - furious
   transition_graph:
-    neutral: ["curiosity", "joy", "tired", "sad", "fear", "angry", "furious"]
-    curiosity: ["joy", "neutral", "sad", "fear", "angry"]
-    joy: ["neutral", "curiosity", "tired", "sad"]
-    sad: ["neutral", "curiosity", "fear"]
-    tired: ["neutral", "sad"]
-    angry: ["neutral", "fear", "furious"]
-    furious: ["angry", "fear", "neutral"]
-    fear: ["neutral", "curiosity", "angry"]
-
+    neutral:
+    - curiosity
+    - joy
+    - tired
+    - sad
+    - fear
+    - angry
+    - furious
+    curiosity:
+    - joy
+    - neutral
+    - sad
+    - fear
+    - angry
+    joy:
+    - neutral
+    - curiosity
+    - tired
+    - sad
+    sad:
+    - neutral
+    - curiosity
+    - fear
+    tired:
+    - neutral
+    - sad
+    angry:
+    - neutral
+    - fear
+    - furious
+    furious:
+    - angry
+    - fear
+    - neutral
+    fear:
+    - neutral
+    - curiosity
+    - angry
 companion:
   enabled: true
-  relationship_memory_path: "modules/autonomy/data/relationship_memory.json"
+  relationship_memory_path: modules/autonomy/data/relationship_memory.json
   rituals:
     enabled: true
-    morning_window_h: [6, 11]
+    morning_window_h:
+    - 6
+    - 11
     owner_return_min_absence_s: 180
     owner_return_cooldown_s: 300
   proactive:
@@ -220,26 +290,23 @@ companion:
     callback_min_trust: 0.2
     scene_comment_min_importance: 0.45
     policy:
-      owner_style: "warm"
-      guest_style: "respectful"
+      owner_style: warm
+      guest_style: respectful
   lines:
     use_llm: true
     max_words: 18
     llm_cooldown_s: 35
     default_language: tr
-  # Sesli komutlar tri-layer keyword router yerine LLM tool loop'a gider (çok dilli).
   voice_ai_tools: true
   emotion_command_shortcut: false
   owner_sessions:
     enabled: true
     source: vision
-
 speech:
   use_stream_tts: true
   stream_poll_interval_s: 0.12
   stream_max_wait_s: 90
   stream_max_chunk_chars: 220
-  # Companion learning loop: extract prefs/facts, reinforce trust from praise/rude.
   learning:
     enabled: true
     feedback:
@@ -253,15 +320,17 @@ speech:
         user_rude:
           trust: -0.12
           salience: 0.55
-
+sound_direction:
+  poll_interval_s: 2.0
 vision_hooks:
   enabled: true
-  poll_interval_s: 2
+  poll_interval_s: 5
+  forward_interval_s: 8
   max_results: 5
   person_cooldown_s: 25
   ignore_labels:
-    - "chair"
-    - "tv"
+  - chair
+  - tv
   prefer_llm_greetings: true
   speak_on_unknown: false
   importance_speak_threshold: 0.6
@@ -280,260 +349,526 @@ vision_hooks:
     enabled: true
     cooldown_s: 28
     mirror:
-      - joy
-      - sadness
-      - fear
-      - worried
+    - joy
+    - sadness
+    - fear
+    - worried
     speak_on_mirror: true
-
 empathy:
   enabled: true
   cooldown_s: 28
-
 scenes:
   wakeword_reaction:
     steps:
-      - { type: event, name: "scene.wakeword.start" }
-      - { type: effect_burst, name: "TWINKLE", duration_ms: 120, count: 2, interval_ms: 60 }
-      - { type: segment_anim, segment: "jewel", name: "TWINKLE", color: "#66E8FF", iterations: 1 }
-      - { type: head, pan: 90, tilt: 88 }
-      - { type: base, name: "BREATHE", color: "#1F4B66" }
-      - { type: event, name: "scene.wakeword.end" }
-
+    - type: event
+      name: scene.wakeword.start
+    - type: effect_burst
+      name: TWINKLE
+      duration_ms: 120
+      count: 2
+      interval_ms: 60
+    - type: segment_anim
+      segment: jewel
+      name: TWINKLE
+      color: '#66E8FF'
+      iterations: 1
+    - type: head
+      pan: 90
+      tilt: 88
+    - type: base
+      name: BREATHE
+      color: '#1F4B66'
+    - type: event
+      name: scene.wakeword.end
   owner_return:
     steps:
-      - { type: event, name: "scene.owner_return.start" }
-      - { type: preset, name: "owner_welcome" }
-      - { type: effect_burst, name: "COMET", duration_ms: 170, count: 3, interval_ms: 80 }
-      - { type: anim, name: "owner_scan", speed: 1.0, loop: false }
-      - { type: speak, text: "{nickname}, geri donmene sevindim.", emotion: "joy" }
-      - { type: event, name: "scene.owner_return.end" }
-
+    - type: event
+      name: scene.owner_return.start
+    - type: preset
+      name: owner_welcome
+    - type: effect_burst
+      name: COMET
+      duration_ms: 170
+      count: 3
+      interval_ms: 80
+    - type: anim
+      name: owner_scan
+      speed: 1.0
+      loop: false
+    - type: speak
+      text: '{nickname}, geri donmene sevindim.'
+      emotion: joy
+    - type: event
+      name: scene.owner_return.end
   sleepy_entry:
     steps:
-      - { type: event, name: "scene.sleepy_entry.start" }
-      - { type: segment_fill, segment: "jewel", color: "#1A1D2B" }
-      - { type: segment_fill, segment: "stick", color: "#090C14" }
-      - { type: effect, name: "BREATHE", duration_ms: 900, force: false }
-      - { type: head, pan: 90, tilt: 120 }
-      - { type: speak, text: "Iyi geceler.", emotion: "tired" }
-      - { type: event, name: "scene.sleepy_entry.end" }
-
+    - type: event
+      name: scene.sleepy_entry.start
+    - type: segment_fill
+      segment: jewel
+      color: '#1A1D2B'
+    - type: segment_fill
+      segment: stick
+      color: '#090C14'
+    - type: effect
+      name: BREATHE
+      duration_ms: 900
+      force: false
+    - type: head
+      pan: 90
+      tilt: 120
+    - type: speak
+      text: Iyi geceler.
+      emotion: tired
+    - type: event
+      name: scene.sleepy_entry.end
   wake_entry:
     steps:
-      - { type: event, name: "scene.wake_entry.start" }
-      - { type: preset, name: "curious_scan" }
-      - { type: effect_burst, name: "PULSE", duration_ms: 140, count: 2, interval_ms: 90 }
-      - { type: anim, name: "stretch", speed: 1.0, loop: false }
-      - { type: speak, text: "Gunaydin, hazirim.", emotion: "joy" }
-      - { type: event, name: "scene.wake_entry.end" }
-
+    - type: event
+      name: scene.wake_entry.start
+    - type: preset
+      name: curious_scan
+    - type: effect_burst
+      name: PULSE
+      duration_ms: 140
+      count: 2
+      interval_ms: 90
+    - type: anim
+      name: stretch
+      speed: 1.0
+      loop: false
+    - type: speak
+      text: Gunaydin, hazirim.
+      emotion: joy
+    - type: event
+      name: scene.wake_entry.end
   curious_scan:
     steps:
-      - { type: event, name: "scene.curious_scan.start" }
-      - { type: preset, name: "curious_scan" }
-      - { type: head, pan: 90, tilt: 88 }
-      - { type: effect_burst, name: "TWINKLE", duration_ms: 100, count: 2, interval_ms: 70 }
-      - { type: event, name: "scene.curious_scan.end" }
-
+    - type: event
+      name: scene.curious_scan.start
+    - type: preset
+      name: curious_scan
+    - type: head
+      pan: 90
+      tilt: 88
+    - type: effect_burst
+      name: TWINKLE
+      duration_ms: 100
+      count: 2
+      interval_ms: 70
+    - type: event
+      name: scene.curious_scan.end
   vision_greeting_owner:
     steps:
-      - { type: event, name: "scene.vision_owner.start" }
-      - { type: preset, name: "owner_welcome" }
-      - { type: effect_burst, name: "COMET", duration_ms: 180, count: 2, interval_ms: 90 }
-      - { type: anim, name: "owner_scan", speed: 1.0, loop: false }
-      - { type: speak, text: "Hos geldin {name}.", emotion: "joy" }
-      - { type: event, name: "scene.vision_owner.end" }
-
+    - type: event
+      name: scene.vision_owner.start
+    - type: preset
+      name: owner_welcome
+    - type: effect_burst
+      name: COMET
+      duration_ms: 180
+      count: 2
+      interval_ms: 90
+    - type: anim
+      name: owner_scan
+      speed: 1.0
+      loop: false
+    - type: speak
+      text: Hos geldin {name}.
+      emotion: joy
+    - type: event
+      name: scene.vision_owner.end
   vision_greeting_known:
     steps:
-      - { type: event, name: "scene.vision_greeting.start" }
-      - { type: effect, name: "COMET", duration_ms: 700, force: false }
-      - { type: segment_anim, segment: "jewel", name: "PULSE", color: "#00AAFF", iterations: 1 }
-      - { type: anim, name: "vision_focus", speed: 1.0, loop: false }
-      - { type: speak, text: "{greeting}", emotion: "joy" }
-      - { type: segment_fill, segment: "stick", color: "#1E90FF" }
-      - { type: base, name: "BREATHE", color: "#1E90FF" }
-      - { type: event, name: "scene.vision_greeting.end" }
-
+    - type: event
+      name: scene.vision_greeting.start
+    - type: effect
+      name: COMET
+      duration_ms: 700
+      force: false
+    - type: segment_anim
+      segment: jewel
+      name: PULSE
+      color: '#00AAFF'
+      iterations: 1
+    - type: anim
+      name: vision_focus
+      speed: 1.0
+      loop: false
+    - type: speak
+      text: '{greeting}'
+      emotion: joy
+    - type: segment_fill
+      segment: stick
+      color: '#1E90FF'
+    - type: base
+      name: BREATHE
+      color: '#1E90FF'
+    - type: event
+      name: scene.vision_greeting.end
   vision_greeting_known_close:
     steps:
-      - { type: event, name: "scene.vision_greeting.start" }
-      - { type: effect, name: "RAINBOW_CYCLE", duration_ms: 700, force: false }
-      - { type: effect_burst, name: "COMET", duration_ms: 140, count: 3, interval_ms: 70 }
-      - { type: segment_anim, segment: "jewel", name: "COMET", color: "#00C8FF", iterations: 1 }
-      - { type: head, pan: 90, tilt: 88 }
-      - { type: speak, text: "{greeting}", emotion: "joy" }
-      - { type: sleep, duration_ms: 120 }
-      - { type: segment_fill, segment: "stick", color: "#1E90FF" }
-      - { type: event, name: "scene.vision_greeting.end" }
-
+    - type: event
+      name: scene.vision_greeting.start
+    - type: effect
+      name: RAINBOW_CYCLE
+      duration_ms: 700
+      force: false
+    - type: effect_burst
+      name: COMET
+      duration_ms: 140
+      count: 3
+      interval_ms: 70
+    - type: segment_anim
+      segment: jewel
+      name: COMET
+      color: '#00C8FF'
+      iterations: 1
+    - type: head
+      pan: 90
+      tilt: 88
+    - type: speak
+      text: '{greeting}'
+      emotion: joy
+    - type: sleep
+      duration_ms: 120
+    - type: segment_fill
+      segment: stick
+      color: '#1E90FF'
+    - type: event
+      name: scene.vision_greeting.end
   vision_greeting_unknown:
     steps:
-      - { type: event, name: "scene.vision_greeting.start" }
-      - { type: effect, name: "PULSE", duration_ms: 600, force: false }
-      - { type: segment_anim, segment: "jewel", name: "TWINKLE", color: "#30E3CA", iterations: 1 }
-      - { type: head, pan: 90, tilt: 92 }
-      - { type: speak, text: "{greeting}", emotion: "curiosity" }
-      - { type: segment_fill, segment: "stick", color: "#102A2A" }
-      - { type: base, name: "BREATHE", color: "#30E3CA" }
-      - { type: event, name: "scene.vision_greeting.end" }
-
+    - type: event
+      name: scene.vision_greeting.start
+    - type: effect
+      name: PULSE
+      duration_ms: 600
+      force: false
+    - type: segment_anim
+      segment: jewel
+      name: TWINKLE
+      color: '#30E3CA'
+      iterations: 1
+    - type: head
+      pan: 90
+      tilt: 92
+    - type: speak
+      text: '{greeting}'
+      emotion: curiosity
+    - type: segment_fill
+      segment: stick
+      color: '#102A2A'
+    - type: base
+      name: BREATHE
+      color: '#30E3CA'
+    - type: event
+      name: scene.vision_greeting.end
   vision_greeting_unknown_close:
     steps:
-      - { type: event, name: "scene.vision_greeting.start" }
-      - { type: effect, name: "TWINKLE", duration_ms: 520, force: false }
-      - { type: effect_burst, name: "TWINKLE", duration_ms: 130, count: 2, interval_ms: 70 }
-      - { type: segment_anim, segment: "jewel", name: "TWINKLE", color: "#30E3CA", iterations: 2 }
-      - { type: head, pan: 90, tilt: 95 }
-      - { type: speak, text: "{greeting}", emotion: "curiosity" }
-      - { type: segment_fill, segment: "stick", color: "#0C2020" }
-      - { type: event, name: "scene.vision_greeting.end" }
-
-  # Emotion scenes — map dominant emotion to visual + small head/anim cues
+    - type: event
+      name: scene.vision_greeting.start
+    - type: effect
+      name: TWINKLE
+      duration_ms: 520
+      force: false
+    - type: effect_burst
+      name: TWINKLE
+      duration_ms: 130
+      count: 2
+      interval_ms: 70
+    - type: segment_anim
+      segment: jewel
+      name: TWINKLE
+      color: '#30E3CA'
+      iterations: 2
+    - type: head
+      pan: 90
+      tilt: 95
+    - type: speak
+      text: '{greeting}'
+      emotion: curiosity
+    - type: segment_fill
+      segment: stick
+      color: '#0C2020'
+    - type: event
+      name: scene.vision_greeting.end
   emotion_joy:
     steps:
-      - { type: event, name: "scene.emotion_joy.start" }
-      - { type: preset, name: "emotion_joy" }
-      - { type: effect_burst, name: "RAINBOW_CYCLE", duration_ms: 300, count: 2, interval_ms: 60 }
-      - { type: anim, name: "look_around", speed: 1.0, loop: false }
-      - { type: event, name: "scene.emotion_joy.end" }
-
+    - type: event
+      name: scene.emotion_joy.start
+    - type: preset
+      name: emotion_joy
+    - type: effect_burst
+      name: RAINBOW_CYCLE
+      duration_ms: 300
+      count: 2
+      interval_ms: 60
+    - type: anim
+      name: look_around
+      speed: 1.0
+      loop: false
+    - type: event
+      name: scene.emotion_joy.end
   emotion_curiosity:
     steps:
-      - { type: event, name: "scene.emotion_curiosity.start" }
-      - { type: preset, name: "emotion_curiosity" }
-      - { type: anim, name: "vision_focus", speed: 1.0, loop: false }
-      - { type: effect, name: "COMET", duration_ms: 400 }
-      - { type: event, name: "scene.emotion_curiosity.end" }
-
+    - type: event
+      name: scene.emotion_curiosity.start
+    - type: preset
+      name: emotion_curiosity
+    - type: anim
+      name: vision_focus
+      speed: 1.0
+      loop: false
+    - type: effect
+      name: COMET
+      duration_ms: 400
+    - type: event
+      name: scene.emotion_curiosity.end
   emotion_fear:
     steps:
-      - { type: event, name: "scene.emotion_fear.start" }
-      - { type: preset, name: "emotion_fear" }
-      - { type: head, pan: 90, tilt: 80 }
-      - { type: effect, name: "PULSE", duration_ms: 450 }
-      - { type: event, name: "scene.emotion_fear.end" }
-
+    - type: event
+      name: scene.emotion_fear.start
+    - type: preset
+      name: emotion_fear
+    - type: head
+      pan: 90
+      tilt: 80
+    - type: effect
+      name: PULSE
+      duration_ms: 450
+    - type: event
+      name: scene.emotion_fear.end
   emotion_tired:
     steps:
-      - { type: event, name: "scene.emotion_tired.start" }
-      - { type: preset, name: "emotion_tired" }
-      - { type: anim, name: "stretch", speed: 0.8, loop: false }
-      - { type: head, pan: 90, tilt: 110 }
-      - { type: event, name: "scene.emotion_tired.end" }
-
+    - type: event
+      name: scene.emotion_tired.start
+    - type: preset
+      name: emotion_tired
+    - type: anim
+      name: stretch
+      speed: 0.8
+      loop: false
+    - type: head
+      pan: 90
+      tilt: 110
+    - type: event
+      name: scene.emotion_tired.end
   emotion_sad:
     steps:
-      - { type: event, name: "scene.emotion_sad.start" }
-      - { type: preset, name: "emotion_sad" }
-      - { type: effect, name: "PULSE", duration_ms: 600 }
-      - { type: head, pan: 90, tilt: 100 }
-      - { type: event, name: "scene.emotion_sad.end" }
-
+    - type: event
+      name: scene.emotion_sad.start
+    - type: preset
+      name: emotion_sad
+    - type: effect
+      name: PULSE
+      duration_ms: 600
+    - type: head
+      pan: 90
+      tilt: 100
+    - type: event
+      name: scene.emotion_sad.end
   emotion_angry:
     steps:
-      - { type: event, name: "scene.emotion_angry.start" }
-      - { type: preset, name: "emotion_angry" }
-      - { type: head, pan: 90, tilt: 105 }
-      - { type: effect, name: "SOLID", color: "#FF0000" }
-      - { type: event, name: "scene.emotion_angry.end" }
-
+    - type: event
+      name: scene.emotion_angry.start
+    - type: preset
+      name: emotion_angry
+    - type: head
+      pan: 90
+      tilt: 105
+    - type: effect
+      name: SOLID
+      color: '#FF0000'
+    - type: event
+      name: scene.emotion_angry.end
   emotion_furious:
     steps:
-      - { type: event, name: "scene.emotion_furious.start" }
-      - { type: preset, name: "emotion_furious" }
-      - { type: head, pan: 90, tilt: 110 }
-      - { type: effect_burst, name: "PULSE", duration_ms: 120, count: 4, interval_ms: 60 }
-      - { type: effect, name: "SOLID", color: "#FF0000" }
-      - { type: event, name: "scene.emotion_furious.end" }
-
+    - type: event
+      name: scene.emotion_furious.start
+    - type: preset
+      name: emotion_furious
+    - type: head
+      pan: 90
+      tilt: 110
+    - type: effect_burst
+      name: PULSE
+      duration_ms: 120
+      count: 4
+      interval_ms: 60
+    - type: effect
+      name: SOLID
+      color: '#FF0000'
+    - type: event
+      name: scene.emotion_furious.end
   emotion_sadness:
     steps:
-      - { type: event, name: "scene.emotion_sadness.start" }
-      - { type: preset, name: "emotion_sadness" }
-      - { type: effect, name: "PULSE", duration_ms: 600 }
-      - { type: head, pan: 90, tilt: 100 }
-      - { type: event, name: "scene.emotion_sadness.end" }
-
+    - type: event
+      name: scene.emotion_sadness.start
+    - type: preset
+      name: emotion_sadness
+    - type: effect
+      name: PULSE
+      duration_ms: 600
+    - type: head
+      pan: 90
+      tilt: 100
+    - type: event
+      name: scene.emotion_sadness.end
   emotion_love:
     steps:
-      - { type: event, name: "scene.emotion_love.start" }
-      - { type: preset, name: "emotion_love" }
-      - { type: effect, name: "PULSE", duration_ms: 700, color: "#FF2864" }
-      - { type: event, name: "scene.emotion_love.end" }
-
+    - type: event
+      name: scene.emotion_love.start
+    - type: preset
+      name: emotion_love
+    - type: effect
+      name: PULSE
+      duration_ms: 700
+      color: '#FF2864'
+    - type: event
+      name: scene.emotion_love.end
   emotion_surprise:
     steps:
-      - { type: event, name: "scene.emotion_surprise.start" }
-      - { type: preset, name: "emotion_surprise" }
-      - { type: effect_burst, name: "TWINKLE", duration_ms: 150, count: 3, interval_ms: 70 }
-      - { type: event, name: "scene.emotion_surprise.end" }
-
+    - type: event
+      name: scene.emotion_surprise.start
+    - type: preset
+      name: emotion_surprise
+    - type: effect_burst
+      name: TWINKLE
+      duration_ms: 150
+      count: 3
+      interval_ms: 70
+    - type: event
+      name: scene.emotion_surprise.end
   emotion_excitement:
     steps:
-      - { type: event, name: "scene.emotion_excitement.start" }
-      - { type: preset, name: "emotion_excitement" }
-      - { type: effect_burst, name: "RAINBOW_CYCLE", duration_ms: 200, count: 2, interval_ms: 80 }
-      - { type: event, name: "scene.emotion_excitement.end" }
-
+    - type: event
+      name: scene.emotion_excitement.start
+    - type: preset
+      name: emotion_excitement
+    - type: effect_burst
+      name: RAINBOW_CYCLE
+      duration_ms: 200
+      count: 2
+      interval_ms: 80
+    - type: event
+      name: scene.emotion_excitement.end
   emotion_bored:
     steps:
-      - { type: event, name: "scene.emotion_bored.start" }
-      - { type: preset, name: "emotion_bored" }
-      - { type: head, pan: 88, tilt: 95 }
-      - { type: effect, name: "BREATHE", duration_ms: 900, color: "#3C3C3C" }
-      - { type: event, name: "scene.emotion_bored.end" }
-
+    - type: event
+      name: scene.emotion_bored.start
+    - type: preset
+      name: emotion_bored
+    - type: head
+      pan: 88
+      tilt: 95
+    - type: effect
+      name: BREATHE
+      duration_ms: 900
+      color: '#3C3C3C'
+    - type: event
+      name: scene.emotion_bored.end
   emotion_worried:
     steps:
-      - { type: event, name: "scene.emotion_worried.start" }
-      - { type: preset, name: "emotion_worried" }
-      - { type: effect, name: "BREATHE", duration_ms: 800, color: "#B46400" }
-      - { type: head, pan: 92, tilt: 98 }
-      - { type: event, name: "scene.emotion_worried.end" }
-
+    - type: event
+      name: scene.emotion_worried.start
+    - type: preset
+      name: emotion_worried
+    - type: effect
+      name: BREATHE
+      duration_ms: 800
+      color: '#B46400'
+    - type: head
+      pan: 92
+      tilt: 98
+    - type: event
+      name: scene.emotion_worried.end
   emotion_confusion:
     steps:
-      - { type: event, name: "scene.emotion_confusion.start" }
-      - { type: preset, name: "emotion_confusion" }
-      - { type: effect, name: "TWINKLE", duration_ms: 500, color: "#A000C8" }
-      - { type: head, pan: 85, tilt: 92 }
-      - { type: event, name: "scene.emotion_confusion.end" }
-
+    - type: event
+      name: scene.emotion_confusion.start
+    - type: preset
+      name: emotion_confusion
+    - type: effect
+      name: TWINKLE
+      duration_ms: 500
+      color: '#A000C8'
+    - type: head
+      pan: 85
+      tilt: 92
+    - type: event
+      name: scene.emotion_confusion.end
   emotion_neutral:
     steps:
-      - { type: event, name: "scene.emotion_neutral.start" }
-      - { type: preset, name: "calm_idle" }
-      - { type: effect, name: "BREATHE", duration_ms: 600, color: "#283C50" }
-      - { type: event, name: "scene.emotion_neutral.end" }
-
+    - type: event
+      name: scene.emotion_neutral.start
+    - type: preset
+      name: calm_idle
+    - type: effect
+      name: BREATHE
+      duration_ms: 600
+      color: '#283C50'
+    - type: event
+      name: scene.emotion_neutral.end
 owner:
   enabled: true
-  name: "WhoIsMrSentry"
-  # additional accepted owner aliases (case-insensitive)
+  name: WhoIsMrSentry
   aliases:
-    - "Emir"
-    # removed legacy Khar language alias
+  - Emir
   addressing:
-    affectionate: "Baba"
-    formal: "Emir"
-    handle: "WhoIsMrSentry"
+    affectionate: Baba
+    formal: Emir
+    handle: WhoIsMrSentry
   presence_timeout_s: 45
   require_presence: false
   max_requests_without_owner: 3
   cooldown_s: 20
   speaker_window_s: 10
-  polite_message: "Sahip yokken de isteğini yerine getirebilirim."
-  angry_message: "Baba yokken beni zorlamanı istemiyorum."
-  cooldown_message: "Baba gelene kadar konuşmak istemiyorum."
-  greeting: "Baba! Geldiğine çok sevindim."
+  polite_message: Sahip yokken de isteğini yerine getirebilirim.
+  angry_message: Baba yokken beni zorlamanı istemiyorum.
+  cooldown_message: Baba gelene kadar konuşmak istemiyorum.
+  greeting: Baba! Geldiğine çok sevindim.
   restricted_keywords:
-    - "format"
-    - "kendini kapat"
-    - "delete"
-  # Note: Kharuun-specific irreversible triggers removed.
+  - format
+  - kendini kapat
+  - delete
   rfid:
-    endpoint: "@gateway/arduino/rfid/authorize"
+    endpoint: '@gateway/arduino/rfid/authorize'
     grace_s: 120
     poll_interval_s: 15
+world_memory:
+  enabled: true
+  db_path: data/world_memory.sqlite3
+  max_context_items: 8
+  default_confidence: 0.55
+living_needs:
+  enabled: true
+  idle_boredom_s: 90
+  alone_social_s: 180
+  curiosity_decay_s: 150
+  rest_energy_threshold: 0.28
+  sound_attention_hold_s: 18
+  person_attention_hold_s: 45
+safe_navigation:
+  enabled: true
+  places_path: data/safe_places.json
+  allow_base_motion: false
+  default_rest_place: quiet_corner
+  rest_pose:
+    pan: 90
+    tilt: 125
+pi_hardware_runtime:
+  require_pi: true
+  require_camera: true
+  require_esp: false
+  esp_health_timeout_s: 0.4
+topomap_motion:
+  enabled: true
+  map_path: data/topomap_places.json
+  allow_base_motion: false
+  require_ultrasonic_clearance: true
+  min_clearance_cm: 28.0
+owner_learning:
+  enabled: true
+  profile_path: data/owner_profile.json
+  min_confidence: 0.55

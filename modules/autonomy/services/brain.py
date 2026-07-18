@@ -20,6 +20,19 @@ from .proactive_planner import ProactivePlanner
 from .barge_in import BargeInController
 from .liveliness import LivelinessScheduler
 from .interaction_feedback import InteractionFeedbackLearner
+from .needs_engine import CompanionNeedsEngine
+from .companion_goal_selector import CompanionGoalSelector
+from .companion_goal_executor import CompanionGoalExecutor
+from .companion_auto_execute_gate import CompanionAutoExecuteGate
+from .companion_behavior_loop import CompanionBehaviorLoop
+from .vision_context_needs_bridge import VisionContextNeedsBridge
+from .audio_event_needs_bridge import AudioEventNeedsBridge
+from .world_memory_rag import WorldMemoryRAG as WorldMemory
+from .living_needs import LivingNeedsEngine
+from .safe_navigation import SafeNavigationMemory
+from .memory_decision_shadow import MemoryDecisionShadow
+from .memory_needs_bias import MemoryNeedsBias
+from .world_memory_autowriter import WorldMemoryAutoWriter
 from .relationship_memory import RelationshipMemory
 from .brain_parts.animations import AnimationSupportMixin
 from .brain_parts.owner_guard import OwnerGuardMixin
@@ -83,6 +96,32 @@ class AutonomyBrain(
         )
         learning_cfg = companion_cfg.get("learning", {}) if isinstance(companion_cfg.get("learning", {}), dict) else {}
         self.feedback_learner = InteractionFeedbackLearner(learning_cfg.get("feedback", learning_cfg))
+        needs_cfg = self.config.get("companion_needs", {}) if isinstance(self.config.get("companion_needs", {}), dict) else {}
+        self.needs_engine = CompanionNeedsEngine(needs_cfg)
+        goal_cfg = self.config.get("companion_goals", {}) if isinstance(self.config.get("companion_goals", {}), dict) else {}
+        self.goal_selector = CompanionGoalSelector(goal_cfg)
+        executor_cfg = self.config.get("companion_goal_executor", {}) if isinstance(self.config.get("companion_goal_executor", {}), dict) else {}
+        self.goal_executor = CompanionGoalExecutor(executor_cfg, client=self.client)
+        auto_exec_cfg = self.config.get("companion_auto_execute", {}) if isinstance(self.config.get("companion_auto_execute", {}), dict) else {}
+        self.goal_auto_execute_gate = CompanionAutoExecuteGate(auto_exec_cfg)
+        loop_cfg = self.config.get("companion_behavior_loop", {}) if isinstance(self.config.get("companion_behavior_loop", {}), dict) else {}
+        self.companion_behavior_loop = CompanionBehaviorLoop(loop_cfg)
+        vision_needs_cfg = self.config.get("vision_context_needs", {}) if isinstance(self.config.get("vision_context_needs", {}), dict) else {}
+        self.vision_context_needs_bridge = VisionContextNeedsBridge(vision_needs_cfg)
+        audio_needs_cfg = self.config.get("audio_event_needs", {}) if isinstance(self.config.get("audio_event_needs", {}), dict) else {}
+        self.audio_event_needs_bridge = AudioEventNeedsBridge(audio_needs_cfg)
+        world_memory_cfg = self.config.get("world_memory", {}) if isinstance(self.config.get("world_memory", {}), dict) else {}
+        self.world_memory = WorldMemory(world_memory_cfg)
+        living_needs_cfg = self.config.get("living_needs", {}) if isinstance(self.config.get("living_needs", {}), dict) else {}
+        self.living_needs = LivingNeedsEngine(living_needs_cfg)
+        safe_navigation_cfg = self.config.get("safe_navigation", {}) if isinstance(self.config.get("safe_navigation", {}), dict) else {}
+        self.safe_navigation = SafeNavigationMemory(safe_navigation_cfg, client=self.client)
+        memory_decision_cfg = self.config.get("memory_decision_shadow", {}) if isinstance(self.config.get("memory_decision_shadow", {}), dict) else {}
+        self.memory_decision_shadow = MemoryDecisionShadow(memory_decision_cfg)
+        memory_bias_cfg = self.config.get("memory_needs_bias", {}) if isinstance(self.config.get("memory_needs_bias", {}), dict) else {}
+        self.memory_needs_bias = MemoryNeedsBias(memory_bias_cfg)
+        world_memory_autowrite_cfg = self.config.get("world_memory_autowrite", {}) if isinstance(self.config.get("world_memory_autowrite", {}), dict) else {}
+        self.world_memory_autowriter = WorldMemoryAutoWriter(world_memory_autowrite_cfg)
         self.barge_in = BargeInController(config.get("barge_in", {}) if isinstance(config.get("barge_in", {}), dict) else {})
         self.liveliness = LivelinessScheduler(config.get("liveliness", {}) if isinstance(config.get("liveliness", {}), dict) else {})
         self._vision_cfg = config.get("vision_hooks", {})
@@ -125,6 +164,24 @@ class AutonomyBrain(
             "rfid_authorized_until": 0.0,
             "last_speaker": None,
             "persona_mode": None,
+            "companion_needs": {},
+            "companion_behavior_loop": {},
+            "companion_behavior_history": [],
+            "vision_context_needs": {},
+            "vision_context_history": [],
+            "audio_event_needs": {},
+            "audio_event_history": [],
+            "world_memory": {},
+            "world_memory_history": [],
+            "memory_decision_shadow": {},
+            "memory_needs_bias": {},
+            "world_memory_autowrite": {},
+            "world_memory_autowrite_history": [],
+            "living_needs": {},
+            "living_needs_history": [],
+            "safe_navigation": {},
+            "sound_interrupt": {},
+            "sound_interrupt_history": [],
         }
         self._people_last_seen = {}
         self._last_emotion_sent = None
@@ -237,6 +294,10 @@ class AutonomyBrain(
         if hasattr(self.mood, "satisfy_need"):
             self.mood.satisfy_need("social", social_fill)
             self.mood.satisfy_need("stimulation", stim_drain)
+        try:
+            self.needs_engine.observe_interaction(str(source or "interaction"))
+        except Exception:
+            pass
 
     def _sense(self):
         """Poll sensors for new information."""
@@ -245,11 +306,17 @@ class AutonomyBrain(
         self._sense_vision()
 
     def _sense_sound_direction(self):
+        cfg = self.config.get("sound_direction", {}) if isinstance(self.config.get("sound_direction", {}), dict) else {}
+        interval = float(cfg.get("poll_interval_s", 2.0) or 2.0)
+        now = time.time()
+        if now - float(self.state.get("last_sound_direction_poll", 0.0) or 0.0) < max(0.2, interval):
+            return
+        self.state["last_sound_direction_poll"] = now
         try:
             direction = self.client.get_speech_direction()
             angle = (direction or {}).get("angle") if isinstance(direction, dict) else None
             if isinstance(angle, (int, float)) and abs(angle) > 10:
-                    self._react_to_sound(angle)
+                self._react_to_sound(angle)
         except Exception:
             pass
 
@@ -517,6 +584,10 @@ class AutonomyBrain(
         self._sync_emotion()
         self._liveliness_tick(now)
 
+        self._update_companion_needs(now)
+
+        self._tick_companion_behavior_loop(now)
+
         if random.random() < 0.4:
             self._perform_micro_movement()
 
@@ -550,6 +621,717 @@ class AutonomyBrain(
 
         self._run_companion_rituals(now)
         self._run_companion_proactive(now)
+
+    def _update_companion_needs(self, now: float) -> None:
+        try:
+            owner_present = bool(self._owner_seen_recently()) if hasattr(self, "_owner_seen_recently") else False
+            owner_last_seen = float(self.state.get("owner_last_seen", 0.0) or 0.0)
+            scene_ctx = {
+                "summary": str(self.state.get("scene_summary", "") or ""),
+                "importance": float(self.state.get("scene_importance", 0.0) or 0.0),
+                "unspoken": bool(self.state.get("scene_unspoken", False)),
+                "hazards": self.state.get("scene_hazards", []),
+            }
+            cfg_pc = self.config.get("pc_test", {}) if isinstance(self.config.get("pc_test", {}), dict) else {}
+            pc_test = bool(cfg_pc.get("enabled", False))
+            mood_state = getattr(self.mood, "state", {})
+            mood_state = dict(mood_state) if isinstance(mood_state, dict) else {}
+            needs_state = self.mood.get_needs() if hasattr(self.mood, "get_needs") else {}
+            needs_state = dict(needs_state) if isinstance(needs_state, dict) else {}
+            if hasattr(self, "vision_context_needs_bridge"):
+                try:
+                    bridge_ctx = self.vision_context_needs_bridge.context(now=now)
+                    self.state["vision_context_needs"] = bridge_ctx.get("status", bridge_ctx)
+                    if bridge_ctx.get("available"):
+                        scene_ctx.update(bridge_ctx.get("scene") or {})
+                        if bridge_ctx.get("owner_present"):
+                            owner_present = True
+                        bridge_owner_ts = bridge_ctx.get("owner_last_seen_ts")
+                        if bridge_owner_ts:
+                            owner_last_seen = max(float(owner_last_seen or 0.0), float(bridge_owner_ts))
+                        mood_state.update(bridge_ctx.get("mood_overrides") or {})
+                        needs_state.update(bridge_ctx.get("needs_overrides") or {})
+                except Exception as exc:
+                    logger.debug("Vision context needs bridge failed: %s", exc)
+            if hasattr(self, "audio_event_needs_bridge"):
+                try:
+                    audio_bridge_ctx = self.audio_event_needs_bridge.context(now=now)
+                    self.state["audio_event_needs"] = audio_bridge_ctx.get("status", audio_bridge_ctx)
+                    if audio_bridge_ctx.get("available"):
+                        scene_ctx["audio_context"] = audio_bridge_ctx.get("audio_context") or {}
+                        if audio_bridge_ctx.get("owner_present"):
+                            owner_present = True
+                        audio_owner_ts = audio_bridge_ctx.get("owner_last_heard_ts")
+                        if audio_owner_ts:
+                            owner_last_seen = max(float(owner_last_seen or 0.0), float(audio_owner_ts))
+                        if audio_bridge_ctx.get("speech_busy"):
+                            setattr(self, "_speech_busy", True)
+                        mood_state.update(audio_bridge_ctx.get("mood_overrides") or {})
+                        needs_state.update(audio_bridge_ctx.get("needs_overrides") or {})
+                except Exception as exc:
+                    logger.debug("Audio event needs bridge failed: %s", exc)
+            snapshot = self.needs_engine.tick(
+                now=now,
+                last_interaction_ts=float(self.state.get("last_interaction", now) or now),
+                mood_state=mood_state,
+                needs_state=needs_state,
+                owner_present=owner_present,
+                owner_last_seen_ts=owner_last_seen or None,
+                is_sleeping=bool(self.state.get("is_sleeping", False)),
+                speech_busy=bool(getattr(self, "_speech_busy", False)),
+                scene=scene_ctx,
+                pc_test=pc_test,
+            )
+            snapshot = self._apply_memory_bias_to_needs(snapshot, now)
+            self.state["companion_needs"] = snapshot
+            goal_plan = self.goal_selector.select(
+                snapshot,
+                owner_present=owner_present,
+                now=now,
+            )
+            self.state["companion_goal"] = goal_plan
+            goal_event = str(goal_plan.get("event", "") or "").strip()
+            if goal_event:
+                self.client.push_interaction_event(goal_event, goal_plan)
+            event = str(snapshot.get("event", "") or "").strip()
+            if event:
+                self.client.push_interaction_event(event, {
+                    "dominant_need": snapshot.get("dominant_need"),
+                    "recommended_goal": snapshot.get("recommended_goal"),
+                    "scores": snapshot.get("scores", {}),
+                    "confidence": snapshot.get("confidence", 0.0),
+                })
+        except Exception as exc:
+            logger.debug("Companion needs update failed: %s", exc)
+
+    def execute_companion_goal(self, payload: dict | None = None, **_: object) -> dict:
+        try:
+            plan = None
+            if isinstance(payload, dict) and isinstance(payload.get("goal_plan"), dict):
+                plan = payload.get("goal_plan")
+            if not isinstance(plan, dict):
+                plan = self.get_companion_goal_snapshot() if hasattr(self, "get_companion_goal_snapshot") else {}
+            result = self.goal_executor.execute(plan)
+            self.state["companion_goal_execution"] = result
+            return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def observe_vision_context_for_needs(self, payload: dict | None = None, source: str = "api") -> dict:
+        try:
+            if not hasattr(self, "vision_context_needs_bridge"):
+                return {"ok": False, "available": False, "reason": "vision_context_bridge_missing"}
+            result = self.vision_context_needs_bridge.observe(payload or {}, source=source)
+            self.state["vision_context_needs"] = result
+            history = list(self.state.get("vision_context_history") or [])
+            history.append({
+                "timestamp": result.get("timestamp"),
+                "reason": result.get("reason"),
+                "summary": result.get("summary", ""),
+                "new_object": result.get("new_object", False),
+                "owner_present": result.get("owner_present", False),
+                "no_person": result.get("no_person", False),
+                "hazards": result.get("hazards", []),
+            })
+            self.state["vision_context_history"] = history[-20:]
+            try:
+                result["memory_autowrite"] = self.observe_context_world_memory("vision", result)
+            except Exception:
+                pass
+            try:
+                self.client.push_interaction_event("vision.context", {
+                    "reason": result.get("reason"),
+                    "summary": result.get("summary", ""),
+                    "new_object": result.get("new_object", False),
+                    "owner_present": result.get("owner_present", False),
+                    "no_person": result.get("no_person", False),
+                })
+            except Exception:
+                pass
+            return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def observe_audio_event_for_needs(self, payload: dict | None = None, source: str = "api") -> dict:
+        try:
+            if not hasattr(self, "audio_event_needs_bridge"):
+                return {"ok": False, "available": False, "reason": "audio_event_bridge_missing"}
+            result = self.audio_event_needs_bridge.observe(payload or {}, source=source)
+            self.state["audio_event_needs"] = result
+            history = list(self.state.get("audio_event_history") or [])
+            history.append({
+                "timestamp": result.get("timestamp"),
+                "reason": result.get("reason"),
+                "event_type": result.get("event_type", ""),
+                "wakeword": result.get("wakeword", False),
+                "speech": result.get("speech", False),
+                "sound": result.get("sound", False),
+                "silence": result.get("silence", False),
+                "loud": result.get("loud", False),
+            })
+            self.state["audio_event_history"] = history[-20:]
+            try:
+                result["memory_autowrite"] = self.observe_context_world_memory("audio", result)
+            except Exception:
+                pass
+            try:
+                self.client.push_interaction_event("audio.context", {
+                    "reason": result.get("reason"),
+                    "event_type": result.get("event_type", ""),
+                    "wakeword": result.get("wakeword", False),
+                    "speech": result.get("speech", False),
+                    "sound": result.get("sound", False),
+                    "silence": result.get("silence", False),
+                    "loud": result.get("loud", False),
+                })
+            except Exception:
+                pass
+            try:
+                if result.get("sound") or result.get("wakeword") or result.get("speech") or result.get("loud"):
+                    result["sound_interrupt"] = self.handle_sound_interrupt(result)
+            except Exception:
+                pass
+            return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def observe_context_world_memory(self, source_type: str, context: dict | None = None) -> dict:
+        try:
+            if not hasattr(self, "world_memory"):
+                return {"ok": False, "available": False, "reason": "world_memory_missing"}
+            if not hasattr(self, "world_memory_autowriter"):
+                return {"ok": False, "available": False, "reason": "world_memory_autowriter_missing"}
+            payloads = self.world_memory_autowriter.build(source_type, context or {})
+            results = []
+            for payload in payloads:
+                src = payload.get("source") if isinstance(payload, dict) else source_type
+                results.append(self.world_memory.observe(payload, source=src or source_type))
+            snapshot = {"ok": True, "available": True, "source_type": source_type, "count": len(results), "items": [r.get("item", {}) for r in results if isinstance(r, dict)], "created_count": sum(1 for r in results if isinstance(r, dict) and r.get("created"))}
+            self.state["world_memory"] = self.world_memory.status()
+            self.state["world_memory_autowrite"] = snapshot
+            history = list(self.state.get("world_memory_autowrite_history") or [])
+            history.append({"source_type": source_type, "count": snapshot.get("count", 0), "created_count": snapshot.get("created_count", 0), "items": [{"id": item.get("id"), "kind": item.get("kind"), "name": item.get("name")} for item in snapshot.get("items", []) if isinstance(item, dict)]})
+            self.state["world_memory_autowrite_history"] = history[-50:]
+            return snapshot
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc), "source_type": source_type}
+
+    def get_world_memory_autowrite_snapshot(self) -> dict:
+        try:
+            current = self.state.get("world_memory_autowrite")
+            if isinstance(current, dict) and current:
+                data = dict(current)
+            else:
+                data = {"ok": True, "available": False, "reason": "never_written", "count": 0, "items": []}
+            data["history"] = list(self.state.get("world_memory_autowrite_history") or [])[-10:]
+            return data
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def _apply_memory_bias_to_needs(self, snapshot: dict, now: float | None = None) -> dict:
+        try:
+            if not hasattr(self, "memory_needs_bias") or not hasattr(self, "memory_decision_shadow") or not hasattr(self, "world_memory"):
+                return snapshot
+            memory_snapshot = self.world_memory.status()
+            recent_result = self.world_memory.recent(limit=25)
+            recent = recent_result.get("items", []) if isinstance(recent_result, dict) else []
+            shadow = self.memory_decision_shadow.evaluate(memory_snapshot, recent, now=now)
+            self.state["memory_decision_shadow"] = shadow
+            biased = self.memory_needs_bias.apply(snapshot, shadow, now=now)
+            if isinstance(biased, dict):
+                self.state["memory_needs_bias"] = biased.get("memory_bias", {})
+                return biased
+        except Exception as exc:
+            try:
+                self.state["memory_needs_bias"] = {"ok": False, "available": False, "error": str(exc)}
+            except Exception:
+                pass
+        return snapshot
+
+    def get_memory_needs_bias_snapshot(self) -> dict:
+        try:
+            if hasattr(self, "memory_needs_bias"):
+                return self.memory_needs_bias.snapshot()
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+        return {"ok": False, "available": False, "reason": "memory_needs_bias_missing"}
+
+    def evaluate_memory_needs_bias(self, payload: dict | None = None) -> dict:
+        try:
+            if not hasattr(self, "memory_needs_bias"):
+                return {"ok": False, "available": False, "reason": "memory_needs_bias_missing"}
+            data = payload if isinstance(payload, dict) else {}
+            needs = data.get("needs") if isinstance(data.get("needs"), dict) else data.get("needs_snapshot")
+            shadow = data.get("shadow") if isinstance(data.get("shadow"), dict) else data.get("memory_shadow")
+            return self.memory_needs_bias.apply(needs if isinstance(needs, dict) else {}, shadow if isinstance(shadow, dict) else {}, now=data.get("now"))
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def get_memory_decision_shadow(self) -> dict:
+        try:
+            if not hasattr(self, "world_memory") or not hasattr(self, "memory_decision_shadow"):
+                return {"ok": False, "available": False, "reason": "memory_decision_shadow_missing"}
+            snapshot = self.world_memory.status()
+            recent_result = self.world_memory.recent(limit=25)
+            recent = recent_result.get("items", []) if isinstance(recent_result, dict) else []
+            result = self.memory_decision_shadow.evaluate(snapshot, recent)
+            self.state["memory_decision_shadow"] = result
+            return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def evaluate_memory_decision_shadow(self, payload: dict | None = None) -> dict:
+        try:
+            if not hasattr(self, "memory_decision_shadow"):
+                return {"ok": False, "available": False, "reason": "memory_decision_shadow_missing"}
+            data = payload if isinstance(payload, dict) else {}
+            snapshot = data.get("memory") if isinstance(data.get("memory"), dict) else data
+            recent = data.get("recent") if isinstance(data.get("recent"), list) else None
+            return self.memory_decision_shadow.evaluate(snapshot, recent, now=data.get("now"))
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def get_world_memory_snapshot(self) -> dict:
+        try:
+            if not hasattr(self, "world_memory"):
+                return {"ok": False, "available": False, "reason": "world_memory_missing"}
+            result = self.world_memory.status()
+            self.state["world_memory"] = result
+            return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def get_world_memory_schema(self) -> dict:
+        try:
+            if not hasattr(self, "world_memory"):
+                return {"ok": False, "available": False, "reason": "world_memory_missing"}
+            return self.world_memory.schema()
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def observe_world_memory(self, payload: dict | None = None, source: str = "api") -> dict:
+        try:
+            if not hasattr(self, "world_memory"):
+                return {"ok": False, "available": False, "reason": "world_memory_missing"}
+            result = self.world_memory.observe(payload or {}, source=source)
+            self.state["world_memory"] = self.world_memory.status()
+            history = list(self.state.get("world_memory_history") or [])
+            item = result.get("item") if isinstance(result, dict) else {}
+            history.append({
+                "timestamp": result.get("timestamp") if isinstance(result, dict) else None,
+                "id": item.get("id") if isinstance(item, dict) else "",
+                "kind": item.get("kind") if isinstance(item, dict) else "",
+                "name": item.get("name") if isinstance(item, dict) else "",
+                "created": result.get("created") if isinstance(result, dict) else False,
+                "source": item.get("source") if isinstance(item, dict) else source,
+            })
+            self.state["world_memory_history"] = history[-50:]
+            try:
+                self.client.push_interaction_event("memory.observe", {
+                    "kind": item.get("kind") if isinstance(item, dict) else "",
+                    "name": item.get("name") if isinstance(item, dict) else "",
+                    "created": result.get("created") if isinstance(result, dict) else False,
+                })
+            except Exception:
+                pass
+            return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def get_world_memory_recent(self, kind: str | None = None, limit: int = 10) -> dict:
+        try:
+            if not hasattr(self, "world_memory"):
+                return {"ok": False, "available": False, "reason": "world_memory_missing"}
+            return self.world_memory.recent(kind=kind or None, limit=limit)
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def recall_world_memory(self, query: str = "", limit: int = 8) -> dict:
+        try:
+            if not hasattr(self, "world_memory"):
+                return {"ok": False, "available": False, "reason": "world_memory_missing"}
+            if hasattr(self.world_memory, "recall"):
+                return self.world_memory.recall(query or "", limit=limit)
+            return self.world_memory.recent(limit=limit)
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def get_world_memory_context(self, query: str = "", limit: int = 8) -> dict:
+        try:
+            if not hasattr(self, "world_memory"):
+                return {"ok": False, "available": False, "reason": "world_memory_missing", "context": ""}
+            if hasattr(self.world_memory, "build_context"):
+                return self.world_memory.build_context(query or "", limit=limit)
+            recent = self.world_memory.recent(limit=limit)
+            items = recent.get("items", []) if isinstance(recent, dict) else []
+            lines = [f"- {i.get('kind')}:{i.get('name')} | {i.get('summary')}" for i in items if isinstance(i, dict)]
+            return {"ok": True, "available": True, "query": query or "", "context": "\n".join(lines), "items": items}
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc), "context": ""}
+
+    def get_world_memory_history(self, limit: int = 20) -> dict:
+        try:
+            if not hasattr(self, "world_memory"):
+                return {"ok": False, "available": False, "reason": "world_memory_missing"}
+            return self.world_memory.history(limit=limit)
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def clear_world_memory(self, kind: str | None = None) -> dict:
+        try:
+            if not hasattr(self, "world_memory"):
+                return {"ok": False, "available": False, "reason": "world_memory_missing"}
+            result = self.world_memory.clear(kind=kind or None)
+            self.state["world_memory"] = self.world_memory.status()
+            return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def get_audio_event_needs_snapshot(self) -> dict:
+        try:
+            current = self.state.get("audio_event_needs")
+            if isinstance(current, dict) and current:
+                data = dict(current)
+            elif hasattr(self, "audio_event_needs_bridge"):
+                data = self.audio_event_needs_bridge.status()
+            else:
+                data = {"ok": False, "available": False, "reason": "audio_event_bridge_missing"}
+            data["history"] = list(self.state.get("audio_event_history") or [])[-10:]
+            return data
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def get_vision_context_needs_snapshot(self) -> dict:
+        try:
+            current = self.state.get("vision_context_needs")
+            if isinstance(current, dict) and current:
+                data = dict(current)
+            elif hasattr(self, "vision_context_needs_bridge"):
+                data = self.vision_context_needs_bridge.status()
+            else:
+                data = {"ok": False, "available": False, "reason": "vision_context_bridge_missing"}
+            data["history"] = list(self.state.get("vision_context_history") or [])[-10:]
+            return data
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def get_companion_behavior_loop_snapshot(self) -> dict:
+        try:
+            current = self.state.get("companion_behavior_loop")
+            if isinstance(current, dict) and current:
+                data = dict(current)
+                data["available"] = True
+                data["history"] = list(self.state.get("companion_behavior_history") or [])[-10:]
+                return data
+            if hasattr(self, "companion_behavior_loop"):
+                status = self.companion_behavior_loop.status()
+                status["available"] = False
+                status["reason"] = "never_checked"
+                status["history"] = []
+                return status
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+        return {"ok": False, "available": False, "reason": "behavior_loop_missing"}
+
+    def tick_companion_behavior_loop(self, force: bool = False, **_: object) -> dict:
+        try:
+            now = time.time()
+            needs = self.get_needs_snapshot() if hasattr(self, "get_needs_snapshot") else {}
+            goal = self.get_companion_goal_snapshot() if hasattr(self, "get_companion_goal_snapshot") else {}
+            decision = self.companion_behavior_loop.decide(
+                needs=needs,
+                goal=goal,
+                now=now,
+                sleeping=bool(self.state.get("is_sleeping", False)),
+                speech_busy=bool(getattr(self, "_speech_busy", False)),
+                force=force,
+            )
+            if not decision.get("should_tick"):
+                self.state["companion_behavior_loop"] = decision
+                return decision
+            execution = self.tick_companion_auto_execute(force=force)
+            result = self.companion_behavior_loop.mark_execution(decision, execution)
+            self.state["companion_behavior_loop"] = result
+            history = list(self.state.get("companion_behavior_history") or [])
+            history.append({
+                "timestamp": result.get("timestamp"),
+                "dominant_need": result.get("dominant_need"),
+                "behavior": result.get("behavior"),
+                "reason": result.get("reason"),
+                "executed": result.get("executed"),
+                "execution_reason": result.get("execution_reason"),
+            })
+            self.state["companion_behavior_history"] = history[-20:]
+            try:
+                if result.get("executed"):
+                    self.client.push_interaction_event("companion.behavior_loop", {
+                        "dominant_need": result.get("dominant_need"),
+                        "behavior": result.get("behavior"),
+                                "reason": result.get("reason"),
+                    })
+            except Exception:
+                pass
+            return result
+        except Exception as exc:
+            result = {"ok": False, "available": False, "should_tick": False, "executed": False, "error": str(exc)}
+            self.state["companion_behavior_loop"] = result
+            return result
+
+    def _tick_companion_behavior_loop(self, now: float) -> None:
+        try:
+            if hasattr(self, "companion_behavior_loop"):
+                self.tick_companion_behavior_loop(force=False)
+        except Exception as exc:
+            logger.debug("Companion behavior loop tick failed: %s", exc)
+
+    def get_companion_auto_execute_snapshot(self) -> dict:
+        try:
+            current = self.state.get("companion_auto_execute")
+            if isinstance(current, dict) and current:
+                return dict(current)
+            if hasattr(self, "goal_auto_execute_gate"):
+                status = self.goal_auto_execute_gate.status()
+                status["available"] = False
+                status["reason"] = "never_checked"
+                return status
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+        return {"ok": False, "available": False, "reason": "auto_execute_gate_missing"}
+
+    def tick_companion_auto_execute(self, payload: dict | None = None, force: bool = False, **_: object) -> dict:
+        try:
+            body = payload if isinstance(payload, dict) else {}
+            plan = body.get("goal_plan") if isinstance(body.get("goal_plan"), dict) else None
+            if not isinstance(plan, dict):
+                plan = self.get_companion_goal_snapshot() if hasattr(self, "get_companion_goal_snapshot") else {}
+            decision = self.goal_auto_execute_gate.decide(plan, force=force)
+            if not decision.get("should_execute"):
+                self.state["companion_auto_execute"] = decision
+                return decision
+            execution = self.execute_companion_goal({"goal_plan": plan})
+            result = self.goal_auto_execute_gate.mark_execution(decision, execution)
+            self.state["companion_auto_execute"] = result
+            return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "should_execute": False, "executed": False, "error": str(exc)}
+
+    def get_companion_goal_execution_snapshot(self) -> dict:
+        try:
+            current = self.state.get("companion_goal_execution")
+            if isinstance(current, dict) and current:
+                return dict(current)
+            if hasattr(self, "goal_executor"):
+                status = self.goal_executor.status()
+                status["available"] = False
+                status["reason"] = "never_executed"
+                return status
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+        return {"ok": False, "available": False, "reason": "goal_executor_missing"}
+
+    def get_companion_goal_snapshot(self) -> dict:
+        try:
+            current = self.state.get("companion_goal")
+            if isinstance(current, dict) and current:
+                data = dict(current)
+                data["available"] = True
+                return data
+            needs = self.get_needs_snapshot() if hasattr(self, "get_needs_snapshot") else {}
+            plan = self.goal_selector.select(needs)
+            plan["available"] = False
+            plan["reason"] = "no_goal_snapshot_yet"
+            return plan
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def get_needs_snapshot(self) -> dict:
+        try:
+            if hasattr(self, "living_needs") and bool(getattr(self.living_needs, "cfg", {}).get("enabled", True)):
+                current = self.state.get("living_needs")
+                if isinstance(current, dict) and current:
+                    data = dict(current)
+                    data["available"] = True
+                    return data
+                return self.tick_living_needs()
+            if hasattr(self, "needs_engine"):
+                current = self.state.get("companion_needs")
+                if isinstance(current, dict) and current:
+                    data = dict(current)
+                    data["available"] = True
+                    return data
+                return self.needs_engine.snapshot()
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+        return {"ok": False, "available": False, "reason": "needs_engine_missing"}
+
+    def tick_living_needs(self) -> dict:
+        try:
+            if not hasattr(self, "living_needs"):
+                return {"ok": False, "available": False, "reason": "living_needs_missing"}
+            now = time.time()
+            vision = self._current_vision_snapshot()
+            audio = self.state.get("audio_event_needs") if isinstance(self.state.get("audio_event_needs"), dict) else {}
+            snapshot = self.living_needs.tick(now=now, state=self.state, mood=self.mood, vision=vision, audio=audio)
+            snapshot = self._apply_memory_bias_to_needs(snapshot, now=now)
+            self.state["living_needs"] = snapshot
+            self.state["companion_needs"] = snapshot
+            history = list(self.state.get("living_needs_history") or [])
+            history.append({
+                "timestamp": snapshot.get("timestamp"),
+                "dominant_need": snapshot.get("dominant_need"),
+                "recommended_goal": snapshot.get("recommended_goal"),
+                "scores": snapshot.get("scores", {}),
+            })
+            self.state["living_needs_history"] = history[-50:]
+            try:
+                semantic = snapshot.get("semantic_state") if isinstance(snapshot.get("semantic_state"), dict) else {}
+                self.client.set_expression_event("needs." + str(snapshot.get("dominant_need") or "balance"), {
+                    "semantic_state": semantic,
+                    "scores": snapshot.get("scores", {}),
+                    "recommended_goal": snapshot.get("recommended_goal"),
+                })
+            except Exception:
+                pass
+            return snapshot
+        except Exception as exc:
+            result = {"ok": False, "available": False, "error": str(exc)}
+            self.state["living_needs"] = result
+            return result
+
+    def get_living_needs_snapshot(self) -> dict:
+        try:
+            current = self.state.get("living_needs")
+            if isinstance(current, dict) and current:
+                data = dict(current)
+            elif hasattr(self, "living_needs"):
+                data = self.living_needs.status()
+            else:
+                data = {"ok": False, "available": False, "reason": "living_needs_missing"}
+            data["history"] = list(self.state.get("living_needs_history") or [])[-10:]
+            return data
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+
+    def _current_vision_snapshot(self) -> dict:
+        out = {}
+        try:
+            tracks = self.client._get("camera", "/tracking/tracks", timeout_s=0.8)
+            if isinstance(tracks, dict):
+                out["tracks"] = tracks.get("tracks") if isinstance(tracks.get("tracks"), list) else tracks.get("items", [])
+                out["target"] = tracks.get("target")
+        except Exception:
+            pass
+        try:
+            ctx = self.state.get("vision_context_needs")
+            if isinstance(ctx, dict):
+                out.update({k: v for k, v in ctx.items() if k not in out})
+        except Exception:
+            pass
+        return out
+
+    def execute_safe_rest_corner(self, payload: dict | None = None) -> dict:
+        try:
+            if not hasattr(self, "safe_navigation"):
+                return {"ok": False, "available": False, "reason": "safe_navigation_missing"}
+            result = self.safe_navigation.execute_rest_corner(payload or {})
+            self.state["safe_navigation"] = result
+            return result
+        except Exception as exc:
+            result = {"ok": False, "available": False, "error": str(exc)}
+            self.state["safe_navigation"] = result
+            return result
+
+    def get_safe_navigation_status(self) -> dict:
+        try:
+            if hasattr(self, "safe_navigation"):
+                return self.safe_navigation.status()
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+        return {"ok": False, "available": False, "reason": "safe_navigation_missing"}
+
+    def list_safe_places(self) -> dict:
+        try:
+            if hasattr(self, "safe_navigation"):
+                return self.safe_navigation.list_places()
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+        return {"ok": False, "available": False, "reason": "safe_navigation_missing"}
+
+    def learn_safe_place(self, payload: dict | None = None) -> dict:
+        try:
+            if hasattr(self, "safe_navigation"):
+                result = self.safe_navigation.learn_place(payload or {})
+                try:
+                    place = result.get("place") if isinstance(result, dict) else {}
+                    if isinstance(place, dict):
+                        self.observe_world_memory({
+                            "kind": "place",
+                            "name": place.get("name") or place.get("id"),
+                            "summary": place.get("summary") or "learned safe place",
+                            "confidence": place.get("safety_score", 0.6),
+                            "salience": 0.65,
+                            "tags": ["safe_place", "rest_place"],
+                            "details": place,
+                        }, source="safe_navigation")
+                except Exception:
+                    pass
+                return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "error": str(exc)}
+        return {"ok": False, "available": False, "reason": "safe_navigation_missing"}
+
+    def handle_sound_interrupt(self, payload: dict | None = None) -> dict:
+        try:
+            body = payload if isinstance(payload, dict) else {}
+            event_type = str(body.get("event_type") or body.get("reason") or "sound").strip().lower()
+            is_sound = bool(body.get("sound") or body.get("wakeword") or body.get("speech") or event_type in {"sound", "wakeword", "speech", "voice"})
+            if not is_sound:
+                return {"ok": True, "available": True, "handled": False, "reason": "not_sound_interrupt"}
+            actions = []
+            try:
+                actions.append({"type": "expression", "result": self.client.set_expression_event("sound.interrupt", {"source": event_type, "payload": body})})
+            except Exception as exc:
+                actions.append({"type": "expression", "ok": False, "error": str(exc)})
+            try:
+                actions.append({"type": "liveliness", "result": self.client.set_liveliness(True, mode="alert", amplitude_deg=6, period_ms=1800)})
+            except Exception as exc:
+                actions.append({"type": "liveliness", "ok": False, "error": str(exc)})
+            try:
+                actions.append({"type": "head", "result": self.client.move_head(90, 86)})
+            except Exception as exc:
+                actions.append({"type": "head", "ok": False, "error": str(exc)})
+            try:
+                actions.append({"type": "camera_target", "result": self.client._post("camera", "/tracking/select", {"label": "person", "strategy": "center"}, timeout_s=1.0)})
+            except Exception as exc:
+                actions.append({"type": "camera_target", "ok": False, "error": str(exc)})
+            try:
+                self.observe_world_memory({
+                    "kind": "episode",
+                    "name": "sound_interrupt",
+                    "summary": "Sound interrupted resting or idle behavior; robot woke and looked for the source.",
+                    "confidence": 0.7,
+                    "salience": 0.7,
+                    "tags": ["sound", "interrupt", "wake"],
+                    "details": body,
+                }, source="audio_interrupt")
+            except Exception:
+                pass
+            result = {"ok": True, "available": True, "handled": True, "timestamp": time.time(), "event_type": event_type, "actions": actions}
+            self.state["sound_interrupt"] = result
+            hist = list(self.state.get("sound_interrupt_history") or [])
+            hist.append({"timestamp": result["timestamp"], "event_type": event_type, "handled": True})
+            self.state["sound_interrupt_history"] = hist[-20:]
+            return result
+        except Exception as exc:
+            return {"ok": False, "available": False, "handled": False, "error": str(exc)}
+
+    def get_sound_interrupt_snapshot(self) -> dict:
+        data = self.state.get("sound_interrupt") if isinstance(self.state.get("sound_interrupt"), dict) else {}
+        if not data:
+            data = {"ok": True, "available": False, "reason": "never_interrupted"}
+        out = dict(data)
+        out["history"] = list(self.state.get("sound_interrupt_history") or [])[-10:]
+        return out
 
     def _run_companion_rituals(self, now: float) -> None:
         if self._speech_busy:
@@ -627,6 +1409,11 @@ class AutonomyBrain(
 
     def _forward_visual_events_to_agent(self) -> None:
         """Forward key autonomy/vision signals to Agent Core event endpoint."""
+        interval = float(self._vision_cfg.get("forward_interval_s", 8.0) or 8.0)
+        now = time.time()
+        if now - float(self.state.get("last_agent_vision_forward_poll", 0.0) or 0.0) < max(1.0, interval):
+            return
+        self.state["last_agent_vision_forward_poll"] = now
         if not hasattr(self.client, "emit_agent_event"):
             return
         try:
@@ -1153,13 +1940,20 @@ class AutonomyBrain(
         try:
             if not self.agent.speech_arbiter._speak_fn:
                 self.agent.speech_arbiter.set_speak_fn(
-                    lambda text, tone=None, language=None: self.client.speak_preferred(
-                        text, tone=tone, language=language or lang,
+                    lambda text, tone=None, language=None, trace_id=None: self.client.speak_preferred(
+                        text,
+                        tone=tone,
+                        language=language or lang,
+                        trace_id=trace_id,
                     )
                 )
             enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
             agent_result = self.agent.step(
-                enriched_text, language=lang, speaker=speaker, native_tools=True,
+                enriched_text,
+                language=lang,
+                speaker=speaker,
+                native_tools=True,
+                trace_id=request_id,
             )
             if agent_result and agent_result.get("text"):
                 if not self._is_active_request(request_id):
@@ -1169,7 +1963,12 @@ class AutonomyBrain(
                 self._remember_person_chat(speaker, agent_result["text"], role="assistant")
                 if not agent_result.get("speech_handled"):
                     tone = self._tone_profile(self.state.get("last_emotion") or self.mood.get_dominant_emotion())
-                    self.agent.speech_arbiter.enqueue_final(agent_result["text"], language=lang, tone=tone)
+                    self.agent.speech_arbiter.enqueue_final(
+                        agent_result["text"],
+                        language=lang,
+                        tone=tone,
+                        trace_id=request_id,
+                    )
                 return True
         except Exception as exc:
             logger.warning("Agent Core step failed, falling back to direct LLM: %s", exc)
@@ -1483,3 +2282,106 @@ class AutonomyBrain(
             if not self._run_scene("wake_entry", context={"hour": hour}):
                 self._speak_with_mood("Günaydın.", emotion="joy")
             self.client.set_speech_tracking(True)
+
+
+# BEGIN BATCH04 PI HARDWARE OWNER TOPO PATCH
+
+def _batch04_model_asset_status(self):
+    try:
+        from modules.common.model_asset_truth import collect_asset_truth
+        return collect_asset_truth(Path.cwd())
+    except Exception as exc:
+        return {"ok": False, "available": False, "error": str(exc)}
+
+def _batch04_pi_runtime_status(self):
+    try:
+        from modules.autonomy.services.pi_hardware_runtime import PiHardwareRuntime
+        cfg = self.config.get("pi_hardware_runtime", {}) if isinstance(self.config.get("pi_hardware_runtime", {}), dict) else {}
+        return PiHardwareRuntime(cfg, client=self.client).status()
+    except Exception as exc:
+        return {"ok": False, "available": False, "error": str(exc)}
+
+def _batch04_topomap_executor(self):
+    from modules.autonomy.services.topomap_motion_executor import TopomapMotionExecutor
+    cfg = self.config.get("topomap_motion", {}) if isinstance(self.config.get("topomap_motion", {}), dict) else {}
+    cur = getattr(self, "_batch04_topomap_motion", None)
+    if cur is None:
+        cur = TopomapMotionExecutor(cfg, client=self.client); setattr(self, "_batch04_topomap_motion", cur)
+    return cur
+
+def _batch04_navigation_topomap(self):
+    try: return _batch04_topomap_executor(self).list_map()
+    except Exception as exc: return {"ok": False, "available": False, "error": str(exc)}
+
+def _batch04_navigation_learn_place(self, payload=None):
+    try:
+        result = _batch04_topomap_executor(self).learn_place(payload or {})
+        try:
+            place = result.get("place") if isinstance(result, dict) else {}
+            if isinstance(place, dict) and hasattr(self, "observe_world_memory"):
+                self.observe_world_memory({"kind": "place", "name": place.get("name") or place.get("id"), "summary": place.get("summary") or "learned navigation place", "confidence": place.get("safety_score", 0.6), "salience": 0.7, "tags": ["place", "topomap", str(place.get("kind") or "place")], "details": place}, source="topomap_motion")
+        except Exception: pass
+        return result
+    except Exception as exc: return {"ok": False, "available": False, "error": str(exc)}
+
+def _batch04_navigation_goal(self, payload=None):
+    try:
+        result = _batch04_topomap_executor(self).execute_goal(payload or {}); self.state["topomap_motion"] = result; return result
+    except Exception as exc:
+        result = {"ok": False, "available": False, "error": str(exc)}; self.state["topomap_motion"] = result; return result
+
+def _batch04_owner_learning(self):
+    from modules.autonomy.services.owner_person_learning import OwnerPersonLearning
+    cfg = self.config.get("owner_learning", {}) if isinstance(self.config.get("owner_learning", {}), dict) else {}
+    cur = getattr(self, "_batch04_owner_learning", None)
+    if cur is None:
+        cur = OwnerPersonLearning(cfg, client=self.client, memory=getattr(self, "world_memory", None)); setattr(self, "_batch04_owner_learning", cur)
+    return cur
+
+def _batch04_owner_status(self):
+    try: return _batch04_owner_learning(self).status()
+    except Exception as exc: return {"ok": False, "available": False, "error": str(exc)}
+
+def _batch04_owner_learn(self, payload=None):
+    try: return _batch04_owner_learning(self).learn(payload or {})
+    except Exception as exc: return {"ok": False, "available": False, "error": str(exc)}
+
+def _batch04_owner_identify(self, payload=None):
+    try:
+        result = _batch04_owner_learning(self).identify(payload or {}); self.state["owner_identification"] = result; return result
+    except Exception as exc:
+        result = {"ok": False, "available": False, "error": str(exc)}; self.state["owner_identification"] = result; return result
+
+def _batch04_companion_e2e_scenario(self, payload=None):
+    body = payload if isinstance(payload, dict) else {}; actions = []
+    try: needs = self.tick_living_needs() if hasattr(self, "tick_living_needs") else {}
+    except Exception as exc: needs = {"ok": False, "error": str(exc)}
+    try: owner = _batch04_owner_identify(self, {})
+    except Exception as exc: owner = {"ok": False, "error": str(exc)}
+    try: tracks = self.client._get("camera", "/tracking/tracks", timeout_s=0.8)
+    except Exception as exc: tracks = {"ok": False, "error": str(exc)}
+    no_person = True
+    if isinstance(tracks, dict):
+        items = tracks.get("tracks") if isinstance(tracks.get("tracks"), list) else []
+        no_person = not any(str(t.get("label") or "").lower() == "person" for t in items if isinstance(t, dict))
+    if bool(body.get("force_rest")) or no_person:
+        try: actions.append({"type": "rest_corner", "result": self.execute_safe_rest_corner({"reason": "e2e_no_person", "allow_base_motion": bool(body.get("allow_base_motion", False))})})
+        except Exception as exc: actions.append({"type": "rest_corner", "ok": False, "error": str(exc)})
+    if bool(body.get("sound_interrupt")):
+        try: actions.append({"type": "sound_interrupt", "result": self.handle_sound_interrupt({"event_type": "sound", "source": "e2e"})})
+        except Exception as exc: actions.append({"type": "sound_interrupt", "ok": False, "error": str(exc)})
+    try: memory = self.get_world_memory_context(str(body.get("query") or "owner safe place current room"), limit=5) if hasattr(self, "get_world_memory_context") else {}
+    except Exception as exc: memory = {"ok": False, "error": str(exc)}
+    result = {"ok": True, "available": True, "mode": body.get("mode") or "safe", "needs": needs, "owner": owner, "tracks": tracks, "no_person": no_person, "actions": actions, "memory_context": memory}
+    self.state["companion_e2e_scenario"] = result; return result
+
+AutonomyBrain.get_model_asset_status = _batch04_model_asset_status
+AutonomyBrain.get_pi_runtime_status = _batch04_pi_runtime_status
+AutonomyBrain.get_navigation_topomap = _batch04_navigation_topomap
+AutonomyBrain.learn_navigation_topomap_place = _batch04_navigation_learn_place
+AutonomyBrain.execute_navigation_goal = _batch04_navigation_goal
+AutonomyBrain.get_owner_learning_status = _batch04_owner_status
+AutonomyBrain.learn_owner_person = _batch04_owner_learn
+AutonomyBrain.identify_owner_person = _batch04_owner_identify
+AutonomyBrain.run_companion_e2e_scenario = _batch04_companion_e2e_scenario
+# END BATCH04 PI HARDWARE OWNER TOPO PATCH
