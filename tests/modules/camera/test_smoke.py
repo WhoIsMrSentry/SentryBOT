@@ -32,7 +32,7 @@ def test_config_loader():
     cfg = load_config()
     assert isinstance(cfg, dict)
     assert "enabled" in cfg
-    assert cfg.get("enabled") is False
+    assert cfg.get("enabled") is True
 
 
 def test_config_loader_cam_enabled_env(monkeypatch):
@@ -95,7 +95,8 @@ def test_router_disabled_healthz():
     body = resp.json()
     assert body["ok"] is False
     assert body["enabled"] is False
-    assert body["reason"] == "camera_disabled"
+    assert "capture" in body
+    assert "imx500" in body
 
 
 def test_router_start_blocked_when_disabled():

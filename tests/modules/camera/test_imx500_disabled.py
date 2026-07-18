@@ -80,22 +80,22 @@ def test_runner_unpacks_dict_outputs(monkeypatch):
 
     cfg = Imx500Config(enabled=False)
     runner = Imx500Runner(cfg, bus=OnSensorEventBus())
-    boxes, scores, classes = runner._unpack_outputs([
+    boxes, scores, classes = runner._unpack([
         {
             "boxes": [(0.1, 0.1, 0.2, 0.2), (0.3, 0.3, 0.5, 0.5)],
             "scores": [0.91, 0.42],
             "classes": [0, 1],
         }
     ])
-    assert boxes == [[0.1, 0.1, 0.2, 0.2], [0.3, 0.3, 0.5, 0.5]]
+    assert boxes == [(0.1, 0.1, 0.2, 0.2), (0.3, 0.3, 0.5, 0.5)]
     assert scores == [0.91, 0.42]
     assert classes == [0, 1]
 
-    boxes2, scores2, classes2 = runner._unpack_outputs([
-        [(0.0, 0.0, 1.0, 1.0)],
-        [0.77],
-        [3],
+    boxes2, scores2, classes2 = runner._unpack([
+        [[(0.0, 0.0, 1.0, 1.0)]],
+        [[0.77]],
+        [[3]],
     ])
     assert classes2 == [3]
     assert scores2[0] == pytest.approx(0.77)
-    assert boxes2 == [[0.0, 0.0, 1.0, 1.0]]
+    assert boxes2 == [(0.0, 0.0, 1.0, 1.0)]

@@ -8,10 +8,15 @@ from modules.speak.services.lang_detect import (
     piper_voice_for_language,
     resolve_speak_language,
 )
-from modules.speak.services.tts import DummyBackend, PiperBackend, TextToSpeech
+from modules.speak.services.tts import DummyBackend, TextToSpeech, PersistentPiperModel, TTSConfig, PiperBackend
 
-
-def test_resolve_piper_voice_entry() -> None:
+def test_resolve_piper_voice_entry(monkeypatch) -> None:
+    class DummyPiperVoice:
+        @classmethod
+        def load(cls, *args, **kwargs):
+            return cls()
+    monkeypatch.setattr("modules.speak.services.tts.Path.is_file", lambda self: True)
+    monkeypatch.setattr("modules.speak.services.tts._load_piper_api", lambda: (DummyPiperVoice, None))
     cfg = {
         "voice": "glados",
         "model_path": "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx",
@@ -22,8 +27,8 @@ def test_resolve_piper_voice_entry() -> None:
             },
         },
     }
-    resolved = PiperBackend._resolve_voice_cfg(cfg, "glados")
-    assert resolved["model_path"].endswith("glados_piper_medium.onnx")
+    model = PersistentPiperModel(TTSConfig(), cfg, cfg["voices"]["glados"])
+    assert model.model_path.endswith("glados_piper_medium.onnx")
 
 
 def test_resolve_piper_paths_expands_repo_relative() -> None:
@@ -92,13 +97,13 @@ def test_text_to_speech_piper_picks_english_voice_key() -> None:
     assert voice == "glados"
 
 
-def test_piper_missing_model_falls_back_to_dummy() -> None:
-    tts = TextToSpeech(
-        {
-            "engine": "piper",
-            "piper": {
-                "model_path": "data/piper_models/__missing__/model.onnx",
-            },
-        }
-    )
+def test_piper_missing_model_falls_back_to_dummy(monkeypatch) -> None:
+    monkeypatch.setenv("SENTRYBOT_ALLOW_TEST_TTS", "1")
+    tts = TextToSpeech({
+        "engine": "piper",
+        "allow_dummy_fallback": True,
+        "piper": {
+            "model_path": "data/piper_models/__missing__/model.onnx",
+        },
+    })
     assert isinstance(tts.backend, DummyBackend)

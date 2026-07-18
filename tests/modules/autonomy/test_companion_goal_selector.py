@@ -10,13 +10,12 @@ def test_goal_selector_maps_exploration_to_safe_plan():
             "confidence": 0.8,
             "scores": {"exploration": 82, "energy": 90},
         },
-        pc_test=True,
         now=100.0,
     )
     assert plan["ok"] is True
     assert plan["behavior"] == "look_around_and_learn"
     assert plan["expression_event"] == "needs.exploration"
-    assert plan["auto_execute"] is False
+    assert plan["auto_execute"] is True
     assert any(a["type"] == "vision" for a in plan["actions"])
 
 

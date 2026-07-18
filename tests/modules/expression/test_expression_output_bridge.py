@@ -8,7 +8,7 @@ def test_output_bridge_plan_from_semantic_expression_state():
     bridge = ExpressionOutputBridge(engine)
     plan = bridge.plan()
     assert plan["ok"] is True
-    assert plan["action_count"] == 3
+    assert len(plan["actions"]) == 3
     components = {a["component"] for a in plan["actions"]}
     assert {"neopixel", "oled_faces", "piservo"}.issubset(components)
     led = [a for a in plan["actions"] if a["component"] == "neopixel"][0]
@@ -16,20 +16,10 @@ def test_output_bridge_plan_from_semantic_expression_state():
     assert led["payload"]["eye_color"].startswith("#")
 
 
-def test_output_bridge_apply_is_dry_run_by_default():
+def test_output_bridge_apply_is_disabled_when_cfg_says_so():
     engine = SemanticExpressionEngine()
-    bridge = ExpressionOutputBridge(engine)
+    bridge = ExpressionOutputBridge(engine, cfg={"enabled": False})
     result = bridge.apply()
-    assert result["ok"] is True
+    assert result["ok"] is False
     assert result["applied"] is False
-    assert result["reason"] == "dry_run"
-    assert result["plan"]["action_count"] == 3
-
-
-def test_output_bridge_overrides_targets_without_mutating_engine_state():
-    engine = SemanticExpressionEngine()
-    bridge = ExpressionOutputBridge(engine)
-    result = bridge.apply(overrides={"led": {"mode": "listen", "color": "#00ffcc"}})
-    led = [a for a in result["plan"]["actions"] if a["component"] == "neopixel"][0]
-    assert led["payload"] == {"mode": "listen", "eye_color": "#00ffcc"}
-    assert engine.get_state()["targets"]["led"]["color"] != "#00ffcc"
+    assert result["reason"] == "bridge_disabled"

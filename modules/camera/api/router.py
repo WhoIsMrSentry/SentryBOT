@@ -12,6 +12,14 @@ from ..services.capture import CameraCapture
 CAMERA_RUNNER_STATUS_COMPATIBILITY_CONTRACT = True
 CAMERA_RUNNER_STATUS_COMPATIBILITY_ROLE = "imx500_runner_status_backcompat_adapter"
 
+CAMERA_REVERSIBLE_START_STOP_CONTRACT = True
+CAMERA_REVERSIBLE_START_STOP_ROLE = "explicit_route_control_surface"
+CAMERA_START_STOP_STATUS_ONLY_AUDIT_SAFE = True
+
+CAMERA_STATUS_TRUTH_CONTRACT = True
+CAMERA_STATUS_TRUTH_ROLE = "non_activating_camera_runtime_status_surface"
+CAMERA_STATUS_DOES_NOT_START_CAPTURE = True
+
 
 class TrackingSelection(BaseModel):
     label: str = Field(default="person", min_length=1, max_length=80)

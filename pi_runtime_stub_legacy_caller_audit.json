@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-18T15:02:24",
+  "generated_at": "2026-07-18T15:34:12",
   "report_type": "pi_runtime_stub_legacy_caller_audit",
   "summary": {
     "target": "Pi/Linux robot runtime",
@@ -1906,12 +1906,6 @@
         {
           "from_path": "modules/animate/xAnimateService.py",
           "line": 9,
-          "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0008: try:\n0009:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0010:     from modules.arduino_serial.contract import (  # type: ignore"
-        },
-        {
-          "from_path": "modules/animate/xAnimateService.py",
-          "line": 9,
           "key": "xArduinoSerialService",
           "snippet": "0008: try:\n0009:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0010:     from modules.arduino_serial.contract import (  # type: ignore"
         },
@@ -1934,6 +1928,12 @@
           "snippet": "0054:         self.cfg = load_config(overrides=config_overrides)\n0055:         self.serial = serial or xArduinoSerialService()\n0056:         self._running = False"
         },
         {
+          "from_path": "modules/animate/xAnimateService.py",
+          "line": 9,
+          "key": "modules.arduino_serial.xArduinoSerialService",
+          "snippet": "0008: try:\n0009:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0010:     from modules.arduino_serial.contract import (  # type: ignore"
+        },
+        {
           "from_path": "modules/arduino_serial/__init__.py",
           "line": 3,
           "key": "xArduinoSerialService",
@@ -1944,12 +1944,6 @@
           "line": 5,
           "key": "xArduinoSerialService",
           "snippet": "0004: \n0005: from .xArduinoSerialService import xArduinoSerialService  # re-export for convenience"
-        },
-        {
-          "from_path": "modules/arduino_serial/api/router.py",
-          "line": 10,
-          "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0009: except Exception:\n0010:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0011: "
         },
         {
           "from_path": "modules/arduino_serial/api/router.py",
@@ -1970,10 +1964,10 @@
           "snippet": "0012: \n0013: def get_router(svc: xArduinoSerialService) -> APIRouter:\n0014:     def _validate_payload_or_400(obj: Dict[str, Any]) -> None:"
         },
         {
-          "from_path": "modules/arduino_serial/README.md",
-          "line": 46,
+          "from_path": "modules/arduino_serial/api/router.py",
+          "line": 10,
           "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0045: from modules.arduino_serial.api.router import get_router\n0046: from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService\n0047: "
+          "snippet": "0009: except Exception:\n0010:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0011: "
         },
         {
           "from_path": "modules/arduino_serial/README.md",
@@ -1988,10 +1982,10 @@
           "snippet": "0047: \n0048: svc = xArduinoSerialService()\n0049: svc.start()"
         },
         {
-          "from_path": "modules/arduino_serial/services/driver.py",
-          "line": 8,
+          "from_path": "modules/arduino_serial/README.md",
+          "line": 46,
           "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0007: except Exception:\n0008:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0009: "
+          "snippet": "0045: from modules.arduino_serial.api.router import get_router\n0046: from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService\n0047: "
         },
         {
           "from_path": "modules/arduino_serial/services/driver.py",
@@ -2024,10 +2018,10 @@
           "snippet": "0014:     def __init__(self, svc: Optional[xArduinoSerialService] = None):\n0015:         self.svc = svc or xArduinoSerialService()\n0016: "
         },
         {
-          "from_path": "modules/gateway/services/bootstrap.py",
-          "line": 298,
+          "from_path": "modules/arduino_serial/services/driver.py",
+          "line": 8,
           "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0297: def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:\n0298:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0299:     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore"
+          "snippet": "0007: except Exception:\n0008:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0009: "
         },
         {
           "from_path": "modules/gateway/services/bootstrap.py",
@@ -2040,6 +2034,12 @@
           "line": 300,
           "key": "xArduinoSerialService",
           "snippet": "0299:     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore\n0300:     ardu = xArduinoSerialService(config_overrides=_agent_section(\"arduino_serial\") or None)\n0301:     if _should_autostart_services():"
+        },
+        {
+          "from_path": "modules/gateway/services/bootstrap.py",
+          "line": 298,
+          "key": "modules.arduino_serial.xArduinoSerialService",
+          "snippet": "0297: def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:\n0298:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0299:     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore"
         }
       ],
       "caller_count": 31
@@ -3773,12 +3773,6 @@
         {
           "from_path": "modules/gateway/services/bootstrap.py",
           "line": 332,
-          "key": "modules.neopixel.services.driver",
-          "snippet": "0331:     from modules.neopixel.services.runner import NeoRunner  # type: ignore\n0332:     from modules.neopixel.services.driver import NeoDriverConfig  # type: ignore\n0333:     from modules.neopixel.config_loader import load_config as load_neo_cfg  # type: ignore"
-        },
-        {
-          "from_path": "modules/gateway/services/bootstrap.py",
-          "line": 332,
           "key": "driver",
           "snippet": "0331:     from modules.neopixel.services.runner import NeoRunner  # type: ignore\n0332:     from modules.neopixel.services.driver import NeoDriverConfig  # type: ignore\n0333:     from modules.neopixel.config_loader import load_config as load_neo_cfg  # type: ignore"
         },
@@ -3795,6 +3789,12 @@
           "snippet": "0657:     from modules.piservo.api.router import get_router as get_piservo_router  # type: ignore\n0658:     from modules.piservo.services.driver import ServoConfig  # type: ignore\n0659:     from modules.piservo.services.runner import EarRunner  # type: ignore"
         },
         {
+          "from_path": "modules/gateway/services/bootstrap.py",
+          "line": 332,
+          "key": "modules.neopixel.services.driver",
+          "snippet": "0331:     from modules.neopixel.services.runner import NeoRunner  # type: ignore\n0332:     from modules.neopixel.services.driver import NeoDriverConfig  # type: ignore\n0333:     from modules.neopixel.config_loader import load_config as load_neo_cfg  # type: ignore"
+        },
+        {
           "from_path": "modules/neopixel/api/router.py",
           "line": 136,
           "key": "driver",
@@ -3803,13 +3803,13 @@
         {
           "from_path": "modules/neopixel/cli.py",
           "line": 4,
-          "key": "modules.neopixel.services.driver",
+          "key": "driver",
           "snippet": "0003: \n0004: from modules.neopixel.services.driver import NeoDriverConfig\n0005: from modules.neopixel.services.runner import NeoRunner"
         },
         {
           "from_path": "modules/neopixel/cli.py",
           "line": 4,
-          "key": "driver",
+          "key": "modules.neopixel.services.driver",
           "snippet": "0003: \n0004: from modules.neopixel.services.driver import NeoDriverConfig\n0005: from modules.neopixel.services.runner import NeoRunner"
         },
         {
@@ -3817,12 +3817,6 @@
           "line": 53,
           "key": "driver",
           "snippet": "0052: \n0053: # Pi5-specific driver hint\n0054: pi5neo:"
-        },
-        {
-          "from_path": "modules/neopixel/README.md",
-          "line": 111,
-          "key": "modules.neopixel.services.driver",
-          "snippet": "0110: from modules.neopixel.services.runner import NeoRunner\n0111: from modules.neopixel.services.driver import NeoDriverConfig\n0112: "
         },
         {
           "from_path": "modules/neopixel/README.md",
@@ -3834,6 +3828,12 @@
           "from_path": "modules/neopixel/README.md",
           "line": 111,
           "key": "driver",
+          "snippet": "0110: from modules.neopixel.services.runner import NeoRunner\n0111: from modules.neopixel.services.driver import NeoDriverConfig\n0112: "
+        },
+        {
+          "from_path": "modules/neopixel/README.md",
+          "line": 111,
+          "key": "modules.neopixel.services.driver",
           "snippet": "0110: from modules.neopixel.services.runner import NeoRunner\n0111: from modules.neopixel.services.driver import NeoDriverConfig\n0112: "
         },
         {
@@ -4380,12 +4380,6 @@
         {
           "from_path": "modules/gateway/services/bootstrap.py",
           "line": 757,
-          "key": "modules.oled_faces.xOledFacesService",
-          "snippet": "0756: def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:\n0757:     from modules.oled_faces.xOledFacesService import xOledFacesService  # type: ignore\n0758:     from modules.oled_faces.api.router import get_router as get_oled_faces_router  # type: ignore"
-        },
-        {
-          "from_path": "modules/gateway/services/bootstrap.py",
-          "line": 757,
           "key": "xOledFacesService",
           "snippet": "0756: def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:\n0757:     from modules.oled_faces.xOledFacesService import xOledFacesService  # type: ignore\n0758:     from modules.oled_faces.api.router import get_router as get_oled_faces_router  # type: ignore"
         },
@@ -4394,6 +4388,12 @@
           "line": 763,
           "key": "xOledFacesService",
           "snippet": "0762: \n0763:     svc = xOledFacesService(\n0764:         state_store=state_store,"
+        },
+        {
+          "from_path": "modules/gateway/services/bootstrap.py",
+          "line": 757,
+          "key": "modules.oled_faces.xOledFacesService",
+          "snippet": "0756: def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:\n0757:     from modules.oled_faces.xOledFacesService import xOledFacesService  # type: ignore\n0758:     from modules.oled_faces.api.router import get_router as get_oled_faces_router  # type: ignore"
         },
         {
           "from_path": "modules/oled_faces/__init__.py",
@@ -5420,18 +5420,12 @@
         {
           "from_path": "apps/run_robot_tui.py",
           "line": 10,
-          "key": "tui_v2",
+          "key": "modules.runtime_console.tui_v2",
           "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
         },
         {
           "from_path": "apps/run_robot_tui.py",
           "line": 10,
-          "key": "modules.runtime_console.tui_v2",
-          "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
-        },
-        {
-          "from_path": "apps/sentrybot_tui.py",
-          "line": 10,
           "key": "tui_v2",
           "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
         },
@@ -5439,6 +5433,12 @@
           "from_path": "apps/sentrybot_tui.py",
           "line": 10,
           "key": "modules.runtime_console.tui_v2",
+          "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
+        },
+        {
+          "from_path": "apps/sentrybot_tui.py",
+          "line": 10,
+          "key": "tui_v2",
           "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
         }
       ],
@@ -5561,25 +5561,25 @@
         {
           "from_path": "modules/autonomy/services/brain.py",
           "line": 46,
-          "key": "modules.speak.services.lang_detect",
+          "key": "lang_detect",
           "snippet": "0045: try:\n0046:     from modules.speak.services.lang_detect import detect_text_language\n0047: except ImportError:"
         },
         {
           "from_path": "modules/autonomy/services/brain.py",
           "line": 46,
-          "key": "lang_detect",
+          "key": "modules.speak.services.lang_detect",
           "snippet": "0045: try:\n0046:     from modules.speak.services.lang_detect import detect_text_language\n0047: except ImportError:"
         },
         {
           "from_path": "modules/autonomy/services/brain_parts/vocal.py",
           "line": 9,
-          "key": "modules.speak.services.lang_detect",
+          "key": "lang_detect",
           "snippet": "0008: try:\n0009:     from modules.speak.services.lang_detect import detect_text_language\n0010: except ImportError:"
         },
         {
           "from_path": "modules/autonomy/services/brain_parts/vocal.py",
           "line": 9,
-          "key": "lang_detect",
+          "key": "modules.speak.services.lang_detect",
           "snippet": "0008: try:\n0009:     from modules.speak.services.lang_detect import detect_text_language\n0010: except ImportError:"
         },
         {
@@ -5591,13 +5591,13 @@
         {
           "from_path": "modules/speech/services/stt_language.py",
           "line": 26,
-          "key": "modules.speak.services.lang_detect",
+          "key": "lang_detect",
           "snippet": "0025: def _detect_language(text: str, *, default: str, prefer_online: bool = True) -> str:\n0026:     from modules.speak.services.lang_detect import detect_text_language\n0027: "
         },
         {
           "from_path": "modules/speech/services/stt_language.py",
           "line": 26,
-          "key": "lang_detect",
+          "key": "modules.speak.services.lang_detect",
           "snippet": "0025: def _detect_language(text: str, *, default: str, prefer_online: bool = True) -> str:\n0026:     from modules.speak.services.lang_detect import detect_text_language\n0027: "
         }
       ],
@@ -6194,13 +6194,13 @@
         {
           "from_path": "modules/agent_core/README.md",
           "line": 122,
-          "key": "MIGRATION_TRI_LAYER",
+          "key": "modules/agent_core/MIGRATION_TRI_LAYER.md",
           "snippet": "0121: \n0122: - `modules/agent_core/MIGRATION_TRI_LAYER.md`"
         },
         {
           "from_path": "modules/agent_core/README.md",
           "line": 122,
-          "key": "modules/agent_core/MIGRATION_TRI_LAYER.md",
+          "key": "MIGRATION_TRI_LAYER",
           "snippet": "0121: \n0122: - `modules/agent_core/MIGRATION_TRI_LAYER.md`"
         }
       ],
@@ -7915,18 +7915,6 @@
         {
           "from_path": "modules/autonomy/services/robot_capability_map.py",
           "line": 16,
-          "key": "config/robot_capability_registry.json",
-          "snippet": "0015: ROBOT_CAPABILITY_BOUNDARY_ROLE = \"autonomy_read_only_capability_registry_adapter\"\n0016: ROBOT_CAPABILITY_CONFIG_PATH = \"config/robot_capability_registry.json\"\n0017: ROBOT_CAPABILITY_RUNTIME_OWNER = \"modules.autonomy reads capability registry; hard safety/arm gates remain in tools/ci and execution gates\""
-        },
-        {
-          "from_path": "modules/autonomy/services/robot_capability_map.py",
-          "line": 19,
-          "key": "config/robot_capability_registry.json",
-          "snippet": "0018: ROBOT_CAPABILITY_BOUNDARY_REASON = (\n0019:     \"Capability registry lives in config/robot_capability_registry.json. \"\n0020:     \"This adapter makes that registry available to autonomy without enabling real hardware.\""
-        },
-        {
-          "from_path": "modules/autonomy/services/robot_capability_map.py",
-          "line": 16,
           "key": "robot_capability_registry",
           "snippet": "0015: ROBOT_CAPABILITY_BOUNDARY_ROLE = \"autonomy_read_only_capability_registry_adapter\"\n0016: ROBOT_CAPABILITY_CONFIG_PATH = \"config/robot_capability_registry.json\"\n0017: ROBOT_CAPABILITY_RUNTIME_OWNER = \"modules.autonomy reads capability registry; hard safety/arm gates remain in tools/ci and execution gates\""
         },
@@ -7953,6 +7941,18 @@
           "line": 59,
           "key": "robot_capability_registry",
           "snippet": "0058:             \"available\": False,\n0059:             \"reason\": \"robot_capability_registry_not_object\",\n0060:             \"path\": str(path),"
+        },
+        {
+          "from_path": "modules/autonomy/services/robot_capability_map.py",
+          "line": 16,
+          "key": "config/robot_capability_registry.json",
+          "snippet": "0015: ROBOT_CAPABILITY_BOUNDARY_ROLE = \"autonomy_read_only_capability_registry_adapter\"\n0016: ROBOT_CAPABILITY_CONFIG_PATH = \"config/robot_capability_registry.json\"\n0017: ROBOT_CAPABILITY_RUNTIME_OWNER = \"modules.autonomy reads capability registry; hard safety/arm gates remain in tools/ci and execution gates\""
+        },
+        {
+          "from_path": "modules/autonomy/services/robot_capability_map.py",
+          "line": 19,
+          "key": "config/robot_capability_registry.json",
+          "snippet": "0018: ROBOT_CAPABILITY_BOUNDARY_REASON = (\n0019:     \"Capability registry lives in config/robot_capability_registry.json. \"\n0020:     \"This adapter makes that registry available to autonomy without enabling real hardware.\""
         }
       ],
       "caller_count": 8
@@ -8434,18 +8434,6 @@
         {
           "from_path": "modules/autonomy/services/robot_capability_map.py",
           "line": 16,
-          "key": "config/robot_capability_registry.json",
-          "snippet": "0015: ROBOT_CAPABILITY_BOUNDARY_ROLE = \"autonomy_read_only_capability_registry_adapter\"\n0016: ROBOT_CAPABILITY_CONFIG_PATH = \"config/robot_capability_registry.json\"\n0017: ROBOT_CAPABILITY_RUNTIME_OWNER = \"modules.autonomy reads capability registry; hard safety/arm gates remain in tools/ci and execution gates\""
-        },
-        {
-          "from_path": "modules/autonomy/services/robot_capability_map.py",
-          "line": 19,
-          "key": "config/robot_capability_registry.json",
-          "snippet": "0018: ROBOT_CAPABILITY_BOUNDARY_REASON = (\n0019:     \"Capability registry lives in config/robot_capability_registry.json. \"\n0020:     \"This adapter makes that registry available to autonomy without enabling real hardware.\""
-        },
-        {
-          "from_path": "modules/autonomy/services/robot_capability_map.py",
-          "line": 16,
           "key": "robot_capability_registry",
           "snippet": "0015: ROBOT_CAPABILITY_BOUNDARY_ROLE = \"autonomy_read_only_capability_registry_adapter\"\n0016: ROBOT_CAPABILITY_CONFIG_PATH = \"config/robot_capability_registry.json\"\n0017: ROBOT_CAPABILITY_RUNTIME_OWNER = \"modules.autonomy reads capability registry; hard safety/arm gates remain in tools/ci and execution gates\""
         },
@@ -8472,6 +8460,18 @@
           "line": 59,
           "key": "robot_capability_registry",
           "snippet": "0058:             \"available\": False,\n0059:             \"reason\": \"robot_capability_registry_not_object\",\n0060:             \"path\": str(path),"
+        },
+        {
+          "from_path": "modules/autonomy/services/robot_capability_map.py",
+          "line": 16,
+          "key": "config/robot_capability_registry.json",
+          "snippet": "0015: ROBOT_CAPABILITY_BOUNDARY_ROLE = \"autonomy_read_only_capability_registry_adapter\"\n0016: ROBOT_CAPABILITY_CONFIG_PATH = \"config/robot_capability_registry.json\"\n0017: ROBOT_CAPABILITY_RUNTIME_OWNER = \"modules.autonomy reads capability registry; hard safety/arm gates remain in tools/ci and execution gates\""
+        },
+        {
+          "from_path": "modules/autonomy/services/robot_capability_map.py",
+          "line": 19,
+          "key": "config/robot_capability_registry.json",
+          "snippet": "0018: ROBOT_CAPABILITY_BOUNDARY_REASON = (\n0019:     \"Capability registry lives in config/robot_capability_registry.json. \"\n0020:     \"This adapter makes that registry available to autonomy without enabling real hardware.\""
         }
       ],
       "caller_count": 8
@@ -9069,13 +9069,13 @@
         {
           "from_path": "modules/agent_core/README.md",
           "line": 122,
-          "key": "MIGRATION_TRI_LAYER",
+          "key": "modules/agent_core/MIGRATION_TRI_LAYER.md",
           "snippet": "0121: \n0122: - `modules/agent_core/MIGRATION_TRI_LAYER.md`"
         },
         {
           "from_path": "modules/agent_core/README.md",
           "line": 122,
-          "key": "modules/agent_core/MIGRATION_TRI_LAYER.md",
+          "key": "MIGRATION_TRI_LAYER",
           "snippet": "0121: \n0122: - `modules/agent_core/MIGRATION_TRI_LAYER.md`"
         }
       ],
@@ -10361,13 +10361,13 @@
         {
           "from_path": "modules/agent_core/__init__.py",
           "line": 30,
-          "key": "tools",
+          "key": "modules.agent_core.services.tools",
           "snippet": "0029:     \"TopologicalMap\": \"modules.agent_core.services.slam:TopologicalMap\",\n0030:     \"ToolRegistry\": \"modules.agent_core.services.tools:ToolRegistry\",\n0031:     \"WorldState\": \"modules.agent_core.services.world_state:WorldState\","
         },
         {
           "from_path": "modules/agent_core/__init__.py",
           "line": 30,
-          "key": "modules.agent_core.services.tools",
+          "key": "tools",
           "snippet": "0029:     \"TopologicalMap\": \"modules.agent_core.services.slam:TopologicalMap\",\n0030:     \"ToolRegistry\": \"modules.agent_core.services.tools:ToolRegistry\",\n0031:     \"WorldState\": \"modules.agent_core.services.world_state:WorldState\","
         },
         {
@@ -11415,12 +11415,6 @@
         {
           "from_path": "modules/animate/xAnimateService.py",
           "line": 9,
-          "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0008: try:\n0009:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0010:     from modules.arduino_serial.contract import (  # type: ignore"
-        },
-        {
-          "from_path": "modules/animate/xAnimateService.py",
-          "line": 9,
           "key": "xArduinoSerialService",
           "snippet": "0008: try:\n0009:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0010:     from modules.arduino_serial.contract import (  # type: ignore"
         },
@@ -11443,6 +11437,12 @@
           "snippet": "0054:         self.cfg = load_config(overrides=config_overrides)\n0055:         self.serial = serial or xArduinoSerialService()\n0056:         self._running = False"
         },
         {
+          "from_path": "modules/animate/xAnimateService.py",
+          "line": 9,
+          "key": "modules.arduino_serial.xArduinoSerialService",
+          "snippet": "0008: try:\n0009:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0010:     from modules.arduino_serial.contract import (  # type: ignore"
+        },
+        {
           "from_path": "modules/arduino_serial/__init__.py",
           "line": 3,
           "key": "xArduinoSerialService",
@@ -11453,12 +11453,6 @@
           "line": 5,
           "key": "xArduinoSerialService",
           "snippet": "0004: \n0005: from .xArduinoSerialService import xArduinoSerialService  # re-export for convenience"
-        },
-        {
-          "from_path": "modules/arduino_serial/api/router.py",
-          "line": 10,
-          "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0009: except Exception:\n0010:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0011: "
         },
         {
           "from_path": "modules/arduino_serial/api/router.py",
@@ -11479,10 +11473,10 @@
           "snippet": "0012: \n0013: def get_router(svc: xArduinoSerialService) -> APIRouter:\n0014:     def _validate_payload_or_400(obj: Dict[str, Any]) -> None:"
         },
         {
-          "from_path": "modules/arduino_serial/README.md",
-          "line": 46,
+          "from_path": "modules/arduino_serial/api/router.py",
+          "line": 10,
           "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0045: from modules.arduino_serial.api.router import get_router\n0046: from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService\n0047: "
+          "snippet": "0009: except Exception:\n0010:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0011: "
         },
         {
           "from_path": "modules/arduino_serial/README.md",
@@ -11497,10 +11491,10 @@
           "snippet": "0047: \n0048: svc = xArduinoSerialService()\n0049: svc.start()"
         },
         {
-          "from_path": "modules/arduino_serial/services/driver.py",
-          "line": 8,
+          "from_path": "modules/arduino_serial/README.md",
+          "line": 46,
           "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0007: except Exception:\n0008:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0009: "
+          "snippet": "0045: from modules.arduino_serial.api.router import get_router\n0046: from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService\n0047: "
         },
         {
           "from_path": "modules/arduino_serial/services/driver.py",
@@ -11533,10 +11527,10 @@
           "snippet": "0014:     def __init__(self, svc: Optional[xArduinoSerialService] = None):\n0015:         self.svc = svc or xArduinoSerialService()\n0016: "
         },
         {
-          "from_path": "modules/gateway/services/bootstrap.py",
-          "line": 298,
+          "from_path": "modules/arduino_serial/services/driver.py",
+          "line": 8,
           "key": "modules.arduino_serial.xArduinoSerialService",
-          "snippet": "0297: def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:\n0298:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0299:     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore"
+          "snippet": "0007: except Exception:\n0008:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0009: "
         },
         {
           "from_path": "modules/gateway/services/bootstrap.py",
@@ -11549,6 +11543,12 @@
           "line": 300,
           "key": "xArduinoSerialService",
           "snippet": "0299:     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore\n0300:     ardu = xArduinoSerialService(config_overrides=_agent_section(\"arduino_serial\") or None)\n0301:     if _should_autostart_services():"
+        },
+        {
+          "from_path": "modules/gateway/services/bootstrap.py",
+          "line": 298,
+          "key": "modules.arduino_serial.xArduinoSerialService",
+          "snippet": "0297: def _include_arduino(app: FastAPI, started: Dict[str, object]) -> None:\n0298:     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore\n0299:     from modules.arduino_serial.api.router import get_router as get_arduino_router  # type: ignore"
         }
       ],
       "caller_count": 31
@@ -14419,73 +14419,73 @@
         {
           "from_path": "modules/agent_core/services/tools.py",
           "line": 904,
-          "key": "modules.common.emotion_vocab",
+          "key": "emotion_vocab",
           "snippet": "0903:         try:\n0904:             from modules.common.emotion_vocab import emotion_render\n0905: "
         },
         {
           "from_path": "modules/agent_core/services/tools.py",
           "line": 904,
-          "key": "emotion_vocab",
+          "key": "modules.common.emotion_vocab",
           "snippet": "0903:         try:\n0904:             from modules.common.emotion_vocab import emotion_render\n0905: "
         },
         {
           "from_path": "modules/autonomy/services/brain.py",
           "line": 499,
-          "key": "modules.common.emotion_vocab",
+          "key": "emotion_vocab",
           "snippet": "0498:             try:\n0499:                 from modules.common.emotion_vocab import get_vocab\n0500: "
         },
         {
           "from_path": "modules/autonomy/services/brain.py",
           "line": 1792,
-          "key": "modules.common.emotion_vocab",
+          "key": "emotion_vocab",
           "snippet": "1791:         try:\n1792:             from modules.common.emotion_vocab import emotion_render\n1793: "
         },
         {
           "from_path": "modules/autonomy/services/brain.py",
           "line": 499,
-          "key": "emotion_vocab",
+          "key": "modules.common.emotion_vocab",
           "snippet": "0498:             try:\n0499:                 from modules.common.emotion_vocab import get_vocab\n0500: "
         },
         {
           "from_path": "modules/autonomy/services/brain.py",
           "line": 1792,
-          "key": "emotion_vocab",
+          "key": "modules.common.emotion_vocab",
           "snippet": "1791:         try:\n1792:             from modules.common.emotion_vocab import emotion_render\n1793: "
         },
         {
           "from_path": "modules/autonomy/services/brain_parts/vision.py",
           "line": 116,
-          "key": "modules.common.emotion_vocab",
+          "key": "emotion_vocab",
           "snippet": "0115:         try:\n0116:             from modules.common.emotion_vocab import get_vocab\n0117: "
         },
         {
           "from_path": "modules/autonomy/services/brain_parts/vision.py",
           "line": 116,
-          "key": "emotion_vocab",
+          "key": "modules.common.emotion_vocab",
           "snippet": "0115:         try:\n0116:             from modules.common.emotion_vocab import get_vocab\n0117: "
         },
         {
           "from_path": "modules/autonomy/services/brain_parts/vocal.py",
           "line": 105,
-          "key": "modules.common.emotion_vocab",
+          "key": "emotion_vocab",
           "snippet": "0104:         try:\n0105:             from modules.common.emotion_vocab import get_vocab\n0106: "
         },
         {
           "from_path": "modules/autonomy/services/brain_parts/vocal.py",
           "line": 105,
-          "key": "emotion_vocab",
+          "key": "modules.common.emotion_vocab",
           "snippet": "0104:         try:\n0105:             from modules.common.emotion_vocab import get_vocab\n0106: "
         },
         {
           "from_path": "modules/autonomy/services/liveliness.py",
           "line": 66,
-          "key": "modules.common.emotion_vocab",
+          "key": "emotion_vocab",
           "snippet": "0065:         try:\n0066:             from modules.common.emotion_vocab import get_vocab\n0067: "
         },
         {
           "from_path": "modules/autonomy/services/liveliness.py",
           "line": 66,
-          "key": "emotion_vocab",
+          "key": "modules.common.emotion_vocab",
           "snippet": "0065:         try:\n0066:             from modules.common.emotion_vocab import get_vocab\n0067: "
         },
         {
@@ -14493,12 +14493,6 @@
           "line": 7,
           "key": "emotion_vocab",
           "snippet": "0006: \n0007: from .emotion_vocab import (\n0008:     EmotionRender,"
-        },
-        {
-          "from_path": "modules/common/README.md",
-          "line": 24,
-          "key": "modules.common.emotion_vocab",
-          "snippet": "0023: ```python\n0024: from modules.common.emotion_vocab import get_vocab\n0025: "
         },
         {
           "from_path": "modules/common/README.md",
@@ -14513,15 +14507,21 @@
           "snippet": "0023: ```python\n0024: from modules.common.emotion_vocab import get_vocab\n0025: "
         },
         {
-          "from_path": "modules/neopixel/emotions/loader.py",
-          "line": 50,
+          "from_path": "modules/common/README.md",
+          "line": 24,
           "key": "modules.common.emotion_vocab",
-          "snippet": "0049:     try:\n0050:         from modules.common.emotion_vocab import get_vocab  # lazy: optional dep\n0051: "
+          "snippet": "0023: ```python\n0024: from modules.common.emotion_vocab import get_vocab\n0025: "
         },
         {
           "from_path": "modules/neopixel/emotions/loader.py",
           "line": 50,
           "key": "emotion_vocab",
+          "snippet": "0049:     try:\n0050:         from modules.common.emotion_vocab import get_vocab  # lazy: optional dep\n0051: "
+        },
+        {
+          "from_path": "modules/neopixel/emotions/loader.py",
+          "line": 50,
+          "key": "modules.common.emotion_vocab",
           "snippet": "0049:     try:\n0050:         from modules.common.emotion_vocab import get_vocab  # lazy: optional dep\n0051: "
         },
         {
@@ -14529,12 +14529,6 @@
           "line": 14,
           "key": "emotion_vocab",
           "snippet": "0013: \n0014: # Compatibility bitmap labels still emitted by emotion_vocab / config.\n0015: _MOOD_ALIASES: Dict[str, str] = {"
-        },
-        {
-          "from_path": "modules/oled_faces/services/mapper.py",
-          "line": 10,
-          "key": "modules.common.emotion_vocab",
-          "snippet": "0009: try:\n0010:     from modules.common.emotion_vocab import get_vocab as _get_emotion_vocab\n0011: except Exception:  # pragma: no cover"
         },
         {
           "from_path": "modules/oled_faces/services/mapper.py",
@@ -14561,15 +14555,21 @@
           "snippet": "0052:             try:\n0053:                 render = _get_emotion_vocab().render(key)\n0054:                 canon_override = self.event_map.get(f\"emotion:{render.canonical}\")"
         },
         {
-          "from_path": "modules/piservo/services/ears.py",
-          "line": 35,
+          "from_path": "modules/oled_faces/services/mapper.py",
+          "line": 10,
           "key": "modules.common.emotion_vocab",
-          "snippet": "0034:     try:\n0035:         from modules.common.emotion_vocab import get_vocab  # lazy optional dep\n0036: "
+          "snippet": "0009: try:\n0010:     from modules.common.emotion_vocab import get_vocab as _get_emotion_vocab\n0011: except Exception:  # pragma: no cover"
         },
         {
           "from_path": "modules/piservo/services/ears.py",
           "line": 35,
           "key": "emotion_vocab",
+          "snippet": "0034:     try:\n0035:         from modules.common.emotion_vocab import get_vocab  # lazy optional dep\n0036: "
+        },
+        {
+          "from_path": "modules/piservo/services/ears.py",
+          "line": 35,
+          "key": "modules.common.emotion_vocab",
           "snippet": "0034:     try:\n0035:         from modules.common.emotion_vocab import get_vocab  # lazy optional dep\n0036: "
         }
       ],
@@ -16745,12 +16745,6 @@
         {
           "from_path": "modules/gateway/services/bootstrap.py",
           "line": 332,
-          "key": "modules.neopixel.services.driver",
-          "snippet": "0331:     from modules.neopixel.services.runner import NeoRunner  # type: ignore\n0332:     from modules.neopixel.services.driver import NeoDriverConfig  # type: ignore\n0333:     from modules.neopixel.config_loader import load_config as load_neo_cfg  # type: ignore"
-        },
-        {
-          "from_path": "modules/gateway/services/bootstrap.py",
-          "line": 332,
           "key": "driver",
           "snippet": "0331:     from modules.neopixel.services.runner import NeoRunner  # type: ignore\n0332:     from modules.neopixel.services.driver import NeoDriverConfig  # type: ignore\n0333:     from modules.neopixel.config_loader import load_config as load_neo_cfg  # type: ignore"
         },
@@ -16767,6 +16761,12 @@
           "snippet": "0657:     from modules.piservo.api.router import get_router as get_piservo_router  # type: ignore\n0658:     from modules.piservo.services.driver import ServoConfig  # type: ignore\n0659:     from modules.piservo.services.runner import EarRunner  # type: ignore"
         },
         {
+          "from_path": "modules/gateway/services/bootstrap.py",
+          "line": 332,
+          "key": "modules.neopixel.services.driver",
+          "snippet": "0331:     from modules.neopixel.services.runner import NeoRunner  # type: ignore\n0332:     from modules.neopixel.services.driver import NeoDriverConfig  # type: ignore\n0333:     from modules.neopixel.config_loader import load_config as load_neo_cfg  # type: ignore"
+        },
+        {
           "from_path": "modules/neopixel/api/router.py",
           "line": 136,
           "key": "driver",
@@ -16775,13 +16775,13 @@
         {
           "from_path": "modules/neopixel/cli.py",
           "line": 4,
-          "key": "modules.neopixel.services.driver",
+          "key": "driver",
           "snippet": "0003: \n0004: from modules.neopixel.services.driver import NeoDriverConfig\n0005: from modules.neopixel.services.runner import NeoRunner"
         },
         {
           "from_path": "modules/neopixel/cli.py",
           "line": 4,
-          "key": "driver",
+          "key": "modules.neopixel.services.driver",
           "snippet": "0003: \n0004: from modules.neopixel.services.driver import NeoDriverConfig\n0005: from modules.neopixel.services.runner import NeoRunner"
         },
         {
@@ -16789,12 +16789,6 @@
           "line": 53,
           "key": "driver",
           "snippet": "0052: \n0053: # Pi5-specific driver hint\n0054: pi5neo:"
-        },
-        {
-          "from_path": "modules/neopixel/README.md",
-          "line": 111,
-          "key": "modules.neopixel.services.driver",
-          "snippet": "0110: from modules.neopixel.services.runner import NeoRunner\n0111: from modules.neopixel.services.driver import NeoDriverConfig\n0112: "
         },
         {
           "from_path": "modules/neopixel/README.md",
@@ -16806,6 +16800,12 @@
           "from_path": "modules/neopixel/README.md",
           "line": 111,
           "key": "driver",
+          "snippet": "0110: from modules.neopixel.services.runner import NeoRunner\n0111: from modules.neopixel.services.driver import NeoDriverConfig\n0112: "
+        },
+        {
+          "from_path": "modules/neopixel/README.md",
+          "line": 111,
+          "key": "modules.neopixel.services.driver",
           "snippet": "0110: from modules.neopixel.services.runner import NeoRunner\n0111: from modules.neopixel.services.driver import NeoDriverConfig\n0112: "
         },
         {
@@ -17018,45 +17018,45 @@
         },
         {
           "from_path": "modules/camera/api/router.py",
-          "line": 27,
-          "key": "runner",
-          "snippet": "0026:     enabled: bool = True,\n0027:     imx500_runner: Optional[Any] = None,\n0028:     onsensor_bus: Optional[Any] = None,"
-        },
-        {
-          "from_path": "modules/camera/api/router.py",
-          "line": 32,
-          "key": "runner",
-          "snippet": "0031: \n0032:     def runner_status() -> dict[str, Any]:\n0033:         if imx500_runner is None:"
-        },
-        {
-          "from_path": "modules/camera/api/router.py",
-          "line": 33,
-          "key": "runner",
-          "snippet": "0032:     def runner_status() -> dict[str, Any]:\n0033:         if imx500_runner is None:\n0034:             return {\"enabled\": False, \"available\": False, \"running\": False, \"reason\": \"not_configured\"}"
-        },
-        {
-          "from_path": "modules/camera/api/router.py",
           "line": 35,
           "key": "runner",
-          "snippet": "0034:             return {\"enabled\": False, \"available\": False, \"running\": False, \"reason\": \"not_configured\"}\n0035:         status_fn = getattr(imx500_runner, \"status\", None)\n0036:         if callable(status_fn):"
+          "snippet": "0034:     enabled: bool = True,\n0035:     imx500_runner: Optional[Any] = None,\n0036:     onsensor_bus: Optional[Any] = None,"
         },
         {
           "from_path": "modules/camera/api/router.py",
-          "line": 47,
+          "line": 40,
           "key": "runner",
-          "snippet": "0046:                 }\n0047:         cfg = getattr(imx500_runner, \"cfg\", None)\n0048:         enabled = bool(getattr(cfg, \"enabled\", True)) if cfg is not None else True"
+          "snippet": "0039: \n0040:     def runner_status() -> dict[str, Any]:\n0041:         if imx500_runner is None:"
         },
         {
           "from_path": "modules/camera/api/router.py",
-          "line": 51,
+          "line": 41,
           "key": "runner",
-          "snippet": "0050:             \"enabled\": enabled,\n0051:             \"available\": bool(getattr(imx500_runner, \"available\", False)),\n0052:             \"running\": bool(getattr(imx500_runner, \"running\", False)),"
+          "snippet": "0040:     def runner_status() -> dict[str, Any]:\n0041:         if imx500_runner is None:\n0042:             return {\"enabled\": False, \"available\": False, \"running\": False, \"reason\": \"not_configured\"}"
         },
         {
           "from_path": "modules/camera/api/router.py",
-          "line": 52,
+          "line": 43,
           "key": "runner",
-          "snippet": "0051:             \"available\": bool(getattr(imx500_runner, \"available\", False)),\n0052:             \"running\": bool(getattr(imx500_runner, \"running\", False)),\n0053:             \"reason\": \"compatibility_runner\","
+          "snippet": "0042:             return {\"enabled\": False, \"available\": False, \"running\": False, \"reason\": \"not_configured\"}\n0043:         status_fn = getattr(imx500_runner, \"status\", None)\n0044:         if callable(status_fn):"
+        },
+        {
+          "from_path": "modules/camera/api/router.py",
+          "line": 55,
+          "key": "runner",
+          "snippet": "0054:                 }\n0055:         cfg = getattr(imx500_runner, \"cfg\", None)\n0056:         enabled = bool(getattr(cfg, \"enabled\", True)) if cfg is not None else True"
+        },
+        {
+          "from_path": "modules/camera/api/router.py",
+          "line": 59,
+          "key": "runner",
+          "snippet": "0058:             \"enabled\": enabled,\n0059:             \"available\": bool(getattr(imx500_runner, \"available\", False)),\n0060:             \"running\": bool(getattr(imx500_runner, \"running\", False)),"
+        },
+        {
+          "from_path": "modules/camera/api/router.py",
+          "line": 60,
+          "key": "runner",
+          "snippet": "0059:             \"available\": bool(getattr(imx500_runner, \"available\", False)),\n0060:             \"running\": bool(getattr(imx500_runner, \"running\", False)),\n0061:             \"reason\": \"compatibility_runner\","
         },
         {
           "from_path": "modules/camera/services/__init__.py",
@@ -17992,12 +17992,6 @@
         {
           "from_path": "modules/gateway/services/bootstrap.py",
           "line": 757,
-          "key": "modules.oled_faces.xOledFacesService",
-          "snippet": "0756: def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:\n0757:     from modules.oled_faces.xOledFacesService import xOledFacesService  # type: ignore\n0758:     from modules.oled_faces.api.router import get_router as get_oled_faces_router  # type: ignore"
-        },
-        {
-          "from_path": "modules/gateway/services/bootstrap.py",
-          "line": 757,
           "key": "xOledFacesService",
           "snippet": "0756: def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:\n0757:     from modules.oled_faces.xOledFacesService import xOledFacesService  # type: ignore\n0758:     from modules.oled_faces.api.router import get_router as get_oled_faces_router  # type: ignore"
         },
@@ -18006,6 +18000,12 @@
           "line": 763,
           "key": "xOledFacesService",
           "snippet": "0762: \n0763:     svc = xOledFacesService(\n0764:         state_store=state_store,"
+        },
+        {
+          "from_path": "modules/gateway/services/bootstrap.py",
+          "line": 757,
+          "key": "modules.oled_faces.xOledFacesService",
+          "snippet": "0756: def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:\n0757:     from modules.oled_faces.xOledFacesService import xOledFacesService  # type: ignore\n0758:     from modules.oled_faces.api.router import get_router as get_oled_faces_router  # type: ignore"
         },
         {
           "from_path": "modules/oled_faces/__init__.py",
@@ -18136,13 +18136,13 @@
         {
           "from_path": "modules/ollama/api/router.py",
           "line": 19,
-          "key": "chat_routes",
+          "key": "modules.ollama.api.chat_routes",
           "snippet": "0018: from modules.ollama.api.health import get_health_router\n0019: from modules.ollama.api.chat_routes import get_chat_router\n0020: from modules.ollama.api.persona_routes import get_persona_router"
         },
         {
           "from_path": "modules/ollama/api/router.py",
           "line": 19,
-          "key": "modules.ollama.api.chat_routes",
+          "key": "chat_routes",
           "snippet": "0018: from modules.ollama.api.health import get_health_router\n0019: from modules.ollama.api.chat_routes import get_chat_router\n0020: from modules.ollama.api.persona_routes import get_persona_router"
         }
       ],
@@ -19288,24 +19288,6 @@
         {
           "from_path": "modules/agent_core/services/agent.py",
           "line": 33,
-          "key": "modules.ollama.services.clients",
-          "snippet": "0032: try:\n0033:     from modules.ollama.services.clients import create_llm_client  # type: ignore\n0034:     from modules.ollama.config_loader import load_config as load_ollama_runtime_config  # type: ignore"
-        },
-        {
-          "from_path": "modules/agent_core/services/agent.py",
-          "line": 1173,
-          "key": "modules.ollama.services.clients",
-          "snippet": "1172:         try:\n1173:             from modules.ollama.services.clients import GoogleAIStudioClient  # type: ignore\n1174: "
-        },
-        {
-          "from_path": "modules/agent_core/services/agent.py",
-          "line": 1501,
-          "key": "modules.ollama.services.clients",
-          "snippet": "1500:         try:\n1501:             from modules.ollama.services.clients import GoogleAIStudioClient\n1502:             gemini_limited = GoogleAIStudioClient.is_rate_limited(str(getattr(self.provider_client, \"api_key\", \"\")))"
-        },
-        {
-          "from_path": "modules/agent_core/services/agent.py",
-          "line": 33,
           "key": "clients",
           "snippet": "0032: try:\n0033:     from modules.ollama.services.clients import create_llm_client  # type: ignore\n0034:     from modules.ollama.config_loader import load_config as load_ollama_runtime_config  # type: ignore"
         },
@@ -19334,15 +19316,33 @@
           "snippet": "1500:         try:\n1501:             from modules.ollama.services.clients import GoogleAIStudioClient\n1502:             gemini_limited = GoogleAIStudioClient.is_rate_limited(str(getattr(self.provider_client, \"api_key\", \"\")))"
         },
         {
-          "from_path": "modules/config_center/google_keys.py",
-          "line": 9,
+          "from_path": "modules/agent_core/services/agent.py",
+          "line": 33,
           "key": "modules.ollama.services.clients",
-          "snippet": "0008: \n0009: from modules.ollama.services.clients import _sanitize_google_api_key\n0010: "
+          "snippet": "0032: try:\n0033:     from modules.ollama.services.clients import create_llm_client  # type: ignore\n0034:     from modules.ollama.config_loader import load_config as load_ollama_runtime_config  # type: ignore"
+        },
+        {
+          "from_path": "modules/agent_core/services/agent.py",
+          "line": 1173,
+          "key": "modules.ollama.services.clients",
+          "snippet": "1172:         try:\n1173:             from modules.ollama.services.clients import GoogleAIStudioClient  # type: ignore\n1174: "
+        },
+        {
+          "from_path": "modules/agent_core/services/agent.py",
+          "line": 1501,
+          "key": "modules.ollama.services.clients",
+          "snippet": "1500:         try:\n1501:             from modules.ollama.services.clients import GoogleAIStudioClient\n1502:             gemini_limited = GoogleAIStudioClient.is_rate_limited(str(getattr(self.provider_client, \"api_key\", \"\")))"
         },
         {
           "from_path": "modules/config_center/google_keys.py",
           "line": 9,
           "key": "clients",
+          "snippet": "0008: \n0009: from modules.ollama.services.clients import _sanitize_google_api_key\n0010: "
+        },
+        {
+          "from_path": "modules/config_center/google_keys.py",
+          "line": 9,
+          "key": "modules.ollama.services.clients",
           "snippet": "0008: \n0009: from modules.ollama.services.clients import _sanitize_google_api_key\n0010: "
         },
         {
@@ -19359,12 +19359,6 @@
         },
         {
           "from_path": "modules/ollama/api/router.py",
-          "line": 13,
-          "key": "modules.ollama.services.clients",
-          "snippet": "0012: except Exception:\n0013:     from modules.ollama.services.clients import create_llm_client\n0014:     from modules.ollama.services.chat import OllamaChatService"
-        },
-        {
-          "from_path": "modules/ollama/api/router.py",
           "line": 9,
           "key": "clients",
           "snippet": "0008: try:\n0009:     from ..services.clients import create_llm_client\n0010:     from ..services.chat import OllamaChatService"
@@ -19373,6 +19367,12 @@
           "from_path": "modules/ollama/api/router.py",
           "line": 13,
           "key": "clients",
+          "snippet": "0012: except Exception:\n0013:     from modules.ollama.services.clients import create_llm_client\n0014:     from modules.ollama.services.chat import OllamaChatService"
+        },
+        {
+          "from_path": "modules/ollama/api/router.py",
+          "line": 13,
+          "key": "modules.ollama.services.clients",
           "snippet": "0012: except Exception:\n0013:     from modules.ollama.services.clients import create_llm_client\n0014:     from modules.ollama.services.chat import OllamaChatService"
         },
         {
@@ -19390,25 +19390,25 @@
         {
           "from_path": "modules/vlm_bridge/services/google_vlm_client.py",
           "line": 32,
-          "key": "modules.ollama.services.clients",
+          "key": "clients",
           "snippet": "0031:     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:\n0032:         from modules.ollama.services.clients import GoogleAIStudioClient, _sanitize_google_api_key\n0033: "
         },
         {
           "from_path": "modules/vlm_bridge/services/google_vlm_client.py",
           "line": 32,
-          "key": "clients",
+          "key": "modules.ollama.services.clients",
           "snippet": "0031:     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:\n0032:         from modules.ollama.services.clients import GoogleAIStudioClient, _sanitize_google_api_key\n0033: "
         },
         {
           "from_path": "modules/vlm_bridge/services/llm_client.py",
           "line": 145,
-          "key": "modules.ollama.services.clients",
+          "key": "clients",
           "snippet": "0144:         from modules.ollama.config_loader import load_config as load_ollama_config  # type: ignore\n0145:         from modules.ollama.services.clients import create_llm_client  # type: ignore\n0146:     except Exception:"
         },
         {
           "from_path": "modules/vlm_bridge/services/llm_client.py",
           "line": 145,
-          "key": "clients",
+          "key": "modules.ollama.services.clients",
           "snippet": "0144:         from modules.ollama.config_loader import load_config as load_ollama_config  # type: ignore\n0145:         from modules.ollama.services.clients import create_llm_client  # type: ignore\n0146:     except Exception:"
         },
         {
@@ -20226,18 +20226,12 @@
         {
           "from_path": "apps/run_robot_tui.py",
           "line": 10,
-          "key": "modules.runtime_console.tui",
+          "key": "tui",
           "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
         },
         {
           "from_path": "apps/run_robot_tui.py",
           "line": 10,
-          "key": "tui",
-          "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
-        },
-        {
-          "from_path": "apps/sentrybot_tui.py",
-          "line": 10,
           "key": "modules.runtime_console.tui",
           "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
         },
@@ -20245,6 +20239,12 @@
           "from_path": "apps/sentrybot_tui.py",
           "line": 10,
           "key": "tui",
+          "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
+        },
+        {
+          "from_path": "apps/sentrybot_tui.py",
+          "line": 10,
+          "key": "modules.runtime_console.tui",
           "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
         },
         {
@@ -20391,18 +20391,12 @@
         {
           "from_path": "apps/run_robot_tui.py",
           "line": 10,
-          "key": "tui_v2",
+          "key": "modules.runtime_console.tui_v2",
           "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
         },
         {
           "from_path": "apps/run_robot_tui.py",
           "line": 10,
-          "key": "modules.runtime_console.tui_v2",
-          "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
-        },
-        {
-          "from_path": "apps/sentrybot_tui.py",
-          "line": 10,
           "key": "tui_v2",
           "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
         },
@@ -20410,6 +20404,12 @@
           "from_path": "apps/sentrybot_tui.py",
           "line": 10,
           "key": "modules.runtime_console.tui_v2",
+          "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
+        },
+        {
+          "from_path": "apps/sentrybot_tui.py",
+          "line": 10,
+          "key": "tui_v2",
           "snippet": "0009: \n0010: from modules.runtime_console.tui_v2 import main\n0011: "
         }
       ],
@@ -20927,25 +20927,25 @@
         {
           "from_path": "modules/autonomy/services/brain.py",
           "line": 46,
-          "key": "modules.speak.services.lang_detect",
+          "key": "lang_detect",
           "snippet": "0045: try:\n0046:     from modules.speak.services.lang_detect import detect_text_language\n0047: except ImportError:"
         },
         {
           "from_path": "modules/autonomy/services/brain.py",
           "line": 46,
-          "key": "lang_detect",
+          "key": "modules.speak.services.lang_detect",
           "snippet": "0045: try:\n0046:     from modules.speak.services.lang_detect import detect_text_language\n0047: except ImportError:"
         },
         {
           "from_path": "modules/autonomy/services/brain_parts/vocal.py",
           "line": 9,
-          "key": "modules.speak.services.lang_detect",
+          "key": "lang_detect",
           "snippet": "0008: try:\n0009:     from modules.speak.services.lang_detect import detect_text_language\n0010: except ImportError:"
         },
         {
           "from_path": "modules/autonomy/services/brain_parts/vocal.py",
           "line": 9,
-          "key": "lang_detect",
+          "key": "modules.speak.services.lang_detect",
           "snippet": "0008: try:\n0009:     from modules.speak.services.lang_detect import detect_text_language\n0010: except ImportError:"
         },
         {
@@ -20957,13 +20957,13 @@
         {
           "from_path": "modules/speech/services/stt_language.py",
           "line": 26,
-          "key": "modules.speak.services.lang_detect",
+          "key": "lang_detect",
           "snippet": "0025: def _detect_language(text: str, *, default: str, prefer_online: bool = True) -> str:\n0026:     from modules.speak.services.lang_detect import detect_text_language\n0027: "
         },
         {
           "from_path": "modules/speech/services/stt_language.py",
           "line": 26,
-          "key": "lang_detect",
+          "key": "modules.speak.services.lang_detect",
           "snippet": "0025: def _detect_language(text: str, *, default: str, prefer_online: bool = True) -> str:\n0026:     from modules.speak.services.lang_detect import detect_text_language\n0027: "
         }
       ],
@@ -22153,12 +22153,6 @@
         },
         {
           "from_path": "modules/gateway/services/bootstrap.py",
-          "line": 366,
-          "key": "modules.vlm_bridge.config_loader",
-          "snippet": "0365: def _include_vlm_bridge(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:\n0366:     from modules.vlm_bridge.config_loader import load_config as load_vlm_cfg  # type: ignore\n0367:     from modules.vlm_bridge.services.processor import VisionProcessor  # type: ignore"
-        },
-        {
-          "from_path": "modules/gateway/services/bootstrap.py",
           "line": 61,
           "key": "config_loader",
           "snippet": "0060:     try:\n0061:         from modules.camera.config_loader import load_config as load_cam_cfg  # type: ignore\n0062: "
@@ -22204,6 +22198,12 @@
           "line": 499,
           "key": "config_loader",
           "snippet": "0498:         # We attempt to read top-level 'speech' config under gateway config for this flag.\n0499:         from modules.gateway import config_loader as _gw_cfg  # type: ignore\n0500:         gwcfg = _gw_cfg.load_config(None)"
+        },
+        {
+          "from_path": "modules/gateway/services/bootstrap.py",
+          "line": 366,
+          "key": "modules.vlm_bridge.config_loader",
+          "snippet": "0365: def _include_vlm_bridge(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:\n0366:     from modules.vlm_bridge.config_loader import load_config as load_vlm_cfg  # type: ignore\n0367:     from modules.vlm_bridge.services.processor import VisionProcessor  # type: ignore"
         },
         {
           "from_path": "modules/gateway/xGatewayService.py",
@@ -23047,6 +23047,12 @@
         },
         {
           "from_path": "modules/vlm_bridge/services/processor.py",
+          "line": 40,
+          "key": "modules.vlm_bridge.services.semantic_describer",
+          "snippet": "0039: except Exception:\n0040:     from modules.vlm_bridge.services.semantic_describer import SemanticDescriber  # type: ignore\n0041: "
+        },
+        {
+          "from_path": "modules/vlm_bridge/services/processor.py",
           "line": 38,
           "key": "semantic_describer",
           "snippet": "0037: try:\n0038:     from .semantic_describer import SemanticDescriber\n0039: except Exception:"
@@ -23055,12 +23061,6 @@
           "from_path": "modules/vlm_bridge/services/processor.py",
           "line": 40,
           "key": "semantic_describer",
-          "snippet": "0039: except Exception:\n0040:     from modules.vlm_bridge.services.semantic_describer import SemanticDescriber  # type: ignore\n0041: "
-        },
-        {
-          "from_path": "modules/vlm_bridge/services/processor.py",
-          "line": 40,
-          "key": "modules.vlm_bridge.services.semantic_describer",
           "snippet": "0039: except Exception:\n0040:     from modules.vlm_bridge.services.semantic_describer import SemanticDescriber  # type: ignore\n0041: "
         }
       ],
@@ -23103,13 +23103,13 @@
         {
           "from_path": "modules/vlm_bridge/README.md",
           "line": 68,
-          "key": "xVlmBridgeService",
+          "key": "modules.vlm_bridge.xVlmBridgeService",
           "snippet": "0067: ## Çalıştırma\n0068: - Bağımsız: `python -m modules.vlm_bridge.xVlmBridgeService`\n0069: - Gateway ile: `python -m modules.gateway.xGatewayService` ve `include.vlm_bridge: true`"
         },
         {
           "from_path": "modules/vlm_bridge/README.md",
           "line": 68,
-          "key": "modules.vlm_bridge.xVlmBridgeService",
+          "key": "xVlmBridgeService",
           "snippet": "0067: ## Çalıştırma\n0068: - Bağımsız: `python -m modules.vlm_bridge.xVlmBridgeService`\n0069: - Gateway ile: `python -m modules.gateway.xGatewayService` ve `include.vlm_bridge: true`"
         }
       ],

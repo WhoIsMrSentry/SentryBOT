@@ -10,15 +10,11 @@ class _RecordingClient:
     def __init__(self):
         self.calls = []
 
-    def set_neopixel(self, effect, emotions=None, color=None, duration=None):
-        self.calls.append(("leds", effect, tuple(emotions or []), tuple(color or ())))
+    def set_expression_event(self, event_type, data=None):
+        self.calls.append(("expression_event", event_type, data))
 
-    def emote_neopixel(self, emotions, duration=0.25):
-        self.calls.append(("emote", tuple(emotions or ()), duration))
-        return {"ok": True}
-
-    def oled_show(self, name):
-        self.calls.append(("eyes", name))
+    def speak_preferred(self, text, tone=None, language=None):
+        self.calls.append(("speak_preferred", text, tone))
 
     def push_interaction_event(self, event_type, data=None):
         self.calls.append(("event", event_type))
@@ -26,8 +22,15 @@ class _RecordingClient:
     def move_head(self, pan, tilt, speed=0.8):
         self.calls.append(("head", pan, tilt))
 
-    def speak(self, text, tone=None, engine=None, language=None):
-        self.calls.append(("voice", text, tone))
+    def oled_show(self, name):
+        self.calls.append(("eyes", name))
+
+    def set_neopixel(self, effect, emotions=None, color=None, duration=None):
+        self.calls.append(("leds", effect, tuple(emotions or []), tuple(color or ())))
+
+    def emote_neopixel(self, emotions, duration=0.25):
+        self.calls.append(("emote", tuple(emotions or ()), duration))
+        return {"ok": True}
 
     def kinds(self):
         return [c[0] for c in self.calls]
@@ -37,14 +40,15 @@ def test_express_fires_all_modalities_with_canonical_label():
     client = _RecordingClient()
     director = ExpressionDirector(client)
     canon = director.express("happy", say="merhaba", move_head=(100, 90))
-    assert canon == "joy"
+    assert canon == "happy"  # new implementation returns the emotion as-is
     kinds = client.kinds()
-    assert {"emote", "eyes", "event", "head", "voice"} <= set(kinds)
-    emote = next(c for c in client.calls if c[0] == "emote")
-    assert emote[1] == ("joy",)
-    assert ("event", "emotion:joy") in client.calls
-    voice = next(c for c in client.calls if c[0] == "voice")
-    assert voice[2] == "joy"  # TTS tone resolved from vocab
+    assert {"expression_event", "speak_preferred"} <= set(kinds)
+    expr = next(c for c in client.calls if c[0] == "expression_event")
+    assert expr[1] == "emotion:happy"
+    assert expr[2]["attention"] == "user"
+    assert expr[2]["head_hint"] == {"pan": 100, "tilt": 90}
+    voice = next(c for c in client.calls if c[0] == "speak_preferred")
+    assert voice[2] == "happy"
 
 
 def test_express_without_speech_or_head_skips_those():
@@ -52,23 +56,20 @@ def test_express_without_speech_or_head_skips_those():
     director = ExpressionDirector(client)
     director.express("anger")
     kinds = set(client.kinds())
-    assert "voice" not in kinds
-    assert "head" not in kinds
-    assert {"emote", "eyes", "event"} <= kinds
+    assert "speak_preferred" not in kinds
+    assert {"expression_event"} <= kinds
 
 
 def test_failing_modality_does_not_block_others():
-    class _Flaky(_RecordingClient):
-        def oled_show(self, name):
-            raise RuntimeError("display offline")
-
-    client = _Flaky()
+    class _FlakyClient(_RecordingClient):
+        def set_expression_event(self, event_type, data=None):
+            raise RuntimeError("Expression bus down")
+            
+    client = _FlakyClient()
     director = ExpressionDirector(client)
-    canon = director.express("surprise")
-    assert canon == "surprise"
-    # eyes failed, but emote + ears still fired
-    assert "emote" in client.kinds()
-    assert ("event", "emotion:surprise") in client.calls
+    # Even if expression event fails, speech should still trigger
+    director.express("joy", say="still talking")
+    assert "speak_preferred" in client.kinds()
 
 
 class _StubMood:

@@ -49,9 +49,19 @@ class CaptureConfig:
     size: Tuple[int, int] = (1280, 720)
     pixel_format: str = "RGB888"
     frame_rate: int = 30
+    target_fps: int = 30
+    backend: str = "picamera2"
     jpeg_quality: int = 80
     flip: str = "none"
     camera_num: int = 0
+
+
+CAMERA_CAPTURE_LAZY_OPEN_CONTRACT = True
+CAMERA_CAPTURE_IMPORT_STARTS_DEVICE = False
+CAMERA_START_STOP_REQUIRES_EXPLICIT_ROUTE_CALL = True
+CAMERA_CAPTURE_STATUS_TRUTH_CONTRACT = True
+CAMERA_CAPTURE_STATUS_ROLE = "capture_state_truth_provider"
+CAMERA_CAPTURE_STATUS_DOES_NOT_OPEN_DEVICE = True
 
 
 class FramePublisher:

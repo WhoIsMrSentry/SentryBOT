@@ -81,5 +81,5 @@ def test_imx500_status_model_missing_when_library_present(monkeypatch, tmp_path)
     runner = Imx500Runner(cfg, bus=OnSensorEventBus())
     data = runner.status()
     assert data["enabled"] is True
-    assert data["model_path_exists"] is False
+    assert data["model_exists"] is False
     assert data["reason"] == "model_missing"

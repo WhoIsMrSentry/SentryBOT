@@ -25,12 +25,15 @@ class _DummyPlayer:
         return 0.5
 
 
+import threading
+
 def _piper_service():
     svc = SpeakService.__new__(SpeakService)
     svc.cfg = {"tts": {"engine": "piper"}}
     svc.tts = _DummyTTS()
     svc.player = _DummyPlayer()
     svc._liveliness_cfg = {}
+    svc._speech_lock = threading.Lock()
     return svc
 
 

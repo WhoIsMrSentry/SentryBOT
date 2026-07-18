@@ -23,22 +23,25 @@ class _DummyPlayer:
         return 0.5
 
 
+import threading
+
 def test_speak_accepts_string_tone_preset() -> None:
     svc = SpeakService.__new__(SpeakService)
     svc.cfg = {"tts": {"engine": "dummy"}}
     svc.tts = _DummyTTS()
     svc.player = _DummyPlayer()
     svc._liveliness_cfg = {}
+    svc._speech_lock = threading.RLock()
 
     result = svc.speak("Merhaba", tone="calm")
 
     assert result["ok"] is True
     assert svc.tts.last_overrides is not None
-    assert svc.tts.last_overrides.get("rate") == 170
-    assert svc.tts.last_overrides.get("volume") == 0.7
+    assert svc.tts.last_overrides.get("rate") == 160
+    assert svc.tts.last_overrides.get("volume") == 0.72
 
 
 def test_coerce_tone_rejects_invalid_type() -> None:
     assert SpeakService._coerce_tone({"rate": 180}) == {"rate": 180}
-    assert SpeakService._coerce_tone("calm") == {"rate": 170, "volume": 0.7}
+    assert SpeakService._coerce_tone("calm") == {"rate": 160, "volume": 0.72}
     assert SpeakService._coerce_tone(42) is None

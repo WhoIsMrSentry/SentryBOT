@@ -42,6 +42,6 @@ def test_expression_router_contract():
     assert client.get("/expression/status").json()["ok"] is True
     r = client.post("/expression/state", json={"emotion": "happy", "attention": "user"})
     assert r.status_code == 200
-    assert r.json()["state"]["emotion"] == "happy"
+    assert r.json()["semantic"]["state"]["emotion"] == "happy"
     r = client.post("/expression/event", json={"type": "autonomy.sleep"})
-    assert r.json()["state"]["emotion"] == "sleepy"
+    assert r.json()["semantic"]["state"]["emotion"] == "sleepy"

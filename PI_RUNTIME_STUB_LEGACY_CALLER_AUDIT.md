@@ -1,6 +1,6 @@
 # SentryBOT Pi Runtime Stub/Legacy Caller Audit
 
-Generated: `2026-07-18T15:02:24`
+Generated: `2026-07-18T15:34:12`
 
 Target: Pi/Linux robot runtime. PC remains only the development/test host.
 

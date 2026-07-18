@@ -283,6 +283,9 @@ class Imx500Runner:
             except Exception:
                 pass
             return boxes, scores, classes
+        
+        if isinstance(outputs[0], dict):
+            return outputs[0].get("boxes", []), outputs[0].get("scores", []), outputs[0].get("classes", [])
         return outputs[0][0], outputs[1][0], outputs[2][0]
 
     def _normalise_box(self, box: Any, metadata: dict[str, Any], width: int, height: int) -> Tuple[float, float, float, float]:
