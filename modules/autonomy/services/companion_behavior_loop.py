@@ -85,7 +85,12 @@ class CompanionBehaviorLoop:
             base["cooldown_remaining_s"] = round(interval - (ts - self._last_tick_ts), 2)
             return self._remember(base, "cooldown")
         base["should_tick"] = True
-        base["reason"] = "scheduled"
+        base["dry_run"] = bool(self.cfg.get("dry_run", False))
+        if bool(self.cfg.get("force_dry_run", False)):
+            base["gate_force"] = True
+            base["reason"] = "force_dry_run"
+        else:
+            base["reason"] = "scheduled"
         self._last_tick_ts = ts
         self._last_decision = dict(base)
         return dict(base)
@@ -93,7 +98,7 @@ class CompanionBehaviorLoop:
     def mark_execution(self, decision: Dict[str, Any], execution: Dict[str, Any]) -> Dict[str, Any]:
         out = dict(decision)
         out["execution"] = execution
-        out["executed"] = bool(execution.get("applied"))
+        out["executed"] = bool(execution.get("applied")) or execution.get("reason") == "dry_run"
         out["applied"] = bool(execution.get("applied"))
         out["execution_reason"] = execution.get("reason")
         self._last_decision = dict(out)
