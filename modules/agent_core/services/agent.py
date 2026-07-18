@@ -236,10 +236,11 @@ class AgentOrchestrator:
         return MemoryConsolidator(memory=self.memory, social_db=social_db)
 
     def _get_world_memory_context(self, user_prompt: str, limit: int = 8) -> str:
-        if not self.autonomy_client or not hasattr(self.autonomy_client, "world_memory_context"):
+        autonomy_client = getattr(self, "autonomy_client", None)
+        if not autonomy_client or not hasattr(autonomy_client, "world_memory_context"):
             return ""
         try:
-            result = self.autonomy_client.world_memory_context(user_prompt, limit=limit)
+            result = autonomy_client.world_memory_context(user_prompt, limit=limit)
             if isinstance(result, dict):
                 return str(result.get("context") or "").strip()
         except Exception:
@@ -247,14 +248,15 @@ class AgentOrchestrator:
         return ""
 
     def _observe_world_memory_dialogue(self, user_prompt: str, final_text: str) -> None:
-        if not self.autonomy_client or not hasattr(self.autonomy_client, "world_memory_observe"):
+        autonomy_client = getattr(self, "autonomy_client", None)
+        if not autonomy_client or not hasattr(autonomy_client, "world_memory_observe"):
             return
         text = str(user_prompt or "").strip()
         reply = str(final_text or "").strip()
         if not text and not reply:
             return
         try:
-            self.autonomy_client.world_memory_observe({
+            autonomy_client.world_memory_observe({
                 "kind": "episode",
                 "name": "dialogue",
                 "summary": ("User: " + text + " | Robot: " + reply)[:800],

@@ -215,8 +215,7 @@ class SpeechArbiter:
         )
 
     def enqueue_safety(self, text: str, trace_id: str = "") -> Optional[str]:
-        self.interrupt_all()
-        self._interrupt_flag.clear()
+        # Keep queued progress items; safety is higher priority when popped.
         return self.enqueue(
             text,
             priority=SpeechPriority.SAFETY,
