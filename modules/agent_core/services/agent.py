@@ -1532,19 +1532,21 @@ class AgentOrchestrator:
             return None
         self.last_run = now
         self.is_busy = True
-        previous_hook = self.tool_registry.status_hook
-        trace_id = latency_trace.ensure(trace_id, {"component": "agent_core", "language": language or ""})
-        latency_trace.mark(trace_id, "agent.request", {"chars": len(user_prompt), "native_tools": native_tools})
-
-        if self.autonomy_client and hasattr(self.autonomy_client, "set_expression_event"):
-            try:
-                self.autonomy_client.set_expression_event("agent.thinking", {"trace_id": trace_id})
-            except Exception:
-                pass
 
         if speaker and str(speaker).strip().lower() not in {"unknown", "none", ""}:
             try:
                 self.world_state.update_state({"speaker": str(speaker).strip()})
+            except Exception:
+                pass
+
+        previous_hook = self.tool_registry.status_hook
+        trace_id = latency_trace.ensure(trace_id, {"component": "agent_core", "language": language or ""})
+        latency_trace.mark(trace_id, "agent.request", {"chars": len(user_prompt), "native_tools": native_tools})
+
+        autonomy_client = getattr(self, "autonomy_client", None)
+        if autonomy_client and hasattr(autonomy_client, "set_expression_event"):
+            try:
+                autonomy_client.set_expression_event("agent.thinking", {"trace_id": trace_id})
             except Exception:
                 pass
 
