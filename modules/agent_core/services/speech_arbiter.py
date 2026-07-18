@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# --- SentryBOT speech/audio boundary contract ---
+SPEECH_AUDIO_COMPATIBILITY = True
+SPEECH_AUDIO_BOUNDARY_ROLE = "agent_core_compat_speech_arbiter"
+SPEECH_AUDIO_RUNTIME_OWNER = "modules.speech / modules.speak"
+SPEECH_AUDIO_BOUNDARY_REASON = "SpeechArbiter remains the agent_core queue/priority compatibility surface until speech ownership fully moves to speech/speak modules."
+# --- End SentryBOT speech/audio boundary contract ---
+
 import logging
 import re
 import threading
