@@ -11,7 +11,7 @@ class CompanionAutoExecuteGate:
         "min_interval_s": 8.0,
         "dry_run_default": True,
         "allow_real_hardware": False,
-        "allowed_risks": ["none", "low", "medium", "semantic"],
+        "allowed_risks": ["none", "low", "semantic"],
         "blocked_components": [],
         "allowed_priorities": ["low", "normal", "critical"],
     }
