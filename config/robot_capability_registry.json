@@ -1,0 +1,125 @@
+{
+  "schema": "sentrybot.robot_capabilities.v2",
+  "policy": {
+    "blocked_risks": [
+      "critical"
+    ],
+    "stop_on_failure": true
+  },
+  "capabilities": {
+    "expression.event": {
+      "handler": "expression_event",
+      "risk": "none",
+      "enabled": true
+    },
+    "motion.freeze": {
+      "handler": "stop_motion",
+      "risk": "low",
+      "enabled": true
+    },
+    "motion.look_around": {
+      "handler": "animate",
+      "default_name": "look_around",
+      "risk": "low",
+      "enabled": true
+    },
+    "motion.stretch_or_scan": {
+      "handler": "animate",
+      "default_name": "stretch",
+      "risk": "low",
+      "enabled": true
+    },
+    "motion.attend": {
+      "handler": "animate",
+      "default_name": "vision_focus",
+      "risk": "low",
+      "enabled": true
+    },
+    "pose.sleepy_idle": {
+      "handler": "animate",
+      "default_name": "sleepy_idle",
+      "risk": "low",
+      "enabled": true
+    },
+    "vision.cheap": {
+      "handler": "vision_latest",
+      "risk": "none",
+      "enabled": true
+    },
+    "vision.semantic": {
+      "handler": "vision_refresh",
+      "risk": "none",
+      "enabled": true
+    },
+    "perception.owner_scan": {
+      "handler": "track_target",
+      "risk": "low",
+      "enabled": true
+    },
+    "speech.short_prompt": {
+      "handler": "speak",
+      "fallback_text": "Buradayım. Birlikte bir şey yapalım mı?",
+      "risk": "low",
+      "enabled": true
+    },
+    "speech.silent": {
+      "handler": "semantic_noop",
+      "risk": "none",
+      "enabled": true
+    },
+    "scheduler.wait": {
+      "handler": "wait",
+      "risk": "none",
+      "enabled": true
+    },
+    "semantic.pet_intent": {
+      "handler": "semantic_noop",
+      "risk": "none",
+      "enabled": true
+    },
+    "semantic.unknown": {
+      "handler": "semantic_noop",
+      "risk": "none",
+      "enabled": true
+    },
+    "perception.track_object": {
+      "handler": "track_target",
+      "risk": "low",
+      "enabled": true
+    },
+    "navigation.rest_corner": {
+      "handler": "rest_corner",
+      "risk": "low",
+      "enabled": true
+    },
+    "memory.observe": {
+      "handler": "memory_observe",
+      "risk": "none",
+      "enabled": true
+    },
+    "navigation.goal": {
+      "enabled": true,
+      "risk": "medium",
+      "handler": "navigation_goal",
+      "description": "Execute a topomap navigation goal through safe motion gating."
+    },
+    "owner.learn": {
+      "enabled": true,
+      "risk": "low",
+      "handler": "owner_learn",
+      "description": "Learn a person as owner/known person."
+    },
+    "owner.identify": {
+      "enabled": true,
+      "risk": "low",
+      "handler": "owner_identify",
+      "description": "Identify current camera target against owner memory."
+    },
+    "assets.status": {
+      "enabled": true,
+      "risk": "none",
+      "handler": "asset_status",
+      "description": "Read Pi model/runtime asset truth."
+    }
+  }
+}
