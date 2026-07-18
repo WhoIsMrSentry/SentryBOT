@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from .capability_executor import CapabilityExecutor
 
+AUTONOMY_SEMANTIC_NOOP_CONTRACT = True
+
 
 def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}

@@ -5,6 +5,9 @@ from typing import Any, Dict, Optional
 
 from modules.autonomy.services.pet_output_planner import build_pet_output_plan
 
+PET_COMPANION_BEHAVIOR_LOOP_INTEGRATION_CONTRACT = True
+PET_OUTPUT_PLANNER_BEHAVIOR_LOOP_INTEGRATION_CONTRACT = True
+
 
 class CompanionBehaviorLoop:
     DEFAULTS: Dict[str, Any] = {

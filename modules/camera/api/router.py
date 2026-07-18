@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 from ..services.capture import CameraCapture
 
+CAMERA_RUNNER_STATUS_COMPATIBILITY_CONTRACT = True
+
 
 class TrackingSelection(BaseModel):
     label: str = Field(default="person", min_length=1, max_length=80)
