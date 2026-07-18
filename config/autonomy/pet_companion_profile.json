@@ -1,0 +1,16 @@
+{
+  "name": "sentry",
+  "traits": {
+    "curiosity": 0.72,
+    "sociability": 0.68,
+    "calmness": 0.58,
+    "playfulness": 0.62,
+    "protectiveness": 0.70,
+    "independence": 0.45
+  },
+  "style": {
+    "speech": "short_warm",
+    "motion": "soft_reactive",
+    "expression": "alive_subtle"
+  }
+}

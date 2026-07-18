@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "default_armed": false,
+  "allow_pc_arm": false,
+  "allow_real_hardware": false,
+  "require_manual_arm": true,
+  "require_robot_safe_preflight": true,
+  "require_robot_safety_ci": true,
+  "require_capability_registry": true,
+  "require_dry_run_until_armed": true,
+  "max_arm_ttl_s": 300,
+  "allowed_profiles_when_armed": [
+    "robot_safe_manual"
+  ],
+  "blocked_profiles_when_disarmed": [
+    "robot_safe",
+    "robot_safe_manual",
+    "robot_real"
+  ],
+  "allowed_risks_when_disarmed": [
+    "none",
+    "low"
+  ],
+  "blocked_priorities_when_disarmed": [
+    "critical"
+  ],
+  "notes": "Default lock for PC/refactor mode. Real hardware remains disabled until a later explicit robot profile step."
+}
