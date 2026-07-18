@@ -828,10 +828,13 @@ class AgentOrchestrator:
         return {"message": {"content": content}}
 
     def _call_ollama_chat(self, kwargs: Dict[str, Any]):
-        call = self.ollama_client.chat if self.ollama_client is not None else ollama.chat
+        client = getattr(self, "ollama_client", None)
+        call = client.chat if client is not None else ollama.chat
         request = dict(kwargs)
-        request["think"] = self.ollama_think
-        request["keep_alive"] = self.ollama_keep_alive
+        request["think"] = getattr(self, "ollama_think", False)
+        keep_alive = getattr(self, "ollama_keep_alive", None)
+        if keep_alive is not None:
+            request["keep_alive"] = keep_alive
         try:
             return call(**request)
         except TypeError:
@@ -877,11 +880,11 @@ class AgentOrchestrator:
                 )
             return response
         except Exception as exc:
-            fallback = str(self.clm_fallback_model or "").strip()
+            fallback = str(getattr(self, "clm_fallback_model", "") or "").strip()
             if (
-                self.llm_provider == "ollama"
-                and self.clm_fallback_enabled
-                and self.fallback_on_error
+                getattr(self, "llm_provider", "ollama") == "ollama"
+                and getattr(self, "clm_fallback_enabled", False)
+                and getattr(self, "fallback_on_error", False)
                 and fallback
                 and fallback != selected_model
             ):
