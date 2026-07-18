@@ -46,6 +46,10 @@ class CompanionBehaviorLoop:
         idle_s = float(needs_map.get("idle_s") or 0.0)
         pet = goal_map.get("pet_companion") if isinstance(goal_map.get("pet_companion"), dict) else {}
         output_plan = build_pet_output_plan(pet)
+        expression_cmd = dict(output_plan.get("expression") or {})
+        motion_cmd = dict(output_plan.get("motion") or {})
+        speech_cmd = dict(output_plan.get("speech") or {})
+        pet_intent = str(goal_map.get("pet_intent") or pet.get("intent") or output_plan.get("intent") or "")
         base = {
             "ok": True,
             "available": bool(goal_map),
@@ -57,7 +61,14 @@ class CompanionBehaviorLoop:
             "dominant_need": str(goal_map.get("dominant_need") or ""),
             "behavior": str(goal_map.get("behavior") or ""),
             "priority": str(goal_map.get("priority") or "low"),
+            "pet_intent": pet_intent,
+            "pet_expression_hint": str(pet.get("expression_hint") or expression_cmd.get("name") or ""),
+            "pet_motion_hint": str(pet.get("motion_hint") or motion_cmd.get("name") or ""),
+            "pet_speech_hint": str(pet.get("speech_hint") or speech_cmd.get("style") or ""),
             "pet_output_plan": output_plan,
+            "pet_expression_command": expression_cmd,
+            "pet_motion_command": motion_cmd,
+            "pet_speech_command": speech_cmd,
         }
         if not bool(self.cfg.get("enabled", True)):
             return self._remember(base, "behavior_loop_disabled")

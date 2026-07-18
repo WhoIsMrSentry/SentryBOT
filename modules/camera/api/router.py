@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from ..services.capture import CameraCapture
 
 CAMERA_RUNNER_STATUS_COMPATIBILITY_CONTRACT = True
+CAMERA_RUNNER_STATUS_COMPATIBILITY_ROLE = "imx500_runner_status_backcompat_adapter"
 
 
 class TrackingSelection(BaseModel):
@@ -31,10 +32,26 @@ def get_router(
     def runner_status() -> dict[str, Any]:
         if imx500_runner is None:
             return {"enabled": False, "available": False, "running": False, "reason": "not_configured"}
-        try:
-            return dict(imx500_runner.status())
-        except Exception as exc:
-            return {"enabled": True, "available": False, "running": False, "reason": "status_error", "error": str(exc)}
+        status_fn = getattr(imx500_runner, "status", None)
+        if callable(status_fn):
+            try:
+                return dict(status_fn())
+            except Exception as exc:
+                return {
+                    "enabled": True,
+                    "available": False,
+                    "running": False,
+                    "reason": "status_error",
+                    "error": str(exc),
+                }
+        cfg = getattr(imx500_runner, "cfg", None)
+        enabled = bool(getattr(cfg, "enabled", True)) if cfg is not None else True
+        return {
+            "enabled": enabled,
+            "available": bool(getattr(imx500_runner, "available", False)),
+            "running": bool(getattr(imx500_runner, "running", False)),
+            "reason": "compatibility_runner",
+        }
 
     def bus_status() -> dict[str, Any]:
         if onsensor_bus is None:
