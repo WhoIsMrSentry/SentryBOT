@@ -9,6 +9,8 @@ class CompanionAutoExecuteGate:
         "enabled": True,
         "require_auto_execute_flag": True,
         "min_interval_s": 8.0,
+        "dry_run_default": True,
+        "allow_real_hardware": False,
         "allowed_risks": ["none", "low", "medium", "semantic"],
         "blocked_components": [],
         "allowed_priorities": ["low", "normal", "critical"],
@@ -18,22 +20,39 @@ class CompanionAutoExecuteGate:
         self.cfg = dict(self.DEFAULTS)
         if isinstance(cfg, dict):
             self.cfg.update(cfg)
-        self._last_decision: Dict[str, Any] = {"ok": True, "available": False, "should_execute": False, "reason": "never_checked"}
+        self._last_decision: Dict[str, Any] = {
+            "ok": True,
+            "available": False,
+            "should_execute": False,
+            "reason": "never_checked",
+        }
         self._last_plan_id = ""
         self._last_execute_ts = 0.0
 
     def status(self) -> Dict[str, Any]:
         return {"ok": True, **self.cfg, "last_decision": dict(self._last_decision)}
 
-    def decide(self, goal_plan: Optional[Dict[str, Any]], *, force: bool = False, now: Optional[float] = None, **_: Any) -> Dict[str, Any]:
+    def decide(
+        self,
+        goal_plan: Optional[Dict[str, Any]],
+        *,
+        force: bool = False,
+        dry_run: Optional[bool] = None,
+        pc_test: bool = False,
+        now: Optional[float] = None,
+        **_: Any,
+    ) -> Dict[str, Any]:
         ts = float(now if now is not None else time.time())
         plan = goal_plan if isinstance(goal_plan, dict) else {}
+        effective_dry_run = bool(self.cfg.get("dry_run_default", True)) if dry_run is None else bool(dry_run)
         base = {
             "ok": True,
             "available": bool(plan),
             "should_execute": False,
             "executed": False,
             "force": bool(force),
+            "dry_run": effective_dry_run,
+            "pc_real_execution_blocked": False,
             "timestamp": ts,
             "plan_id": str(plan.get("plan_id") or ""),
             "behavior": str(plan.get("behavior") or ""),
@@ -57,12 +76,26 @@ class CompanionAutoExecuteGate:
         if not force and plan_id == self._last_plan_id and ts - self._last_execute_ts < interval:
             base["cooldown_remaining_s"] = round(interval - (ts - self._last_execute_ts), 2)
             return self._remember(base, "cooldown")
+
+        if force and not bool(plan.get("auto_execute", False)) and effective_dry_run:
+            base["should_execute"] = True
+            base["dry_run"] = True
+            return self._remember(base, "force_dry_run", track=True, plan_id=plan_id, ts=ts)
+
+        if not effective_dry_run and pc_test:
+            base["should_execute"] = True
+            base["dry_run"] = True
+            base["pc_real_execution_blocked"] = True
+            return self._remember(base, "pc_real_execution_blocked", track=True, plan_id=plan_id, ts=ts)
+
+        if not effective_dry_run and not bool(self.cfg.get("allow_real_hardware", False)):
+            base["should_execute"] = True
+            base["dry_run"] = True
+            return self._remember(base, "real_hardware_not_allowed", track=True, plan_id=plan_id, ts=ts)
+
         base["should_execute"] = True
-        base["reason"] = "execute"
-        self._last_plan_id = plan_id
-        self._last_execute_ts = ts
-        self._last_decision = dict(base)
-        return dict(base)
+        base["dry_run"] = effective_dry_run
+        return self._remember(base, "execute", track=True, plan_id=plan_id, ts=ts)
 
     def mark_execution(self, decision: Dict[str, Any], execution: Dict[str, Any]) -> Dict[str, Any]:
         out = dict(decision)
@@ -90,8 +123,19 @@ class CompanionAutoExecuteGate:
                 return False, f"risk_blocked:{risk}"
         return True, "allowed"
 
-    def _remember(self, base: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    def _remember(
+        self,
+        base: Dict[str, Any],
+        reason: str,
+        *,
+        track: bool = False,
+        plan_id: str = "",
+        ts: float = 0.0,
+    ) -> Dict[str, Any]:
         out = dict(base)
         out["reason"] = reason
+        if track:
+            self._last_plan_id = plan_id
+            self._last_execute_ts = ts
         self._last_decision = out
         return out
