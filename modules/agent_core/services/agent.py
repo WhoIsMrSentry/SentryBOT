@@ -1619,9 +1619,13 @@ class AgentOrchestrator:
                     active_model,
                     messages,
                     actions_out=executed_actions,
-                    num_predict=self.fast_path_num_predict if use_fast_path else None,
+                    num_predict=getattr(self, "fast_path_num_predict", None) if use_fast_path else None,
                     on_sentence=on_sentence,
-                    max_steps=self.fast_path_max_steps if use_fast_path else self.max_steps,
+                    max_steps=(
+                        getattr(self, "fast_path_max_steps", 2)
+                        if use_fast_path
+                        else getattr(self, "max_steps", 4)
+                    ),
                     trace_id=trace_id,
                 )
 
