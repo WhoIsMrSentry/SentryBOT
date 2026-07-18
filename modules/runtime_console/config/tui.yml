@@ -1,0 +1,18 @@
+# SentryBOT TUI v2 preferences.
+mode: opencode
+profile_default: pc-test
+colors: true
+ascii: false
+refresh_hz: 5
+log_files:
+  - logs/sentry.log
+  - logs/runtime_stdout.log
+capture_robot_stdout: true
+hide_old_runtime_console: true
+pc_test_mode:
+  treat_missing_hardware_as_degraded: true
+  expected_missing:
+    - ESP bridge
+    - Piper model
+    - Vosk model
+    - Raspberry Pi camera

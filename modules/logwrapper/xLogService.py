@@ -15,6 +15,7 @@ _ROUTER = None  # lazy import for FastAPI
 
 class EndpointFilter(logging.Filter):
     """Specific paths like healthz or polling should not flood the console."""
+
     def __init__(self, suppressed_paths: list[str]):
         super().__init__()
         self.suppressed_paths = suppressed_paths
@@ -32,6 +33,32 @@ def _ensure_log_dir(path: str) -> None:
     directory = os.path.dirname(path)
     if directory and not os.path.exists(directory):
         os.makedirs(directory, exist_ok=True)
+
+
+def _console_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    console_cfg = cfg.get("console") or {}
+    mode = str(os.getenv("SENTRYBOT_CONSOLE_MODE", console_cfg.get("mode", "dashboard"))).lower()
+    level = cfg.get("console_level", "INFO")
+    if mode in {"off", "none", "silent", "tui"}:
+        return {"class": "logging.NullHandler", "level": level}
+    if mode == "dashboard":
+        return {
+            "()": "modules.runtime_console.dashboard.RuntimeConsoleLogHandler",
+            "level": level,
+            "mode": mode,
+            "colors": bool(console_cfg.get("colors", True)),
+            "show_background_requests": bool(console_cfg.get("show_background_requests", False)),
+            "aggregate_repeated_messages": bool(console_cfg.get("aggregate_repeated_messages", True)),
+            "repeat_summary_interval_s": int(console_cfg.get("repeat_summary_interval_s", 30)),
+            "event_history": int(console_cfg.get("event_history", 8)),
+            "max_message_width": int(console_cfg.get("max_message_width", 92)),
+            "border": str(console_cfg.get("border", "rounded")),
+        }
+    return {
+        "class": "logging.StreamHandler",
+        "level": level,
+        "stream": "ext://sys.stdout",
+    }
 
 
 def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
@@ -64,14 +91,10 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
 
     # Console handler
     if cfg.get("enable_console", True):
-        handlers["console"] = {
-            "class": "logging.StreamHandler",
-            "level": cfg.get("console_level", "INFO"),
-            "stream": "ext://sys.stdout",
-        }
+        handlers["console"] = _console_config(cfg)
         root_handlers.append("console")
 
-    # File handler with rotation
+    # File handler with rotation. Keep this detailed even when console hides noise.
     if cfg.get("enable_file", True):
         path = str(cfg.get("file_path", "logs/sentry.log"))
         _ensure_log_dir(path)
@@ -180,27 +203,30 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
         except Exception:
             logging.getLogger(name).setLevel(level)
 
-    # Apply endpoint filtering to noisy web logs
-    suppressed = [
-        "/arduino/request",
-        "/vlm/results/latest",
-        "/speech/direction",
-        "/speech/last",
-        "/arduino/healthz",
-        "/state/set/emotions",
-        "/interactions/event",
-        "/interactions/effect",
-        "/neopixel/animate",
-        "/oled_faces/manual"
-    ]
+    # Apply endpoint filtering to noisy console logs only. File logging keeps full detail.
+    suppressed = list((cfg.get("console") or {}).get("hidden_paths") or [])
+    if not suppressed:
+        suppressed = [
+            "/camera/healthz",
+            "/vlm/context/latest",
+            "/vlm/results/latest",
+            "/telemetry/metrics",
+            "/speech/direction",
+            "/speech/last",
+            "/arduino/healthz",
+            "/state/set/emotions",
+            "/interactions/event",
+            "/interactions/effect",
+            "/neopixel/animate",
+            "/oled_faces/manual",
+        ]
     ef = EndpointFilter(suppressed)
-    
-    # Apply to uvicorn.access logger
+
     logging.getLogger("uvicorn.access").addFilter(ef)
-    
-    # Also apply to all root handlers to catch everything going to console/file
     for handler in logging.getLogger().handlers:
-        handler.addFilter(ef)
+        handler_name = handler.__class__.__name__
+        if handler_name in {"StreamHandler", "RuntimeConsoleLogHandler"}:
+            handler.addFilter(ef)
 
 
 def get_memory_handler() -> Optional[InMemoryLogHandler]:
