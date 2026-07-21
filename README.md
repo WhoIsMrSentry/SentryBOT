@@ -37,7 +37,6 @@ Ana hedefler:
 - **Gateway Güvenliği**: Gateway'e isteğe bağlı API anahtarı ve rol kontrolü eklendi; yazma uçları korunabilir.
 - **Diagnostics Akıllı Sağlık Taraması**: Gecikme eşikleri, tekrar eden hata sayımı ve self-heal tetikleri ile daha doğru rapor üretir.
 - **Scheduler Dinamik Görev Motoru**: Görevler çalışma anında eklenip silinebilir; sadece config'e bağlı kalmaz.
-- **Semantic Memory ve SLAM**: Ajan, geçmiş kayıtları alaka puanına göre sıralar ve topolojik haritaya yeni konum/bağlantı öğrenebilir.
 - **Tri-Layer Semantic Routing**: Router yalnızca anahtar kelimeye değil, token benzerliğine de bakarak daha doğru modül seçimi yapar.
 - **VLM Mode Yönetimi**: Görüntü işleme yetenekleri ayrı ayrı açılıp kapatılabilir; pahalı işlemler ihtiyaca göre sınırlandırılır.
 - **OTA Güvenlik Sertleştirmesi**: Firmware yükleme sırasında opsiyonel allowlist ve HMAC imza doğrulaması kullanılabilir.
@@ -51,7 +50,7 @@ Ana hedefler:
 - Konfigürasyon: Her modül altında `config/config.yml`; merkezi düzenleme için Config Center
 - Loglama: Merkezi log wrapper; dosya + bellek içi halka buffer
 
-Başlatıcı akış (varsayılan): `run_robot.py` → Logları kurar → Gateway app’i oluşturur → Uvicorn ile tek porttan servis verir.
+Başlatıcı akış (varsayılan): `sentrybot.py` -> TUI (Control Center) arayüzünü başlatır ve arka planda run_robot.py'yi çalıştırır.
 
 
 ## Robot Ne Yapar? (Yetenekler)

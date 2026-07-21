@@ -1,9 +1,0 @@
-services:
-  sentrybot-gateway:
-    environment:
-      GATEWAY_CONFIG: /app/modules/gateway/config/config.docker.full.yml
-      SENTRYBOT_DISABLE_AUTOSTART: "1"
-
-    # Full profile icin config mount.
-    volumes:
-      - ./modules/gateway/config/config.docker.full.yml:/app/modules/gateway/config/config.docker.full.yml:ro

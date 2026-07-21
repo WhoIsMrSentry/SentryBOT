@@ -513,7 +513,7 @@ class RobotProcess:
                 self.output_log.replace(prev)
         except Exception:
             pass
-        cmd = [sys.executable, "-u", "run_robot.py"]
+        cmd = [sys.executable, "-u", "scripts/run_robot.py"]
         self.proc = subprocess.Popen(
             cmd,
             cwd=str(self.root),
@@ -2200,8 +2200,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--profile", choices=["pc", "pc-test", "robot"], default=None, help="override detected runtime profile")
     args = parser.parse_args(argv)
     root = Path(args.root)
-    if not (root / "run_robot.py").exists():
-        print(f"run_robot.py not found under {root}", file=sys.stderr)
+    if not (root / "scripts" / "run_robot.py").exists():
+        print(f"run_robot.py not found under {root / 'scripts'}", file=sys.stderr)
         return 2
     profile = "pc-test" if args.profile == "pc" else args.profile
     if args.unicode:

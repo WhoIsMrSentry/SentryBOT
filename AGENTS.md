@@ -42,10 +42,8 @@ Her AI aracı kendi keşif dosyasından `.sentrybot/`'a yönlendirilir:
 | Araç | Keşif Dosyası | İçerik |
 |------|--------------|--------|
 | **OpenCode** | `.opencode/agents/` + `.opencode/skills/` | İnce yönlendirici → `.sentrybot/` |
-| **Claude Code** | `CLAUDE.md` | İnce yönlendirici → `.sentrybot/` |
 | **Copilot** | `.github/agents/` + `.github/copilot-instructions.md` | İnce yönlendirici → `.sentrybot/` |
 | **Cursor** | `.cursor/rules/*.mdc` | Akıllı kurallar (globs) → `.sentrybot/` |
-| **Windsurf** | `.windsurfrules` | İnce yönlendirici → `.sentrybot/` |
 | **Antigravity** | `AGENTS.md` (bu dosya) | İnce yönlendirici → `.sentrybot/` |
 
 ### Global Kurulum
@@ -54,11 +52,6 @@ Her AI aracı kendi keşif dosyasından `.sentrybot/`'a yönlendirilir:
 ```bash
 cp -r .opencode/agents/* ~/.config/opencode/agents/
 cp -r .opencode/skills/* ~/.config/opencode/skills/
-```
-
-**Claude Code:**
-```bash
-cp CLAUDE.md ~/.claude/CLAUDE.md
 ```
 
 ## Kritik Kurallar
