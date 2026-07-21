@@ -38,3 +38,4 @@ _codeql_detected_source_root
 vendor/
 *.ps1
 safe_places.json
+.codebase-memory/
