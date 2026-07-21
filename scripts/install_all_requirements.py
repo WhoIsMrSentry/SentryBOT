@@ -168,7 +168,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    repo_root = Path(__file__).resolve().parent
+    repo_root = Path(__file__).resolve().parent.parent
     print(f"Geçerli dizin: {repo_root}")
     
     # Virtual environment setup
