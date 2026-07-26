@@ -29,8 +29,10 @@ class ServiceClient:
             base = resolve_gateway_base_url()
             self.urls = rewrite_loopback_urls(dict(base_urls or {}), base)
             self.urls.setdefault("agent_core", gateway_url(base, "/agent"))
+            self.urls.setdefault("gateway", base)  # root gateway base URL
         except Exception:
             self.urls = dict(base_urls or {})
+            self.urls.setdefault("gateway", "http://127.0.0.1:8080")
         cfg = config or {}
         self.speech_quiet_cfg = dict(cfg.get("speech_quiet_hours", {}))
         self.offline_cfg = dict(cfg.get("offline_mode", {}))
@@ -456,6 +458,17 @@ class ServiceClient:
             payload["color"] = color
         return self._post("interactions", "/base", payload)
 
+    def get_person_memory(self, name: str) -> dict:
+        """Fetch person details from social_db."""
+        return self._get("social_db", f"/api/social_db/person/{name}")
+
+    def fill_neopixel(self, r, g, b):
+        payload = {"effect": "solid", "color": [r, g, b]}
+        try:
+            self._post("gateway", "/api/neopixel/effect", payload)
+        except Exception:
+            pass
+
     def set_expression_event(self, event_type, data=None):
         return self._post("expression", "/event", {"type": str(event_type), "data": data or {}})
 
@@ -682,3 +695,303 @@ class ServiceClient:
         except Exception as e:
             logger.debug(f"Failed to emit agent event {event_type}: {e}")
             return None
+
+    # =====================================================
+    # Async tool methods (used by LLM tool-calling)
+    # These run concurrently with the new http_client.
+    # =====================================================
+
+    async def _async_post(self, service: str, endpoint: str, json: dict | None = None, 
+                           params: dict | None = None, timeout: float = 2.0) -> dict | None:
+        """Async POST that wraps the sync _post for use in async contexts.
+
+        Keeps existing call sites working while allowing the LLM tool layer
+        to invoke equipment calls without blocking FastAPI event loop.
+        """
+        url = self.urls.get(service)
+        if not url:
+            return None
+        try:
+            from modules.common.http_client import get_http_client
+            client = get_http_client(url, timeout)
+            kwargs = {}
+            if json is not None:
+                kwargs["json"] = json
+            if params is not None:
+                kwargs["params"] = params
+            resp = await client.post(endpoint, **kwargs)
+            if resp.status_code == 200:
+                try:
+                    return resp.json()
+                except Exception:
+                    return {}
+            return None
+        except Exception as e:
+            logger.debug("Async post to %s%s failed: %s", service, endpoint, e)
+            return None
+
+    async def _async_get(self, service: str, endpoint: str, 
+                         params: dict | None = None, timeout: float = 2.0) -> dict | None:
+        url = self.urls.get(service)
+        if not url:
+            return None
+        try:
+            from modules.common.http_client import get_http_client
+            client = get_http_client(url, timeout)
+            kwargs = {}
+            if params is not None:
+                kwargs["params"] = params
+            resp = await client.get(endpoint, **kwargs)
+            if resp.status_code == 200:
+                try:
+                    return resp.json()
+                except Exception:
+                    return {}
+            return None
+        except Exception as e:
+            logger.debug("Async get from %s%s failed: %s", service, endpoint, e)
+            return None
+
+    async def async_move_head(self, pan: int, tilt: int, speed: float = 0.8) -> dict:
+        """Async head move (servo)."""
+        try:
+            from modules.arduino_serial.contract import build_set_servo_cmd, SERVO_INDEX_PAN, SERVO_INDEX_TILT
+        except ImportError:
+            return {"ok": False, "error": "arduino contract not available"}
+        pan_resp = await self._async_post(
+            "arduino", "/request", 
+            json=build_set_servo_cmd(SERVO_INDEX_PAN, int(pan)), 
+            params={"timeout": 1.0}
+        )
+        tilt_resp = await self._async_post(
+            "arduino", "/request",
+            json=build_set_servo_cmd(SERVO_INDEX_TILT, int(tilt)),
+            params={"timeout": 1.0}
+        )
+        return {
+            "ok": bool((pan_resp or {}).get("ok", False)) and bool((tilt_resp or {}).get("ok", False)),
+            "pan": pan_resp,
+            "tilt": tilt_resp,
+        }
+
+    async def async_express_emotion(
+        self,
+        emotion: str,
+        intensity: float = 1.0,
+        duration_s: float = 3.0,
+        modalities: list[str] | None = None,
+        text: str | None = None,
+        language: str = "tr",
+    ) -> dict:
+        """Express an emotion atomically via the expression service.
+        
+        This is the primary LLM-facing tool for emotional reactions.
+        """
+        mods = list(modalities) if modalities else ["leds", "oled", "voice", "head"]
+        return await self._async_post(
+            "gateway", "/expression/express",
+            json={
+                "emotion": emotion,
+                "intensity": min(2.0, max(0.1, float(intensity))),
+                "duration_s": min(30.0, max(0.5, float(duration_s))),
+                "modalities": mods,
+                "text": text,
+                "language": str(language or "tr"),
+            },
+            timeout=3.0,
+        )
+
+    async def async_speak(self, text: str, tone: str = "neutral",
+                          language: str = "tr", pitch_shift: float = 0.0,
+                          speed: float = 1.0) -> dict:
+        """Speak with emotion-aware voice parameters."""
+        return await self._async_post(
+            "speak", "/say",
+            json={
+                "text": text,
+                "tone": tone,
+                "language": language,
+                "pitch_shift": pitch_shift,
+                "speed": speed,
+            },
+            timeout=4.0,
+        )
+
+    async def async_look_around(self) -> dict:
+        """Pan/tilt to scan the environment."""
+        steps = [(60, 90), (90, 90), (120, 90), (90, 90), (90, 70), (90, 110)]
+        results = []
+        import asyncio
+        for pan, tilt in steps:
+            res = await self.async_move_head(pan, tilt)
+            results.append({"pan": pan, "tilt": tilt, "ok": res.get("ok", False)})
+            await asyncio.sleep(0.6)
+        return {"ok": all(r["ok"] for r in results), "steps": results}
+
+    async def async_focus_person(self, name: str) -> dict:
+        """Look at a specific person."""
+        if not name:
+            return {"ok": False, "error": "name is empty"}
+        return await self._async_post("vlm", "/focus/person", params={"person": str(name)})
+
+    async def async_remember_person(
+        self, name: str, relationship: str = "known", recognition_level: int = 2
+    ) -> dict:
+        """Save or update a person in long-term memory."""
+        return await self._async_post(
+            "vlm", "/person/remember",
+            json={
+                "name": name,
+                "relationship": relationship,
+                "recognition_level": recognition_level,
+            },
+        )
+
+    async def async_search_memory(self, query: str, limit: int = 5) -> dict:
+        """Search episodic/agent memory."""
+        if not query:
+            return {"ok": False, "error": "query is empty"}
+        try:
+            url = self._agent_core_url()
+            from modules.common.http_client import get_http_client
+            base = url.replace("/agent", "")
+            client = get_http_client(base, timeout=2.0)
+            resp = await client.get(
+                "/agent/memory/search",
+                params={"query": query, "limit": limit},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+        except Exception as e:
+            logger.debug("async_search_memory fallback failed: %s", e)
+        return await self._async_get("agent_core", "/memory/search", params={"query": query, "limit": limit})
+
+    async def async_get_vision(self) -> dict:
+        """Get latest visual context (people, objects, hazards, scene)."""
+        data = await self._async_get("vlm", "/context/latest", timeout=2.0)
+        if data is None:
+            data = await self._async_get("vision", "/context/latest", timeout=2.0)
+        if isinstance(data, dict):
+            if data.get("available"):
+                ctx = data.get("context", {})
+                return {
+                    "available": True,
+                    "people": ctx.get("people", []),
+                    "objects": ctx.get("objects", []),
+                    "hazards": ctx.get("hazards", []),
+                    "scene_summary": ctx.get("summary", ""),
+                    "importance": ctx.get("importance_score", 0.0),
+                }
+        return {"available": False, "people": [], "objects": [], "hazards": [], "scene_summary": "vision unavailable"}
+
+    async def async_get_sensor_data(self) -> dict:
+        """Get battery, ultrasonic, IMU snapshot."""
+        try:
+            url = self.urls.get("arduino", "")
+            if not url:
+                return {"error": "arduino url not configured"}
+            from modules.common.http_client import get_http_client
+            client = get_http_client(url, timeout=2.0)
+            resp = await client.post(
+                "/emergency",
+                json={
+                    "cmd": "ultra_read",
+                },
+                timeout=2.0,
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return {"distance_cm": data.get("cm"), "raw": data}
+        except Exception as e:
+            logger.debug("async_get_sensor_data failed: %s", e)
+        return {"distance_cm": None}
+
+    async def async_wake(self) -> dict:
+        """Activate the robot from sleep/quiet state."""
+        return await self._async_post("autonomy", "/start", timeout=2.0)
+
+    async def async_sleep(self) -> dict:
+        """Put the robot to sleep/rest state."""
+        return await self._async_post("autonomy", "/stop", timeout=2.0)
+
+    async def async_set_operational_mode(self, mode: str) -> dict:
+        """Set operational mode: 'active', 'sleep', 'maintenance', 'paused'."""
+        return await self._async_post(
+            "state_manager", "/set/operational",
+            json={"mode": str(mode)},
+            timeout=1.0,
+        )
+
+    async def async_queue_action(
+        self,
+        action_type: str,
+        priority: int = 50,
+        ttl_ms: int = 5000,
+        payload: dict | None = None,
+    ) -> dict:
+        """Submit an action to the agent action queue."""
+        return await self._async_post(
+            "agent_core", "/actions/queue",
+            json={
+                "type": action_type,
+                "priority": priority,
+                "ttl_ms": ttl_ms,
+                "payload": payload or {},
+            },
+            timeout=2.0,
+        )
+
+    async def async_push_interaction_event(self, event_type: str, data: dict | None = None) -> dict:
+        """Push an event into the interactions bus."""
+        return await self._async_post(
+            "interactions", "/event",
+            json={"type": event_type, "data": data or {}},
+            timeout=1.0,
+        )
+
+    async def async_chat(self, message: str, source_lang: str = "tr",
+                         response_lang: str = "tr") -> dict:
+        """Send a chat message to the Ollama/LLM service."""
+        return await self._async_post(
+            "ollama", "/chat",
+            params={
+                "query": message,
+                "source_lang": source_lang,
+                "response_lang": response_lang,
+            },
+            timeout=25.0,
+        )
+
+    async def async_emote_neopixel(self, emotions: list[str], duration: float = 0.25) -> dict:
+        """Play palette-based emotion colors via neopixel service."""
+        return await self._async_post(
+            "neopixel", "/emote",
+            params={"duration": duration, "emotions": emotions},
+            timeout=2.0,
+        )
+
+    async def async_set_neopixel(self, effect: str, color=None, 
+                                  emotions=None, duration=None) -> dict:
+        """Set neopixel effect with semantic color/emotion."""
+        payload = {"name": str(effect or "PULSE").strip().upper()}
+        if color is not None:
+            rgb = self._parse_rgb(color)
+            if rgb is not None:
+                payload["r"], payload["g"], payload["b"] = rgb
+        if emotions:
+            payload["emotions"] = [str(e) for e in emotions]
+        if duration is not None:
+            payload["duration"] = float(duration)
+        return await self._async_post("neopixel", "/animate", json=payload)
+
+    async def async_animate(self, name: str, speed: float = 1.0, loop: bool = False) -> dict:
+        """Run a named animation (pose sequence)."""
+        return await self._async_post(
+            "animate", "/run",
+            params={"name": name, "speed": speed, "loop": str(bool(loop)).lower()},
+            timeout=2.0,
+        )
+
+    async def async_close(self):
+        """Close any open resources (no-op; reports nothing)."""
+        return None
