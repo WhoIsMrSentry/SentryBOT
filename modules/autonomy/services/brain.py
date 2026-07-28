@@ -1408,7 +1408,7 @@ class AutonomyBrain(
         )
 
     def _forward_visual_events_to_agent(self) -> None:
-        """Forward key autonomy/vision signals to Agent Core event endpoint."""
+        """Forward key autonomy/vision signals to Agent Core event endpoint and trigger LLM reactions."""
         interval = float(self._vision_cfg.get("forward_interval_s", 8.0) or 8.0)
         now = time.time()
         if now - float(self.state.get("last_agent_vision_forward_poll", 0.0) or 0.0) < max(1.0, interval):
@@ -1426,6 +1426,17 @@ class AutonomyBrain(
             if hazards:
                 self.client.emit_agent_event("hazard_detected", {"count": len(hazards)})
                 self.appraise_event("loud_noise", intensity=min(1.0, len(hazards) / 3.0))
+                # LLM reaction to hazard
+                if self.agent and self.config.get("llm", {}).get("enabled", False):
+                    try:
+                        prompt = (
+                            f"EVENT: Visual hazard detected! {len(hazards)} hazard(s) in view. "
+                            f"React appropriately - express alarm, move to safety, or investigate. "
+                            f"Use your tools (like express_emotion) to act, then confirm briefly."
+                        )
+                        self.agent.step_event("hazard_detected", prompt)
+                    except Exception as exc:
+                        logger.debug("Hazard event step_event failed: %s", exc)
                 return
             owner_seen = False
             new_people = 0
@@ -1440,11 +1451,52 @@ class AutonomyBrain(
                     new_people += 1
             if owner_seen:
                 self.client.emit_agent_event("owner_follow_intent", {})
+                # LLM reaction to owner
+                if self.agent and self.config.get("llm", {}).get("enabled", False):
+                    try:
+                        prompt = (
+                            f"EVENT: Your owner just appeared in view! "
+                            f"Express joy/excitement. Greet them naturally, move your head toward them, "
+                            f"maybe say something warm. Use your tools (like express_emotion) to act, then confirm briefly."
+                        )
+                        self.agent.step_event("owner_seen", prompt)
+                    except Exception as exc:
+                        logger.debug("Owner seen event step_event failed: %s", exc)
             elif new_people > 0:
                 self.client.emit_agent_event("new_person_seen", {"count": new_people})
                 self.appraise_event("new_person", intensity=min(1.0, new_people / 2.0))
+                # LLM reaction to stranger
+                if self.agent and self.config.get("llm", {}).get("enabled", False):
+                    try:
+                        prompt = (
+                            f"EVENT: You see {new_people} new person/people you don't recognize. "
+                            f"React with curiosity or caution. Turn toward them, maybe say hello or observe silently. "
+                            f"Use your tools (like express_emotion) to express your reaction, then confirm in one sentence."
+                        )
+                        self.agent.step_event("new_person_seen", prompt)
+                    except Exception as exc:
+                        logger.debug("New person event step_event failed: %s", exc)
+            elif self.state.get("vision_context_needs", {}).get("new_object"):
+                self.appraise_event("new_object", intensity=0.5)
+                self.client.emit_agent_event("new_object_seen", {})
+                if self.agent and self.config.get("llm", {}).get("enabled", False):
+                    try:
+                        self._make_agentic_decision(reason="vision", context_note="I see a new object that I haven't seen before. I should investigate it.")
+                    except Exception as exc:
+                        logger.debug("New object agentic decision failed: %s", exc)
             elif self.state.get("is_bored"):
                 self.client.emit_agent_event("idle_comment_request", {"prompt": "look around and comment naturally"})
+                # LLM idle comment
+                if self.agent and self.config.get("llm", {}).get("enabled", False):
+                    try:
+                        prompt = (
+                            f"EVENT: You're bored and nothing's happening. Look around the room and make a "
+                            f"spontaneous comment or observation. Pick something interesting to look at, "
+                            f"express a brief thought. Use your tools (like express_emotion), then speak naturally."
+                        )
+                        self.agent.step_event("idle_comment", prompt)
+                    except Exception as exc:
+                        logger.debug("Idle comment event step_event failed: %s", exc)
         except Exception:
             pass
 
@@ -1622,8 +1674,8 @@ class AutonomyBrain(
         except Exception:
             return ""
 
-    def _make_agentic_decision(self):
-        """Ask LLM what to do based on internal state using the native tool loop."""
+    def _make_agentic_decision(self, reason: str = "boredom", context_note: str = ""):
+        """Ask LLM what to do based on internal state and trigger reason."""
         if not self.config.get("llm", {}).get("enabled", False):
             return
 
@@ -1636,8 +1688,19 @@ class AutonomyBrain(
         needs = self.mood.get_needs() if hasattr(self.mood, "get_needs") else {}
         mood_trend = self._mood_trend_summary()
         sighting = self._last_sighting_summary(str(self.state.get("last_speaker") or ""))
+        
+        situation = f"You are currently IDLE with unmet needs."
+        if reason == "vision":
+            situation = f"You just noticed something visually: {context_note}"
+        elif reason == "audio":
+            situation = f"You just heard something: {context_note}"
+        elif reason == "social":
+            situation = f"Social context update: {context_note}"
+        elif reason == "memory":
+            situation = f"You just remembered something: {context_note}"
+
         prompt = (
-            f"You are currently IDLE with unmet needs.\n"
+            f"{situation}\n"
             f"Internal State:\n"
             f"- Happiness: {int(self.mood['happiness'])}/100, Energy: {int(self.mood['energy'])}/100, "
             f"Curiosity: {int(self.mood['curiosity'])}/100\n"
@@ -1649,7 +1712,7 @@ class AutonomyBrain(
             f"{('Recent activity: ' + activity) if activity else ''}\n"
             f"{mood_trend}\n{sighting}\n\n"
             f"Use your internal physical tools right now (such as looking around, playing an animation on OLED, "
-            f"or changing body lights) to entertain yourself or find something interesting to do. Do not ask for permission."
+            f"or changing body lights) to react to this situation, entertain yourself, or find something interesting to do. Do not ask for permission."
         )
 
         try:
@@ -1813,7 +1876,7 @@ class AutonomyBrain(
             pass
 
     def _react_to_sound(self, angle):
-        """Turn head towards sound source."""
+        """Turn head towards sound source and trigger LLM reaction."""
         logger.info("Sound detected at %s", angle)
         offset = max(-70, min(70, angle))
         target_pan = max(0, min(180, 90 + offset))
@@ -1829,6 +1892,20 @@ class AutonomyBrain(
         self.mood.modify("curiosity", 5)
         self.mood.modify("energy", 2)
         self.memory.add_event(f"Heard sound at angle {angle}")
+
+        # LLM-driven reaction to sound
+        if self.agent and self.config.get("llm", {}).get("enabled", False):
+            try:
+                prompt = (
+                    f"You just heard a sudden sound from angle {int(angle)} degrees. "
+                    f"Your head turned toward it (pan={int(target_pan)}). "
+                    f"React naturally - express curiosity, surprise, or caution. "
+                    f"Use your physical tools (express_emotion, move_head, look_around, speak). "
+                    f"Do not ask for permission."
+                )
+                self.agent.step_event("sound_detected", prompt, trace_id=f"sound_{int(time.time())}")
+            except Exception as exc:
+                logger.debug("Sound event step_event failed: %s", exc)
 
     def _barge_in_stop_speaking(self) -> None:
         """Stop robot TTS so the user can speak (wakeword barge-in)."""
