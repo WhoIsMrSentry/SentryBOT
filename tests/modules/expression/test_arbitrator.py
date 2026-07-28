@@ -9,64 +9,64 @@ from modules.common.emotion_vocab import Emotion
 from modules.expression.services.arbitrator import ExpressionArbiter, ModalityClients
 import pytest
 
-@pytest.mark.anyio
-async def test_express_emotion_returns_ok():
-    arb = ExpressionArbiter(ModalityClients())
-    result = await arb.express_emotion(
-        emotion="anger",
-        intensity=1.0,
-        duration_s=0.5,
-        modalities=["leds", "oled"],
-        text=None,
-        language="tr",
-        force=True,
-    )
-    assert result["ok"] is True
-    assert result["emotion"] == "anger"
+def test_express_emotion_returns_ok():
+    async def run():
+        arb = ExpressionArbiter(ModalityClients())
+        result = await arb.express_emotion(
+            emotion="anger",
+            intensity=1.0,
+            duration_s=0.5,
+            modalities=["leds", "oled"],
+            text=None,
+            language="tr",
+            force=True,
+        )
+        assert result["ok"] is True
+        assert result["emotion"] == "anger"
+    asyncio.run(run())
 
 
-@pytest.mark.anyio
-async def test_intensity_scales_render():
-    arb = ExpressionArbiter(ModalityClients())
-    base = await arb.express_emotion(
-        emotion="anger", intensity=1.0, duration_s=0.2,
-        modalities=["leds"], force=True,
-    )
-    intense = await arb.express_emotion(
-        emotion="anger", intensity=2.0, duration_s=0.2,
-        modalities=["leds"], force=True,
-    )
-    # intensity 2.0 should amplify head delta
-    # Lock will block direct comparison
-    assert base["render"]["semantic"]["intensity"] == 1.0
+def test_intensity_scales_render():
+    async def run():
+        arb = ExpressionArbiter(ModalityClients())
+        base = await arb.express_emotion(
+            emotion="anger", intensity=1.0, duration_s=0.2,
+            modalities=["leds"], force=True,
+        )
+        intense = await arb.express_emotion(
+            emotion="anger", intensity=2.0, duration_s=0.2,
+            modalities=["leds"], force=True,
+        )
+        assert base["render"]["semantic"]["intensity"] == 1.0
+    asyncio.run(run())
 
 
-@pytest.mark.anyio
-async def test_visual_lock_prevents_immediate_switch():
-    arb = ExpressionArbiter(ModalityClients())
-    r1 = await arb.express_emotion(
-        emotion="furious", intensity=1.0, duration_s=0.2,
-        modalities=["leds"], force=True,
-    )
-    r2 = await arb.express_emotion(
-        emotion="joy", intensity=1.0, duration_s=0.2,
-        modalities=["leds"], force=False,
-    )
-    # Without force, second one should be locked or rate-limited
-    assert r2["ok"] is False
+def test_visual_lock_prevents_immediate_switch():
+    async def run():
+        arb = ExpressionArbiter(ModalityClients())
+        r1 = await arb.express_emotion(
+            emotion="furious", intensity=1.0, duration_s=0.2,
+            modalities=["leds"], force=True,
+        )
+        r2 = await arb.express_emotion(
+            emotion="joy", intensity=1.0, duration_s=0.2,
+            modalities=["leds"], force=False,
+        )
+        assert r2["ok"] is False
+    asyncio.run(run())
 
 
-@pytest.mark.anyio
-async def test_force_overrides_lock():
-    arb = ExpressionArbiter(ModalityClients())
-    await arb.express_emotion(
-        emotion="anger", intensity=1.0, duration_s=0.2, force=True,
-    )
-    r = await arb.express_emotion(
-        emotion="joy", intensity=1.0, duration_s=0.2, force=True,
-    )
-    # force=True bypasses visual lock
-    assert r["ok"] is True
+def test_force_overrides_lock():
+    async def run():
+        arb = ExpressionArbiter(ModalityClients())
+        await arb.express_emotion(
+            emotion="anger", intensity=1.0, duration_s=0.2, force=True,
+        )
+        r = await arb.express_emotion(
+            emotion="joy", intensity=1.0, duration_s=0.2, force=True,
+        )
+        assert r["ok"] is True
+    asyncio.run(run())
 
 
 def test_modality_clients_default_empty():
