@@ -219,10 +219,9 @@ class AgentOrchestrator:
             self.apply_realtime_profile(active_profile)
 
     def _build_memory_consolidator(self):
-        """Wire the consolidator to episodic memory and (if present) social_db.
+        """Wire the consolidator to episodic memory, autonomy client, and LLM.
 
-        This is the bridge that lets durable facts mined from dialogue land in
-        both the episodic store and the speaker's social record.
+        This bridges dialogue -> semantic facts -> WorldMemory (RAG) + episodic + social.
         """
         from .memory_consolidator import MemoryConsolidator
 
@@ -233,7 +232,16 @@ class AgentOrchestrator:
             social_db = _social_default()
         except Exception:
             social_db = None
-        return MemoryConsolidator(memory=self.memory, social_db=social_db)
+
+        # Use provider client for extraction (works with ollama/openai/gemini)
+        llm_client = getattr(self, "provider_client", None) or getattr(self, "ollama_client", None)
+
+        return MemoryConsolidator(
+            memory=self.memory,
+            social_db=social_db,
+            autonomy_client=self.autonomy_client,
+            llm_client=llm_client,
+        )
 
     def _get_world_memory_context(self, user_prompt: str, limit: int = 8) -> str:
         autonomy_client = getattr(self, "autonomy_client", None)
@@ -1258,16 +1266,23 @@ class AgentOrchestrator:
     ) -> str:
         # MARK: Layer-3 is the only layer that speaks as the main persona.
         # Use configurable persona system prompt when provided; otherwise use a neutral default
+        try:
+            from modules.common.system_prompts import persona_prompt_with_language
+        except Exception:
+            persona_prompt_with_language = None
         lang_rule = self._language_directive(session_language)
-        if self.persona_system_prompt:
-            system_prompt = f"{self.persona_system_prompt}\n\n{lang_rule}"
+        if persona_prompt_with_language is not None:
+            system_prompt = persona_prompt_with_language(self.persona_system_prompt, lang_rule)
         else:
-            system_prompt = (
-                "You are the final response layer. Combine sub-agent findings into one direct answer for the user. "
-                "Do not expose internal chain details unless the user explicitly asks. "
-                "Prioritize safety constraints when present.\n\n"
-                f"{lang_rule}"
-            )
+            if self.persona_system_prompt:
+                system_prompt = f"{self.persona_system_prompt}\n\n{lang_rule}"
+            else:
+                system_prompt = (
+                    "You are the final response layer. Combine sub-agent findings into one direct answer for the user. "
+                    "Do not expose internal chain details unless the user explicitly asks. "
+                    "Prioritize safety constraints when present.\n\n"
+                    f"{lang_rule}"
+                )
 
         compact_reports = self._compact_subagent_reports(reports)
         actions_taken = self._summarize_actions(reports)
@@ -1423,19 +1438,26 @@ class AgentOrchestrator:
         return len(str(user_prompt or "").strip()) <= self.fast_path_max_chars
 
     def _native_loop_messages(self, session_language: str) -> List[Dict[str, Any]]:
+        try:
+            from modules.common.system_prompts import persona_prompt_with_language
+        except Exception:
+            persona_prompt_with_language = None
         lang_rule = self._language_directive(session_language)
-        persona = self.persona_system_prompt or (
-            "You are the robot's single response layer. Answer the user directly."
-        )
-        system_prompt = (
-            f"{persona}\n\n{lang_rule}\n\n"
-            "You understand the user in any language. Interpret intent across languages "
-            "(e.g. LED color, emotion, speak, head movement) and call the matching tool.\n"
-            "You can control the robot with the available tools (lights, emotion, "
-            "speech, head, sounds...). When the user asks for a physical action, "
-            "call the matching tool instead of only describing it, then confirm "
-            "briefly in one sentence in the user's language."
-        )
+        if persona_prompt_with_language is not None:
+            system_prompt = persona_prompt_with_language(self.persona_system_prompt, lang_rule)
+        else:
+            persona = self.persona_system_prompt or (
+                "You are the robot's single response layer. Answer the user directly."
+            )
+            system_prompt = (
+                f"{persona}\n\n{lang_rule}\n\n"
+                "You understand the user in any language. Interpret intent across languages "
+                "(e.g. LED color, emotion, speak, head movement) and call the matching tool.\n"
+                "You can control the robot with the available tools (lights, emotion, "
+                "speech, head, sounds...). When the user asks for a physical action, "
+                "call the matching tool instead of only describing it, then confirm "
+                "briefly in one sentence in the user's language."
+            )
         return [{"role": "system", "content": system_prompt}] + list(self.chat_history)
 
     def _check_provider_availability(self) -> Optional[Dict[str, Any]]:
@@ -1666,4 +1688,137 @@ class AgentOrchestrator:
             self.tool_registry.status_hook = previous_hook
             self._active_progress_token = ""
             self.is_busy = False
+
+    def step_event(
+        self,
+        event_type: str,
+        event_prompt: str,
+        language: Optional[str] = None,
+        speaker: Optional[str] = None,
+        trace_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Event-driven step that bypasses cooldown and empty-prompt checks.
+
+        Used by autonomy brain for spontaneous reactions (sound, vision, boredom).
+        """
+        trace_id = latency_trace.ensure(trace_id, {"component": "agent_core", "event": event_type})
+        latency_trace.mark(trace_id, "agent.event_request", {"event": event_type, "chars": len(event_prompt)})
+
+        session_language = self._normalize_session_language(language)
+        progress_token = self.progress_manager.new_request(language=session_language)
+        self._active_progress_token = progress_token
+        callback = self._build_progress_callback(progress_token, None)
+        self.tool_registry.status_hook = callback
+
+        try:
+            autonomy_client = getattr(self, "autonomy_client", None)
+            if autonomy_client and hasattr(autonomy_client, "set_expression_event"):
+                try:
+                    autonomy_client.set_expression_event(f"agent.event.{event_type}", {"trace_id": trace_id})
+                except Exception:
+                    pass
+
+            use_fast_path = self._should_fast_path(event_prompt, native_tools=True)
+            self.progress_manager.emit_ack(progress_token, speak=not use_fast_path)
+            latency_trace.mark(trace_id, "agent.context_start")
+            survival_override = self.check_survival_drives()
+            world_context = self.world_state.inject_world_state("")
+            memory_context = self._get_world_memory_context(event_prompt)
+            if memory_context:
+                world_context = f"{world_context}\n\n[World Memory]\n{memory_context}"
+            language_rule = self._language_directive(session_language)
+            full_prompt = f"{event_prompt}\n\n[{language_rule}]\n\n[World State]\n{world_context}"
+            if survival_override:
+                full_prompt += f"\n\n{survival_override}"
+            self._append_history("user", full_prompt)
+            active_model = self._get_active_persona_model()
+            latency_trace.mark(trace_id, "agent.context_done", {"model": active_model})
+
+            provider_error = self._check_provider_availability()
+            if provider_error:
+                latency_trace.finish(trace_id, "provider_unavailable")
+                return {**provider_error, "trace_id": trace_id}
+
+            final_text = ""
+            total_steps = 0
+            subagent_reports: List[Dict[str, Any]] = []
+            executed_actions: List[Dict[str, Any]] = []
+            stream_state = {"spoken": 0}
+            on_sentence: Optional[Callable[[str, int], None]] = None
+            if self.speech_arbiter._speak_fn is not None:
+                def speak_sentence(sentence: str, index: int) -> None:
+                    item_id = self.speech_arbiter.enqueue_final_chunk(
+                        sentence,
+                        index=index,
+                        language=session_language,
+                        trace_id=trace_id,
+                    )
+                    if item_id:
+                        stream_state["spoken"] += 1
+                on_sentence = speak_sentence
+
+            if self.tri_layer_enabled and not use_fast_path:
+                final_text, total_steps, subagent_reports = self._run_tri_layer(
+                    event_prompt,
+                    world_context,
+                    survival_override,
+                    active_model,
+                    session_language,
+                    progress_token,
+                    callback,
+                    on_sentence=on_sentence,
+                )
+                executed_actions = self._summarize_actions(subagent_reports)
+            else:
+                messages = self._native_loop_messages(session_language)
+                final_text, total_steps = self._run_native_history_loop(
+                    active_model,
+                    messages,
+                    actions_out=executed_actions,
+                    num_predict=getattr(self, "fast_path_num_predict", None) if use_fast_path else None,
+                    on_sentence=on_sentence,
+                    max_steps=(
+                        getattr(self, "fast_path_max_steps", 2)
+                        if use_fast_path
+                        else getattr(self, "max_steps", 4)
+                    ),
+                    trace_id=trace_id,
+                )
+
+            self.progress_manager.emit_final(progress_token)
+            self.memory.remember("dialogue", f"Event({event_type}): {event_prompt} | Bot: {final_text}")
+            try:
+                self._observe_world_memory_dialogue(event_prompt, final_text)
+            except Exception:
+                logger.debug("world memory dialogue observation failed", exc_info=True)
+            try:
+                self.memory_consolidator.consolidate(event_prompt, speaker=self._current_speaker())
+            except Exception:
+                logger.debug("memory consolidation failed", exc_info=True)
+
+            latency_trace.mark(
+                trace_id,
+                "agent.done",
+                {"steps": total_steps, "speech_handled": stream_state["spoken"] > 0},
+            )
+            if self.speech_arbiter._speak_fn is None:
+                latency_trace.finish(trace_id, "done")
+            return {
+                "text": final_text,
+                "thoughts": f"Agent reacted to {event_type} in {total_steps} internal steps.",
+                "actions": executed_actions,
+                "plan": [],
+                "route": self.last_routed_subagents,
+                "subagents": subagent_reports,
+                "speech_handled": stream_state["spoken"] > 0,
+                "trace_id": trace_id,
+                "latency": latency_trace.get(trace_id),
+            }
+        except Exception as exc:
+            latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
+            raise
+        finally:
+            self.progress_manager.emit_final(progress_token)
+            self.tool_registry.status_hook = None
+            self._active_progress_token = ""
 
