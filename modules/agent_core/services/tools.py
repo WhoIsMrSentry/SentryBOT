@@ -832,6 +832,69 @@ class ToolRegistry:
             },
         )
 
+        self._register(
+            self.express_emotion,
+            {
+                "type": "function",
+                "function": {
+                    "name": "express_emotion",
+                    "description": (
+                        "Express a canonical emotion across all modalities atomically. "
+                        "Coordinates NeoPixel LEDs (effect+color+speed), OLED faces (animation), "
+                        "TTS voice (tone+pitch+speed), head servos (pan/tilt), and ear servos "
+                        "to produce a UNIFIED, semantically-grounded expression. "
+                        "Use this for genuine emotional reactions — the LLM should call this "
+                        "tool whenever it 'feels' something, instead of just describing it."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "emotion": {
+                                "type": "string",
+                                "enum": [
+                                    "neutral", "joy", "sadness", "anger", "furious", "fear",
+                                    "surprise", "excitement", "love", "disgust", "confusion",
+                                    "worried", "bored", "tired", "curiosity", "calm", "pride",
+                                    "embarrassment", "awe", "gloomy", "cool", "devil", "kawaii",
+                                    "dead", "smoking", "wired", "nervous", "disoriented",
+                                    "suspicious"
+                                ],
+                                "description": "Canonical emotion name. Aliases like 'happy'='joy', 'sad'='sadness', 'kork'='fear' also work.",
+                            },
+                            "intensity": {
+                                "type": "number",
+                                "minimum": 0.1, "maximum": 2.0,
+                                "default": 1.0,
+                                "description": "Expression intensity: 0.1=subtle, 1.0=normal, 2.0=extreme.",
+                            },
+                            "duration_s": {
+                                "type": "number",
+                                "minimum": 0.5, "maximum": 30.0,
+                                "default": 3.0,
+                                "description": "How long to hold the expression in seconds.",
+                            },
+                            "modalities": {
+                                "type": "array",
+                                "items": {"type": "string", "enum": ["leds", "oled", "voice", "head", "ears"]},
+                                "default": ["leds", "oled", "voice", "head"],
+                                "description": "Which output modalities to activate. Default: all.",
+                            },
+                            "text": {
+                                "type": "string",
+                                "description": "Optional text to speak (requires 'voice' in modalities).",
+                            },
+                            "language": {
+                                "type": "string",
+                                "default": "tr",
+                                "description": "BCP-47 language code (e.g. tr, en, de).",
+                            },
+                        },
+                        "required": ["emotion"],
+                    },
+                },
+            },
+        )
+
     # ==========================================
     # TOOL LOGIC
     # ==========================================
@@ -1244,3 +1307,64 @@ class ToolRegistry:
             return f"Cancel action failed: HTTP {resp.status_code}"
         except Exception as exc:
             return f"Cancel action failed: {exc}"
+
+    def express_emotion(
+        self,
+        emotion: str,
+        intensity: float = 1.0,
+        duration_s: float = 3.0,
+        modalities: list[str] | None = None,
+        text: str | None = None,
+        language: str = "tr",
+    ) -> str:
+        """Express an emotion across all modalities through the Expression service.
+        
+        This delegates to the Expression module's /expression/express endpoint,
+        which coordinates LEDs, OLED, TTS, head, and ears atomically with
+        semantic emotion rendering from the canonical emotion vocabulary.
+        """
+        if not self.client:
+            return "Error: Hardware client disconnected."
+        try:
+            int(min(2.0, max(0.1, float(intensity))))
+            dur = min(30.0, max(0.5, float(duration_s)))
+            mods = list(modalities) if modalities else ["leds", "oled", "voice", "head"]
+            # Fetch render hints from local vocab for an immediate semantic summary
+            try:
+                from modules.common.emotion_vocab import get_vocab
+                render = get_vocab().get_render_dict(emotion)
+                canon = render["canonical"]
+            except Exception:
+                render = None
+                canon = str(emotion).strip().lower()
+            try:
+                resp = self._http.post(
+                    "/expression/express",
+                    json_data={
+                        "emotion": canon,
+                        "intensity": round(float(intensity), 3),
+                        "duration_s": round(float(dur), 3),
+                        "modalities": mods,
+                        "text": text,
+                        "language": str(language or "tr"),
+                    },
+                    timeout=3.0,
+                )
+                if resp.status_code == 200:
+                    body = resp.json()
+                    ok = body.get("ok", False)
+                    if not ok:
+                        return f"Expression skipped: {body.get('reason', 'unknown')}"
+                    return (
+                        f"Expressed {canon} (intensity={intensity:.2f}, "
+                        f"{duration_s:.1f}s) across {', '.join(mods)}. "
+                        f"Render: LED={render['neopixel']['effect']} "
+                        f"RGB={render['neopixel']['rgb'] if render else 'n/a'}, "
+                        f"OLED={render['oled']['animation'] if render else 'n/a'}, "
+                        f"TTS={render['voice']['tone'] if render else 'n/a'}"
+                    )
+                return f"Expression failed: HTTP {resp.status_code}"
+            except Exception as exc:
+                return f"Expression failed: {exc}"
+        except (TypeError, ValueError) as exc:
+            return f"Expression parameter error: {exc}"
