@@ -4,12 +4,24 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
 IGNORES = {".git", ".venv", "venv", "env", "__pycache__", "build", "dist", ".mypy_cache", ".ruff_cache", ".pytest_cache", ".vscode", "node_modules"}
+
+
+def get_uv_bin() -> str | None:
+    """Check if uv is installed on system or in ~/.local/bin/uv."""
+    found = shutil.which("uv")
+    if found:
+        return found
+    user_uv = Path.home() / ".local/bin/uv"
+    if user_uv.exists():
+        return str(user_uv)
+    return None
 
 
 def find_requirements(root: Path) -> List[Path]:
@@ -19,10 +31,8 @@ def find_requirements(root: Path) -> List[Path]:
     if root_req.exists():
         reqs.append(root_req)
 
-    # Walk once to honor ignore folders
     for p in root.rglob("requirements.txt"):
         try:
-            # Skip the one at root already added
             if p.resolve() == root_req.resolve():
                 continue
         except Exception:
@@ -32,7 +42,6 @@ def find_requirements(root: Path) -> List[Path]:
             continue
         reqs.append(p)
 
-    # De-duplicate while preserving order
     seen = set()
     unique: List[Path] = []
     for p in reqs:
@@ -45,7 +54,7 @@ def find_requirements(root: Path) -> List[Path]:
 
 
 def label_for(req: Path, repo_root: Path) -> str:
-    """Return a friendly label for printing (e.g., 'camera' or 'root')."""
+    """Return a friendly label for printing."""
     try:
         rel = req.parent.relative_to(repo_root)
     except Exception:
@@ -59,14 +68,20 @@ def label_for(req: Path, repo_root: Path) -> str:
 
 
 def setup_venv(venv_path: Path) -> bool:
-    """Create virtual environment if it doesn't exist."""
+    """Create virtual environment if it doesn't exist using uv (Python 3.11)."""
     if venv_path.exists():
         print(f"Virtual environment zaten mevcut: {venv_path}")
         return True
-    
+
     print(f"Virtual environment oluşturuluyor: {venv_path}")
-    result = subprocess.run([sys.executable, "-m", "venv", str(venv_path)], 
-                          capture_output=True, text=True)
+    uv_bin = get_uv_bin()
+    if uv_bin:
+        print("uv algılandı, Python 3.11 sanal ortamı oluşturuluyor...")
+        cmd = [uv_bin, "venv", "--python", "3.11", str(venv_path)]
+    else:
+        cmd = [sys.executable, "-m", "venv", str(venv_path)]
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"HATA: Virtual environment oluşturulamadı: {result.stderr}")
         return False
@@ -82,11 +97,10 @@ def get_venv_python(venv_path: Path) -> str:
         return str(venv_path / "bin" / "python")
 
 
-def install_requirements(files: Iterable[Path], dry_run: bool = False, pip_args: str | None = None, 
+def install_requirements(files: Iterable[Path], dry_run: bool = False, pip_args: str | None = None,
                         fail_fast: bool = False, use_venv: bool = False, venv_path: Path | None = None) -> List[Tuple[Path, int]]:
     results: List[Tuple[Path, int]] = []
-    
-    # Determine Python executable
+
     if use_venv and venv_path:
         python_exe = get_venv_python(venv_path)
         if not Path(python_exe).exists():
@@ -94,36 +108,28 @@ def install_requirements(files: Iterable[Path], dry_run: bool = False, pip_args:
             return [(f, 1) for f in files]
     else:
         python_exe = sys.executable
-    
-    pip = [python_exe, "-m", "pip", "install", "-r"]
+
+    uv_bin = get_uv_bin()
+    if uv_bin:
+        pip = [uv_bin, "pip", "install", "--python", python_exe, "-r"]
+    else:
+        pip = [python_exe, "-m", "pip", "install", "-r"]
+
     extra = shlex.split(pip_args) if pip_args else []
 
     def _run_pip(cmd: List[str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
 
-    def _needs_repair(stdout: str, stderr: str) -> bool:
-        text = f"{stdout}\n{stderr}".lower()
-        return any(
-            marker in text
-            for marker in [
-                "no such file or directory",
-                "dist-info",
-                "invalid distribution",
-                "record file not found",
-                "metadata",
-            ]
-        )
-    
     for f in files:
         lab = label_for(f, Path.cwd())
         venv_info = f" (venv: {venv_path.name})" if use_venv and venv_path else ""
         print(f"\n=== {lab} gereklilikleri kuruluyor ({f}){venv_info} ===")
-        
+
         if dry_run:
-            print(f"DRY-RUN: {python_exe} -m pip install -r {f} {' '.join(extra)}")
+            print(f"DRY-RUN: {' '.join(pip)} {f} {' '.join(extra)}")
             results.append((f, 0))
             continue
-            
+
         cmd = pip + [str(f)] + extra
         proc = _run_pip(cmd)
         if proc.stdout:
@@ -132,37 +138,26 @@ def install_requirements(files: Iterable[Path], dry_run: bool = False, pip_args:
             print(proc.stderr, end="", file=sys.stderr)
 
         code = int(proc.returncode or 0)
-
-        if code != 0 and _needs_repair(proc.stdout or "", proc.stderr or ""):
-            repair_cmd = pip + [str(f), "--ignore-installed", "--no-cache-dir"] + extra
-            print("\nKurulum bozuk dağıtımlardan dolayı tekrar deneniyor: --ignore-installed --no-cache-dir")
-            repair_proc = _run_pip(repair_cmd)
-            if repair_proc.stdout:
-                print(repair_proc.stdout, end="")
-            if repair_proc.stderr:
-                print(repair_proc.stderr, end="", file=sys.stderr)
-            code = int(repair_proc.returncode or 0)
-
         results.append((f, code))
-        
+
         if code != 0:
             print(f"HATA: {f} kurulumu {code} kodu ile başarısız.")
             if fail_fast:
                 break
-                
+
     return results
 
 
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Tüm requirements.txt dosyalarını bulup kurar.")
-    ap.add_argument("--only", nargs="*", default=None, help="Sadece belirtilen modülleri kur (ör. camera speech).")
+    ap.add_argument("--only", nargs="*", default=None, help="Sadece belirtilen modülleri kur.")
     ap.add_argument("--skip", nargs="*", default=None, help="Belirtilen modülleri atla.")
     ap.add_argument("--dry-run", action="store_true", help="Yükleme komutlarını sadece yazdır.")
-    ap.add_argument("--pip-args", default=None, help="pip için ekstra argümanlar (ör. --upgrade --no-cache-dir).")
+    ap.add_argument("--pip-args", default=None, help="pip için ekstra argümanlar.")
     ap.add_argument("--fail-fast", action="store_true", help="İlk hata sonrası dur.")
     ap.add_argument("--use-venv", action="store_true", help="Virtual environment kullan.")
-    ap.add_argument("--venv-path", default=".venv", help="Virtual environment yolu (varsayılan: .venv).")
-    ap.add_argument("--break-system-packages", action="store_true", help="Sistem paketlerini kırmaya zorla (riskli).")
+    ap.add_argument("--venv-path", default="scripts/venv", help="Virtual environment yolu.")
+    ap.add_argument("--break-system-packages", action="store_true", help="Sistem paketlerini kırmaya zorla.")
     return ap.parse_args()
 
 
@@ -170,8 +165,7 @@ def main() -> int:
     args = parse_args()
     repo_root = Path(__file__).resolve().parent.parent
     print(f"Geçerli dizin: {repo_root}")
-    
-    # Virtual environment setup
+
     venv_path = None
     if args.use_venv:
         venv_path = repo_root / args.venv_path
@@ -183,7 +177,6 @@ def main() -> int:
         print("requirements.txt bulunamadı.")
         return 0
 
-    # Filter by only/skip
     def _keep(p: Path) -> bool:
         lab = label_for(p, repo_root)
         if args.only:
@@ -198,15 +191,14 @@ def main() -> int:
     for p in selected:
         print(f" - {label_for(p, repo_root)} -> {p}")
 
-    # Add --break-system-packages if requested
     pip_args = args.pip_args or ""
     if args.break_system_packages and not args.use_venv:
         pip_args += " --break-system-packages"
 
     results = install_requirements(
-        selected, 
-        dry_run=args.dry_run, 
-        pip_args=pip_args, 
+        selected,
+        dry_run=args.dry_run,
+        pip_args=pip_args,
         fail_fast=args.fail_fast,
         use_venv=args.use_venv,
         venv_path=venv_path
