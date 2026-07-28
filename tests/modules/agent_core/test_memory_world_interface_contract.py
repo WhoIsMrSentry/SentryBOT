@@ -10,11 +10,10 @@ from modules.agent_core.services.world_state import WorldState
 EXPECTED_SIGNATURES = {'EpisodicMemory.__init__': '(self, db_path: str = None)',
  'EpisodicMemory.remember': '(self, event_type: str, content: str, importance: int = 1)',
  'EpisodicMemory.search_memory': '(self, query: str, limit: int = 5) -> List[Dict[str, Any]]',
- 'MemoryConsolidator.__init__': "(self, memory: 'Any' = None, social_db: 'Any' = None, learner: "
-                                "'Any' = None) -> 'None'",
+ 'MemoryConsolidator.__init__': "(self, memory: 'Any' = None, social_db: 'Any' = None, learner: 'Any' = None, autonomy_client: 'Any' = None, world_memory: 'Any' = None, llm_client: 'Any' = None, enabled: 'bool' = True) -> 'None'",
  'MemoryConsolidator.consolidate': "(self, text: 'str', speaker: 'Optional[str]' = None) -> "
                                    "'List[str]'",
- 'MemoryConsolidator.extract_facts': "(self, text: 'str') -> 'List[str]'",
+ 'MemoryConsolidator.extract_facts': "(self, text: 'str', speaker: 'Optional[str]' = None) -> 'List[str]'",
  'WorldState.__init__': '(self)',
  'WorldState.get_state': '(self) -> Dict[str, Any]',
  'WorldState.inject_world_state': '(self, base_prompt: str) -> str',
