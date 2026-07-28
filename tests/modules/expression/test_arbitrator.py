@@ -7,8 +7,9 @@ import time
 
 from modules.common.emotion_vocab import Emotion
 from modules.expression.services.arbitrator import ExpressionArbiter, ModalityClients
+import pytest
 
-
+@pytest.mark.anyio
 async def test_express_emotion_returns_ok():
     arb = ExpressionArbiter(ModalityClients())
     result = await arb.express_emotion(
@@ -24,6 +25,7 @@ async def test_express_emotion_returns_ok():
     assert result["emotion"] == "anger"
 
 
+@pytest.mark.anyio
 async def test_intensity_scales_render():
     arb = ExpressionArbiter(ModalityClients())
     base = await arb.express_emotion(
@@ -39,6 +41,7 @@ async def test_intensity_scales_render():
     assert base["render"]["semantic"]["intensity"] == 1.0
 
 
+@pytest.mark.anyio
 async def test_visual_lock_prevents_immediate_switch():
     arb = ExpressionArbiter(ModalityClients())
     r1 = await arb.express_emotion(
@@ -53,6 +56,7 @@ async def test_visual_lock_prevents_immediate_switch():
     assert r2["ok"] is False
 
 
+@pytest.mark.anyio
 async def test_force_overrides_lock():
     arb = ExpressionArbiter(ModalityClients())
     await arb.express_emotion(

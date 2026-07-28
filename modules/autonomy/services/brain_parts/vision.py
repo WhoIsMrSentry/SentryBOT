@@ -129,7 +129,7 @@ class VisionMixin:
         self.state["last_emotion"] = canon
         try:
             self.express(canon)
-            self.client.push_interaction_event(f"vision.person_emotion_{canon}")
+            self.client.push_interaction_event(f"vision.person_emotion_{canon.value if hasattr(canon, 'value') else canon}")
         except Exception:
             pass
         if empathy.get("speak_on_mirror", False):
