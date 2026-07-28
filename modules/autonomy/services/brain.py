@@ -606,11 +606,13 @@ class AutonomyBrain(
             idle_cfg = self.config.get("behaviors", {}).get("idle_tree", {})
             idle_interval = float(idle_cfg.get("interval_s", 6.0))
             if now - self._last_idle_action >= idle_interval:
-                if self._run_idle_behavior(now):
-                    self._last_idle_action = now
-                elif bool(idle_cfg.get("fallback_to_llm", True)) and self._should_agentic_decision(now):
-                    self._make_agentic_decision()
+                agentic_enabled = bool(idle_cfg.get("fallback_to_llm", True)) or bool(self.config.get("agentic", {}).get("enabled", True))
+                if agentic_enabled and self._should_agentic_decision(now):
+                    self._make_agentic_decision(reason="boredom")
                     self._last_agentic_ts = now
+                    self._last_idle_action = now
+                elif self._run_idle_behavior(now):
+                    self._last_idle_action = now
         else:
             self.state["is_bored"] = False
 
