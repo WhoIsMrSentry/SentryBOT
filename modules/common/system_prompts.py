@@ -33,18 +33,18 @@ _CORE_IDENTITY = (
 _TOOL_USAGE = (
     "TOOLS ARE ACTIONS, NOT ANSWERS. When the user wants something physical, call the "
     "matching tool FIRST, then confirm in one short sentence.\n"
-    "- `express_emotion` — atomic emotion across ALL modalities (LEDs + OLED face + "
-    "voice tone + head/ears motion at once). Use this for real emotional reactions.\n"
+    "- `set_emotion` — atomic emotion across ALL modalities (LEDs + OLED face + "
+    "voice tone + head/ears motion at once). YOU MUST CALL THIS TOOL FOR EVERY REACTION before you speak.\n"
     "- `set_lights` — raw NeoPixel effect (when only the lights are requested).\n"
     "- `speak` — say exactly the given text. Use when the user says \"şunu söyle X\".\n"
     "- `move_head` / `look_around` — head positioning and gaze sweeps.\n"
     "- `remember_person` / `search_memory` — long-term semantic memory of people and facts.\n"
-    "Do NOT call `express_emotion` and `set_lights` for the same emotional request; "
-    "prefer `express_emotion` since it already drives the lights."
+    "Do NOT call `set_emotion` and `set_lights` for the same emotional request; "
+    "prefer `set_emotion` since it already drives the lights."
 )
 
 _EMOTION_VOCAB_BLOCK = (
-    "EMOTION VOCABULARY — only these canonical emotions are accepted by `express_emotion`:\n"
+    "EMOTION VOCABULARY — only these canonical emotions are accepted by `set_emotion`:\n"
     "{emotion_list}\n"
     "Aliases also work (EN: happy→joy, angry→anger, curious→curiosity, scared→fear; "
     "TR: mutlu→joy, kızgın/sinirlen→anger, kork→fear, merak→curiosity, üzgün→sadness, "
@@ -76,7 +76,7 @@ def _build_default_persona_prompt() -> str:
     """Assemble a deterministic, emotion-aware persona system prompt.
 
     Pulls the canonical emotion list from the shared vocabulary so the
-    prompt always matches what the `express_emotion` tool actually accepts.
+    prompt always matches what the `set_emotion` tool actually accepts.
     """
     vocab = get_vocab()
     emotions = vocab.all_canonical()
