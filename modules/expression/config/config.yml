@@ -9,6 +9,9 @@ state:
   default_energy: normal
   max_history: 120
 
+# Emotion-render mapping source: modules/common/config/emotions.yml
+# (kept here for backwards compat with legacy mappings; new canonical vocab is preferred)
+
 mappings:
   colors:
     neutral: "#4060ff"
@@ -37,6 +40,14 @@ mappings:
     internal: thinking
     camera: eye
 
+# Expression Arbiter settings
+arbiter:
+  min_interval_s: 0.5          # minimum time between expressions
+  visual_lock_default_s: 2.2  # default visual hold duration
+  visual_lock_strong_s: 4.5   # strong emotions (fear, furious) hold longer
+  visual_state_hold_s: 3.0     # transition graph hold time
+
+# Output bridge (legacy, kept for backward compat)
 output_bridge:
   enabled: true
   gateway_url: "http://127.0.0.1:8080"
@@ -45,3 +56,12 @@ output_bridge:
     neopixel: "/neopixel/companion/mode"
     oled_faces: "/oled_faces/event"
     piservo: "/piservo/gesture"
+
+# Adapter settings (new arbiter uses these)
+adapters:
+  enabled: true
+  gateway_url: "http://127.0.0.1:8080"
+  neopixel_timeout: 2.0
+  oled_timeout: 2.0
+  speak_timeout: 4.0
+  head_timeout: 1.0

@@ -14,8 +14,8 @@ def test_config_loader():
     from modules.common.emotion_vocab import load_vocab
 
     vocab = load_vocab()
-    assert vocab.canonical_keys(), "expected at least one canonical emotion"
-    assert "neutral" in vocab.canonical_keys()
+    assert vocab.all_canonical(), "expected at least one canonical emotion"
+    assert "neutral" in vocab.all_canonical()
 
 
 def test_alias_resolution():

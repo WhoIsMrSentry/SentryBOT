@@ -1,66 +1,813 @@
-# SentryBOT — Canonical Emotion Vocabulary
-#
-# Single source of truth that unifies the three historical emotion vocabularies
-# (autonomy mood ~6, oled_faces events ~13, neopixel palettes ~23).
-#
-# Every subsystem resolves its incoming label to a canonical key, then reads the
-# render hints below. This keeps eyes (OLED), LEDs (NeoPixel), ears (PiServo),
-# head body-language and TTS tone aligned for one emotion.
-
-aliases:
-  neutral:    [calm, idle, default, normal]
-  joy:        [happy, happiness, glad, cheerful, amusement, optimism, mutlu, mutlu ol, sevin, neşeli, neseli]
-  sadness:    [sad, unhappy, down, grief, disappointment, remorse, uzul, üzül, mutsuz]
-  curiosity:  [curious, interested, intrigued, realization, merak, merakli]
-  tired:      [sleepy, drowsy, fatigued, exhausted, yoruldum, uyu, uykum var]
-  fear:       [scared, afraid, frightened, nervousness, kork, korkut, korkma]
-  anger:      [angry, mad, annoyance, annoyed, sinirlen, sinirli, kizgin, kızgın, ofkeli, öfkeli, sinirlenme]
-  furious:    [rage, enraged, livid, cok sinirli, çok sinirli, öfke, ofke]
-  surprise:   [surprised, shocked, astonished, sasir, şaşır, saskin, şaşkın]
-  excitement: [excited, thrilled, energetic, heyecanli, heyecanlı]
-  love:       [affection, adoration, admiration, desire, gratitude, sev, seviyorum, askim, aşkım]
-  disgust:    [disgusted, repulsed, disapproval]
-  confusion:  [confused, disoriented, puzzled, uncertain, kafan karisik, kafan karışık, anlamadim]
-  worried:    [worry, anxious, concerned, endiseli, endişeli, kaygili]
-  bored:      [boredom, dull, listless, sikildim, sıkıldım, sikinti]
-  suspicious: [suspicious, doubtful, side_eye, skeptical]
-  awe:        [awe, wonder, amazed, wow]
-  gloomy:     [gloomy, melancholy, rainy, overcast]
-  cool:       [cool, chill, sunglasses]
-  devil:      [devil, mischief, evil, naughty]
-  kawaii:     [kawaii, cute, blushing, adorable]
-  dead:       [dead, ko, knocked_out, defeated]
-  smoking:    [smoking, chill_smoke, relaxed_smoke]
-  wired:      [wired, caffeinated, hyper, jittery]
-  nervous:    [nervous, sweaty, anxious_face]
-  disoriented: [dizzy, woozy, vertigo]
-
-render:
-  neutral:     { oled: neutral,     palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [40, 60, 80] }
-  joy:         { oled: happy,       palette: joy,          effect: RAINBOW_CYCLE,  ears: joy,       tone: joy,      rgb: [0, 200, 60] }
-  sadness:     { oled: sad,         palette: sadness,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [40, 80, 160] }
-  curiosity:   { oled: attentive,   palette: curiosity,    effect: COMET,          ears: curiosity, tone: neutral,  rgb: [0, 180, 200] }
-  tired:       { oled: tired,       palette: neutral,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [80, 40, 120] }
-  fear:        { oled: scared,      palette: fear,         effect: PULSE,          ears: fear,      tone: sadness,  rgb: [200, 0, 120] }
-  anger:       { oled: angry,       palette: anger,        effect: PULSE,          ears: anger,     tone: excited,  rgb: [220, 40, 0] }
-  furious:     { oled: furious,     palette: anger,        effect: METEOR,         ears: anger,     tone: excited,  rgb: [255, 0, 0] }
-  surprise:    { oled: surprised,   palette: surprise,     effect: TWINKLE,        ears: surprise,  tone: excited,  rgb: [255, 200, 0] }
-  excitement:  { oled: wired,       palette: excitement,   effect: RAINBOW_CYCLE,  ears: surprise,  tone: excited,  rgb: [255, 120, 0] }
-  love:        { oled: lovely,      palette: love,         effect: PULSE,          ears: joy,       tone: joy,      rgb: [255, 40, 100] }
-  disgust:     { oled: gloomy,       palette: disgust,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [120, 160, 0] }
-  confusion:   { oled: disoriented,  palette: confusion,    effect: TWINKLE,        ears: curiosity, tone: neutral,  rgb: [160, 0, 200] }
-  worried:     { oled: nervous,      palette: nervousness,  effect: BREATHE,        ears: fear,      tone: sadness,  rgb: [180, 100, 0] }
-  bored:       { oled: bored,        palette: neutral,      effect: BREATHE,        ears: sadness,   tone: neutral,  rgb: [60, 60, 60] }
-  suspicious:  { oled: suspicious,   palette: neutral,      effect: BREATHE,        ears: curiosity, tone: neutral,  rgb: [90, 90, 70] }
-  awe:         { oled: awe,          palette: surprise,     effect: TWINKLE,        ears: surprise,  tone: excited,  rgb: [255, 220, 120] }
-  gloomy:      { oled: gloomy,        palette: sadness,      effect: BREATHE,        ears: sadness,   tone: sadness,  rgb: [50, 70, 110] }
-  cool:        { oled: cool,          palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [70, 90, 120] }
-  devil:       { oled: devil,         palette: anger,        effect: PULSE,          ears: anger,     tone: excited,  rgb: [200, 0, 60] }
-  kawaii:      { oled: kawaii,        palette: love,         effect: TWINKLE,        ears: joy,       tone: joy,      rgb: [255, 140, 180] }
-  dead:        { oled: dead,          palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [40, 40, 40] }
-  smoking:     { oled: smoking,       palette: neutral,      effect: BREATHE,        ears: neutral,   tone: neutral,  rgb: [80, 80, 80] }
-  wired:       { oled: wired,         palette: excitement,   effect: COMET,          ears: surprise,  tone: excited,  rgb: [255, 120, 0] }
-  nervous:     { oled: nervous,       palette: nervousness,  effect: PULSE,          ears: fear,      tone: sadness,  rgb: [200, 160, 0] }
-  disoriented: { oled: disoriented,   palette: confusion,    effect: TWINKLE,        ears: curiosity, tone: neutral,  rgb: [140, 80, 200] }
+# SentryBOT Canonical Emotion Vocabulary
+# Single source of truth for all emotion->render mappings across modules.
 
 default_canonical: neutral
+
+# Aliases: map various labels to canonical emotions
+aliases:
+  neutral:
+    - "idle"
+    - "base"
+    - "default"
+    - "none"
+    - "ok"
+  joy:
+    - "happy"
+    - "happiness"
+    - "pleased"
+    - "cheerful"
+    - "glad"
+    - "delighted"
+    - "sevinç"
+    - "sevin"
+    - "mutlu"
+    - "mutlu ol"
+    - "neşeli"
+    - "neşelen"
+    - "gül"
+    - "neseli"
+  sadness:
+    - "sad"
+    - "unhappy"
+    - "depressed"
+    - "melancholy"
+    - "sorrow"
+    - "grief"
+    - "üzgün"
+    - "üzül"
+    - "uzul"
+    - "mutsuz"
+    - "mutsuz ol"
+    - "hüzünlü"
+  anger:
+    - "angry"
+    - "mad"
+    - "irritated"
+    - "annoyed"
+    - "frustrated"
+    - "sinirli"
+    - "sinirlen"
+    - "sinirlenmiş"
+    - "kızgın"
+    - "kizgin"
+    - "kizgin ol"
+    - "öfkeli"
+    - "ofkeli"
+    - "ofkeli ol"
+  furious:
+    - "enraged"
+    - "rage"
+    - "outraged"
+    - "livid"
+    - "delirmiş"
+    - "çıldırmış"
+    - "öfke"
+  fear:
+    - "scared"
+    - "afraid"
+    - "frightened"
+    - "terrified"
+    - "panicked"
+    - "anxious"
+    - "korkulu"
+    - "korkmuş"
+    - "kork"
+    - "korkut"
+    - "panik"
+  surprise:
+    - "surprised"
+    - "shocked"
+    - "amazed"
+    - "astonished"
+    - "şaşırmış"
+    - "şaşkın"
+    - "şaşır"
+  excitement:
+    - "excited"
+    - "thrilled"
+    - "enthusiastic"
+    - "eager"
+    - "heyecanlı"
+    - "heyecanlan"
+    - "coşkulu"
+  love:
+    - "affection"
+    - "fondness"
+    - "adoration"
+    - "aşk"
+    - "sevgi"
+  disgust:
+    - "disgusted"
+    - "repulsed"
+    - "revolted"
+    - "iğrenmiş"
+    - "tiksinmiş"
+  confusion:
+    - "confused"
+    - "puzzled"
+    - "perplexed"
+    - "baffled"
+    - "kafası karışık"
+    - "anlamamış"
+  worried:
+    - "anxious"
+    - "concerned"
+    - "uneasy"
+    - "nervous"
+    - "endişeli"
+    - "kaygılı"
+  bored:
+    - "uninterested"
+    - "apathetic"
+    - "listless"
+    - "sıkılmış"
+    - "ilgisiz"
+  tired:
+    - "exhausted"
+    - "fatigued"
+    - "sleepy"
+    - "drained"
+    - "yorgun"
+    - "bitkin"
+  curiosity:
+    - "curious"
+    - "inquisitive"
+    - "interested"
+    - "meraklı"
+    - "merak"
+    - "merak et"
+    - "merakli"
+    - "ilgili"
+  calm:
+    - "relaxed"
+    - "peaceful"
+    - "serene"
+    - "tranquil"
+    - "sakin"
+    - "huzurlu"
+  pride:
+    - "proud"
+    - "satisfied"
+    - "gururlu"
+  embarrassment:
+    - "embarrassed"
+    - "ashamed"
+    - "self_conscious"
+    - "utangaç"
+    - "mahcup"
+  awe:
+    - "wonder"
+    - "amazement"
+    - "hayret"
+    - "büyülenmiş"
+  gloomy:
+    - "melancholic"
+    - "somber"
+    - "kederli"
+  cool:
+    - "suave"
+    - "composed"
+    - "cool"
+  devil:
+    - "mischievous"
+    - "wicked"
+    - "şeytani"
+  kawaii:
+    - "cute"
+    - "adorable"
+    - "sevimli"
+  dead:
+    - "offline"
+    - "shutdown"
+    - "kapalı"
+  smoking:
+    - "vaping"
+    - "sigara"
+  wired:
+    - "energetic"
+    - "hyper"
+    - "enerjik"
+  nervous:
+    - "jittery"
+    - "tense"
+    - "gergin"
+  disoriented:
+    - "lost"
+    - "dizzy"
+    - "kafası karışık"
+  suspicious:
+    - "distrustful"
+    - "skeptical"
+    - "şüpheci"
+
+# Render hints per canonical emotion
+# These are the definitive mappings used by expression_arbiter, neopixel, oled_faces, speak
+render:
+  neutral:
+    neopixel_effect: "BREATHE"
+    neopixel_rgb: [40, 60, 80]
+    neopixel_palette: "neutral"
+    neopixel_speed: 1.0
+    neopixel_variants:
+      - [40, 60, 80]
+      - [50, 70, 90]
+      - [60, 80, 100]
+    oled_animation: "normal"
+    oled_bitmap: "neutral"
+    ears_position: "neutral"
+    head_pan_delta: 0
+    head_tilt_delta: 0
+    voice_tone: "neutral"
+    voice_pitch_shift: 0.0
+    voice_speed: 1.0
+    arousal: 0.1
+    valence: 0.0
+    intensity: 0.3
+
+  joy:
+    neopixel_effect: "BREATHE"
+    neopixel_rgb: [0, 220, 120]
+    neopixel_palette: "joy"
+    neopixel_speed: 0.9
+    neopixel_variants:
+      - [0, 220, 120]
+      - [80, 240, 100]
+      - [120, 255, 180]
+    oled_animation: "happy"
+    oled_bitmap: "smile"
+    ears_position: "joy"
+    head_pan_delta: 6
+    head_tilt_delta: 4
+    voice_tone: "happy"
+    voice_pitch_shift: 0.15
+    voice_speed: 1.1
+    arousal: 0.7
+    valence: 0.8
+    intensity: 1.0
+
+  sadness:
+    neopixel_effect: "PULSE"
+    neopixel_rgb: [60, 100, 180]
+    neopixel_palette: "sadness"
+    neopixel_speed: 0.4
+    neopixel_variants:
+      - [60, 100, 180]
+      - [40, 80, 160]
+      - [80, 120, 200]
+    oled_animation: "sad"
+    oled_bitmap: "sad"
+    ears_position: "sadness"
+    head_pan_delta: 3
+    head_tilt_delta: 5
+    voice_tone: "sad"
+    voice_pitch_shift: -0.1
+    voice_speed: 0.85
+    arousal: 0.2
+    valence: -0.7
+    intensity: 0.8
+
+  anger:
+    neopixel_effect: "PULSE"
+    neopixel_rgb: [255, 60, 0]
+    neopixel_palette: "anger"
+    neopixel_speed: 1.6
+    neopixel_variants:
+      - [255, 60, 0]
+      - [255, 90, 0]
+      - [230, 30, 0]
+    oled_animation: "angry"
+    oled_bitmap: "angry"
+    ears_position: "anger"
+    head_pan_delta: 9
+    head_tilt_delta: -3
+    voice_tone: "angry"
+    voice_pitch_shift: -0.15
+    voice_speed: 1.15
+    arousal: 0.85
+    valence: -0.7
+    intensity: 1.2
+
+  furious:
+    neopixel_effect: "COMET"
+    neopixel_rgb: [255, 0, 0]
+    neopixel_palette: "anger"
+    neopixel_speed: 2.5
+    neopixel_variants:
+      - [255, 0, 0]
+      - [255, 50, 0]
+      - [200, 0, 0]
+    oled_animation: "angry"
+    oled_bitmap: "angry"
+    ears_position: "anger"
+    head_pan_delta: 12
+    head_tilt_delta: -5
+    voice_tone: "angry"
+    voice_pitch_shift: -0.2
+    voice_speed: 1.25
+    arousal: 0.95
+    valence: -0.9
+    intensity: 1.5
+
+  fear:
+    neopixel_effect: "PULSE"
+    neopixel_rgb: [255, 255, 60]
+    neopixel_palette: "fear"
+    neopixel_speed: 2.2
+    neopixel_variants:
+      - [255, 255, 60]
+      - [255, 230, 40]
+      - [230, 255, 30]
+    oled_animation: "fear"
+    oled_bitmap: "fear"
+    ears_position: "fear"
+    head_pan_delta: 10
+    head_tilt_delta: 6
+    voice_tone: "fear"
+    voice_pitch_shift: 0.2
+    voice_speed: 1.2
+    arousal: 0.9
+    valence: -0.8
+    intensity: 1.3
+
+  surprise:
+    neopixel_effect: "TWINKLE"
+    neopixel_rgb: [255, 180, 0]
+    neopixel_palette: "surprise"
+    neopixel_speed: 1.8
+    neopixel_variants:
+      - [255, 180, 0]
+      - [255, 200, 50]
+      - [240, 160, 0]
+    oled_animation: "surprise"
+    oled_bitmap: "surprise"
+    ears_position: "surprise"
+    head_pan_delta: 8
+    head_tilt_delta: 8
+    voice_tone: "surprise"
+    voice_pitch_shift: 0.25
+    voice_speed: 1.1
+    arousal: 0.8
+    valence: 0.1
+    intensity: 1.1
+
+  excitement:
+    neopixel_effect: "WAVE"
+    neopixel_rgb: [255, 120, 0]
+    neopixel_palette: "excitement"
+    neopixel_speed: 1.4
+    neopixel_variants:
+      - [255, 120, 0]
+      - [255, 150, 30]
+      - [240, 100, 0]
+    oled_animation: "excited"
+    oled_bitmap: "excited"
+    ears_position: "excitement"
+    head_pan_delta: 10
+    head_tilt_delta: 5
+    voice_tone: "excited"
+    voice_pitch_shift: 0.18
+    voice_speed: 1.2
+    arousal: 0.85
+    valence: 0.6
+    intensity: 1.2
+
+  love:
+    neopixel_effect: "BREATHE"
+    neopixel_rgb: [255, 100, 180]
+    neopixel_palette: "love"
+    neopixel_speed: 0.7
+    neopixel_variants:
+      - [255, 100, 180]
+      - [255, 140, 180]
+      - [255, 160, 200]
+    oled_animation: "love"
+    oled_bitmap: "heart"
+    ears_position: "love"
+    head_pan_delta: 6
+    head_tilt_delta: 4
+    voice_tone: "gentle"
+    voice_pitch_shift: 0.1
+    voice_speed: 0.95
+    arousal: 0.5
+    valence: 0.9
+    intensity: 0.8
+
+  disgust:
+    neopixel_effect: "PULSE"
+    neopixel_rgb: [120, 60, 180]
+    neopixel_palette: "disgust"
+    neopixel_speed: 1.0
+    neopixel_variants:
+      - [120, 60, 180]
+      - [100, 40, 160]
+      - [140, 80, 200]
+    oled_animation: "disgust"
+    oled_bitmap: "disgust"
+    ears_position: "disgust"
+    head_pan_delta: -5
+    head_tilt_delta: -3
+    voice_tone: "disgusted"
+    voice_pitch_shift: -0.1
+    voice_speed: 1.0
+    arousal: 0.4
+    valence: -0.6
+    intensity: 0.8
+
+  confusion:
+    neopixel_effect: "TWINKLE"
+    neopixel_rgb: [160, 80, 220]
+    neopixel_palette: "confusion"
+    neopixel_speed: 1.2
+    neopixel_variants:
+      - [160, 80, 220]
+      - [180, 100, 240]
+      - [140, 60, 200]
+    oled_animation: "confusion"
+    oled_bitmap: "confusion"
+    ears_position: "confusion"
+    head_pan_delta: -4
+    head_tilt_delta: 4
+    voice_tone: "confused"
+    voice_pitch_shift: 0.05
+    voice_speed: 0.95
+    arousal: 0.3
+    valence: -0.1
+    intensity: 0.7
+
+  worried:
+    neopixel_effect: "PULSE"
+    neopixel_rgb: [220, 160, 0]
+    neopixel_palette: "worried"
+    neopixel_speed: 1.5
+    neopixel_variants:
+      - [220, 160, 0]
+      - [240, 180, 0]
+      - [200, 140, 0]
+    oled_animation: "worried"
+    oled_bitmap: "worried"
+    ears_position: "worried"
+    head_pan_delta: -3
+    head_tilt_delta: 3
+    voice_tone: "worried"
+    voice_pitch_shift: -0.05
+    voice_speed: 0.9
+    arousal: 0.6
+    valence: -0.5
+    intensity: 0.9
+
+  bored:
+    neopixel_effect: "SOLID"
+    neopixel_rgb: [80, 80, 80]
+    neopixel_palette: "bored"
+    neopixel_speed: 0.3
+    neopixel_variants:
+      - [80, 80, 80]
+      - [100, 100, 100]
+      - [60, 60, 60]
+    oled_animation: "bored"
+    oled_bitmap: "bored"
+    ears_position: "bored"
+    head_pan_delta: 2
+    head_tilt_delta: 0
+    voice_tone: "bored"
+    voice_pitch_shift: -0.1
+    voice_speed: 0.85
+    arousal: 0.15
+    valence: -0.2
+    intensity: 0.4
+
+  tired:
+    neopixel_effect: "BREATHE"
+    neopixel_rgb: [60, 40, 100]
+    neopixel_palette: "tired"
+    neopixel_speed: 0.3
+    neopixel_variants:
+      - [60, 40, 100]
+      - [80, 60, 120]
+      - [40, 30, 80]
+    oled_animation: "tired"
+    oled_bitmap: "sleep"
+    ears_position: "sadness"
+    head_pan_delta: 0
+    head_tilt_delta: -2
+    voice_tone: "tired"
+    voice_pitch_shift: -0.15
+    voice_speed: 0.75
+    arousal: 0.1
+    valence: -0.1
+    intensity: 0.3
+
+  curiosity:
+    neopixel_effect: "WAVE"
+    neopixel_rgb: [0, 180, 255]
+    neopixel_palette: "curiosity"
+    neopixel_speed: 1.1
+    neopixel_variants:
+      - [0, 180, 255]
+      - [0, 220, 255]
+      - [100, 200, 255]
+    oled_animation: "scanning"
+    oled_bitmap: "curiosity"
+    ears_position: "curiosity"
+    head_pan_delta: 10
+    head_tilt_delta: 5
+    voice_tone: "curious"
+    voice_pitch_shift: 0.1
+    voice_speed: 1.0
+    arousal: 0.6
+    valence: 0.3
+    intensity: 0.9
+
+  calm:
+    neopixel_effect: "BREATHE"
+    neopixel_rgb: [0, 160, 160]
+    neopixel_palette: "calm"
+    neopixel_speed: 0.6
+    neopixel_variants:
+      - [0, 160, 160]
+      - [40, 180, 180]
+      - [80, 200, 200]
+    oled_animation: "calm"
+    oled_bitmap: "neutral"
+    ears_position: "calm"
+    head_pan_delta: 0
+    head_tilt_delta: 0
+    voice_tone: "calm"
+    voice_pitch_shift: 0.0
+    voice_speed: 0.95
+    arousal: 0.2
+    valence: 0.4
+    intensity: 0.4
+
+  pride:
+    neopixel_effect: "COMET"
+    neopixel_rgb: [255, 200, 0]
+    neopixel_palette: "pride"
+    neopixel_speed: 1.3
+    neopixel_variants:
+      - [255, 200, 0]
+      - [255, 220, 40]
+      - [240, 180, 0]
+    oled_animation: "proud"
+    oled_bitmap: "proud"
+    ears_position: "pride"
+    head_pan_delta: 5
+    head_tilt_delta: -2
+    voice_tone: "proud"
+    voice_pitch_shift: 0.05
+    voice_speed: 1.05
+    arousal: 0.5
+    valence: 0.7
+    intensity: 0.8
+
+  embarrassment:
+    neopixel_effect: "RANDOM_BLINK"
+    neopixel_rgb: [255, 120, 160]
+    neopixel_palette: "embarrassment"
+    neopixel_speed: 1.0
+    neopixel_variants:
+      - [255, 120, 160]
+      - [255, 150, 180]
+      - [240, 100, 140]
+    oled_animation: "embarrassed"
+    oled_bitmap: "embarrassed"
+    ears_position: "embarrassment"
+    head_pan_delta: -5
+    head_tilt_delta: 2
+    voice_tone: "embarrassed"
+    voice_pitch_shift: 0.0
+    voice_speed: 0.9
+    arousal: 0.4
+    valence: -0.2
+    intensity: 0.6
+
+  awe:
+    neopixel_effect: "TWINKLE"
+    neopixel_rgb: [180, 120, 255]
+    neopixel_palette: "awe"
+    neopixel_speed: 1.5
+    neopixel_variants:
+      - [180, 120, 255]
+      - [200, 150, 255]
+      - [160, 100, 240]
+    oled_animation: "awe"
+    oled_bitmap: "awe"
+    ears_position: "awe"
+    head_pan_delta: 4
+    head_tilt_delta: 8
+    voice_tone: "awe"
+    voice_pitch_shift: 0.15
+    voice_speed: 0.9
+    arousal: 0.55
+    valence: 0.4
+    intensity: 0.85
+
+  gloomy:
+    neopixel_effect: "PULSE"
+    neopixel_rgb: [60, 80, 140]
+    neopixel_palette: "gloomy"
+    neopixel_speed: 0.4
+    neopixel_variants:
+      - [60, 80, 140]
+      - [40, 60, 120]
+      - [80, 100, 160]
+    oled_animation: "gloomy"
+    oled_bitmap: "gloomy"
+    ears_position: "sadness"
+    head_pan_delta: 0
+    head_tilt_delta: 5
+    voice_tone: "sad"
+    voice_pitch_shift: -0.1
+    voice_speed: 0.8
+    arousal: 0.15
+    valence: -0.6
+    intensity: 0.7
+
+  cool:
+    neopixel_effect: "BREATHE"
+    neopixel_rgb: [70, 90, 120]
+    neopixel_palette: "cool"
+    neopixel_speed: 0.8
+    neopixel_variants:
+      - [70, 90, 120]
+      - [90, 110, 140]
+      - [50, 70, 100]
+    oled_animation: "cool"
+    oled_bitmap: "cool"
+    ears_position: "cool"
+    head_pan_delta: -3
+    head_tilt_delta: -2
+    voice_tone: "neutral"
+    voice_pitch_shift: -0.05
+    voice_speed: 1.0
+    arousal: 0.25
+    valence: 0.2
+    intensity: 0.5
+
+  devil:
+    neopixel_effect: "PULSE"
+    neopixel_rgb: [200, 0, 60]
+    neopixel_palette: "anger"
+    neopixel_speed: 1.8
+    neopixel_variants:
+      - [200, 0, 60]
+      - [220, 20, 80]
+      - [180, 0, 40]
+    oled_animation: "devil"
+    oled_bitmap: "devil"
+    ears_position: "anger"
+    head_pan_delta: 8
+    head_tilt_delta: -4
+    voice_tone: "excited"
+    voice_pitch_shift: 0.1
+    voice_speed: 1.15
+    arousal: 0.8
+    valence: -0.3
+    intensity: 1.1
+
+  kawaii:
+    neopixel_effect: "TWINKLE"
+    neopixel_rgb: [255, 140, 180]
+    neopixel_palette: "love"
+    neopixel_speed: 1.2
+    neopixel_variants:
+      - [255, 140, 180]
+      - [255, 170, 200]
+      - [255, 120, 160]
+    oled_animation: "kawaii"
+    oled_bitmap: "kawaii"
+    ears_position: "joy"
+    head_pan_delta: 5
+    head_tilt_delta: 5
+    voice_tone: "joy"
+    voice_pitch_shift: 0.2
+    voice_speed: 1.1
+    arousal: 0.65
+    valence: 0.75
+    intensity: 0.9
+
+  dead:
+    neopixel_effect: "BREATHE"
+    neopixel_rgb: [40, 40, 40]
+    neopixel_palette: "dead"
+    neopixel_speed: 0.15
+    neopixel_variants:
+      - [40, 40, 40]
+      - [50, 50, 50]
+      - [30, 30, 30]
+    oled_animation: "dead"
+    oled_bitmap: "dead"
+    ears_position: "neutral"
+    head_pan_delta: 0
+    head_tilt_delta: 0
+    voice_tone: "neutral"
+    voice_pitch_shift: 0.0
+    voice_speed: 0.5
+    arousal: 0.0
+    valence: 0.0
+    intensity: 0.0
+
+  smoking:
+    neopixel_effect: "BREATHE"
+    neopixel_rgb: [80, 80, 80]
+    neopixel_palette: "smoking"
+    neopixel_speed: 0.4
+    neopixel_variants:
+      - [80, 80, 80]
+      - [100, 100, 100]
+      - [60, 60, 60]
+    oled_animation: "smoking"
+    oled_bitmap: "smoking"
+    ears_position: "neutral"
+    head_pan_delta: 0
+    head_tilt_delta: 0
+    voice_tone: "neutral"
+    voice_pitch_shift: 0.0
+    voice_speed: 0.9
+    arousal: 0.2
+    valence: 0.0
+    intensity: 0.3
+
+  wired:
+    neopixel_effect: "COMET"
+    neopixel_rgb: [255, 120, 0]
+    neopixel_palette: "excitement"
+    neopixel_speed: 2.0
+    neopixel_variants:
+      - [255, 120, 0]
+      - [255, 150, 30]
+      - [240, 100, 0]
+    oled_animation: "wired"
+    oled_bitmap: "wired"
+    ears_position: "surprise"
+    head_pan_delta: 12
+    head_tilt_delta: 8
+    voice_tone: "excited"
+    voice_pitch_shift: 0.2
+    voice_speed: 1.3
+    arousal: 0.9
+    valence: 0.2
+    intensity: 1.3
+
+  nervous:
+    neopixel_effect: "PULSE"
+    neopixel_rgb: [200, 160, 0]
+    neopixel_palette: "nervousness"
+    neopixel_speed: 1.6
+    neopixel_variants:
+      - [200, 160, 0]
+      - [220, 180, 0]
+      - [180, 140, 0]
+    oled_animation: "nervous"
+    oled_bitmap: "nervous"
+    ears_position: "fear"
+    head_pan_delta: -4
+    head_tilt_delta: 4
+    voice_tone: "sad"
+    voice_pitch_shift: -0.05
+    voice_speed: 1.1
+    arousal: 0.65
+    valence: -0.4
+    intensity: 0.9
+
+  disoriented:
+    neopixel_effect: "TWINKLE"
+    neopixel_rgb: [140, 80, 200]
+    neopixel_palette: "confusion"
+    neopixel_speed: 1.4
+    neopixel_variants:
+      - [140, 80, 200]
+      - [160, 100, 220]
+      - [120, 60, 180]
+    oled_animation: "disoriented"
+    oled_bitmap: "disoriented"
+    ears_position: "curiosity"
+    head_pan_delta: -6
+    head_tilt_delta: 6
+    voice_tone: "neutral"
+    voice_pitch_shift: 0.0
+    voice_speed: 0.95
+    arousal: 0.45
+    valence: -0.1
+    intensity: 0.8
+
+  suspicious:
+    neopixel_effect: "PULSE"
+    neopixel_rgb: [180, 60, 180]
+    neopixel_palette: "suspicious"
+    neopixel_speed: 1.1
+    neopixel_variants:
+      - [180, 60, 180]
+      - [200, 80, 200]
+      - [160, 40, 160]
+    oled_animation: "suspicious"
+    oled_bitmap: "suspicious"
+    ears_position: "curiosity"
+    head_pan_delta: -8
+    head_tilt_delta: 3
+    voice_tone: "suspicious"
+    voice_pitch_shift: -0.1
+    voice_speed: 0.9
+    arousal: 0.5
+    valence: -0.3
+    intensity: 0.85

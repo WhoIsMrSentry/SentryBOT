@@ -129,7 +129,7 @@ class VisionMixin:
         self.state["last_emotion"] = canon
         try:
             self.express(canon)
-            self.client.push_interaction_event(f"vision.person_emotion_{canon}")
+            self.client.push_interaction_event(f"vision.person_emotion_{canon.value if hasattr(canon, 'value') else canon}")
         except Exception:
             pass
         if empathy.get("speak_on_mirror", False):
@@ -160,14 +160,38 @@ class VisionMixin:
         self._people_last_seen[name] = now
         self.state["last_interaction"] = now
         self.memory.add_event(f"Vision {name} tespit etti.")
-        if name != "Unknown":
+        
+        # Save to world memory for contextual awareness
+        if hasattr(self, "world_memory"):
+            self.world_memory.observe({
+                "kind": "person" if name != "Unknown" else "object",
+                "name": name,
+                "confidence": result.get("confidence", 1.0),
+                "emotion": result.get("emotion", ""),
+                "distance_m": result.get("distance_m", 0.0)
+            }, source="vision")
+
+        happiness_boost = 10 if name != "Unknown" else 4
+        
+        # Social_db integration for emotional response
+        if name != "Unknown" and hasattr(self, "client"):
             self._track_person_stat(name)
             if hasattr(self, "_note_person_seen"):
                 try:
                     self._note_person_seen(name, emotion=str(result.get("emotion", "") or ""))
                 except Exception:
                     pass
-        happiness_boost = 10 if name != "Unknown" else 4
+            try:
+                record = self.client.get_person_memory(name)
+                rel = ((record.get("record") or {}).get("relationship") or "neutral").lower()
+                if rel in ["friend", "owner", "family"]:
+                    happiness_boost += 15
+                elif rel in ["enemy", "stranger", "threat"]:
+                    self.mood.modify("fear", 15)
+                    self.mood.modify("anger", 10)
+            except Exception as e:
+                logging.getLogger("autonomy.vision").debug(f"social_db fetch failed for {name}: {e}")
+
         self.mood.modify("happiness", happiness_boost)
         self.mood.modify("curiosity", 5)
         self._mirror_person_emotion(result)
