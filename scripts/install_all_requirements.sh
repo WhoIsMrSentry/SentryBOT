@@ -1,12 +1,20 @@
 #!/usr/bin/env bash
-# Basit kılavuz: Python yükleyiciyi çağırır.
-# Windows kullanıyorsanız PowerShell'de: py -3 install_all_requirements.py
+# SentryBOT otomatik gereksinim kurucu (uv destekli)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# uv aracını bulabilmesi için PATH'i tanımla
+export PATH="$HOME/.local/bin:$PATH"
+
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 echo "Geçerli dizin: $SCRIPT_DIR"
-$PYTHON_BIN install_all_requirements.py "$@"
+
+# Ekstra parametre verilmediyse otomatik olarak uv sanal ortamını kullan
+if [[ "$*" == *"--use-venv"* ]]; then
+    $PYTHON_BIN install_all_requirements.py "$@"
+else
+    $PYTHON_BIN install_all_requirements.py --use-venv --venv-path scripts/venv "$@"
+fi
