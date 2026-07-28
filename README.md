@@ -27,17 +27,19 @@ Ana hedefler:
 
 ## Neler Yeni? (Öne Çıkan Son Geliştirmeler)
 
+- **Tri-Layer Agent Mimarı (agent_core):** Robotun otonom kararları 3 katmanlı (Router/Planner, Uzman Sub-Agent'lar, Ana Persona) bir otonom ajan pipeline'ı ile yönetilir.
+- **Social DB:** Eski JSON tabanlı izole hafızalar tek bir birleşik SQLite veritabanında toplandı. Kişiler, yüzler, ilişkiler, anılar ve ritüeller tek merkezden yönetiliyor.
+- **OLED Faces:** SSD1306 I2C OLED için Pip tarzı prosedürel animasyonlu göz ve yüz ifadeleri eklendi. Duygusal ifadeler robotun durumuyla senkronize edilir.
+- **Gelişmiş Otonomi ve Duygu Motoru (autonomy):** Robotun iç durumu (Mutluluk, Enerji, Merak, Korku) davranışlarını ve NeoPixel ışıklarını otomatik etkiler. Ses geldiğinde kafa çevirme, boşta kalınca iç çekme/etrafı izleme özellikleri aktiftir.
+- **Wakeword Modülü:** OpenWakeWord ve Vosk destekli arka plan dinleyicisi eklendi.
+- **Semantik Router:** İstekler LLM tabanlı vektör/benzerlik ile en doğru sub-agent'a yönlendirilir.
+- **Common Emotion Vocab:** Tüm modüller ortak bir duygu (emotion) sözlüğünü kullanır; gözler, ışıklar ve ses tonu birbiriyle uyumlu çalışır.
 - Servo sürüşü I2C’ye taşındı (PCA9685, 50 Hz). Açı→mikrosaniye darbe haritalaması konfigüre edilebilir (min/max us).
 - Çift “X‑cross” lazer eklendi: tekli ya da ikisi birden aç/kapa (firmware komut + Pi API).
-- 16×1 I2C LCD’ler için 8×2 adresleme düzeltmesi: 16 karakter mesajlar 8+8’e bölünerek yazdırılır.
-- **Duygu Motoru (Emotional Engine)**: Robotun iç durumu (Mutluluk, Enerji, Merak, Korku) davranışlarını ve NeoPixel ışıklarını otomatik olarak etkiler (örn: `joy` -> altın rengi nefes alma).
-- **Tam Yapılandırılmış Çıktı (Structured JSON)**: Ollama artık tüm yanıtlarını düşünce (thoughts), vokal yanıt (text) ve fiziksel aksiyonlar (actions) içeren katı bir JSON formatında döner.
-- **Sistem-Genel Modül Kontrolü**: Robot artık kendi modüllerini (notifier, camera, speech vb.) LLM kararlarıyla çalışma esnasında kapatıp açabilir.
+- **Tam Yapılandırılmış Çıktı (Structured JSON)**: Ollama artık tüm yanıtlarını düşünce, vokal yanıt ve aksiyon içeren JSON formatında döner.
+- **Sistem-Genel Modül Kontrolü**: Robot kendi modüllerini LLM kararlarıyla çalışma esnasında kapatıp açabilir.
 - **Durum Kalıcılığı**: State Manager, global state'i sqlite/json backend ile restart sonrasında da saklar.
 - **Gateway Güvenliği**: Gateway'e isteğe bağlı API anahtarı ve rol kontrolü eklendi; yazma uçları korunabilir.
-- **Diagnostics Akıllı Sağlık Taraması**: Gecikme eşikleri, tekrar eden hata sayımı ve self-heal tetikleri ile daha doğru rapor üretir.
-- **Scheduler Dinamik Görev Motoru**: Görevler çalışma anında eklenip silinebilir; sadece config'e bağlı kalmaz.
-- **Tri-Layer Semantic Routing**: Router yalnızca anahtar kelimeye değil, token benzerliğine de bakarak daha doğru modül seçimi yapar.
 - **VLM Mode Yönetimi**: Görüntü işleme yetenekleri ayrı ayrı açılıp kapatılabilir; pahalı işlemler ihtiyaca göre sınırlandırılır.
 - **OTA Güvenlik Sertleştirmesi**: Firmware yükleme sırasında opsiyonel allowlist ve HMAC imza doğrulaması kullanılabilir.
 
@@ -276,100 +278,40 @@ Gateway çalışıyorsa tüm uçlar tek porttadır. Aşağıdaki istekler örnek
 - Konuşma
 	- ASR başlat/durdur: `/speech/start`, `/speech/stop`
 	- TTS: `/speak/say` body: `{ "text": "Merhaba!" }`
-
-
 	## Modüller (Tek Tek)
 
-	- animate
-		- Amaç: YAML tabanlı servo animasyon sekansları; isimle tetiklenir.
-		- Kullanım: `xAnimateService.run('sit')`; adımlar `pose[]` ve `duration_ms|hold_ms` içerir.
-		- Config: `modules/animate/config/config.yml`
-
-	- arduino_serial
-		- Amaç: Arduino Mega ile NDJSON seri köprü; sürücü sınıfı + opsiyonel API.
-		- Kabiliyet: servo/pose/stepper/imu/telemetry/estop + lazer (tekli/çift) kontrolü.
-		- Uçlar: `/arduino/healthz`, `/arduino/request`, `/arduino/telemetry/start`, `/arduino/laser/*`.
-		- Config: port AUTO, baudrate; env: `ARDUINO_PORT`, `ARDUINO_BAUD`.
-
-	- calibration
-		- Amaç: Servo/Kamera/Audio kalibrasyon yardımcıları.
-		- Uçlar: `/calib/healthz`, `/calib/camera/checkerboard`, `/calib/servo/sweep`.
-
-	- camera
-		- Amaç: PiCamera2/OpenCV backend ile görüntü yakalama ve yayın.
-		- Özellikler: çözünürlük/FPS/JPEG kalite; yayıncı son kareyi saklar.
-		- Uçlar: `/camera/*` (gateway altında).
-
-	- config_center
-		- Amaç: Modül `config.yml` dosyalarını listele/düzenle; minimal UI.
-		- Uçlar: `/config/healthz`, `/config/list`, `/config/get|raw|set`, `/config/scan`, `/config/ui`.
-
-	- diagnostics
-		- Amaç: Boot self‑check ve modül sağlık taraması.
-		- Uçlar: `/diagnostics/healthz`, `/diagnostics/run`, `/diagnostics/report`.
-
-	- gateway
-		- Amaç: Ana giriş; tüm modül router’larını tek app’te toplar.
-		- Uçlar: Tüm modüller tek portta; `/healthz`, `/status` özet; `include.*` yönetimi.
-
-	- hardware
-		- Amaç: RPi5 sağlık/sistem, I2C tarama, GPIO özet.
-		- Uçlar: `/hardware/healthz`, `/hardware/system`, `/hardware/i2c/scan`, `/hardware/gpio/info`.
-
-	- interactions
-		- Amaç: Kural motoru; metrikler/olaylara göre NeoPixel efektleri.
-		- Uçlar: `/interactions/event|effect|base|state`.
-
-	- logwrapper
-		- Amaç: Merkezi loglama; console + dönen dosya + bellek içi halka buffer.
-		- Uçlar: Opsiyonel FastAPI router ile loglara erişim.
-
-	- mutagen
-		- Amaç: Mutagen CLI üzerinden dosya senkron yönetimi (cihaz ↔ robot).
-		- Uçlar: `/mutagen/healthz|status|start|stop|rescan`.
-
-	- neopixel
-		- Amaç: WS2812 LED kontrolü; donanım/simülatör otomatik; zengin animasyonlar ve "emotions" paleti.
-		- Uçlar: `/neopixel/healthz|clear|fill|effect|emote|emote_named|animate`.
-
-	- notifier
-		- Amaç: Telegram/Discord köprüleri.
-		- Uçlar: `/notify/healthz`, `/notify/telegram`, `/notify/discord`, `/notify/test`.
-
-	- ollama
-		- Amaç: LLM sohbet/persona; persona klasör yapısıyla yönetim.
-		- Uçlar: `/ollama/healthz|chat|persona(s)|persona/select|persona/create_from_url`.
-
-	- ota
-		- Amaç: Over‑the‑air güncelleme altyapısı (örn. Arduino firmware dağıtımı).
-
-	- piservo
-		- Amaç: Pi üzerinde kulak/ikincil servolar (pigpio) — jestler ve basit hareketler.
-		- Uçlar: `/piservo/*` (kulak pozları ve jestler).
-
-	- scheduler
-		- Amaç: Zamanlanmış işler; basit periyodik görevler (ör. sağlık pingi).
-		- Uçlar: `/scheduler/jobs` (liste/ekleme/çıkarma).
-
-	- speak
-		- Amaç: TTS (pyttsx3 veya Piper); base64 WAV oynatma; ALSA cihaz seçimi.
-		- Uçlar: `/speak/say`, `/speak/play`.
-
-	- speech
-		- Amaç: Offline ASR (Vosk), I2S; stereo ise DoA ve takip.
-		- Uçlar: `/speech/start|stop|last|direction|track/*`.
-
-	- state_manager
-		- Amaç: Global durum/emotions yönetimi.
-		- Uçlar: `/state/get`, `/state/set/emotions`.
-
-	- telemetry
-		- Amaç: Telemetri; Prometheus `/metrics` ve olay yayımı.
-		- Uçlar: `/telemetry/*`.
-
-	- vlm_bridge
-		- Amaç: OpenCV tabanlı yüz tanıma/takip ve dış görüntü sonuçlarını Arduino komutlarına köprüleme.
-		- Uçlar: `/vlm/*` (ör. `/vlm/track`, `/vlm/follow/start`).
+	- **admin_ui**: LAN-only tek yönetim paneli. Modüllerin durum anlık görüntülerini birleştiren kontrol arayüzü.
+	- **agent_core**: 3-katmanlı LLM tabanlı otonom zekâ (Router, Sub-agents, Persona) ve epizodik bellek yönetimi.
+	- **animate**: YAML tabanlı servo animasyon sekansları; isimle tetiklenir.
+	- **arduino_serial**: Arduino Mega ile NDJSON seri köprü. Servo, stepper, imu, telemetry ve lazer kontrolü.
+	- **autonomy**: Live Mode. Duygu durum yönetimi (MoodManager), davranış döngüsü, VLM algı birleştirme ve otonom tepki/sahne yöneticisi.
+	- **calibration**: Servo, Kamera ve Ses kalibrasyon yardımcıları.
+	- **camera**: PiCamera2/OpenCV backend ile görüntü yakalama ve yayın.
+	- **common**: Ortak yardımcılar, paylaşılan duygu/ifade (emotion) sözlüğü (`emotion_vocab.py`).
+	- **config_center**: Modül `config.yml` dosyalarını listele/düzenle; minimal UI.
+	- **diagnostics**: Boot self-check ve akıllı modül sağlık taraması.
+	- **esp_link**: Pi tarafında ESP32 bridge cihazına HTTP üzerinden proxy ve iletişim sağlar.
+	- **expression**: Semantik ifade motoru. Sistem olaylarını senkronize animasyon, renk ve oled yüz ifadelerine dönüştürür.
+	- **gateway**: Ana giriş noktası. Tüm modül router'larını tek bir FastAPI uygulamasında toplar.
+	- **hardware**: RPi5 sağlık/sistem, I2C tarama, GPIO özet uyarıları.
+	- **interactions**: Kural motoru. Sensör, olay ve metrik ölçümlerine göre NeoPixel/OLED efektleri tetikler.
+	- **logwrapper**: Merkezi loglama. Console + dönen dosya + bellek içi halka buffer.
+	- **mutagen**: Mutagen CLI üzerinden dosya senkron yönetimi (cihaz ↔ robot).
+	- **neopixel**: WS2812 LED animasyonları; donanım/simülatör otomatik; duygusal renk paletleri.
+	- **notifier**: Telegram/Discord köprüleri ve bildirim iletimi.
+	- **oled_faces**: SSD1306 I2C OLED ekranlar için Pip tarzı prosedürel animasyonlu göz ve olay senkronize yüz ifadeleri.
+	- **ollama**: LLM sohbet ve persona yönetimi; LLM endpointleri.
+	- **ota**: Over-the-air güncelleme altyapısı (örn: uzaktan Arduino firmware dağıtımı).
+	- **piservo**: Raspberry Pi üzerinde doğrudan kontrol edilen ikincil servolar (kulaklar).
+	- **runtime_console**: Logosuz, panel tabanlı sade terminal arayüzü / TUI görünümü.
+	- **scheduler**: Dinamik zamanlanmış periyodik görevler ve HTTP ping işleri.
+	- **social_db**: Kişiler, ilişkiler, görülme kayıtları, sohbet geçmişi ve anıları tek merkezde toplayan birleşik SQLite bellek.
+	- **speak**: TTS (pyttsx3 veya Piper) ile offline seslendirme, base64 WAV oynatma, ALSA çıkış yönetimi.
+	- **speech**: Vosk ile tamamen offline ASR (ses tanıma) ve I2S üzerinden stereo/DoA ile ses yönü bulma.
+	- **state_manager**: Global durum ve duygular için kalıcı anahtar/değer deposu.
+	- **telemetry**: Prometheus metrikleri (`/metrics`) ve olay yayımı.
+	- **vlm_bridge**: Yüz algılama/tanıma (OpenCV) ve Vision Language Model isteklerini işleyip donanım komutlarına dönüştürme.
+	- **wakeword**: OpenWakeWord veya Vosk tabanlı uyandırma kelimesi dinleyicisi; asıl speech modülünü tetikler.
 
 
 	## Tipik Senaryolar
