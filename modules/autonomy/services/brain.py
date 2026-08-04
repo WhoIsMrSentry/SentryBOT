@@ -1713,8 +1713,18 @@ class AutonomyBrain(
             f"{('Preferences: ' + pref_summary) if pref_summary else ''}\n"
             f"{('Recent activity: ' + activity) if activity else ''}\n"
             f"{mood_trend}\n{sighting}\n\n"
-            f"Use your internal physical tools right now (such as looking around, playing an animation on OLED, "
-            f"or changing body lights) to react to this situation, entertain yourself, or find something interesting to do. Do not ask for permission."
+            f"AVAILABLE PHYSICAL TOOLS (call them, don't just describe):\n"
+            f"- express_emotion(emotion, intensity, duration_s, modalities, text?, language?) -- "
+            f"atomic emotion across LEDs+OLED+voice+head. Emotions: neutral, joy, sadness, anger, furious, "
+            f"fear, surprise, excitement, love, disgust, confusion, worried, bored, tired, curiosity, calm, "
+            f"pride, embarrassment, awe, gloomy, cool, devil, kawaii, dead, smoking, wired, nervous, "
+            f"disoriented, suspicious\n"
+            f"- look_around() -- sweep gaze to discover things\n"
+            f"- move_head(pan, tilt, duration_s) -- point face\n"
+            f"- speak(text, language) -- say something out loud\n"
+            f"- set_lights(effect, emotions?, color?, duration?) -- raw NeoPixel\n"
+            f"\nPick ONE small in-character action that fits your current mood/needs. "
+            f"Do not ask for permission. Act, then briefly confirm."
         )
 
         try:
