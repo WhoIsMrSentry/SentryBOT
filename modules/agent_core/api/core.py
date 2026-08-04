@@ -53,6 +53,30 @@ def get_core_router(agent) -> APIRouter:
         )
         return result or {"text": "", "thoughts": "idle", "actions": [], "trace_id": trace_id}
 
+    @router.post("/step_event")
+    def step_event(
+        event_type: str = Body(embed=True),
+        event_prompt: str = Body(embed=True),
+        language: Optional[str] = Body(default=None, embed=True),
+        speaker: Optional[str] = Body(default=None, embed=True),
+        trace_id: Optional[str] = Body(default=None, embed=True),
+    ) -> Dict[str, Any]:
+        """Event-driven step that bypasses cooldown and empty-prompt checks.
+
+        Used by autonomy brain for spontaneous reactions (sound, vision, boredom).
+        """
+        if not hasattr(agent, "step_event"):
+            return {"ok": False, "error": "step_event not available"}
+        trace_id = str(trace_id or uuid.uuid4().hex[:16])
+        result = agent.step_event(
+            event_type=event_type,
+            event_prompt=event_prompt,
+            language=language,
+            speaker=speaker,
+            trace_id=trace_id,
+        )
+        return result or {"text": "", "thoughts": f"{event_type} handled", "actions": [], "trace_id": trace_id}
+
     @router.post("/step_stream")
     def step_stream(
         query: str = Body(embed=True),
