@@ -606,11 +606,13 @@ class AutonomyBrain(
             idle_cfg = self.config.get("behaviors", {}).get("idle_tree", {})
             idle_interval = float(idle_cfg.get("interval_s", 6.0))
             if now - self._last_idle_action >= idle_interval:
-                if self._run_idle_behavior(now):
-                    self._last_idle_action = now
-                elif bool(idle_cfg.get("fallback_to_llm", True)) and self._should_agentic_decision(now):
-                    self._make_agentic_decision()
+                agentic_enabled = bool(idle_cfg.get("fallback_to_llm", True)) or bool(self.config.get("agentic", {}).get("enabled", True))
+                if agentic_enabled and self._should_agentic_decision(now):
+                    self._make_agentic_decision(reason="boredom")
                     self._last_agentic_ts = now
+                    self._last_idle_action = now
+                elif self._run_idle_behavior(now):
+                    self._last_idle_action = now
         else:
             self.state["is_bored"] = False
 
@@ -1638,7 +1640,7 @@ class AutonomyBrain(
             return True
         if float(needs.get("stimulation", 0)) >= float(triggers.get("stimulation_need", 68)):
             return True
-        if float(self.mood.get("energy", 100) or 100) <= float(triggers.get("low_energy", 25)):
+        if float(self.mood.state.get("energy", 100) or 100) <= float(triggers.get("low_energy", 25)):
             return True
         if float(needs.get("rest", 100)) <= float(triggers.get("low_rest", 22)):
             return True
@@ -1702,8 +1704,8 @@ class AutonomyBrain(
         prompt = (
             f"{situation}\n"
             f"Internal State:\n"
-            f"- Happiness: {int(self.mood['happiness'])}/100, Energy: {int(self.mood['energy'])}/100, "
-            f"Curiosity: {int(self.mood['curiosity'])}/100\n"
+            f"- Happiness: {int(self.mood.state['happiness'])}/100, Energy: {int(self.mood.state['energy'])}/100, "
+            f"Curiosity: {int(self.mood.state['curiosity'])}/100\n"
             f"- Needs: social={needs.get('social', 0)}, stimulation={needs.get('stimulation', 0)}, "
             f"rest={needs.get('rest', 0)}\n"
             f"Recent Events:\n{events}\n\n"
@@ -1711,8 +1713,18 @@ class AutonomyBrain(
             f"{('Preferences: ' + pref_summary) if pref_summary else ''}\n"
             f"{('Recent activity: ' + activity) if activity else ''}\n"
             f"{mood_trend}\n{sighting}\n\n"
-            f"Use your internal physical tools right now (such as looking around, playing an animation on OLED, "
-            f"or changing body lights) to react to this situation, entertain yourself, or find something interesting to do. Do not ask for permission."
+            f"AVAILABLE PHYSICAL TOOLS (call them, don't just describe):\n"
+            f"- express_emotion(emotion, intensity, duration_s, modalities, text?, language?) -- "
+            f"atomic emotion across LEDs+OLED+voice+head. Emotions: neutral, joy, sadness, anger, furious, "
+            f"fear, surprise, excitement, love, disgust, confusion, worried, bored, tired, curiosity, calm, "
+            f"pride, embarrassment, awe, gloomy, cool, devil, kawaii, dead, smoking, wired, nervous, "
+            f"disoriented, suspicious\n"
+            f"- look_around() -- sweep gaze to discover things\n"
+            f"- move_head(pan, tilt, duration_s) -- point face\n"
+            f"- speak(text, language) -- say something out loud\n"
+            f"- set_lights(effect, emotions?, color?, duration?) -- raw NeoPixel\n"
+            f"\nPick ONE small in-character action that fits your current mood/needs. "
+            f"Do not ask for permission. Act, then briefly confirm."
         )
 
         try:

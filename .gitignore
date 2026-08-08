@@ -39,3 +39,5 @@ vendor/
 *.ps1
 safe_places.json
 .codebase-memory/
+pi_runtime_stub_legacy_caller_audit.json
+PI_RUNTIME_STUB_LEGACY_CALLER_AUDIT.md

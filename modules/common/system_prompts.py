@@ -76,7 +76,7 @@ def _build_default_persona_prompt() -> str:
     """Assemble a deterministic, emotion-aware persona system prompt.
 
     Pulls the canonical emotion list from the shared vocabulary so the
-    prompt always matches what the `express_emotion` tool actually accepts.
+    prompt always matches what the `set_emotion` tool actually accepts.
     """
     vocab = get_vocab()
     emotions = vocab.all_canonical()
