@@ -1640,7 +1640,7 @@ class AutonomyBrain(
             return True
         if float(needs.get("stimulation", 0)) >= float(triggers.get("stimulation_need", 68)):
             return True
-        if float(self.mood.get("energy", 100) or 100) <= float(triggers.get("low_energy", 25)):
+        if float(self.mood.state.get("energy", 100) or 100) <= float(triggers.get("low_energy", 25)):
             return True
         if float(needs.get("rest", 100)) <= float(triggers.get("low_rest", 22)):
             return True
@@ -1704,8 +1704,8 @@ class AutonomyBrain(
         prompt = (
             f"{situation}\n"
             f"Internal State:\n"
-            f"- Happiness: {int(self.mood['happiness'])}/100, Energy: {int(self.mood['energy'])}/100, "
-            f"Curiosity: {int(self.mood['curiosity'])}/100\n"
+            f"- Happiness: {int(self.mood.state['happiness'])}/100, Energy: {int(self.mood.state['energy'])}/100, "
+            f"Curiosity: {int(self.mood.state['curiosity'])}/100\n"
             f"- Needs: social={needs.get('social', 0)}, stimulation={needs.get('stimulation', 0)}, "
             f"rest={needs.get('rest', 0)}\n"
             f"Recent Events:\n{events}\n\n"
