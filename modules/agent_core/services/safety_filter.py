@@ -7,6 +7,7 @@ SAFETY_ACTION_BOUNDARY_REASON = 'ActionSafetyFilter still clamps action handler 
 
 import logging
 from typing import Dict, Any
+from datetime import datetime
 
 logger = logging.getLogger("agent.safety_filter")
 
@@ -32,3 +33,37 @@ class ActionSafetyFilter:
 
     def clamp_laser_duration(self, duration: float) -> float:
         return min(float(duration), self.max_laser)
+
+    def set_world_state(self, world_state):
+        self.world_state = world_state
+
+    def check_action_safety(self, action_type: str, payload: dict) -> dict:
+        """
+        Evaluate if an action is safe to execute in the current context.
+        Returns: {"safe": bool, "reason": str, "message": str}
+        """
+        # 1. Check Quiet Hours (Sleep mode / Time)
+        hour = datetime.now().hour
+        is_quiet_hours = (hour >= 23 or hour < 8)
+        
+        if is_quiet_hours:
+            if action_type in ["speak", "sound", "play_sound", "express_emotion"]:
+                # Ensure the robot doesn't make loud noises during sleep hours
+                # Allow exceptions if priority/safety flags exist in payload, but block by default
+                if not payload.get("override_quiet_hours", False):
+                    logger.warning(f"SafetyFilter blocked {action_type} due to quiet hours (23:00 - 08:00).")
+                    return {
+                        "safe": False,
+                        "reason": "quiet_hours",
+                        "message": "Cannot play sounds or speak during sleep hours."
+                    }
+                    
+        # 2. Check Hardware Limits Contextually (e.g., fast move with low battery)
+        if action_type in ["move_direct", "stepper", "pathfind"]:
+            # If world_state has battery, we could check it here.
+            # Example placeholder:
+            # if getattr(self, "world_state", None) and self.world_state.get_battery() < 10:
+            #     return {"safe": False, "reason": "low_battery", "message": "Battery too low for movement."}
+            pass
+
+        return {"safe": True, "reason": "ok", "message": ""}
