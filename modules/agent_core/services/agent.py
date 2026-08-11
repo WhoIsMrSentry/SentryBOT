@@ -127,8 +127,10 @@ class AgentOrchestrator:
         self.memory_consolidator = self._build_memory_consolidator()
         self.slam = TopologicalMap()
         self.safety_filter = ActionSafetyFilter(config)
+        if hasattr(self.safety_filter, "set_world_state"):
+            self.safety_filter.set_world_state(self.world_state)
         self.tool_execution_arbiter = ToolExecutionArbiter()
-        self.action_arbiter = ActionArbiter()
+        self.action_arbiter = ActionArbiter(safety_filter=self.safety_filter)
         self.vision_arbiter = VisionArbiter()
         self.expression_arbiter = ExpressionArbiter()
         self.speech_arbiter = SpeechArbiter()
