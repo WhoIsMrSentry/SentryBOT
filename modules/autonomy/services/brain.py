@@ -23,6 +23,7 @@ from .interaction_feedback import InteractionFeedbackLearner
 from .needs_engine import CompanionNeedsEngine
 from .companion_goal_selector import CompanionGoalSelector
 from .companion_goal_executor import CompanionGoalExecutor
+from .reflection_planner import ReflectionPlanner
 from .companion_auto_execute_gate import CompanionAutoExecuteGate
 from .companion_behavior_loop import CompanionBehaviorLoop
 from .vision_context_needs_bridge import VisionContextNeedsBridge
@@ -34,6 +35,8 @@ from .memory_decision_shadow import MemoryDecisionShadow
 from .memory_needs_bias import MemoryNeedsBias
 from .world_memory_autowriter import WorldMemoryAutoWriter
 from .relationship_memory import RelationshipMemory
+from .spinal_cord_reflex import SpinalCordReflexEngine
+from .behavior_shadow_learner import BehaviorShadowLearner
 from .brain_parts.animations import AnimationSupportMixin
 from .brain_parts.owner_guard import OwnerGuardMixin
 from .brain_parts.responses import ResponseTagMixin
@@ -104,6 +107,7 @@ class AutonomyBrain(
         self.goal_executor = CompanionGoalExecutor(executor_cfg, client=self.client)
         auto_exec_cfg = self.config.get("companion_auto_execute", {}) if isinstance(self.config.get("companion_auto_execute", {}), dict) else {}
         self.goal_auto_execute_gate = CompanionAutoExecuteGate(auto_exec_cfg)
+        self.reflection_planner = ReflectionPlanner(config)
         loop_cfg = self.config.get("companion_behavior_loop", {}) if isinstance(self.config.get("companion_behavior_loop", {}), dict) else {}
         self.companion_behavior_loop = CompanionBehaviorLoop(loop_cfg)
         vision_needs_cfg = self.config.get("vision_context_needs", {}) if isinstance(self.config.get("vision_context_needs", {}), dict) else {}
@@ -126,6 +130,12 @@ class AutonomyBrain(
         self.liveliness = LivelinessScheduler(config.get("liveliness", {}) if isinstance(config.get("liveliness", {}), dict) else {})
         self._vision_cfg = config.get("vision_hooks", {})
         self.owner_cfg = config.get("owner", {})
+
+        spinal_cfg = self.config.get("spinal_cord", {}) if isinstance(self.config.get("spinal_cord", {}), dict) else {}
+        self.spinal_cord = SpinalCordReflexEngine(spinal_cfg, client=self.client, memory=self.memory)
+
+        shadow_cfg = self.config.get("shadow_learner", {}) if isinstance(self.config.get("shadow_learner", {}), dict) else {}
+        self.shadow_learner = BehaviorShadowLearner(shadow_cfg)
 
         # Agent Core (advanced reasoning, tool-calling, planning)
         self.agent = None
@@ -277,6 +287,14 @@ class AutonomyBrain(
             except Exception as exc:
                 logger.error("Error in autonomy loop: %s", exc)
             time.sleep(interval)
+            
+    def handle_hardware_event(self, event_type: str, payload: dict) -> bool:
+        """API hook to pass fast hardware events directly to the Spinal Cord."""
+        return self.spinal_cord.observe_hardware_event(event_type, payload)
+
+    def observe_manual_action(self, action_type: str, payload: dict):
+        """API hook to record manual user actions for Shadow Mode (Behavior Cloning)."""
+        self.shadow_learner.observe_action(action_type, payload)
 
     def interaction_occurred(self, source=None):
         """External ping that resets boredom timer and nudges mood."""
@@ -578,6 +596,19 @@ class AutonomyBrain(
         if self.state["is_sleeping"]:
             if random.random() < 0.1:
                 self.client.set_neopixel("breathe", emotions=["neutral"], duration=2.0)
+            
+            # Dream Cycle: Prune and consolidate memories while sleeping
+            last_prune = self.state.get("last_memory_prune_ts", 0)
+            if now - last_prune > 3600:  # Run once per hour of sleep
+                logger.info("Dream Cycle: Pruning and consolidating memories...")
+                try:
+                    prune_res = self.world_memory.prune_unimportant_memories()
+                    cons_res = self.world_memory.consolidate_memories()
+                    logger.info(f"Dream Cycle complete. Pruned: {prune_res.get('deleted', 0)}, Consolidated: {cons_res.get('consolidated', 0)}")
+                except Exception as exc:
+                    logger.error(f"Dream cycle failed: {exc}")
+                self.state["last_memory_prune_ts"] = now
+                
             return
 
         self.mood.update()
@@ -713,6 +744,22 @@ class AutonomyBrain(
                 plan = payload.get("goal_plan")
             if not isinstance(plan, dict):
                 plan = self.get_companion_goal_snapshot() if hasattr(self, "get_companion_goal_snapshot") else {}
+                
+            if plan and "actions" in plan:
+                native_actions = [a for a in plan.get("actions", []) if a.get("native_tool_call")]
+                for action in native_actions:
+                    if hasattr(self, "agent") and self.agent and hasattr(self.agent, "tool_registry"):
+                        tool_name = action.get("tool")
+                        kwargs = {k: v for k, v in action.items() if k not in ["tool", "native_tool_call"]}
+                        try:
+                            logger.info(f"Executing native tool call from plan: {tool_name}({kwargs})")
+                            self.agent.tool_registry.execute(tool_name, kwargs)
+                        except Exception as e:
+                            logger.error(f"Failed to execute native tool {tool_name}: {e}")
+                
+                # Filter out native actions so the standard executor doesn't fail
+                plan["actions"] = [a for a in plan.get("actions", []) if not a.get("native_tool_call")]
+
             result = self.goal_executor.execute(plan)
             self.state["companion_goal_execution"] = result
             return result
@@ -1113,6 +1160,24 @@ class AutonomyBrain(
             execution = self.execute_companion_goal({"goal_plan": plan})
             result = self.goal_auto_execute_gate.mark_execution(decision, execution)
             self.state["companion_auto_execute"] = result
+            
+            # TRIGGER REFLECTION LOOP if it was an LLM plan
+            if plan.get("behavior") == "llm_generated_action" and hasattr(self, "reflection_planner"):
+                needs = self.get_needs_snapshot() if hasattr(self, "get_needs_snapshot") else {}
+                vision = self.state.get("vision_context_needs", {}).get("summary", "no context")
+                
+                # Asynchronously reflect and store
+                def _reflect_and_store():
+                    try:
+                        reflection_mem = self.reflection_planner.reflect(plan, result, needs, vision)
+                        if reflection_mem:
+                            self.observe_world_memory(reflection_mem, source="reflection_planner")
+                    except Exception as e:
+                        logger.error(f"Reflection failed: {e}")
+                
+                import threading
+                threading.Thread(target=_reflect_and_store, daemon=True).start()
+                
             return result
         except Exception as exc:
             return {"ok": False, "available": False, "should_execute": False, "executed": False, "error": str(exc)}
@@ -1148,20 +1213,42 @@ class AutonomyBrain(
 
     def get_needs_snapshot(self) -> dict:
         try:
+            recent_reflections = []
+            if hasattr(self, "world_memory"):
+                try:
+                    recent = self.world_memory.recent(kind="reflection", limit=5)
+                    recent_reflections = recent.get("items", [])
+                except Exception:
+                    pass
+            
+            tool_schemas = []
+            if getattr(self, "agent", None) and hasattr(self.agent, "tool_registry"):
+                tool_schemas = self.agent.tool_registry.schemas
+
             if hasattr(self, "living_needs") and bool(getattr(self.living_needs, "cfg", {}).get("enabled", True)):
                 current = self.state.get("living_needs")
                 if isinstance(current, dict) and current:
                     data = dict(current)
                     data["available"] = True
+                    data["recent_reflections"] = recent_reflections
+                    data["tool_schemas"] = tool_schemas
                     return data
-                return self.tick_living_needs()
+                data = self.tick_living_needs()
+                data["recent_reflections"] = recent_reflections
+                data["tool_schemas"] = tool_schemas
+                return data
             if hasattr(self, "needs_engine"):
                 current = self.state.get("companion_needs")
                 if isinstance(current, dict) and current:
                     data = dict(current)
                     data["available"] = True
+                    data["recent_reflections"] = recent_reflections
+                    data["tool_schemas"] = tool_schemas
                     return data
-                return self.needs_engine.snapshot()
+                data = self.needs_engine.snapshot()
+                data["recent_reflections"] = recent_reflections
+                data["tool_schemas"] = tool_schemas
+                return data
         except Exception as exc:
             return {"ok": False, "available": False, "error": str(exc)}
         return {"ok": False, "available": False, "reason": "needs_engine_missing"}
