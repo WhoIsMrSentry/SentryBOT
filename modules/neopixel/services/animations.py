@@ -14,6 +14,57 @@ except Exception:
 Color = Tuple[int, int, int]
 
 
+def eye_eyebrow(
+    driver: NeoDriver,
+    color: Color,
+    iterations: int = 1,
+    wait: float = 0.05,
+    jewel_start: int = 0,
+    jewel_count: int = 7,
+    center_rel: int = 0,
+    stick_start: int = 7,
+    stick_count: int = 16
+) -> None:
+    """
+    Explicit animation for the eye (jewel) and eyebrows (sticks).
+    This performs a few pulses.
+    """
+    n = driver.num_leds
+    opp = (255 - color[0], 255 - color[1], 255 - color[2])
+    
+    half_stick = stick_count // 2
+    sticks = []
+    if half_stick > 0:
+        sticks.append((stick_start, half_stick))
+        sticks.append((stick_start + half_stick, stick_count - half_stick))
+    else:
+        sticks.append((stick_start, stick_count))
+
+    for _ in range(max(1, iterations)):
+        for step in range(20):
+            phase = step / 20.0
+            pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(phase * 2 * math.pi))
+            
+            for rel in range(jewel_count):
+                idx = jewel_start + rel
+                if idx >= n: break
+                if rel == center_rel:
+                    driver.set(idx, int(opp[0] * pulse), int(opp[1] * pulse), int(opp[2] * pulse))
+                else:
+                    driver.set(idx, int(color[0] * 0.15), int(color[1] * 0.15), int(color[2] * 0.15))
+            
+            eyebrow_pulse = 0.2 + 0.5 * (0.5 + 0.5 * math.cos(phase * math.pi))
+            for stick_start_idx, stick_len in sticks:
+                for i in range(stick_len):
+                    idx = stick_start_idx + i
+                    if idx >= n: break
+                    arch_factor = math.sin((i / max(1, stick_len - 1)) * math.pi) if stick_len > 1 else 1.0
+                    intensity = eyebrow_pulse * (0.4 + 0.6 * arch_factor)
+                    driver.set(idx, int(color[0] * intensity), int(color[1] * intensity), int(color[2] * intensity))
+            
+            driver.show()
+            time.sleep(wait)
+
 def _clamp(x: float, lo: int = 0, hi: int = 255) -> int:
     return max(lo, min(hi, int(x)))
 
