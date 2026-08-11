@@ -203,6 +203,50 @@ class CompanionGoalExecutor:
 
     @staticmethod
     def _translate_step(action: Dict[str, Any]) -> Dict[str, Any]:
+        # Handle raw LLM tool calls
+        tool = str(action.get("tool") or "").strip().lower()
+        if tool:
+            if tool == "speak":
+                return {
+                    "component": "speak",
+                    "method": "POST",
+                    "url": "/speak/say",
+                    "risk": "low",
+                    "capability": "speech.short_prompt",
+                    "params": dict(action),
+                    "payload": dict(action),
+                }
+            if tool == "move_head":
+                return {
+                    "component": "piservo",
+                    "method": "POST",
+                    "url": "/piservo/move_head",
+                    "risk": "low",
+                    "capability": "motion.head",
+                    "params": dict(action),
+                    "payload": dict(action),
+                }
+            if tool == "oled_face":
+                return {
+                    "component": "expression",
+                    "method": "POST",
+                    "url": "/expression/face",
+                    "risk": "none",
+                    "capability": "expression.face",
+                    "params": dict(action),
+                    "payload": dict(action),
+                }
+            if tool == "set_lights":
+                return {
+                    "component": "expression",
+                    "method": "POST",
+                    "url": "/expression/lights",
+                    "risk": "none",
+                    "capability": "expression.lights",
+                    "params": dict(action),
+                    "payload": dict(action),
+                }
+
         action_type = str(action.get("type") or "").strip().lower()
         if action_type == "expression":
             event = action.get("event")
