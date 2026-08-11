@@ -109,10 +109,12 @@ class ActionArbiter:
         self,
         default_cooldown_s: float = 0.5,
         dedup_window_s: float = 2.0,
+        safety_filter: Any = None,
     ) -> None:
         self._lock = threading.Lock()
         self._default_cooldown_s = max(0.1, float(default_cooldown_s))
         self._dedup_window_s = max(0.2, float(dedup_window_s))
+        self.safety_filter = safety_filter
 
         # cooldown_key -> expiry timestamp
         self._cooldowns: Dict[str, float] = {}
@@ -190,6 +192,16 @@ class ActionArbiter:
         last = self._recent_dispatches.get(dedup_key, 0.0)
         if now - last < self._dedup_window_s:
             return {"ok": False, "reason": "duplicate"}
+
+        # 4.5 Safety Check (if enabled)
+        if self.safety_filter and hasattr(self.safety_filter, "check_action_safety"):
+            safety_res = self.safety_filter.check_action_safety(req.type, req.payload)
+            if not safety_res.get("safe", True):
+                return {
+                    "ok": False,
+                    "reason": "safety_blocked",
+                    "message": safety_res.get("message", "Action blocked by Safety Engine.")
+                }
 
         # 5. Exclusive resource check
         group = _EXCLUSIVE_GROUPS.get(req.type)

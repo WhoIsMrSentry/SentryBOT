@@ -758,7 +758,7 @@ class ToolRegistry:
                             },
                             "tone": {
                                 "type": "string",
-                                "description": "Optional emotional tone (e.g. neutral, happy, sad, excited, calm).",
+                                "description": "Optional emotional tone based on internal state (e.g. neutral, happy, sad, excited, tired, calm). Use this to reflect your mood.",
                             },
                             "language": {
                                 "type": "string",
@@ -894,6 +894,72 @@ class ToolRegistry:
                 },
             },
         )
+        
+        self._register(
+            self.print_to_lcd,
+            {
+                "type": "function",
+                "function": {
+                    "name": "print_to_lcd",
+                    "description": "Write text to the robot's front LCD screen. Used to display short messages.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "top": {
+                                "type": "string",
+                                "description": "Text for the top line (max 16 chars).",
+                            },
+                            "bottom": {
+                                "type": "string",
+                                "description": "Text for the bottom line (max 16 chars).",
+                            },
+                        },
+                        "required": ["top", "bottom"],
+                    },
+                },
+            },
+        )
+
+        self._register(
+            self.get_last_rfid,
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_last_rfid",
+                    "description": "Get the UID of the last scanned RFID tag. Useful to check who last interacted with the robot.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                    },
+                },
+            },
+        )
+
+        self._register(
+            self.move_direct,
+            {
+                "type": "function",
+                "function": {
+                    "name": "move_direct",
+                    "description": "Directly control the robot's driving motors to move forward, backward, left, or right.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "direction": {
+                                "type": "string",
+                                "enum": ["forward", "backward", "left", "right"],
+                                "description": "Direction to move.",
+                            },
+                            "amount": {
+                                "type": "integer",
+                                "description": "Amount to move in relative motor steps (e.g. 500 for a small movement).",
+                            },
+                        },
+                        "required": ["direction", "amount"],
+                    },
+                },
+            },
+        )
 
     # ==========================================
     # TOOL LOGIC
@@ -908,6 +974,49 @@ class ToolRegistry:
         return (
             f"Head moved to pan={safe_pan}, tilt={safe_tilt}. Hardware response: {resp}"
         )
+
+    def print_to_lcd(self, top: str, bottom: str) -> str:
+        if not self.client:
+            return "Error: Hardware client disconnected."
+        try:
+            from modules.arduino_serial.contract import build_lcd_cmd
+            resp = self.client._arduino_request(build_lcd_cmd(top, bottom))
+            return f"Printed to LCD: '{top}' / '{bottom}'"
+        except Exception as e:
+            return f"Failed to print to LCD: {e}"
+
+    def get_last_rfid(self) -> str:
+        if not self.client:
+            return "Error: Hardware client disconnected."
+        try:
+            resp = self.client._arduino_request({"cmd": "rfid_last"})
+            if isinstance(resp, dict) and resp.get("ok"):
+                return f"Last RFID: {resp.get('rfid', 'None')}"
+            return f"Last RFID Response: {resp}"
+        except Exception as e:
+            return f"Failed to get RFID: {e}"
+
+    def move_direct(self, direction: str, amount: int) -> str:
+        if not self.client:
+            return "Error: Hardware client disconnected."
+        try:
+            left_val = amount
+            right_val = amount
+            if direction == "backward":
+                left_val = -amount
+                right_val = -amount
+            elif direction == "left":
+                left_val = -amount
+                right_val = amount
+            elif direction == "right":
+                left_val = amount
+                right_val = -amount
+                
+            resp_l = self.client._arduino_request({"cmd": "stepper", "id": 0, "mode": "pos", "value": left_val})
+            resp_r = self.client._arduino_request({"cmd": "stepper", "id": 1, "mode": "pos", "value": right_val})
+            return f"Moved {direction} by {amount}. L:{resp_l} R:{resp_r}"
+        except Exception as e:
+            return f"Failed to move: {e}"
 
     def play_sound(self, name: str) -> str:
         if not self.client:
@@ -978,6 +1087,23 @@ class ToolRegistry:
             )
             self.client.oled_show(render.oled)
             self.client.push_interaction_event(f"emotion:{canon}")
+            
+            # Synchronize head motion preset
+            head_presets = {
+                "joy": (90, 110),
+                "curiosity": (105, 95),
+                "sadness": (90, 70),
+                "fear": (80, 85),
+                "anger": (95, 90),
+                "neutral": (90, 90)
+            }
+            if canon in head_presets:
+                p, t = head_presets[canon]
+                try:
+                    self.move_head(p, t)
+                except Exception:
+                    pass
+                    
             return f"Expressed emotion: {canon}"
         self.client.push_interaction_event(f"emotion:{canon}")
         return f"Internal emotion set to: {canon}"
