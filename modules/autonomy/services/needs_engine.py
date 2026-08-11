@@ -212,19 +212,21 @@ class CompanionNeedsEngine:
             return "rest", "stay_asleep"
         if speech_busy:
             return "conversation", "listen_and_respond"
-        if scores.get("safety", 100.0) < 55.0:
-            return "safety", "pause_and_observe"
-        if scores.get("rest", 0.0) >= 72.0:
-            return "rest", "rest_quietly"
-        if scores.get("social", 0.0) >= 70.0:
-            return "social", "seek_owner_or_invite_interaction"
-        if scores.get("exploration", 0.0) >= 68.0:
-            return "exploration", "look_around_and_learn"
-        if scores.get("boredom", 0.0) >= 60.0:
-            return "boredom", "choose_idle_activity"
-        if scores.get("curiosity", 0.0) >= 65.0:
-            return "curiosity", "inspect_environment"
-        return "balance", "calm_idle"
+            
+        max_score = 0.0
+        dominant = "balance"
+        
+        for k, v in scores.items():
+            if k == "owner_proximity": continue
+            if k == "safety" and v < 55.0:
+                return "safety", "pause_and_observe"
+                
+            if v > max_score and v >= 60.0:
+                max_score = v
+                dominant = k
+                
+        goal = "llm_behavior_planning" if dominant != "balance" else "calm_idle"
+        return dominant, goal
 
     def _maybe_event(self, dominant: str, now_ts: float) -> str:
         if not self.enabled:
