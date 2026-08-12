@@ -85,6 +85,12 @@ jobs:
           fi
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
+      - name: Print pytest logs on failure
+        if: ${{ always() && steps.tests.outputs.exit_code != '0' && steps.tests.outputs.exit_code != '' }}
+        run: |
+          echo "=== Pytest Error Output ==="
+          cat pytest_output.txt
+
       - name: Diagnose abort source (exit 134)
         if: ${{ always() && steps.tests.outputs.exit_code == '134' }}
         continue-on-error: true
