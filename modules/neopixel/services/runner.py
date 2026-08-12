@@ -285,6 +285,13 @@ class NeoRunner:
         except Exception:
             return False
 
+    def stop(self) -> None:
+        try:
+            self.companion_set_mode("off")
+            self.clear()
+        except Exception:
+            pass
+
     # Exposed operations
     def clear(self) -> bool:
         if self.companion_is_active():
