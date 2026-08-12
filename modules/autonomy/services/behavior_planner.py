@@ -119,6 +119,11 @@ class BehaviorPlanner:
                 except Exception:
                     plan = []
             
+            if not plan:
+                logger.error("LLM returned empty plan!")
+                # Return a fallback plan that just sets neopixel to eye mode
+                return [{"tool": "set_neopixel", "effect": "eye", "native_tool_call": True}]
+            
             if isinstance(plan, list) and plan:
                 logger.info(f"Generated new goal queue with {len(plan)} actions.")
                 self.goal_queue.extend(plan)

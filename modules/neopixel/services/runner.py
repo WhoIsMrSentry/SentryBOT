@@ -485,6 +485,7 @@ class NeoRunner:
             "STACKED_BARS": lambda: stacked_bars(driver, 50, c1),
             "MULTI_GRADIENT": lambda: multi_color_gradient(driver, cols, iterations or 5) if cols else None,
             "MULTI_WAVE": lambda: multi_color_wave(driver, cols, iterations or 5) if cols else None,
+            "EYE_EYEBROW": lambda: eye_eyebrow(driver, c1 or (255, 255, 255), iterations or 1),
         }
         fn = _ANIM_MAP.get(name)
         if fn is None:
