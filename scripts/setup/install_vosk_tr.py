@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 from typing import Iterable, List
 
-TARGET = Path(__file__).resolve().parents[1] / "modules" / "speech" / "models" / "vosk-tr"
+TARGET = Path(__file__).resolve().parents[2] / "modules" / "speech" / "models" / "vosk-tr"
 
 # Turkish small model is 0.3 on alphacephei (0.22 removed). HF mirror is reliable on Pi.
 MODEL_URLS: List[str] = [
