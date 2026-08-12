@@ -153,5 +153,16 @@ class MoodManager:
         }
         return fallback.get(emotion, fallback["neutral"])
 
+    def get_speech_tone(self) -> dict:
+        """Returns rate, pitch, and speed adjustments based on current emotion."""
+        emotion = self.get_dominant_emotion()
+        if emotion in ["joy", "curiosity"]:
+            return {"speed": 1.15, "pitch": 1.1, "emotion": emotion}
+        elif emotion in ["sadness", "tired"]:
+            return {"speed": 0.85, "pitch": 0.9, "emotion": emotion}
+        elif emotion in ["fear", "anger", "furious"]:
+            return {"speed": 1.25, "pitch": 1.2, "emotion": emotion}
+        return {"speed": 1.0, "pitch": 1.0, "emotion": "neutral"}
+
     def __getitem__(self, key):
         return self.state.get(key)

@@ -42,6 +42,12 @@ class CompanionGoalSelector:
         self.enabled = bool(self.cfg.get("enabled", True))
         self._last_event_ts: float = 0.0
         self._last_plan_key: str = ""
+        
+        try:
+            from modules.autonomy.services.behavior_planner import BehaviorPlanner
+            self.behavior_planner = BehaviorPlanner(self.cfg)
+        except ImportError:
+            self.behavior_planner = None
 
     def select(
         self,
@@ -57,7 +63,7 @@ class CompanionGoalSelector:
         confidence = max(0.0, min(1.0, _as_float(snap.get("confidence"), 0.55)))
         scores = _as_dict(snap.get("scores"))
 
-        plan = self._plan_for(dominant, recommended, scores=scores, owner_present=owner_present)
+        plan = self._plan_for(dominant, recommended, scores=scores, owner_present=owner_present, snapshot=snap)
         pet_companion = self._pet_companion_decision(
             snap,
             dominant=dominant,
@@ -171,7 +177,30 @@ class CompanionGoalSelector:
         out["pet_companion"] = pet_companion
         return out
 
-    def _plan_for(self, dominant: str, recommended: str, *, scores: Dict[str, Any], owner_present: bool) -> Dict[str, Any]:
+    def _plan_for(self, dominant: str, recommended: str, *, scores: Dict[str, Any], owner_present: bool, snapshot: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if recommended == "llm_behavior_planning" and self.behavior_planner:
+            # The planner holds a queue of actions to avoid spamming the LLM
+            next_action = self.behavior_planner.get_next_action()
+            if not next_action:
+                # Need a new plan
+                # Pass a dummy vision context or ideally the real one if we had it
+                recent_ref = snapshot.get("recent_reflections", []) if snapshot else []
+                tool_schemas = snapshot.get("tool_schemas", []) if snapshot else []
+                new_plan = self.behavior_planner.generate_plan(snapshot or {}, "Robot is currently idle.", recent_reflections=recent_ref, tool_schemas=tool_schemas)
+                if new_plan:
+                    next_action = self.behavior_planner.get_next_action()
+            
+            if next_action:
+                # Construct a semantic plan from the LLM action
+                # E.g. {"tool": "speak", "text": "...", "tone": "tired"} -> action array
+                return {
+                    "behavior": "llm_generated_action",
+                    "priority": "normal",
+                    "expression_event": f"needs.{dominant}",
+                    "safe_to_execute": True,
+                    "actions": [next_action] # The arbiter will execute this raw tool call
+                }
+                
         if dominant == "safety":
             return {
                 "behavior": "pause_and_observe",

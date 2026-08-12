@@ -41,7 +41,7 @@ def test_needs_engine_wakeword_can_select_social_goal():
     )
     assert out["reasons"]["audio_context"]["wakeword"] is True
     assert out["dominant_need"] == "social"
-    assert out["recommended_goal"] == "seek_owner_or_invite_interaction"
+    assert out["recommended_goal"] == "llm_behavior_planning"
 
 
 def test_needs_engine_loud_audio_selects_safety_goal():

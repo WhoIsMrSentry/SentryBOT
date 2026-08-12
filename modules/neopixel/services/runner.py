@@ -23,6 +23,7 @@ try:
         color_wipe,
         random_blink,
         theater_chase as anim_theater_chase,
+        eye_eyebrow,
         snow as anim_snow,
         alternating_colors,
         multi_color_gradient,

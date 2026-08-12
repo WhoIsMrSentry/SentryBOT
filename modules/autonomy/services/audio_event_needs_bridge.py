@@ -70,6 +70,12 @@ class AudioEventNeedsBridge:
         loud = _as_bool(data.get("loud"), False) or _as_bool(data.get("loud_noise"), False) or event_type in {"loud", "loud_noise", "alarm", "bang"}
         owner_present = _as_bool(data.get("owner_present"), False) or wakeword or speech
         speech_busy = _as_bool(data.get("speech_busy"), False)
+        
+        # Extract sound direction (azimuth in degrees, e.g. -90 to +90)
+        sound_angle = _as_float(data.get("sound_angle", data.get("azimuth", 0.0)), 0.0)
+        # Convert azimuth to servo pan (90 is center)
+        suggested_pan = max(0, min(180, int(90 + sound_angle))) if sound_angle != 0.0 else None
+
         if wakeword or speech or owner_present:
             self._owner_last_heard_ts = ts
         result = {
@@ -85,6 +91,8 @@ class AudioEventNeedsBridge:
             "loud": bool(loud),
             "owner_present": bool(owner_present),
             "speech_busy": bool(speech_busy),
+            "sound_angle": sound_angle,
+            "suggested_pan": suggested_pan,
             "transcript": transcript,
             "confidence": round(confidence, 2),
             "reason": self._reason_for(wakeword=wakeword, speech=speech, sound=sound, silence=silence, loud=loud),
@@ -120,8 +128,10 @@ class AudioEventNeedsBridge:
             "sound": bool(st.get("sound")),
             "silence": bool(st.get("silence")),
             "loud": bool(st.get("loud")),
-            "speech_busy": bool(st.get("speech_busy")),
-            "transcript": st.get("transcript", ""),
+            "owner_audio_present": bool(owner_recent),
+            "sound_angle": st.get("sound_angle", 0.0),
+            "suggested_pan": st.get("suggested_pan"),
+            "transcript": str(st.get("transcript") or ""),
             "reason": st.get("reason", "audio.context"),
             "confidence": st.get("confidence", 0.0),
         }

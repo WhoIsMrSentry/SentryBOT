@@ -216,6 +216,7 @@ class WorldMemoryRAG:
                         "INSERT INTO memories_fts(id, kind, name, summary, tags) VALUES (?, ?, ?, ?, ?)",
                         (row["id"], row["kind"], row["name"], row["summary"], tags_text),
                     )
+            con.commit()
         return {"ok": True, "available": True, "created": created, "id": memory_id, "timestamp": now, "item": self.get(memory_id)}
 
     def get(self, memory_id: str) -> Dict[str, Any]:
@@ -303,7 +304,62 @@ class WorldMemoryRAG:
                 con.execute("DELETE FROM observations")
                 if self._fts_available:
                     con.execute("DELETE FROM memories_fts")
+            con.commit()
         return {"ok": True, "available": True, "deleted": int(count or 0)}
+
+    def prune_unimportant_memories(self, age_threshold_s: float = 86400 * 7, min_salience: float = 0.5) -> Dict[str, Any]:
+        """Deletes memories that are old, low salience, and low confidence."""
+        if not self.enabled:
+            return {"ok": False, "deleted": 0}
+        now = time.time()
+        cutoff_time = now - age_threshold_s
+        with closing(self._connect()) as con:
+            rows = con.execute(
+                "SELECT id FROM memories WHERE last_seen < ? AND salience < ? AND confidence < ?",
+                (cutoff_time, min_salience, min_salience)
+            ).fetchall()
+            ids_to_delete = [row[0] for row in rows]
+            
+            if not ids_to_delete:
+                return {"ok": True, "deleted": 0}
+                
+            for mid in ids_to_delete:
+                con.execute("DELETE FROM memories WHERE id=?", (mid,))
+                con.execute("DELETE FROM observations WHERE memory_id=?", (mid,))
+                if self._fts_available:
+                    con.execute("DELETE FROM memories_fts WHERE id=?", (mid,))
+            
+            con.commit()
+            
+        return {"ok": True, "deleted": len(ids_to_delete)}
+
+    def consolidate_memories(self) -> Dict[str, Any]:
+        """Dream cycle: merge highly repetitive but slightly distinct observations, boost salience of important ones."""
+        if not self.enabled:
+            return {"ok": False, "consolidated": 0}
+        
+        # A simple form of consolidation: if an object has > 10 observations, we boost its salience
+        # and delete old observations from the observations table to keep size small.
+        with closing(self._connect()) as con:
+            rows = con.execute("SELECT id, observation_count, salience FROM memories WHERE observation_count > 5").fetchall()
+            updated = 0
+            for row in rows:
+                mid = row[0]
+                count = row[1]
+                salience = float(row[2])
+                new_salience = min(1.0, salience + (count * 0.01))
+                
+                con.execute("UPDATE memories SET salience=? WHERE id=?", (new_salience, mid))
+                # Prune old observation events for this memory
+                con.execute(
+                    "DELETE FROM observations WHERE memory_id=? AND id NOT IN (SELECT id FROM observations WHERE memory_id=? ORDER BY ts DESC LIMIT 5)",
+                    (mid, mid)
+                )
+                updated += 1
+                
+            con.commit()
+                
+        return {"ok": True, "consolidated": updated}
 
     def status(self) -> Dict[str, Any]:
         with closing(self._connect()) as con:

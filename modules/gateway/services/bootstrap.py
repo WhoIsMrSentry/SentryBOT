@@ -920,6 +920,7 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         _try(lambda: _include_admin_ui(app, started, cfg), "admin_ui")
 
     _wire_arduino_neopixel(app, started, cfg)
+    _wire_arduino_autonomy(started)
     _wire_vlm_autonomy(started)
     _wire_onsensor_vlm(started)
     _wire_interactions_piservo(started)
@@ -1019,6 +1020,45 @@ def _wire_arduino_neopixel(app: FastAPI, started: Dict[str, object], cfg: Dict[s
         logger.info("arduino->neopixel event bridge mounted (rate-limited)")
     except Exception as exc:
         logger.warning("arduino->neopixel bridge mount failed: %s", exc)
+
+
+def _wire_arduino_autonomy(started: Dict[str, object]) -> None:
+    arduino = started.get("arduino")
+    autonomy = started.get("autonomy")
+    if arduino is None or autonomy is None or not hasattr(arduino, "register_event_handler"):
+        return
+    brain = getattr(autonomy, "brain", None)
+    if not brain or not hasattr(brain, "handle_hardware_event"):
+        return
+
+    def _on_arduino_hardware_event(msg: Dict[str, Any]) -> None:
+        if not isinstance(msg, dict):
+            return
+        event_name = msg.get("event")
+        cmd_name = msg.get("cmd")
+        
+        # Forward estop command responses as events too
+        if cmd_name == "estop" or event_name == "estop":
+            try:
+                brain.handle_hardware_event("estop", msg)
+            except Exception:
+                pass
+                
+        if not event_name:
+            return
+            
+        hardware_events = {"cliff", "bump", "impact", "obstacle_imminent", "cliff_detected", "ultra_dist"}
+        if event_name in hardware_events:
+            try:
+                brain.handle_hardware_event(event_name, msg)
+            except Exception as exc:
+                logger.debug("arduino hardware event routing to autonomy failed: %s", exc)
+
+    try:
+        arduino.register_event_handler(_on_arduino_hardware_event)
+        logger.info("arduino hardware -> autonomy reflex engine bridge mounted")
+    except Exception as exc:
+        logger.warning("arduino->autonomy bridge mount failed: %s", exc)
 
 
 def _wire_vlm_autonomy(started: Dict[str, object]) -> None:

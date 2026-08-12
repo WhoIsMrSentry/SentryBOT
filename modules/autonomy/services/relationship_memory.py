@@ -238,6 +238,35 @@ class RelationshipMemory:
                 "last_user_utterance": self.last_user_utterance(name),
                 "top_memory": top_memory[:180],
             }
+
+    def get_relationship_personality_bias(self, name: str) -> Dict[str, Any]:
+        """Calculates personality and tone bias depending on person familiarity and bond score."""
+        prof = self.social_profile(name)
+        is_owner = prof.get("is_owner", False)
+        seen_count = prof.get("seen_count", 0)
+        trust_score = prof.get("trust_score", 0.0)
+
+        if is_owner:
+            return {
+                "status": "owner",
+                "tone": "affectionate_and_warm",
+                "greeting_prefix": "Efendim!",
+                "trust_level": 100,
+            }
+        elif seen_count > 8 or trust_score > 5.0:
+            return {
+                "status": "friend",
+                "tone": "friendly_and_playful",
+                "greeting_prefix": "Tekrar merhaba!",
+                "trust_level": 70,
+            }
+        else:
+            return {
+                "status": "stranger",
+                "tone": "polite_and_reserved",
+                "greeting_prefix": "Merhaba, sizi tanıyamadım.",
+                "trust_level": 20,
+            }
         rec = self.get(name) or {}
         prefs = rec.get("preferences", {}) if isinstance(rec.get("preferences", {}), dict) else {}
         likes = prefs.get("likes", []) if isinstance(prefs.get("likes", []), list) else []

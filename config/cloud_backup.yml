@@ -1,0 +1,11 @@
+# SentryBOT Cloud Backup Configuration
+# IMPORTANT: Default is disabled (false) to ensure local privacy until explicitly enabled by user.
+
+cloud_backup:
+  enabled: false
+  provider: "http_custom" # Options: http_custom, s3
+  endpoint_url: "" # E.g., "https://backup.sentrybot.io/api/upload"
+  backup_interval_s: 3600 # Every 1 hour
+  include_databases: true # Upload social_db.sqlite, world_memory.db
+  include_images: false # Upload captured vision frames
+  auth_token: ""

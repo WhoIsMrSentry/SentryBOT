@@ -75,16 +75,10 @@ class IdleBehaviorPlanner:
         return parsed or default
 
     def pick(self, now: Optional[float] = None) -> Optional[IdleAction]:
-        now_ts = now if now is not None else time.time()
-        candidates: List[IdleAction] = []
-        for act in self.actions:
-            last = self._last_run.get(act.name, 0.0)
-            if now_ts - last >= act.min_interval_s:
-                candidates.append(act)
-        if not candidates:
-            return None
-        weights = [max(1, a.weight) for a in candidates]
-        return self._rng.choices(candidates, weights=weights, k=1)[0]
+        # Old random idle actions disabled in favor of the LLM Behavior Planner.
+        # The autonomy tick will now use the needs_engine -> companion_goal_selector -> behavior_planner
+        # to generate dynamic JSON ActionSchemas.
+        return None
 
     def stamp(self, action_name: str, now: Optional[float] = None) -> None:
         self._last_run[str(action_name).upper()] = now if now is not None else time.time()
