@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 from pathlib import Path
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 try:
@@ -48,7 +49,16 @@ def create_app(config_path: str | None = None) -> FastAPI:
         companion_cfg=cfg.get("companion", {}),
     )
 
-    app = FastAPI()
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        yield
+        try:
+            runner.companion_set_mode("off")
+            runner.clear()
+        except Exception:
+            pass
+
+    app = FastAPI(lifespan=lifespan)
     app.include_router(get_router(runner))
     return app
 
