@@ -45,7 +45,7 @@ jobs:
           python -m pip install --upgrade pip
           # Skip remote tool requirements that are not part of module test matrix
           python scripts/install_all_requirements.py --fail-fast --skip remote_tts_server
-          python -m pip install pytest
+          python -m pip install pytest httpx
           # WebRTC VAD is optional (speech.vad.enabled=false by default) and may abort at interpreter shutdown on CI.
           python -m pip uninstall -y webrtcvad || true
           # Optional audio backends are not required for unit tests and can trigger native shutdown crashes on CI.
