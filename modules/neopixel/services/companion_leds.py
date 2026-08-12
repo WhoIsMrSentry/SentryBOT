@@ -399,18 +399,38 @@ class CompanionLedController:
     def _render_eye_frame(self) -> None:
         with self._lock:
             eye = self._eye_color
-        self._clear_sticks()
+        
         self._eye_phase += self._tick_ms / max(200.0, self._eye_breathe_ms)
         pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(self._eye_phase * 2 * math.pi))
+        
+        # Calculate opposite color for the center LED
+        opp = (255 - eye[0], 255 - eye[1], 255 - eye[2])
+        
+        # Jewel: Eye
         for rel in range(self._jewel_count):
             idx = self._jewel_start + rel
             if idx >= self._driver.num_leds:
                 break
             if rel == self._center_rel:
-                self._driver.set(idx, int(eye[0] * pulse), int(eye[1] * pulse), int(eye[2] * pulse))
+                # Center LED is opposite color and pulses
+                self._driver.set(idx, int(opp[0] * pulse), int(opp[1] * pulse), int(opp[2] * pulse))
             else:
-                dim = tuple(int(c * 0.12) for c in eye)
-                self._driver.set(idx, *dim)
+                # Outer ring is base color, slightly dimmed
+                self._driver.set(idx, int(eye[0] * 0.15), int(eye[1] * 0.15), int(eye[2] * 0.15))
+                
+        # Sticks: Eyebrows
+        # Eyebrows will slowly shift/breathe in sync but offset from the eye pulse
+        eyebrow_pulse = 0.2 + 0.5 * (0.5 + 0.5 * math.cos(self._eye_phase * math.pi))
+        for stick in self._sticks:
+            for i in range(stick.count):
+                idx = stick.start + i
+                if idx >= self._driver.num_leds:
+                    break
+                # Arch effect: middle of the stick is brighter
+                arch_factor = math.sin((i / max(1, stick.count - 1)) * math.pi)
+                intensity = eyebrow_pulse * (0.4 + 0.6 * arch_factor)
+                self._driver.set(idx, int(eye[0] * intensity), int(eye[1] * intensity), int(eye[2] * intensity))
+
         self._driver.show()
 
     def _render_wake_spin_frame(self) -> bool:
