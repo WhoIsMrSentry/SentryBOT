@@ -217,9 +217,11 @@ class CompanionNeedsEngine:
         dominant = "balance"
         
         for k, v in scores.items():
-            if k == "owner_proximity": continue
-            if k == "safety" and v < 55.0:
-                return "safety", "pause_and_observe"
+            if k in ("owner_proximity", "energy"): continue
+            if k == "safety":
+                if v < 55.0:
+                    return "safety", "pause_and_observe"
+                continue
                 
             if v > max_score and v >= 60.0:
                 max_score = v
