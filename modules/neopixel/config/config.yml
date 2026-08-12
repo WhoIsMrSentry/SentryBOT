@@ -21,7 +21,7 @@ companion:
   layout:
     jewel_start: 0
     jewel_count: 7
-    jewel_center_index: 0
+    jewel_center_index: 6
     sticks:
       - { start: 7, count: 8, channel: 0 }
       - { start: 15, count: 8, channel: 1 }
