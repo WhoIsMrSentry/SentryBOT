@@ -284,4 +284,11 @@ jobs:
         if: ${{ always() && (steps.collect.outputs.exit_code != '0' || steps.tests.outputs.exit_code != '0') }}
         run: |
           echo "Pytest failed. collect_exit=${{ steps.collect.outputs.exit_code }} tests_exit=${{ steps.tests.outputs.exit_code }}"
+          echo "=== PYTEST ERROR LOGS ==="
+          if [ "${{ steps.collect.outputs.exit_code }}" != "0" ] && [ -f pytest_collect_output.txt ]; then
+            cat pytest_collect_output.txt
+          fi
+          if [ "${{ steps.tests.outputs.exit_code }}" != "0" ] && [ -f pytest_output.txt ]; then
+            cat pytest_output.txt
+          fi
           exit 1
