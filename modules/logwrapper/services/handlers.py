@@ -69,3 +69,10 @@ def build_formatter(json_format: bool) -> logging.Formatter:
     fmt = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
     datefmt = "%H:%M:%S"
     return logging.Formatter(fmt=fmt, datefmt=datefmt)
+
+
+class WarningOnlyFilter(logging.Filter):
+    """Allows WARNING records while keeping ERROR and CRITICAL in error logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return logging.WARNING <= record.levelno < logging.ERROR

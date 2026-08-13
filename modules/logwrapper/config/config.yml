@@ -53,3 +53,9 @@ module_levels:
   uvicorn.access: WARNING
   httpx: WARNING
   comtypes.client._code_cache: WARNING
+
+separate_files:
+  enabled: true
+  warnings_path: logs/warnings.log
+  errors_path: logs/errors.log
+  tui_path: logs/tui.log
