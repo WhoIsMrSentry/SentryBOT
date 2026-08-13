@@ -151,8 +151,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
             started = bootstrap(app, cfg)
             app.state.started = started  # make started available to runtime
+            started["_startup_health"] = {"ok": True, "stage": "ready", "started_services": sorted(k for k in started if not k.startswith("_"))}
+            app.state.startup_health = started["_startup_health"]  # type: ignore[attr-defined]
         except Exception as exc:
-            logger.warning("gateway bootstrap failed: %s", exc)
+            health = {"ok": False, "stage": "bootstrap", "error": str(exc)}
+            app.state.startup_health = health  # type: ignore[attr-defined]
+            app.state.started["_startup_health"] = health  # type: ignore[attr-defined]
+            logger.exception("gateway bootstrap failed; health will report degraded state")
 
         # Mount core router after bootstrap so it receives the started dict reference
         try:

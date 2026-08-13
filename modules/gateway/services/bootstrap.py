@@ -960,6 +960,16 @@ def _wire_arduino_neopixel(app: FastAPI, started: Dict[str, object], cfg: Dict[s
     if arduino is None or neopixel is None or not hasattr(arduino, "register_event_handler"):
         return
     import threading
+    bridge_cfg = cfg.get("arduino_neopixel_bridge", {})
+    bridge_cfg = bridge_cfg if isinstance(bridge_cfg, dict) else {}
+    lease_cfg = bridge_cfg.get("expression_lease", {})
+    lease_cfg = lease_cfg if isinstance(lease_cfg, dict) else {}
+    lease_enabled = bool(lease_cfg.get("enabled", False))
+    lease_source = str(lease_cfg.get("source") or "").strip()
+    lease_priority = lease_cfg.get("priority")
+    lease_ttl_s = lease_cfg.get("ttl_s")
+    lease_force = bool(lease_cfg.get("force", False))
+
     _np_lock = threading.Lock()
     _np_queue: list[Dict[str, Any]] = []
     _np_last_ms = 0
@@ -982,6 +992,19 @@ def _wire_arduino_neopixel(app: FastAPI, started: Dict[str, object], cfg: Dict[s
             if now_ms - _np_last_ms < _np_min_interval_ms:
                 return
             req = _np_queue.pop(0)
+        if lease_enabled:
+            arbiter = started.get("expression_arbiter")
+            if arbiter is None or not lease_source or not hasattr(arbiter, "claim_lights"):
+                logger.warning("arduino neopixel request rejected: expression lease is unavailable")
+                return
+            if not arbiter.claim_lights(
+                lease_source,
+                force=lease_force,
+                priority=lease_priority,
+                ttl_s=lease_ttl_s,
+            ):
+                logger.debug("arduino neopixel request rejected by expression lease")
+                return
         try:
             name = str(req.get("name", "")).strip()
             iterations = int(req.get("iterations", 1) or 1)
