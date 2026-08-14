@@ -560,6 +560,17 @@ class NeoRunner:
         self._companion.set_eye_color((int(r) & 255, int(g) & 255, int(b) & 255))
         return True
 
+    def companion_apply_semantic(self, semantic: str, *, revision: str = "", duration_ms: Optional[int] = None) -> bool:
+        if self._companion is None:
+            return False
+        self._cancel_animations()
+        return self._companion.apply_semantic(semantic, revision=revision, duration_ms=duration_ms)
+
+    def companion_semantic_catalog(self) -> dict[str, Any]:
+        if self._companion is None:
+            return {}
+        return self._companion.semantic_catalog()
+
     def companion_status(self) -> dict[str, Any]:
         if self._companion is None:
             return {"enabled": False, "mode": "off"}

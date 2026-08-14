@@ -110,6 +110,12 @@ def _parse_color_fields(req: AnimateRequest):
     return None
 
 
+class CompanionSemanticRequest(BaseModel):
+    semantic: str = Field(..., min_length=1, description="Human-readable pet expression semantic")
+    revision: str = Field("", max_length=128)
+    duration_ms: Optional[int] = Field(None, ge=100, le=15000)
+
+
 def get_router(runner: NeoRunner) -> APIRouter:
     r = APIRouter(prefix="/neopixel")
     # Expose available animation names for UI/Swagger (friendly view)
@@ -315,6 +321,25 @@ def get_router(runner: NeoRunner) -> APIRouter:
             "iterations": body.iterations,
             "segment": body.segment,
         }
+
+    @r.get("/companion/semantics")
+    def companion_semantics():
+        return {"ok": True, "semantics": runner.companion_semantic_catalog()}
+
+    @r.post("/companion/semantic")
+    def companion_semantic(body: CompanionSemanticRequest = Body(...)):
+        ok = runner.companion_apply_semantic(
+            body.semantic,
+            revision=body.revision,
+            duration_ms=body.duration_ms,
+        )
+        return {
+            "ok": ok,
+            "semantic": body.semantic,
+            "revision": body.revision,
+            "status": runner.companion_status(),
+        }
+
 
     @r.get("/companion/status")
     def companion_status():
