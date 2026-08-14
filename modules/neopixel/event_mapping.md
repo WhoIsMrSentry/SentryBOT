@@ -176,3 +176,38 @@ curl -X POST 'http://localhost:8092/animate/run?name=COMET&speed=1.0&loop=false'
 ## Son notlar
 - Eşlemeler proje içinde zaten çok büyük oranda tanımlıydı; eksik olan `emotion_*` ve `temp_owner` presetleri eklendi ve `_sync_emotion` artık scene çağırıyor.
 - İstersen bu dosyayı CSV/JSON formatına da dönüştüreyim veya `README` içine özet olarak ekleyeyim.
+
+
+## Semantik Pet İfade Kataloğu (Refactor)
+
+> Otonomi, fiziksel LEDlere ham efekt adı göndermek yerine önce semantik niyet seçer. `GET /neopixel/companion/semantics` niyetin insan dilindeki açıklamasını; `POST /neopixel/companion/semantic` aynı niyeti göz ve iki kaş framei olarak uygular.
+
+| Semantik niyet | Kullanıcıya görünen anlam | Görsel gerçekleştirme |
+|---|---|---|
+| `ambient_idle` | Sakin, uyanık ve çevreyi dinliyor. | BREATHE temelli nötr göz-kaş framei. |
+| `quiet_observation` | Sessizce çevreyi gözlemliyor. | Nötr kaşlar ve yumuşak mavi göz. |
+| `curious_scan` | Yeni bir nesne veya sesi merakla inceliyor. | WAVE ritmi, kalkık/kemerli kaşlar. |
+| `social_greeting` | Tanıdık biriyle olumlu sosyal temas kuruyor. | PULSE, memnun kaş pozu ve sıcak göz. |
+| `focused_attention` | Konuşanı ya da hedefi dikkatle dinliyor. | STACK, odaklanmış kaşlar ve altın göz. |
+| `frustrated_cooldown` | Başarısızlıktan sonra güvenli biçimde sakinleşiyor. | GRADIENT, düşük enerjili turuncu ifade. |
+| `sleep_transition` | Dinlenme/uyku moduna geçiyor. | SNOW, sönen göz ve uykulu kaşlar. |
+
+### Ham Efektlerin Anlaşılır Sınıflandırması
+
+| Efekt | Anlam / izinli kullanım |
+|---|---|
+| `EYE_EYEBROW` | Birleşik göz ve iki kaş pet yüz ifadesi; çevresel niyetlerde öncelikli efekt. |
+| `BREATHE` | Sakin hazır olma, dinleme veya düşük enerjili boşta kalma. |
+| `PULSE` | Kısa onay, olumlu fark ediş veya sosyal selamlama. |
+| `WAVE`, `M_WAVE` | Merak, çevre tarama veya algılanan yeni hedefe yönelme. |
+| `STACK` | Düşünme/işleme veya dikkatli dinleme. |
+| `GRADIENT`, `M_GRAD` | Bir duygu/enerji durumundan diğerine yumuşak geçiş. |
+| `TWINKLE` | Güvenli oyuncu/sosyal sevinç; uzun süreli boşta kullanım değil. |
+| `CHASE`, `RUN`, `COMET` | Güvenli hedef takibi ya da odak hareketi; navigasyon reddedilirse yalnız yüz ifadesi kalır. |
+| `BOUNCE` | Kısa, oyuncu keşif/sosyal davet; enerji ve güvenlik uygunsa. |
+| `SNOW` | Uykuya geçiş, sakinleşme veya düşük enerjili dinlenme. |
+| `RAINBOW`, `RAINBOW_CYCLE`, `ALT` | Dekoratif/parti/test efekti; otonomi bunları birincil duygu göstergesi olarak seçmez. |
+| `METEOR`, `FIRE` | Uyarı, özel sahne veya tanılama; normal pet duygusunun varsayılanı değildir. |
+| `WIPE`, `BLINK` | Kısa sistem geri bildirimi veya kalibrasyon; uzun süreli pet yüz ifadesi değildir. |
+
+> Kural: Güvenlik ve sahiplik denetiminden geçmeyen ham animasyon çağrısı pet niyetini ezemez. Admin/test amaçlı dekoratif efektler semantik yüz frameinden ayrı tutulur.
