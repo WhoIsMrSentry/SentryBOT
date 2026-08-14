@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 import json
+import random
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -45,6 +46,27 @@ class TopomapMotionExecutor:
     def list_map(self) -> Dict[str, Any]:
         return {"ok": True, "available": True, "map": self._load(), "status": self.status()}
     def learn_place(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        # Topomap place tags are normalized before persistence.
+        payload = dict(payload or {})
+        validation = self.cfg.get("place_validation", {})
+        validation = validation if isinstance(validation, dict) else {}
+        raw_tags = payload.get("tags", [])
+        raw_tags = raw_tags.split(",") if isinstance(raw_tags, str) else raw_tags
+        tags = sorted({str(tag).strip() for tag in raw_tags if str(tag).strip()}) if isinstance(raw_tags, (list, tuple, set)) else []
+        allowed_tags = {str(tag).strip() for tag in validation.get("allowed_tags", []) if str(tag).strip()}
+        if allowed_tags and not set(tags).issubset(allowed_tags):
+            return {"ok": False, "reason": "unsupported_place_tag", "tags": tags}
+        safe_required_for = {str(tag).strip() for tag in validation.get("safe_required_for", []) if str(tag).strip()}
+        if set(tags).intersection(safe_required_for) and "safe" not in tags:
+            return {"ok": False, "reason": "safe_tag_required", "tags": tags}
+        distance_required_for = {str(tag).strip() for tag in validation.get("distance_required_for", []) if str(tag).strip()}
+        if set(tags).intersection(distance_required_for) and _float(payload.get("distance_from_owner_m"), -1.0) < 0.0:
+            return {"ok": False, "reason": "owner_distance_required", "tags": tags}
+        motion_required_for = {str(tag).strip() for tag in validation.get("motion_required_for", []) if str(tag).strip()}
+        has_motion = any(isinstance(payload.get(key), list) and payload.get(key) for key in ("steps", "plan", "actions"))
+        if set(tags).intersection(motion_required_for) and not has_motion:
+            return {"ok": False, "reason": "motion_plan_required", "tags": tags}
+        payload["tags"] = tags
         body = payload if isinstance(payload, dict) else {}
         place_id = str(body.get("id") or body.get("name") or f"place_{int(time.time())}").strip()
         place = {"id": place_id, "name": str(body.get("name") or place_id), "kind": str(body.get("kind") or "place"), "summary": str(body.get("summary") or "learned topomap place"), "safety_score": max(0.0, min(1.0, _float(body.get("safety_score"), 0.6))), "motion_plan": body.get("motion_plan") if isinstance(body.get("motion_plan"), list) else [], "created_ts": time.time(), "last_seen": time.time(), "details": body.get("details") if isinstance(body.get("details"), dict) else {}}
@@ -113,5 +135,53 @@ class TopomapMotionExecutor:
             return {"ok": False, "reason": "unknown_step", "step": step}
         except Exception as exc:
             return {"ok": False, "reason": str(exc), "step": step}
+
+    def execute_companion_policy(self, policy_name: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        policies = self.cfg.get("companion_policies", {})
+        policies = policies if isinstance(policies, dict) else {}
+        policy = policies.get(str(policy_name or ""), {})
+        policy = policy if isinstance(policy, dict) else {}
+        if not bool(policy.get("enabled", False)):
+            return {"ok": False, "reason": "companion_policy_disabled", "policy": policy_name}
+        required_tags = {str(tag).strip() for tag in policy.get("required_tags", []) if str(tag).strip()}
+        minimum_distance = _float(policy.get("minimum_distance_from_owner_m"), 0.0)
+        places = self._load().get("places", [])
+        candidates = []
+        for place in places if isinstance(places, list) else []:
+            if not isinstance(place, dict):
+                continue
+            tags = {str(tag).strip() for tag in place.get("tags", []) if str(tag).strip()}
+            if not required_tags.issubset(tags):
+                continue
+            distance = _float(place.get("distance_from_owner_m"), -1.0)
+            if minimum_distance > 0.0 and distance < minimum_distance:
+                continue
+            steps = place.get("steps") or place.get("plan") or place.get("actions")
+            if not isinstance(steps, list) or not steps:
+                continue
+            candidates.append(place)
+        if not candidates:
+            return {"ok": False, "reason": "no_safe_topomap_candidate", "policy": policy_name}
+        max_attempts = max(1, int(policy.get("max_attempts", 1) or 1))
+        remaining = list(candidates)
+        attempts = []
+        last_result: Dict[str, Any] = {"ok": False, "reason": "no_safe_topomap_candidate"}
+        while remaining and len(attempts) < max_attempts:
+            selected = random.choice(remaining) if str(policy.get("selection") or "").lower() == "random" else remaining[0]
+            remaining.remove(selected)
+            result = self.execute_goal({"steps": selected.get("steps") or selected.get("plan") or selected.get("actions")})
+            result["policy"] = policy_name
+            result["selected_place"] = str(selected.get("name") or "")
+            attempts.append({"place": result["selected_place"], "ok": bool(result.get("ok")), "reason": result.get("reason")})
+            if result.get("ok"):
+                result["recovery"] = {"attempts": attempts, "fallback_behavior": None}
+                return result
+            last_result = result
+        last_result["policy"] = policy_name
+        last_result["recovery"] = {
+            "attempts": attempts,
+            "fallback_behavior": str(policy.get("fallback_behavior") or ""),
+        }
+        return last_result
 
 __all__ = ["TopomapMotionExecutor"]
