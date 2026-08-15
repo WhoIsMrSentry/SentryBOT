@@ -41,3 +41,12 @@ def test_json_fallback_extracts_preferences(tmp_path):
     rm.add_chat("Ali", "user", "seviyorum muzik")
     profile = rm.social_profile("Ali")
     assert any("muzik" in str(x) for x in profile.get("likes", []))
+
+def test_relationship_memory_classifies_owner_and_guest():
+    mem = RelationshipMemory(enabled=True, social_db=False)
+    mem._social_db = None
+    mem.observe_person("owner", is_owner=True)
+    mem.observe_person("guest", is_owner=False)
+    assert mem.classify_person("owner") == "owner"
+    assert mem.classify_person("guest") == "known_guest"
+    assert mem.classify_person("stranger") == "unknown_guest"

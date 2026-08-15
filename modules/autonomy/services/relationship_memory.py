@@ -85,6 +85,27 @@ class RelationshipMemory:
             rec["last_emotion"] = str(emotion)
         self._persist()
 
+    def classify_person(self, name: str, *, known_guest_min_seen_count: int = 0) -> str:
+        """Return the privacy-safe social type without creating a new person record."""
+        key = self._normalize(name)
+        if not key:
+            return "unknown_guest"
+        record: Dict[str, Any] = {}
+        if self._social_db is not None:
+            try:
+                found = self._social_db.persons.get_by_name(name)
+                record = dict(found) if isinstance(found, dict) else {}
+            except Exception:
+                record = {}
+        else:
+            record = dict(self._people.get(key) or {})
+        if bool(record.get("is_owner") or record.get("owner_priority")):
+            return "owner"
+        seen_count = int(record.get("seen_count") or record.get("sightings_count") or 0)
+        if record and seen_count >= max(0, int(known_guest_min_seen_count)):
+            return "known_guest"
+        return "unknown_guest"
+
     def add_chat(self, name: str, role: str, text: str) -> None:
         if not self.enabled:
             return
@@ -238,6 +259,28 @@ class RelationshipMemory:
                 "last_user_utterance": self.last_user_utterance(name),
                 "top_memory": top_memory[:180],
             }
+        rec = self.get(name) or {}
+        prefs = rec.get("preferences", {}) if isinstance(rec.get("preferences", {}), dict) else {}
+        likes = prefs.get("likes", []) if isinstance(prefs.get("likes", []), list) else []
+        dislikes = prefs.get("dislikes", []) if isinstance(prefs.get("dislikes", []), list) else []
+        topics = prefs.get("topics", []) if isinstance(prefs.get("topics", []), list) else []
+        self._decay_moments(rec)
+        moments = rec.get("moments", []) if isinstance(rec.get("moments", []), list) else []
+        top_memory = ""
+        if moments:
+            moments.sort(key=lambda m: float(m.get("score", 0.0)), reverse=True)
+            top_memory = str((moments[0] or {}).get("text", "")).strip()
+        return {
+            "name": rec.get("name", name),
+            "is_owner": bool(rec.get("is_owner", False)),
+            "seen_count": int(rec.get("seen_count", 0) or 0),
+            "trust_score": float(rec.get("trust_score", 0.0) or 0.0),
+            "likes": likes[:5],
+            "dislikes": dislikes[:5],
+            "topics": topics[:6],
+            "last_user_utterance": self.last_user_utterance(name),
+            "top_memory": top_memory[:180],
+        }
 
     def get_relationship_personality_bias(self, name: str) -> Dict[str, Any]:
         """Calculates personality and tone bias depending on person familiarity and bond score."""
@@ -267,28 +310,6 @@ class RelationshipMemory:
                 "greeting_prefix": "Merhaba, sizi tanıyamadım.",
                 "trust_level": 20,
             }
-        rec = self.get(name) or {}
-        prefs = rec.get("preferences", {}) if isinstance(rec.get("preferences", {}), dict) else {}
-        likes = prefs.get("likes", []) if isinstance(prefs.get("likes", []), list) else []
-        dislikes = prefs.get("dislikes", []) if isinstance(prefs.get("dislikes", []), list) else []
-        topics = prefs.get("topics", []) if isinstance(prefs.get("topics", []), list) else []
-        self._decay_moments(rec)
-        moments = rec.get("moments", []) if isinstance(rec.get("moments", []), list) else []
-        top_memory = ""
-        if moments:
-            moments.sort(key=lambda m: float(m.get("score", 0.0)), reverse=True)
-            top_memory = str((moments[0] or {}).get("text", "")).strip()
-        return {
-            "name": rec.get("name", name),
-            "is_owner": bool(rec.get("is_owner", False)),
-            "seen_count": int(rec.get("seen_count", 0) or 0),
-            "trust_score": float(rec.get("trust_score", 0.0) or 0.0),
-            "likes": likes[:5],
-            "dislikes": dislikes[:5],
-            "topics": topics[:6],
-            "last_user_utterance": self.last_user_utterance(name),
-            "top_memory": top_memory[:180],
-        }
 
     def build_social_context(self, current_speaker: str = "") -> str:
         if not self.enabled:

@@ -423,4 +423,5 @@ ANIMATIONS = {
     "BOUNCE": bouncing_ball,
     "RUN": running_lights,
     "STACK": stacked_bars,
+    "EYE_EYEBROW": eye_eyebrow,
 }

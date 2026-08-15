@@ -48,6 +48,8 @@ class PiSsd1306Driver:
     def close(self) -> None:
         try:
             if self._bus is not None:
+                self.clear()
+                self.flush()
                 self._bus.close()
         except Exception:
             pass

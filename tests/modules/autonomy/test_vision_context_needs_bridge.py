@@ -39,7 +39,7 @@ def test_needs_engine_vision_new_object_recommends_exploration_or_curiosity():
         scene={"new_object": True},
     )
     assert out["scores"]["curiosity"] >= 80
-    assert out["recommended_goal"] in {"look_around_and_learn", "inspect_environment"}
+    assert out["recommended_goal"] == "llm_behavior_planning"
 
 
 def test_needs_engine_hazard_overrides_to_safety():

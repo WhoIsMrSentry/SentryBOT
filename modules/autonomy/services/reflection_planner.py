@@ -11,7 +11,10 @@ logger = logging.getLogger("autonomy.reflection")
 class ReflectionPlanner:
     def __init__(self, config: dict):
         self.config = config
-        self.model = config.get("planner_model", "llama3.2")
+        llm_cfg = config.get("llm", {})
+        agent_cfg = config.get("agent", {})
+        self.model = llm_cfg.get("model") or config.get("planner_model") or "llama3.2"
+        self.ollama_host = agent_cfg.get("ollama_base_url", "http://127.0.0.1:11434")
         self.enabled = config.get("llm_planning_enabled", True)
         
     def reflect(self, plan: Dict[str, Any], execution_result: Dict[str, Any], needs_snapshot: Dict[str, Any], vision_context: str) -> Optional[Dict[str, Any]]:
@@ -51,7 +54,8 @@ class ReflectionPlanner:
         
         try:
             logger.info("Generating LLM reflection...")
-            response = ollama.chat(
+            client = ollama.Client(host=self.ollama_host)
+            response = client.chat(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -62,6 +66,10 @@ class ReflectionPlanner:
             
             content = response.get("message", {}).get("content", "{}")
             memory = json.loads(content)
+            if isinstance(memory, dict):
+                memory["candidate_weight_adjustments"] = memory.get("candidate_weight_adjustments", {}) if isinstance(memory.get("candidate_weight_adjustments"), dict) else {}
+                memory["temporary_avoid_tags"] = memory.get("temporary_avoid_tags", []) if isinstance(memory.get("temporary_avoid_tags"), list) else []
+                memory["preferred_contexts"] = memory.get("preferred_contexts", {}) if isinstance(memory.get("preferred_contexts"), dict) else {}
             
             if isinstance(memory, dict) and memory.get("summary"):
                 logger.info(f"Generated reflection memory: {memory.get('summary')}")
@@ -70,6 +78,9 @@ class ReflectionPlanner:
                     "name": "action_result",
                     "summary": memory.get("summary"),
                     "tags": memory.get("tags", []),
+                    "candidate_weight_adjustments": memory.get("candidate_weight_adjustments", {}),
+                    "temporary_avoid_tags": memory.get("temporary_avoid_tags", []),
+                    "preferred_contexts": memory.get("preferred_contexts", {}),
                     "source": "reflection_planner"
                 }
             return None

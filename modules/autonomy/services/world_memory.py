@@ -143,6 +143,11 @@ class WorldMemory:
         name = _clean_text(data.get("name") or data.get("label") or data.get("title") or data.get("summary") or kind)
         summary = _clean_text(data.get("summary") or data.get("description") or name)
         src = _clean_text(data.get("source") or source or "api")
+        observed_at = _as_float(data.get("observed_at"), ts)
+        explicit_expiry = _as_float(data.get("expiry") or data.get("expiry_ts"), 0.0)
+        ttl_s = _as_float(data.get("expiry_s") or self.cfg.get("default_expiry_s"), 0.0)
+        expiry = explicit_expiry if explicit_expiry > observed_at else (observed_at + ttl_s if ttl_s > 0.0 else 0.0)
+        supersedes = _clean_text(data.get("supersedes"))
         confidence = max(0.0, min(1.0, _as_float(data.get("confidence"), 0.6)))
         salience = max(0.0, min(1.0, _as_float(data.get("salience"), confidence)))
         properties = dict(_as_dict(data.get("properties")))
@@ -172,6 +177,9 @@ class WorldMemory:
                 "count": 1,
                 "first_seen_ts": ts,
                 "last_seen_ts": ts,
+                "observed_at": observed_at,
+                "expiry": expiry,
+                "supersedes": supersedes,
                 "tags": sorted(set(tags)),
             }
         else:
@@ -184,6 +192,10 @@ class WorldMemory:
             item["salience"] = round(max(_as_float(item.get("salience"), 0.0), salience), 3)
             item["count"] = _as_int(item.get("count"), 1) + 1
             item["last_seen_ts"] = ts
+            item["observed_at"] = observed_at
+            item["expiry"] = expiry
+            if supersedes:
+                item["supersedes"] = supersedes
             item["tags"] = sorted(set(list(item.get("tags") or []) + tags))
         bucket[key] = item
         self._trim_kind(kind)

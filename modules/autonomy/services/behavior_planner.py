@@ -12,8 +12,11 @@ logger = logging.getLogger("autonomy.planner")
 class BehaviorPlanner:
     def __init__(self, config: dict):
         self.config = config
-        # Use a fast model for background planning if possible
-        self.model = config.get("planner_model", "llama3.2")
+        # Use the primary LLM model from config if possible, fallback to llama3.2
+        llm_cfg = config.get("llm", {})
+        agent_cfg = config.get("agent", {})
+        self.model = llm_cfg.get("model") or config.get("planner_model") or "llama3.2"
+        self.ollama_host = agent_cfg.get("ollama_base_url", "http://127.0.0.1:11434")
         self.enabled = config.get("llm_planning_enabled", True)
         self.goal_queue: List[Dict[str, Any]] = []
         self._last_plan_time = 0.0
@@ -90,7 +93,8 @@ class BehaviorPlanner:
                 # Fallback format if no tools provided
                 kwargs["format"] = "json"
 
-            response = ollama.chat(**kwargs)
+            client = ollama.Client(host=self.ollama_host)
+            response = client.chat(**kwargs)
             
             self._last_plan_time = time.time()
             message = response.get("message", {})
@@ -114,6 +118,11 @@ class BehaviorPlanner:
                     plan = json.loads(content)
                 except Exception:
                     plan = []
+            
+            if not plan:
+                logger.error("LLM returned empty plan!")
+                # Return a fallback plan that just sets neopixel to eye mode
+                return [{"tool": "set_neopixel", "effect": "eye", "native_tool_call": True}]
             
             if isinstance(plan, list) and plan:
                 logger.info(f"Generated new goal queue with {len(plan)} actions.")

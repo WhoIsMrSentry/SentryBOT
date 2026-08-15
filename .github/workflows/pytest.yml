@@ -45,7 +45,7 @@ jobs:
           python -m pip install --upgrade pip
           # Skip remote tool requirements that are not part of module test matrix
           python scripts/install_all_requirements.py --fail-fast --skip remote_tts_server
-          python -m pip install pytest
+          python -m pip install pytest httpx
           # WebRTC VAD is optional (speech.vad.enabled=false by default) and may abort at interpreter shutdown on CI.
           python -m pip uninstall -y webrtcvad || true
           # Optional audio backends are not required for unit tests and can trigger native shutdown crashes on CI.
@@ -84,6 +84,12 @@ jobs:
             echo "Pytest test run timed out after 1800s." | tee -a pytest_output.txt
           fi
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Print pytest logs on failure
+        if: ${{ always() && steps.tests.outputs.exit_code != '0' && steps.tests.outputs.exit_code != '' }}
+        run: |
+          echo "=== Pytest Error Output ==="
+          cat pytest_output.txt
 
       - name: Diagnose abort source (exit 134)
         if: ${{ always() && steps.tests.outputs.exit_code == '134' }}
@@ -278,4 +284,11 @@ jobs:
         if: ${{ always() && (steps.collect.outputs.exit_code != '0' || steps.tests.outputs.exit_code != '0') }}
         run: |
           echo "Pytest failed. collect_exit=${{ steps.collect.outputs.exit_code }} tests_exit=${{ steps.tests.outputs.exit_code }}"
+          echo "=== PYTEST ERROR LOGS ==="
+          if [ "${{ steps.collect.outputs.exit_code }}" != "0" ] && [ -f pytest_collect_output.txt ]; then
+            cat pytest_collect_output.txt
+          fi
+          if [ "${{ steps.tests.outputs.exit_code }}" != "0" ] && [ -f pytest_output.txt ]; then
+            cat pytest_output.txt
+          fi
           exit 1

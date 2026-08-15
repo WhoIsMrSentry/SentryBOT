@@ -133,3 +133,18 @@ realtime_profile:
     max_subagents: 4
     subagent_workers: 3
     subagent_max_steps: 4
+
+expression_lease:
+  priorities:
+    default: 10
+    ambient_idle: 10
+    autonomy: 20
+    interactions: 40
+    owner_command: 60
+    safety_navigation: 80
+    hardware_protection: 90
+    emergency: 100
+  force_sources: [hardware_protection, emergency]
+  channels:
+    lights: { default_lease_s: 2.5 }
+    oled: { default_lease_s: 2.5 }

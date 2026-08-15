@@ -308,6 +308,7 @@ wakeword:
     channels: 2
     dtype: int16
     frame_ms: 30
+    strict_device: true
   wakeword:
     engine: openwakeword
     words:
@@ -342,6 +343,7 @@ speech:
     channels: 2
     dtype: int16
     frame_ms: 30
+    strict_device: true
   recognition:
     source_language: tr
     language: tr
@@ -501,3 +503,15 @@ provider_truth:
 environment:
   SENTRYBOT_REMOTE_OLLAMA_URL: http://127.0.0.1:11434
   SENTRYBOT_OLLAMA_BASE_URL: http://127.0.0.1:11434
+
+startup:
+  preflight:
+    enabled: true
+    require_raspberry_pi: true
+    require_i2s_input: true
+    required_python_modules: [yaml, fastapi, uvicorn, sounddevice]
+    required_commands: [arecord]
+  bluetooth:
+    bluetoothctl_command: bluetoothctl
+    pactl_command: pactl
+    command_timeout_s: 20

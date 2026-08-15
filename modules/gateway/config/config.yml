@@ -1,4 +1,4 @@
-﻿server:
+server:
   host: 0.0.0.0
   port: 8080
 include:
@@ -68,3 +68,11 @@ security:
     - /agent
     - /autonomy
     - /social
+
+arduino_neopixel_bridge:
+  expression_lease:
+    enabled: true
+    source: hardware_protection
+    priority: 90
+    ttl_s: 0.75
+    force: false

@@ -14,7 +14,7 @@ def test_needs_engine_detects_boredom_and_exploration():
     assert snap["ok"] is True
     assert snap["scores"]["boredom"] == 100.0
     assert snap["dominant_need"] in {"exploration", "boredom", "curiosity"}
-    assert snap["recommended_goal"] in {"look_around_and_learn", "choose_idle_activity", "inspect_environment"}
+    assert snap["recommended_goal"] == "llm_behavior_planning"
     assert snap["event"].startswith("needs.")
 
 

@@ -3,6 +3,7 @@ covering the new vision actions exist, and ProgressManager exposes a unified
 arbiter snapshot."""
 
 from __future__ import annotations
+import time
 
 from typing import Any, Dict, List
 from unittest.mock import patch
@@ -98,3 +99,23 @@ def test_progress_manager_arbiter_snapshot_aggregates():
     assert "timestamp" in snapshot
     assert snapshot["vision"].get("busy") is True
     assert snapshot["tool_execution"].get("vlm", {}).get("tool") == "get_visual_context"
+
+
+def test_expression_arbiter_respects_policy_priority_and_expiry():
+    from modules.agent_core.services.expression_arbiter import ExpressionArbiter
+
+    arbiter = ExpressionArbiter(
+        {
+            "priorities": {"default": 10, "autonomy": 20, "interactions": 40, "emergency": 100},
+            "force_sources": ["emergency"],
+            "channels": {"lights": {"default_lease_s": 0.01}},
+        }
+    )
+    assert arbiter.claim_lights("autonomy", semantic="quiet_observation")
+    assert arbiter.claim_lights("interactions", semantic="social_greeting")
+    assert arbiter.status()["lights_owner"] == "interactions"
+    assert arbiter.claim_lights("autonomy") is False
+    assert arbiter.claim_lights("emergency", force=True, semantic="safety_attention")
+    assert arbiter.detailed_status()["leases"]["lights"]["semantic"] == "safety_attention"
+    time.sleep(0.02)
+    assert arbiter.status()["lights_owner"] == ""

@@ -315,24 +315,6 @@ def get_router(brain: AutonomyBrain) -> APIRouter:
             return brain.execute_safe_rest_corner(payload or {})
         return {"ok": False, "available": False, "reason": "safe_navigation_unavailable"}
 
-    @router.get("/behavior-loop")
-    def get_companion_behavior_loop():
-        """Return companion behavior loop dry-run status and recent history."""
-        if hasattr(brain, "get_companion_behavior_loop_snapshot"):
-            return brain.get_companion_behavior_loop_snapshot()
-        return {"ok": False, "available": False, "reason": "behavior_loop_unavailable"}
-
-    @router.post("/behavior-loop/tick")
-    def tick_companion_behavior_loop(force: bool = False):
-        """Run one safe companion behavior loop tick.
-
-        Defaults remain PC-safe: the tick goes through the auto gate and the
-        executor dry-run path. Set force=true only for manual validation.
-        """
-        if hasattr(brain, "tick_companion_behavior_loop"):
-            return brain.tick_companion_behavior_loop(force=force)
-        return {"ok": False, "available": False, "reason": "behavior_loop_unavailable"}
-
     @router.get("/goal/auto")
     def get_goal_auto_execute_gate():
         """Return companion auto-execute gate status and last decision."""

@@ -132,7 +132,8 @@ class AgentOrchestrator:
         self.tool_execution_arbiter = ToolExecutionArbiter()
         self.action_arbiter = ActionArbiter(safety_filter=self.safety_filter)
         self.vision_arbiter = VisionArbiter()
-        self.expression_arbiter = ExpressionArbiter()
+        expression_lease_cfg = config.get("expression_lease", {}) if isinstance(config.get("expression_lease"), dict) else {}
+        self.expression_arbiter = ExpressionArbiter(expression_lease_cfg)
         self.speech_arbiter = SpeechArbiter()
         progress_cfg = config.get("progress", {}) if isinstance(config.get("progress", {}), dict) else {}
         self.progress_manager = ProgressManager(

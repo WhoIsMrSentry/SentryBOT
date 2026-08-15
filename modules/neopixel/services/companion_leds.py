@@ -9,7 +9,7 @@ import logging
 import math
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 logger = logging.getLogger("neopixel.companion")
 
@@ -57,18 +57,20 @@ def _interpolate_gradient(gradient: List[Color], pos: float) -> Color:
 
 
 class _StickSegment:
-    __slots__ = ("start", "count", "channel")
+    __slots__ = ("start", "count", "channel", "name", "reverse")
 
-    def __init__(self, start: int, count: int, channel: int = 0) -> None:
+    def __init__(self, start: int, count: int, channel: int = 0, name: str = "brow", reverse: bool = False) -> None:
         self.start = start
         self.count = count
         self.channel = channel
+        self.name = str(name or "brow")
+        self.reverse = bool(reverse)
 
 
 class CompanionLedController:
     """Background renderer for jewel + stick companion animations."""
 
-    VALID_MODES = {"off", "listen_vu", "thinking", "eye", "wake_spin", "wake_chase"}
+    VALID_MODES = {"off", "listen_vu", "thinking", "eye", "face", "wake_spin", "wake_chase"}
 
     def __init__(
         self,
@@ -95,6 +97,8 @@ class CompanionLedController:
                         int(item.get("start", 0)),
                         int(item.get("count", 0)),
                         int(item.get("channel", 0)),
+                        str(item.get("name") or ("left_brow" if len(self._sticks) == 0 else "right_brow")),
+                        bool(item.get("reverse", False)),
                     )
                 )
         else:
@@ -103,15 +107,21 @@ class CompanionLedController:
             half = stick_count // 2
             if half > 0 and stick_count >= 2:
                 self._sticks = [
-                    _StickSegment(stick_start, half, 0),
-                    _StickSegment(stick_start + half, stick_count - half, 1),
+                    _StickSegment(stick_start, half, 0, "left_brow"),
+                    _StickSegment(stick_start + half, stick_count - half, 1, "right_brow"),
                 ]
             else:
-                self._sticks = [_StickSegment(stick_start, stick_count, 0)]
+                self._sticks = [_StickSegment(stick_start, stick_count, 0, "left_brow")]
 
         colors = self._cfg.get("colors", {}) if isinstance(self._cfg.get("colors"), dict) else {}
         self._thinking_color = _parse_hex_color(colors.get("thinking", "#0066CC"), (0, 102, 204))
         self._eye_color = _parse_hex_color(colors.get("eye_default", "#30E3CA"), (48, 227, 202))
+        face_cfg = self._cfg.get("face", {}) if isinstance(self._cfg.get("face"), dict) else {}
+        self._face_default_duration_ms = max(100, int(face_cfg.get("default_duration_ms", 1400)))
+        self._face_profiles = face_cfg.get("pose_profiles", {}) if isinstance(face_cfg.get("pose_profiles"), dict) else {}
+        self._semantic_catalog = face_cfg.get("semantics", {}) if isinstance(face_cfg.get("semantics"), dict) else {}
+        self._face_frame: Dict[str, Any] = {}
+        self._face_frame_expires_at = 0.0
         self._vu_bar = _parse_hex_color(colors.get("vu_bar", "#00AAFF"), (0, 170, 255))
         self._vu_bg = _parse_hex_color(colors.get("vu_bg", "#051018"), (5, 16, 24))
         self._wake_spin_color = _parse_hex_color(colors.get("wake_spin", "#FFD700"), (255, 215, 0))
@@ -181,6 +191,77 @@ class CompanionLedController:
         with self._lock:
             self._eye_color = color
 
+
+    @staticmethod
+    def _bounded(value: Any, default: float) -> float:
+        try:
+            return min(1.0, max(0.0, float(value)))
+        except (TypeError, ValueError):
+            return default
+
+    def semantic_catalog(self) -> Dict[str, Any]:
+        """Return the human-readable behavior catalog without exposing mutable config."""
+        return {name: dict(value) for name, value in self._semantic_catalog.items() if isinstance(value, Mapping)}
+
+    def apply_semantic(self, semantic: str, *, revision: str = "", duration_ms: Optional[int] = None) -> bool:
+        entry = self._semantic_catalog.get(str(semantic or "").strip())
+        if not isinstance(entry, Mapping):
+            logger.warning("unknown companion semantic ignored: %s", semantic)
+            return False
+        raw_frame = entry.get("frame", {})
+        frame: Dict[str, Any] = dict(raw_frame) if isinstance(raw_frame, Mapping) else {}
+        frame["semantic"] = str(semantic)
+        frame["revision"] = str(revision or "")
+        configured_duration = entry.get("duration_ms")
+        active_duration = duration_ms if duration_ms is not None else configured_duration
+        return self.apply_face_frame(frame, duration_ms=active_duration)
+
+    def apply_face_frame(self, frame: Mapping[str, Any], *, duration_ms: Optional[int] = None) -> bool:
+        """Render the eye and both brows from one semantic, expiring frame."""
+        if not isinstance(frame, Mapping):
+            logger.warning("invalid face frame ignored")
+            return False
+        with self._lock:
+            self._face_frame = self._normalize_face_frame(frame)
+            requested_ms = duration_ms if duration_ms is not None else frame.get("duration_ms")
+            try:
+                active_ms = max(100, int(requested_ms)) if requested_ms is not None else self._face_default_duration_ms
+            except (TypeError, ValueError):
+                active_ms = self._face_default_duration_ms
+            self._face_frame_expires_at = time.monotonic() + (active_ms / 1000.0)
+        return self.set_mode("face")
+
+    def _normalize_face_frame(self, frame: Mapping[str, Any]) -> Dict[str, Any]:
+        eye_raw = frame.get("eye", {})
+        if not isinstance(eye_raw, Mapping):
+            eye_raw = {}
+        eye_color = _parse_hex_color(eye_raw.get("color"), self._eye_color)
+        brows: Dict[str, Dict[str, Any]] = {}
+        for stick in self._sticks:
+            raw = frame.get(stick.name, {})
+            if not isinstance(raw, Mapping):
+                raw = {}
+            pose = str(raw.get("pose") or "neutral").strip().lower()
+            profile = self._face_profiles.get(pose, {})
+            if not isinstance(profile, Mapping):
+                profile = {}
+            brows[stick.name] = {
+                "pose": pose,
+                "color": _parse_hex_color(raw.get("color", profile.get("color", eye_color)), eye_color),
+                "intensity": self._bounded(raw.get("intensity", profile.get("intensity", 0.65)), 0.65),
+                "phase": self._bounded(raw.get("phase", profile.get("phase", 0.0)), 0.0),
+            }
+        return {
+            "semantic": str(frame.get("semantic") or "ambient_idle"),
+            "revision": str(frame.get("revision") or ""),
+            "eye": {
+                "color": eye_color,
+                "brightness": self._bounded(eye_raw.get("brightness", 0.75), 0.75),
+                "pulse_hz": max(0.0, float(eye_raw.get("pulse_hz", 0.0) or 0.0)),
+            },
+            "brows": brows,
+        }
+
     def set_mode(self, mode: str) -> bool:
         mode = str(mode or "off").strip().lower()
         aliases = {"vu": "listen_vu", "listen": "listen_vu", "": "off"}
@@ -215,6 +296,10 @@ class CompanionLedController:
         else:
             self._ensure_thread()
         return True
+
+    def stop(self) -> None:
+        self.set_mode("off")
+        self._stop.set()
 
     def set_vu_level(self, level: float, *, right: Optional[float] = None) -> None:
         level = max(0.0, min(1.0, float(level)))
@@ -261,6 +346,8 @@ class CompanionLedController:
                         self._render_thinking_frame()
                     elif mode == "eye":
                         self._render_eye_frame()
+                    elif mode == "face":
+                        self._render_face_frame()
                     elif mode == "wake_spin":
                         if self._render_wake_spin_frame():
                             self._complete_wake_spin()
@@ -431,6 +518,51 @@ class CompanionLedController:
                 intensity = eyebrow_pulse * (0.4 + 0.6 * arch_factor)
                 self._driver.set(idx, int(eye[0] * intensity), int(eye[1] * intensity), int(eye[2] * intensity))
 
+        self._driver.show()
+
+    def _render_face_frame(self) -> None:
+        with self._lock:
+            frame = dict(self._face_frame)
+            expired = bool(frame) and time.monotonic() >= self._face_frame_expires_at
+            if expired:
+                self._face_frame = {}
+                self._mode = "eye"
+        if not frame or expired:
+            self._render_eye_frame()
+            return
+        eye = frame.get("eye", {})
+        eye_color = _parse_hex_color(eye.get("color"), self._eye_color)
+        eye_brightness = self._bounded(eye.get("brightness", 0.75), 0.75)
+        pulse_hz = max(0.0, float(eye.get("pulse_hz", 0.0) or 0.0))
+        pulse = 1.0 if pulse_hz <= 0.0 else 0.70 + 0.30 * (0.5 + 0.5 * math.sin(time.monotonic() * pulse_hz * 2.0 * math.pi))
+        for rel in range(self._jewel_count):
+            idx = self._jewel_start + rel
+            if idx >= self._driver.num_leds:
+                break
+            level = eye_brightness * pulse
+            self._driver.set(idx, int(eye_color[0] * level), int(eye_color[1] * level), int(eye_color[2] * level))
+        brows = frame.get("brows", {})
+        for stick in self._sticks:
+            spec = brows.get(stick.name, {}) if isinstance(brows, Mapping) else {}
+            pose = str(spec.get("pose") or "neutral")
+            profile = self._face_profiles.get(pose, self._face_profiles.get("neutral", {}))
+            if not isinstance(profile, Mapping):
+                profile = {}
+            color = _parse_hex_color(spec.get("color"), eye_color)
+            intensity = self._bounded(spec.get("intensity", profile.get("intensity", 0.65)), 0.65)
+            slope = float(profile.get("slope", 0.0) or 0.0)
+            arch = self._bounded(profile.get("arch", 0.0), 0.0)
+            phase = self._bounded(spec.get("phase", profile.get("phase", 0.0)), 0.0)
+            for physical_rel in range(stick.count):
+                idx = stick.start + physical_rel
+                if idx >= self._driver.num_leds:
+                    break
+                logical_rel = (stick.count - 1 - physical_rel) if stick.reverse else physical_rel
+                progress = logical_rel / max(1, stick.count - 1)
+                arch_factor = 1.0 - arch + arch * math.sin(progress * math.pi)
+                level = self._bounded(intensity + slope * (progress - 0.5), intensity) * arch_factor
+                level *= 0.82 + 0.18 * math.sin((time.monotonic() + phase) * 2.0 * math.pi)
+                self._driver.set(idx, int(color[0] * level), int(color[1] * level), int(color[2] * level))
         self._driver.show()
 
     def _render_wake_spin_frame(self) -> bool:
