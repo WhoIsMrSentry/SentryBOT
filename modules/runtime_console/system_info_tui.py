@@ -301,6 +301,24 @@ def get_uptime() -> str:
             return " ".join(parts)
         except Exception:
             pass
+    else:
+        try:
+            with open("/proc/uptime", "r", encoding="utf-8") as f:
+                secs = int(float(f.read().split()[0]))
+                days, rem = divmod(secs, 86400)
+                hours, rem = divmod(rem, 3600)
+                mins, secs = divmod(rem, 60)
+                parts = []
+                if days:
+                    parts.append(f"{days}d")
+                if hours:
+                    parts.append(f"{hours}h")
+                if mins:
+                    parts.append(f"{mins}m")
+                parts.append(f"{secs}s")
+                return " ".join(parts)
+        except Exception:
+            pass
     return "unknown"
 
 
@@ -330,33 +348,117 @@ def get_cpu_info() -> tuple[str, str, str, str]:
                 cpu_name = name.strip()
         except Exception:
             pass
+        if cores == "?":
+            c = os.cpu_count()
+            if c:
+                cores = str(c)
+    else:
+        if cpu_name in ("", "Unknown"):
+            try:
+                dt_path = Path("/proc/device-tree/model")
+                if dt_path.exists():
+                    model_str = dt_path.read_text(encoding="utf-8", errors="ignore").strip("\x00\n ")
+                    if model_str:
+                        cpu_name = model_str
+            except Exception:
+                pass
+            if cpu_name in ("", "Unknown"):
+                try:
+                    with open("/proc/cpuinfo", "r", encoding="utf-8") as f:
+                        for line in f:
+                            if line.startswith(("Model", "model name", "Hardware")):
+                                cpu_name = line.split(":", 1)[1].strip()
+                                break
+                except Exception:
+                    pass
+        if cores == "?":
+            c = os.cpu_count()
+            if c:
+                cores = str(c)
+        if freq == "?":
+            try:
+                freq_path = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+                if not freq_path.exists():
+                    freq_path = Path("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq")
+                if freq_path.exists():
+                    khz = int(freq_path.read_text().strip())
+                    freq = f"{khz // 1000} MHz"
+            except Exception:
+                pass
 
-    return cpu_name.strip(), cores, freq, usage
+    return cpu_name.strip() or "Unknown", cores, freq, usage
 
 
 def get_memory_info() -> tuple[str, str]:
-    if not psutil:
-        return "N/A", "N/A"
-    try:
-        mem = psutil.virtual_memory()
-        used_gb = mem.used / (1024**3)
-        total_gb = mem.total / (1024**3)
-        return f"{used_gb:.1f} GiB", f"{total_gb:.1f} GiB"
-    except Exception:
-        return "N/A", "N/A"
+    if psutil:
+        try:
+            mem = psutil.virtual_memory()
+            used_gb = mem.used / (1024**3)
+            total_gb = mem.total / (1024**3)
+            return f"{used_gb:.1f} GiB", f"{total_gb:.1f} GiB"
+        except Exception:
+            pass
+    if os.name == "nt":
+        try:
+            import ctypes
+            class _MEMSTAT(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            s = _MEMSTAT()
+            s.dwLength = ctypes.sizeof(_MEMSTAT)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(s)):
+                used = s.ullTotalPhys - s.ullAvailPhys
+                return f"{used / (1024**3):.1f} GiB", f"{s.ullTotalPhys / (1024**3):.1f} GiB"
+        except Exception:
+            pass
+    else:
+        try:
+            meminfo: dict[str, int] = {}
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.split(":", 1)
+                    if len(parts) == 2:
+                        val = parts[1].strip().split()[0]
+                        if val.isdigit():
+                            meminfo[parts[0].strip()] = int(val) * 1024
+            if "MemTotal" in meminfo:
+                total = meminfo["MemTotal"]
+                avail = meminfo.get("MemAvailable", meminfo.get("MemFree", 0))
+                used = max(0, total - avail)
+                return f"{used / (1024**3):.1f} GiB", f"{total / (1024**3):.1f} GiB"
+        except Exception:
+            pass
+    return "N/A", "N/A"
 
 
 def get_disk_info() -> tuple[str, str]:
-    if not psutil:
-        return "N/A", "N/A"
+    if psutil:
+        try:
+            root = "C:\\" if os.name == "nt" else "/"
+            disk = psutil.disk_usage(root)
+            used_gb = disk.used / (1024**3)
+            total_gb = disk.total / (1024**3)
+            return f"{used_gb:.1f} GiB", f"{total_gb:.1f} GiB"
+        except Exception:
+            pass
     try:
         root = "C:\\" if os.name == "nt" else "/"
-        disk = psutil.disk_usage(root)
-        used_gb = disk.used / (1024**3)
-        total_gb = disk.total / (1024**3)
+        total_b, used_b, _ = shutil.disk_usage(root)
+        used_gb = used_b / (1024**3)
+        total_gb = total_b / (1024**3)
         return f"{used_gb:.1f} GiB", f"{total_gb:.1f} GiB"
     except Exception:
-        return "N/A", "N/A"
+        pass
+    return "N/A", "N/A"
 
 
 def get_gpu_info() -> str:
@@ -382,6 +484,18 @@ def get_gpu_info() -> str:
         except Exception:
             pass
     else:
+        try:
+            dt_path = Path("/proc/device-tree/model")
+            if dt_path.exists():
+                dt_text = dt_path.read_text(encoding="utf-8", errors="ignore").lower()
+                if "raspberry pi 5" in dt_text:
+                    return "Broadcom VideoCore VII"
+                if "raspberry pi 4" in dt_text:
+                    return "Broadcom VideoCore VI"
+                if "raspberry pi" in dt_text:
+                    return "Broadcom VideoCore IV"
+        except Exception:
+            pass
         try:
             import subprocess
             result = subprocess.run(
@@ -486,12 +600,16 @@ def get_package_count() -> str:
             pass
         return "unknown"
     else:
-        for cmd in [["pacman", "-Q"], ["dpkg", "-l"], ["rpm", "-qa"], ["apk", "info"]]:
+        for cmd in [["dpkg", "-l"], ["pacman", "-Q"], ["rpm", "-qa"], ["apk", "info"]]:
             try:
                 import subprocess
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
-                count = len([l for l in result.stdout.splitlines() if l.strip() and not l.startswith("ii")])
-                return f"{count} ({cmd[0]})"
+                if cmd[0] == "dpkg":
+                    count = len([l for l in result.stdout.splitlines() if l.startswith("ii")])
+                else:
+                    count = len([l for l in result.stdout.splitlines() if l.strip()])
+                if count > 0:
+                    return f"{count} ({cmd[0]})"
             except Exception:
                 continue
     return "unknown"

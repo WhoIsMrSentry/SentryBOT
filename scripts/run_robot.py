@@ -31,6 +31,10 @@ def _stop_started_services(app) -> None:
                 result = method()
                 if inspect.isawaitable(result):
                     logger.debug("async shutdown skipped for %s.%s", name, method_name)
+                    try:
+                        result.close()
+                    except Exception:
+                        pass
             except Exception as exc:
                 logger.debug("shutdown failed for %s.%s: %s", name, method_name, exc)
             break
