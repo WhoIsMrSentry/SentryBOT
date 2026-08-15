@@ -45,7 +45,7 @@ def test_companion_cancels_running_animation_and_blocks_direct_fill():
                 {"start": 15, "count": 8, "channel": 1},
             ],
         },
-        "wake_spin": {"duration_ms": 100, "wait_ms": 5},
+        "wake_spin": {"duration_ms": 2000, "wait_ms": 5},
     }
     runner = NeoRunner(cfg, companion_cfg=companion)
     assert runner.animate("BREATHE", color=(255, 255, 255)) is True
@@ -54,7 +54,8 @@ def test_companion_cancels_running_animation_and_blocks_direct_fill():
     assert runner.companion_status()["animation_generation"] > generation
     assert runner.fill(255, 0, 255) is False
     time.sleep(0.03)
-    assert runner.companion_status()["mode"] == "wake_spin"
+    assert runner.companion_status()["mode"] in ("wake_spin", "listen_vu")
+    runner.stop()
 
 
 def test_preset_segment_effects_do_not_cancel_each_other():

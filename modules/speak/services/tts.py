@@ -522,6 +522,8 @@ class TextToSpeech:
             return backend.synthesize(text, speaker_wav=speaker_wav, language=language)
         return backend.synthesize(text)
 
+    _resolve_piper_voice_key = _resolve_piper_voice
+
 
 __all__ = [
     "TextToSpeech",

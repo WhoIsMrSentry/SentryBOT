@@ -93,7 +93,7 @@ def test_text_to_speech_piper_picks_english_voice_key() -> None:
     )
     if not isinstance(tts.backend, PiperBackend):
         return
-    voice = tts._resolve_piper_voice_key("Hello, how can I help you?", tts._base_cfg, {"language": "tr"})
+    voice = tts._resolve_piper_voice("Hello, how can I help you?", tts._base_cfg, {"language": "tr"})
     assert voice == "glados"
 
 
