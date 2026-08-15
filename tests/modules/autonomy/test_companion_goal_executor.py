@@ -51,3 +51,74 @@ def test_executor_wait_action_is_noop():
     result = ex.execute({"actions": [{"type": "wait", "label": "calm_idle"}]}, dry_run=True)
     assert result["steps"][0]["component"] == "scheduler"
     assert result["steps"][0]["risk"] == "none"
+
+
+def test_executor_routes_semantic_expression_to_companion_face_api():
+    ex = CompanionGoalExecutor()
+    result = ex.execute(
+        {
+            "safe_to_execute": True,
+            "actions": [
+                {"type": "expression", "event": "semantic.curious_scan", "semantic": "curious_scan", "revision": "goal-42"},
+            ],
+        },
+        dry_run=True,
+        now=100.0,
+    )
+    step = result["steps"][0]
+    assert step["component"] == "neopixel"
+    assert step["url"] == "/neopixel/companion/semantic"
+    assert step["payload"] == {"semantic": "curious_scan", "revision": "goal-42"}
+
+def test_executor_routes_navigation_policy_to_autonomy_goal():
+    ex = CompanionGoalExecutor({"enabled": True, "dry_run_default": True})
+    result = ex.execute(
+        {
+            "plan_id": "goal-navigation",
+            "behavior": "curious_scan",
+            "actions": [{"type": "navigation", "policy": "safe_exploration", "risk": "low"}],
+        },
+        dry_run=True,
+        pc_test=True,
+        now=100.0,
+    )
+    step = result["steps"][0]
+    assert step["component"] == "autonomy"
+    assert step["url"] == "/autonomy/navigation/goal"
+    assert step["capability"] == "navigation.safe_exploration"
+    assert step["payload"]["companion_policy"] == "safe_exploration"
+
+def test_executor_reports_yaml_lifecycle_for_dry_run():
+    executor = CompanionGoalExecutor(
+        {
+            "enabled": True,
+            "dry_run_default": True,
+            "lifecycle": {
+                "enabled": True,
+                "dry_run_state": "simulated",
+                "applied_state": "completed",
+                "unavailable_state": "blocked",
+                "failure_state": "failed",
+                "cancelled_reasons": [],
+            },
+        }
+    )
+    result = executor.execute(sample_plan(), dry_run=True, pc_test=True, now=100.0)
+    assert result["lifecycle"]["state"] == "simulated"
+    assert result["lifecycle"]["reason"] == "dry_run"
+
+def test_executor_blocks_capability_guard_before_steps():
+    executor = CompanionGoalExecutor(
+        {
+            "enabled": True,
+            "dry_run_default": False,
+            "allow_real_hardware": True,
+            "require_capability_guard": True,
+        }
+    )
+    plan = sample_plan()
+    plan["capability_guard"] = {"blocked": True, "reason": "capability_unavailable"}
+    result = executor.execute(plan, dry_run=False, pc_test=False, now=100.0)
+    assert result["applied"] is False
+    assert result["reason"] == "capability_guard_blocked"
+    assert result["steps"] == []

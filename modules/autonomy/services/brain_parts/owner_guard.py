@@ -1,12 +1,15 @@
-"""Owner presence and authority guard logic."""
+"""Owner presence, authority guard, and session tracking logic."""
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any, Dict
 
+logger = logging.getLogger("autonomy.owner_guard")
+
 
 class OwnerGuardMixin:
-    """Encapsulates owner scanning, permissions, and request throttling."""
+    """Encapsulates owner scanning, permissions, session tracking, and request throttling."""
 
     def _maybe_scan_for_owner(self) -> None:
         if not self.owner_cfg.get("enabled"):
@@ -65,8 +68,6 @@ class OwnerGuardMixin:
         return False
 
     def _handle_owner_commands(self, text: str, speaker: str | None) -> bool:
-        # Delegation is intentionally disabled: owner cannot transfer authority
-        # to a third person via voice commands.
         return False
 
     def _owner_guard_enabled(self) -> bool:
@@ -170,8 +171,6 @@ class OwnerGuardMixin:
                 return True
         return False
 
-    # Kharuun irreversible trigger removed to simplify owner rules.
-
     def _on_owner_seen(self, timestamp: float) -> None:
         self.state["owner_last_seen"] = timestamp
         self.state["owner_lockout_until"] = 0.0
@@ -221,3 +220,100 @@ class OwnerGuardMixin:
             fragments.append(base)
         alias = self._address_owner("handle")
         return f"{alias}, " + "; ".join(fragments) + "."
+
+    def _check_owner_presence_appraisal(self, now: float) -> None:
+        if not self.owner_cfg.get("enabled"):
+            return
+        present = self._owner_seen_recently()
+        self._sync_owner_session(present)
+        if getattr(self, "_owner_was_present", False) and not present:
+            last = float(self.state.get("owner_last_seen", 0.0) or 0.0)
+            timeout = float(self.owner_cfg.get("presence_timeout_s", 30))
+            if last > 0 and (now - last) >= timeout:
+                if (now - getattr(self, "_last_owner_left_appraisal_ts", 0.0)) >= max(60.0, timeout):
+                    self.appraise_event("owner_left")
+                    self._last_owner_left_appraisal_ts = now
+        self._owner_was_present = present
+
+    def _owner_sessions_cfg(self) -> Dict[str, Any]:
+        companion = self.config.get("companion", {}) if isinstance(self.config.get("companion"), dict) else {}
+        cfg = companion.get("owner_sessions", {})
+        return cfg if isinstance(cfg, dict) else {}
+
+    def _social_db(self):
+        return getattr(self.mood, "_social_db", None)
+
+    def _sync_owner_session(self, owner_present: bool) -> None:
+        cfg = self._owner_sessions_cfg()
+        if not cfg.get("enabled", True):
+            return
+        db = self._social_db()
+        if db is None:
+            return
+        source = str(cfg.get("source", "vision") or "vision")
+        try:
+            if owner_present:
+                active = db.owner_sessions.active()
+                if active is None:
+                    self._owner_session_id = int(db.owner_sessions.start(source=source))
+                else:
+                    self._owner_session_id = int(active.get("id") or 0) or None
+            elif getattr(self, "_owner_session_id", None) is not None:
+                db.owner_sessions.end(self._owner_session_id)
+                self._owner_session_id = None
+            elif db.owner_sessions.active() is not None:
+                db.owner_sessions.end_active()
+        except Exception as exc:
+            logger.debug("owner session sync failed: %s", exc)
+
+    def _owner_absence_seconds(self, now: float) -> float:
+        db = self._social_db()
+        if db is not None:
+            try:
+                rows = db.owner_sessions.recent(limit=2)
+                for row in rows:
+                    end_ts = row.get("end_ts")
+                    if end_ts:
+                        return max(0.0, now - float(end_ts))
+            except Exception:
+                pass
+        last = float(self.state.get("owner_last_seen", 0.0) or 0.0)
+        if last > 0:
+            return max(0.0, now - last)
+        return 0.0
+
+    def _preference_summary(self, speaker: str = "") -> str:
+        spk = str(speaker or self.state.get("last_speaker") or "").strip()
+        if not spk:
+            return ""
+        profile = self.relationship_memory.social_profile(spk)
+        if not profile:
+            return ""
+        likes = profile.get("likes", []) if isinstance(profile.get("likes"), list) else []
+        dislikes = profile.get("dislikes", []) if isinstance(profile.get("dislikes"), list) else []
+        topics = profile.get("topics", []) if isinstance(profile.get("topics"), list) else []
+        parts = []
+        if likes:
+            parts.append(f"likes={','.join(str(x) for x in likes[:3])}")
+        if dislikes:
+            parts.append(f"dislikes={','.join(str(x) for x in dislikes[:2])}")
+        if topics:
+            parts.append(f"topics={','.join(str(x) for x in topics[:3])}")
+        trust = float(profile.get("trust_score", 0.0) or 0.0)
+        parts.append(f"trust={trust:.2f}")
+        return "; ".join(parts)
+
+    def _recent_companion_activity_summary(self, limit: int = 4) -> str:
+        db = self._social_db()
+        if db is None:
+            return ""
+        try:
+            rows = db.interaction_events.recent(limit=limit)
+        except Exception:
+            return ""
+        bits = []
+        for row in rows:
+            kind = str(row.get("kind") or "").strip()
+            if kind.startswith(("companion.", "appraisal:", "autonomy.")):
+                bits.append(kind)
+        return ", ".join(bits)

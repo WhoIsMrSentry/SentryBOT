@@ -1,9 +1,12 @@
 """Vision sensing and reactions for AutonomyBrain."""
 from __future__ import annotations
 
+import logging
 import random
 import time
 from typing import Any, Dict
+
+logger = logging.getLogger("autonomy.vision")
 
 
 class VisionMixin:
@@ -44,8 +47,7 @@ class VisionMixin:
                 elif importance < 0.2 and self.state.get("is_bored"):
                     self.mood.modify("happiness", -2)
         except Exception as exc:
-            import logging
-            logging.getLogger("autonomy.vision").debug("Failed to get visual context: %s", exc)
+            logger.debug("Failed to get visual context: %s", exc)
 
         max_results = self._vision_cfg.get("max_results", 5)
         results = self.client.get_latest_vision_results(limit=max_results)
@@ -62,18 +64,14 @@ class VisionMixin:
             name: ts for name, ts in self._current_people.items() if now - ts <= decay_window
         }
 
+    _sense_visual_tracking = _sense_vision
+
     @staticmethod
     def _scene_tokens(summary: str) -> set:
         return {t for t in str(summary or "").lower().split() if len(t) > 2}
 
     def _track_scene_context(self, ctx_data: Dict[str, Any], importance: float) -> None:
-        """Detect meaningful scene changes and remember the current surroundings.
-
-        Keeps a short-lived snapshot of the environment in ``self.state`` so the
-        proactive layer can comment on what's around, and emits an
-        ``environment.scene_changed`` interaction event on novelty so other
-        modules (ears/LED/agent) can react.
-        """
+        """Detect meaningful scene changes and remember the current surroundings."""
         summary = str(ctx_data.get("summary", "") or "").strip()
         if not summary:
             return
@@ -92,7 +90,7 @@ class VisionMixin:
         if novelty >= threshold and summary != prev:
             self.state["last_scene_summary"] = summary
             self.state["scene_changed_at"] = time.time()
-            self.state["scene_unspoken"] = True  # proactive layer may narrate it
+            self.state["scene_unspoken"] = True
             try:
                 self.client.push_interaction_event(
                     "environment.scene_changed",
@@ -129,7 +127,9 @@ class VisionMixin:
         self.state["last_emotion"] = canon
         try:
             self.express(canon)
-            self.client.push_interaction_event(f"vision.person_emotion_{canon.value if hasattr(canon, 'value') else canon}")
+            self.client.push_interaction_event(
+                f"vision.person_emotion_{canon.value if hasattr(canon, 'value') else canon}"
+            )
         except Exception:
             pass
         if empathy.get("speak_on_mirror", False):
@@ -147,9 +147,8 @@ class VisionMixin:
         name = result.get("name") or result.get("label")
         if not name:
             return
-        
-        import logging
-        logging.getLogger("autonomy.vision").info("Vision >>> %s tespit edildi.", name)
+
+        logger.info("Vision >>> %s tespit edildi.", name)
 
         now = time.time()
         self._current_people[name] = now
@@ -160,20 +159,21 @@ class VisionMixin:
         self._people_last_seen[name] = now
         self.state["last_interaction"] = now
         self.memory.add_event(f"Vision {name} tespit etti.")
-        
-        # Save to world memory for contextual awareness
+
         if hasattr(self, "world_memory"):
-            self.world_memory.observe({
-                "kind": "person" if name != "Unknown" else "object",
-                "name": name,
-                "confidence": result.get("confidence", 1.0),
-                "emotion": result.get("emotion", ""),
-                "distance_m": result.get("distance_m", 0.0)
-            }, source="vision")
+            self.world_memory.observe(
+                {
+                    "kind": "person" if name != "Unknown" else "object",
+                    "name": name,
+                    "confidence": result.get("confidence", 1.0),
+                    "emotion": result.get("emotion", ""),
+                    "distance_m": result.get("distance_m", 0.0),
+                },
+                source="vision",
+            )
 
         happiness_boost = 10 if name != "Unknown" else 4
-        
-        # Social_db integration for emotional response
+
         if name != "Unknown" and hasattr(self, "client"):
             self._track_person_stat(name)
             if hasattr(self, "_note_person_seen"):
@@ -190,7 +190,7 @@ class VisionMixin:
                     self.mood.modify("fear", 15)
                     self.mood.modify("anger", 10)
             except Exception as e:
-                logging.getLogger("autonomy.vision").debug(f"social_db fetch failed for {name}: {e}")
+                logger.debug(f"social_db fetch failed for {name}: {e}")
 
         self.mood.modify("happiness", happiness_boost)
         self.mood.modify("curiosity", 5)
@@ -225,7 +225,7 @@ class VisionMixin:
             record = self.client.get_person_memory(name)
             if record:
                 summary = ((record.get("record") or {}).get("last_summary") or {}).get("text")
-        except Exception:  # pragma: no cover - best effort enrichment
+        except Exception:
             summary = None
         distance = result.get("distance_m")
         prefer_llm = self._vision_cfg.get("prefer_llm_greetings", False)
@@ -280,12 +280,18 @@ class VisionMixin:
 
         target = int(round((current * smooth) + (proposed * (1.0 - smooth))))
         self.state["current_pan"] = target
-        self.client.queue_action("head_move", priority=60, payload={"pan": target, "tilt": self.state["current_tilt"]})
+        self.client.queue_action(
+            "head_move", priority=60, payload={"pan": target, "tilt": self.state["current_tilt"]}
+        )
         self._blink_fallback()
 
     def _compute_person_cooldown(self, result: Dict[str, Any]) -> float:
         base = float(self._vision_cfg.get("person_cooldown_s", 25))
-        dyn = self._vision_cfg.get("dynamic_cooldown", {}) if isinstance(self._vision_cfg.get("dynamic_cooldown", {}), dict) else {}
+        dyn = (
+            self._vision_cfg.get("dynamic_cooldown", {})
+            if isinstance(self._vision_cfg.get("dynamic_cooldown", {}), dict)
+            else {}
+        )
         if not bool(dyn.get("enabled", False)):
             return base
         near_dist = float(dyn.get("near_distance_m", 1.2))

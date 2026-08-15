@@ -21,10 +21,57 @@ companion:
   layout:
     jewel_start: 0
     jewel_count: 7
-    jewel_center_index: 0
+    jewel_center_index: 6
     sticks:
-      - { start: 7, count: 8, channel: 0 }
-      - { start: 15, count: 8, channel: 1 }
+      - { name: left_brow, start: 7, count: 8, channel: 0, reverse: false }
+      - { name: right_brow, start: 15, count: 8, channel: 1, reverse: true }
+  face:
+    default_duration_ms: 1400
+    pose_profiles:
+      neutral: { intensity: 0.52, slope: 0.00, arch: 0.22, phase: 0.00 }
+      curious: { intensity: 0.78, slope: 0.28, arch: 0.46, phase: 0.12 }
+      pleased: { intensity: 0.76, slope: -0.14, arch: 0.58, phase: 0.20 }
+      concerned: { intensity: 0.70, slope: -0.30, arch: 0.18, phase: 0.32 }
+      frustrated: { intensity: 0.82, slope: -0.42, arch: 0.12, phase: 0.48 }
+      sleepy: { intensity: 0.30, slope: 0.00, arch: 0.10, phase: 0.66 }
+
+    semantics:
+      ambient_idle:
+        description: "Sakin, uyanik ve cevreyi dinliyor"
+        animation: BREATHE
+        duration_ms: 1400
+        frame: { eye: { color: "#30E3CA", brightness: 0.42, pulse_hz: 0.35 }, left_brow: { pose: neutral }, right_brow: { pose: neutral } }
+      quiet_observation:
+        description: "Sessizce cevreyi gozlemliyor"
+        animation: EYE_EYEBROW
+        duration_ms: 1200
+        frame: { eye: { color: "#5FA8FF", brightness: 0.55 }, left_brow: { pose: neutral }, right_brow: { pose: neutral } }
+      curious_scan:
+        description: "Yeni bir nesne veya sesi merakla inceliyor"
+        animation: WAVE
+        duration_ms: 1050
+        frame: { eye: { color: "#7DE3FF", brightness: 0.82, pulse_hz: 0.65 }, left_brow: { pose: curious }, right_brow: { pose: curious } }
+      social_greeting:
+        description: "Tanidik bir kisiyle olumlu sosyal temas kuruyor"
+        animation: PULSE
+        duration_ms: 900
+        frame: { eye: { color: "#FF9FCB", brightness: 0.88, pulse_hz: 1.10 }, left_brow: { pose: pleased }, right_brow: { pose: pleased } }
+      focused_attention:
+        description: "Konusani veya takip ettigi hedefi dikkatle dinliyor"
+        animation: STACK
+        duration_ms: 1100
+        frame: { eye: { color: "#FFD166", brightness: 0.72, pulse_hz: 0.20 }, left_brow: { pose: concerned }, right_brow: { pose: concerned } }
+      frustrated_cooldown:
+        description: "Basarisiz denemeden sonra sakinlesmek icin kisa mola veriyor"
+        animation: GRADIENT
+        duration_ms: 1300
+        frame: { eye: { color: "#FF8F70", brightness: 0.50, pulse_hz: 0.15 }, left_brow: { pose: frustrated }, right_brow: { pose: frustrated } }
+      sleep_transition:
+        description: "Enerji tasarrufu icin uyku veya dinlenme moduna geciyor"
+        animation: SNOW
+        duration_ms: 1800
+        frame: { eye: { color: "#5A6B7A", brightness: 0.20, pulse_hz: 0.08 }, left_brow: { pose: sleepy }, right_brow: { pose: sleepy } }
+
   colors:
     thinking: "#0066CC"
     eye_default: "#30E3CA"

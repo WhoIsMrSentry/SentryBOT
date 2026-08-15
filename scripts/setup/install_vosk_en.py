@@ -14,7 +14,7 @@ import zipfile
 from pathlib import Path
 from typing import List
 
-TARGET = Path(__file__).resolve().parents[1] / "modules" / "speech" / "models" / "vosk-en"
+TARGET = Path(__file__).resolve().parents[2] / "modules" / "speech" / "models" / "vosk-en"
 
 MODEL_URLS: List[str] = [
     "https://huggingface.co/rhasspy/vosk-models/resolve/main/en/vosk-model-small-en-us-0.15.zip",

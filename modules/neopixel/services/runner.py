@@ -285,6 +285,13 @@ class NeoRunner:
         except Exception:
             return False
 
+    def stop(self) -> None:
+        try:
+            self.companion_set_mode("off")
+            self.clear()
+        except Exception:
+            pass
+
     # Exposed operations
     def clear(self) -> bool:
         if self.companion_is_active():
@@ -485,6 +492,7 @@ class NeoRunner:
             "STACKED_BARS": lambda: stacked_bars(driver, 50, c1),
             "MULTI_GRADIENT": lambda: multi_color_gradient(driver, cols, iterations or 5) if cols else None,
             "MULTI_WAVE": lambda: multi_color_wave(driver, cols, iterations or 5) if cols else None,
+            "EYE_EYEBROW": lambda: eye_eyebrow(driver, c1 or (255, 255, 255), iterations or 1),
         }
         fn = _ANIM_MAP.get(name)
         if fn is None:
@@ -551,6 +559,17 @@ class NeoRunner:
             return False
         self._companion.set_eye_color((int(r) & 255, int(g) & 255, int(b) & 255))
         return True
+
+    def companion_apply_semantic(self, semantic: str, *, revision: str = "", duration_ms: Optional[int] = None) -> bool:
+        if self._companion is None:
+            return False
+        self._cancel_animations()
+        return self._companion.apply_semantic(semantic, revision=revision, duration_ms=duration_ms)
+
+    def companion_semantic_catalog(self) -> dict[str, Any]:
+        if self._companion is None:
+            return {}
+        return self._companion.semantic_catalog()
 
     def companion_status(self) -> dict[str, Any]:
         if self._companion is None:

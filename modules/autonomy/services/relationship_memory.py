@@ -85,6 +85,27 @@ class RelationshipMemory:
             rec["last_emotion"] = str(emotion)
         self._persist()
 
+    def classify_person(self, name: str, *, known_guest_min_seen_count: int = 0) -> str:
+        """Return the privacy-safe social type without creating a new person record."""
+        key = self._normalize(name)
+        if not key:
+            return "unknown_guest"
+        record: Dict[str, Any] = {}
+        if self._social_db is not None:
+            try:
+                found = self._social_db.persons.get_by_name(name)
+                record = dict(found) if isinstance(found, dict) else {}
+            except Exception:
+                record = {}
+        else:
+            record = dict(self._people.get(key) or {})
+        if bool(record.get("is_owner") or record.get("owner_priority")):
+            return "owner"
+        seen_count = int(record.get("seen_count") or record.get("sightings_count") or 0)
+        if record and seen_count >= max(0, int(known_guest_min_seen_count)):
+            return "known_guest"
+        return "unknown_guest"
+
     def add_chat(self, name: str, role: str, text: str) -> None:
         if not self.enabled:
             return

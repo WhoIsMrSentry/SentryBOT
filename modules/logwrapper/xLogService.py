@@ -7,7 +7,7 @@ import warnings
 from typing import Any, Dict, Optional
 
 from .config_loader import load_config
-from .services.handlers import InMemoryLogHandler, build_formatter
+from .services.handlers import InMemoryLogHandler, WarningOnlyFilter, build_formatter
 
 _MEMORY_HANDLER: Optional[InMemoryLogHandler] = None
 _ROUTER = None  # lazy import for FastAPI
@@ -95,7 +95,44 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
         root_handlers.append("console")
 
     # File handler with rotation. Keep this detailed even when console hides noise.
-    if cfg.get("enable_file", True):
+    split_files = cfg.get("separate_files", {})
+    split_files = split_files if isinstance(split_files, dict) else {}
+    if bool(split_files.get("enabled", False)):
+        max_bytes = int(cfg.get("rotate_bytes", 2 * 1024 * 1024))
+        backups = int(cfg.get("backup_count", 5))
+        warning_path = str(split_files.get("warnings_path", "logs/warnings.log"))
+        error_path = str(split_files.get("errors_path", "logs/errors.log"))
+        tui_path = str(split_files.get("tui_path", "logs/tui.log"))
+        for path in (warning_path, error_path, tui_path):
+            _ensure_log_dir(path)
+        handlers["warnings_file"] = {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": "WARNING",
+            "filters": ["warning_only"],
+            "filename": warning_path,
+            "maxBytes": max_bytes,
+            "backupCount": backups,
+            "encoding": "utf-8",
+        }
+        handlers["errors_file"] = {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": "ERROR",
+            "filename": error_path,
+            "maxBytes": max_bytes,
+            "backupCount": backups,
+            "encoding": "utf-8",
+        }
+        handlers["tui_file"] = {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": "DEBUG",
+            "filename": tui_path,
+            "maxBytes": max_bytes,
+            "backupCount": backups,
+            "encoding": "utf-8",
+        }
+        root_handlers.extend(["warnings_file", "errors_file"])
+        handlers["tui_file"]["level"] = "DEBUG"
+    elif cfg.get("enable_file", True):
         path = str(cfg.get("file_path", "logs/sentry.log"))
         _ensure_log_dir(path)
         handlers["file"] = {
@@ -122,6 +159,7 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
                     "()": lambda: formatter,
                 }
             },
+            "filters": {"warning_only": {"()": "modules.logwrapper.services.handlers.WarningOnlyFilter"}},
             "handlers": {
                 name: {
                     **opts,
@@ -130,6 +168,7 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
                 for name, opts in handlers.items()
             },
             "loggers": {
+                "runtime_console": {"level": "DEBUG", "handlers": ["tui_file"], "propagate": True},
                 "uvicorn.access": {
                     "level": "WARNING",
                     "handlers": root_handlers,

@@ -35,6 +35,12 @@ class AnimateRequest(BaseModel):
     segment: Optional[str] = Field(None, description="Optional segment name (e.g. jewel, stick)")
 
 
+class PromptRequest(BaseModel):
+    prompt: str = Field(..., description="Natural language prompt")
+    context: Optional[dict] = Field(None, description="Conversation context")
+
+
+
 class PresetUpsertRequest(BaseModel):
     name: str = Field(..., description="Preset name")
     spec: dict = Field(..., description="Preset segment mapping")
@@ -102,6 +108,12 @@ def _parse_color_fields(req: AnimateRequest):
             except Exception:
                 return None
     return None
+
+
+class CompanionSemanticRequest(BaseModel):
+    semantic: str = Field(..., min_length=1, description="Human-readable pet expression semantic")
+    revision: str = Field("", max_length=128)
+    duration_ms: Optional[int] = Field(None, ge=100, le=15000)
 
 
 def get_router(runner: NeoRunner) -> APIRouter:
@@ -310,6 +322,25 @@ def get_router(runner: NeoRunner) -> APIRouter:
             "segment": body.segment,
         }
 
+    @r.get("/companion/semantics")
+    def companion_semantics():
+        return {"ok": True, "semantics": runner.companion_semantic_catalog()}
+
+    @r.post("/companion/semantic")
+    def companion_semantic(body: CompanionSemanticRequest = Body(...)):
+        ok = runner.companion_apply_semantic(
+            body.semantic,
+            revision=body.revision,
+            duration_ms=body.duration_ms,
+        )
+        return {
+            "ok": ok,
+            "semantic": body.semantic,
+            "revision": body.revision,
+            "status": runner.companion_status(),
+        }
+
+
     @r.get("/companion/status")
     def companion_status():
         return {"ok": True, **runner.companion_status()}
@@ -339,5 +370,35 @@ def get_router(runner: NeoRunner) -> APIRouter:
             right = left
         ok = runner.companion_set_vu_level(float(left), right=float(right))
         return {"ok": ok, "left": left, "right": right}
+
+    @r.post("/prompt")
+    def handle_prompt(body: PromptRequest = Body(...)):
+        """Basic text-to-action parser for TriLayerRouter to prevent 404s."""
+        prompt = body.prompt.lower()
+        if "eye" in prompt or "göz" in prompt or "bak" in prompt:
+            runner.companion_set_mode("eye")
+            return {"ok": True, "message": "Set companion mode to eye."}
+        if "think" in prompt or "düşün" in prompt:
+            runner.companion_set_mode("thinking")
+            return {"ok": True, "message": "Set companion mode to thinking."}
+        if "off" in prompt or "kapat" in prompt:
+            runner.companion_set_mode("off")
+            return {"ok": True, "message": "Turned off companion LEDs."}
+        
+        # Fallback to emote extraction
+        keywords = ['joy','sadness','anger','fear','surprise','disgust','neutral']
+        emotions = [k for k in keywords if k in prompt]
+        if emotions:
+            try:
+                from modules.neopixel.emotions.loader import EmotionStore  # type: ignore
+            except Exception:
+                from ..emotions.loader import EmotionStore  # type: ignore
+            store = EmotionStore()
+            for emo in emotions:
+                entry = store.random_entry(emo)
+                runner.show_color(*entry.color, duration=2.0, clear_after=False)
+            return {"ok": True, "message": f"Showed emotions: {emotions}"}
+        
+        return {"ok": True, "message": "No specific action taken."}
 
     return r

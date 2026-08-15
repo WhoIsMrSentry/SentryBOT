@@ -6,6 +6,7 @@ OLED_FACE_SERVICE_ROLE = "gateway_runtime_oled_face_compatibility_service"
 import threading
 import time
 from typing import Any, Dict, List, Optional
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
@@ -278,7 +279,14 @@ class xOledFacesService:
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
     svc = xOledFacesService(config_overrides=cfg)
-    app = FastAPI(title="OLED Faces Service")
+    
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        svc.start()
+        yield
+        svc.stop()
+
+    app = FastAPI(title="OLED Faces Service", lifespan=lifespan)
     app.include_router(get_router(svc))
     return app
 

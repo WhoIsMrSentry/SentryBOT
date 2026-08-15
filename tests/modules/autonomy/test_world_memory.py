@@ -50,3 +50,19 @@ def test_clear_one_kind():
     assert result["removed"] == 1
     assert status["counts"]["objects"] == 0
     assert status["counts"]["people"] == 1
+
+def test_observation_records_freshness_metadata():
+    mem = WorldMemory({"persistence_enabled": False, "default_expiry_s": 60})
+    result = mem.observe(
+        {
+            "kind": "place",
+            "name": "desk_corner",
+            "observed_at": 100.0,
+            "supersedes": "place:old_corner",
+        },
+        now=100.0,
+    )
+    item = result["item"]
+    assert item["observed_at"] == 100.0
+    assert item["expiry"] == 160.0
+    assert item["supersedes"] == "place:old_corner"

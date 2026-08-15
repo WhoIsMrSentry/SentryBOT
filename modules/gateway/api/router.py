@@ -3,12 +3,23 @@ from typing import Dict, Any
 from fastapi import APIRouter
 
 
+# Core gateway routes are intentionally read-only; no route bypasses e-stop or
+# owner authorization because hardware commands are owned by module APIs.
+ROUTE_MANIFEST = (
+    {"path": "/healthz", "method": "GET", "auth": "none", "estop_required": False},
+    {"path": "/status", "method": "GET", "auth": "none", "estop_required": False},
+    {"path": "/health", "method": "GET", "auth": "none", "estop_required": False},
+)
+
+
 def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
     r = APIRouter()
 
     @r.get("/healthz")
     def healthz():
-        out: Dict[str, Any] = {"ok": True, "modules": {}}
+        startup = started.get("_startup_health", {"ok": True, "stage": "unknown"})
+        startup = startup if isinstance(startup, dict) else {"ok": False, "stage": "invalid"}
+        out: Dict[str, Any] = {"ok": bool(startup.get("ok", False)), "startup": startup, "modules": {}}
         # Try to call each module's health if known, else mark as started
         try:
             import httpx  # type: ignore
@@ -20,6 +31,8 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
             client = httpx.Client(base_url=f"http://127.0.0.1:{port}")
         try:
             for name in started.keys():
+                if name.startswith("_"):
+                    continue
                 path = None
                 if name == "notifier":
                     path = "/notify/healthz"

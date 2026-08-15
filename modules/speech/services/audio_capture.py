@@ -70,6 +70,7 @@ class AudioConfig:
     channels: int = 1
     dtype: str = "int16"
     frame_ms: int = 30
+    strict_device: bool = False
 
 class AudioCapture:
     """Singleton audio capture supporting multiple broadcast subscribers."""
@@ -81,6 +82,7 @@ class AudioCapture:
             channels=int(cfg.get("channels", 1)),
             dtype=str(cfg.get("dtype", "int16")),
             frame_ms=int(cfg.get("frame_ms", 30)),
+            strict_device=bool(cfg.get("strict_device", False)),
         )
         self._subscribers: list[queue.Queue] = []
         self._lock = threading.Lock()
@@ -289,7 +291,7 @@ class AudioCapture:
         if sd is None:
             return False
         devs_to_try = [_portaudio_device(self.cfg.device)]
-        if self.cfg.device is not None:
+        if self.cfg.device is not None and not bool(self.cfg.strict_device):
             devs_to_try.append(None)
         for dev in devs_to_try:
             try:
