@@ -66,6 +66,10 @@ class ReflectionPlanner:
             
             content = response.get("message", {}).get("content", "{}")
             memory = json.loads(content)
+            if isinstance(memory, dict):
+                memory["candidate_weight_adjustments"] = memory.get("candidate_weight_adjustments", {}) if isinstance(memory.get("candidate_weight_adjustments"), dict) else {}
+                memory["temporary_avoid_tags"] = memory.get("temporary_avoid_tags", []) if isinstance(memory.get("temporary_avoid_tags"), list) else []
+                memory["preferred_contexts"] = memory.get("preferred_contexts", {}) if isinstance(memory.get("preferred_contexts"), dict) else {}
             
             if isinstance(memory, dict) and memory.get("summary"):
                 logger.info(f"Generated reflection memory: {memory.get('summary')}")
@@ -74,6 +78,9 @@ class ReflectionPlanner:
                     "name": "action_result",
                     "summary": memory.get("summary"),
                     "tags": memory.get("tags", []),
+                    "candidate_weight_adjustments": memory.get("candidate_weight_adjustments", {}),
+                    "temporary_avoid_tags": memory.get("temporary_avoid_tags", []),
+                    "preferred_contexts": memory.get("preferred_contexts", {}),
                     "source": "reflection_planner"
                 }
             return None
