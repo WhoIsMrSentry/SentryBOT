@@ -91,6 +91,21 @@ class CompanionGoalExecutor:
                 timestamp=ts,
             )
 
+        guard = _as_dict(plan.get("capability_guard"))
+        if bool(self.cfg.get("require_capability_guard", False)) and guard:
+            blocked = bool(guard.get("blocked", False) or guard.get("available") is False)
+            if blocked:
+                return self._finish(
+                    True,
+                    False,
+                    "capability_guard_blocked",
+                    plan,
+                    [],
+                    started,
+                    dry_run=effective_dry_run,
+                    timestamp=ts,
+                )
+
         steps = self._build_steps(plan.get("actions") or [])
 
         if not effective_dry_run and pc_test:
@@ -157,6 +172,36 @@ class CompanionGoalExecutor:
         )
         out["results"] = results
         out["result_count"] = len(results)
+        lifecycle_cfg = self.cfg.get("lifecycle", {})
+        lifecycle_cfg = lifecycle_cfg if isinstance(lifecycle_cfg, dict) else {}
+        if bool(lifecycle_cfg.get("enabled", False)):
+            cancelled = {str(item) for item in lifecycle_cfg.get("cancelled_reasons", []) if str(item)}
+            if reason in cancelled:
+                state = "cancelled"
+            elif dry_run:
+                state = str(lifecycle_cfg.get("dry_run_state") or "simulated")
+            elif applied:
+                state = str(lifecycle_cfg.get("applied_state") or "completed")
+            elif not available:
+                state = str(lifecycle_cfg.get("unavailable_state") or "blocked")
+            else:
+                state = str(lifecycle_cfg.get("failure_state") or "failed")
+            out["lifecycle"] = {
+                "state": state,
+                "plan_id": out.get("plan_id"),
+                "reason": reason,
+                "started_at": timestamp - ((time.monotonic() - started) if started else 0.0),
+                "updated_at": timestamp,
+            }
+            recovery_cfg = self.cfg.get("recovery_ladder", {})
+            recovery_cfg = recovery_cfg if isinstance(recovery_cfg, dict) else {}
+            if state in {"blocked", "failed"} and bool(recovery_cfg.get("enabled", False)):
+                out["recovery"] = {
+                    "states": [str(item) for item in recovery_cfg.get("states", []) if str(item)],
+                    "max_attempts": int(recovery_cfg.get("max_attempts", 0) or 0),
+                    "terminal_semantic": str(recovery_cfg.get("terminal_semantic") or ""),
+                }
+
         self._last_execution = dict(out)
         return out
 
@@ -188,6 +233,35 @@ class CompanionGoalExecutor:
             "latency_ms": round((time.monotonic() - started) * 1000.0, 2),
             "timestamp": timestamp,
         }
+        lifecycle_cfg = self.cfg.get("lifecycle", {})
+        lifecycle_cfg = lifecycle_cfg if isinstance(lifecycle_cfg, dict) else {}
+        if bool(lifecycle_cfg.get("enabled", False)):
+            cancelled = {str(item) for item in lifecycle_cfg.get("cancelled_reasons", []) if str(item)}
+            if reason in cancelled:
+                state = "cancelled"
+            elif dry_run:
+                state = str(lifecycle_cfg.get("dry_run_state") or "simulated")
+            elif applied:
+                state = str(lifecycle_cfg.get("applied_state") or "completed")
+            elif not available:
+                state = str(lifecycle_cfg.get("unavailable_state") or "blocked")
+            else:
+                state = str(lifecycle_cfg.get("failure_state") or "failed")
+            out["lifecycle"] = {
+                "state": state,
+                "plan_id": out.get("plan_id"),
+                "reason": reason,
+                "updated_at": timestamp,
+            }
+            recovery_cfg = self.cfg.get("recovery_ladder", {})
+            recovery_cfg = recovery_cfg if isinstance(recovery_cfg, dict) else {}
+            if state in {"blocked", "failed"} and bool(recovery_cfg.get("enabled", False)):
+                out["recovery"] = {
+                    "states": [str(item) for item in recovery_cfg.get("states", []) if str(item)],
+                    "max_attempts": int(recovery_cfg.get("max_attempts", 0) or 0),
+                    "terminal_semantic": str(recovery_cfg.get("terminal_semantic") or ""),
+                }
+
         self._last_execution = dict(out)
         return out
 
@@ -249,6 +323,17 @@ class CompanionGoalExecutor:
 
         action_type = str(action.get("type") or "").strip().lower()
         if action_type == "expression":
+            semantic = str(action.get("semantic") or "").strip()
+            if semantic:
+                return {
+                    "component": "neopixel",
+                    "method": "POST",
+                    "url": "/neopixel/companion/semantic",
+                    "risk": "none",
+                    "capability": "expression.semantic_face",
+                    "params": {"semantic": semantic, "revision": str(action.get("revision") or "")},
+                    "payload": {"semantic": semantic, "revision": str(action.get("revision") or "")},
+                }
             event = action.get("event")
             return {
                 "component": "expression",
@@ -290,6 +375,29 @@ class CompanionGoalExecutor:
                 "capability": f"motion.{name}",
                 "params": dict(action),
                 "payload": dict(action),
+            }
+        if action_type == "navigation":
+            policy = str(action.get("policy") or "").strip()
+            if not policy:
+                return {
+                    "component": "navigation",
+                    "method": "NOOP",
+                    "url": "noop:navigation_policy_missing",
+                    "risk": "none",
+                    "capability": "navigation.policy_missing",
+                    "params": dict(action),
+                    "payload": dict(action),
+                }
+            payload = dict(action)
+            payload["companion_policy"] = policy
+            return {
+                "component": "autonomy",
+                "method": "POST",
+                "url": "/autonomy/navigation/goal",
+                "risk": str(action.get("risk") or "low"),
+                "capability": f"navigation.{policy}",
+                "params": dict(action),
+                "payload": payload,
             }
         if action_type == "pose":
             name = str(action.get("name") or "idle").strip() or "idle"
