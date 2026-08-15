@@ -82,6 +82,7 @@ def test_text_to_speech_piper_picks_english_voice_key() -> None:
             "piper": {
                 "voice": "tr",
                 "auto_language": True,
+                "prefer_text_language": True,
                 "language_voices": {"tr": "tr", "en": "glados"},
                 "model_path": "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx",
                 "voices": {

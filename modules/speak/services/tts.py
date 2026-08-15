@@ -491,7 +491,7 @@ class TextToSpeech:
         if not bool(piper_cfg.get("auto_language", True)):
             return None
         explicit = overrides.get("language") if isinstance(overrides, dict) else None
-        if explicit and bool(piper_cfg.get("lock_session_language", True)):
+        if explicit and bool(piper_cfg.get("lock_session_language", True)) and not bool(piper_cfg.get("prefer_text_language", False)):
             language = normalize_lang(explicit, fallback=str(cfg.get("language", "tr")))
         else:
             language = resolve_speak_language(
