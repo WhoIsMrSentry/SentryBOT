@@ -257,7 +257,13 @@ class AudioCapture:
                 self._stopped = False
                 try:
                     while not self._stopped:
-                        length, data = self._pcm.read()
+                        pcm = self._pcm
+                        if pcm is None:
+                            break
+                        try:
+                            length, data = pcm.read()
+                        except Exception:
+                            break
                         if length > 0 and data:
                             b_data = bytes(data)
                             self._update_rms(b_data)
@@ -269,7 +275,10 @@ class AudioCapture:
                                         pass
                 finally:
                     if self._pcm:
-                        self._pcm.close()
+                        try:
+                            self._pcm.close()
+                        except Exception:
+                            pass
                         self._pcm = None
 
             self._alsa_thread = threading.Thread(target=_alsa_reader, daemon=True)
