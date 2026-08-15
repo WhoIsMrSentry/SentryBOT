@@ -641,7 +641,15 @@ class ServiceClient:
         if not endpoint:
             return False
         try:
-            resp = requests.get(endpoint, timeout=1.0)
+            from modules.gateway.url import resolve_config_url, resolve_gateway_base_url
+
+            url = resolve_config_url(str(endpoint), self.urls.get("gateway") or resolve_gateway_base_url())
+        except Exception:
+            url = str(endpoint)
+            if url.startswith("@gateway"):
+                url = f"http://127.0.0.1:8080{url[len('@gateway'):]}"
+        try:
+            resp = requests.get(url, timeout=1.0)
             if resp.status_code != 200:
                 return False
             data = resp.json()
