@@ -841,6 +841,7 @@ world_memory:
   db_path: data/world_memory.sqlite3
   max_context_items: 8
   default_confidence: 0.55
+  default_expiry_s: 900
 living_needs:
   enabled: true
   idle_boredom_s: 90
@@ -868,7 +869,205 @@ topomap_motion:
   allow_base_motion: false
   require_ultrasonic_clearance: true
   min_clearance_cm: 28.0
+  companion_policies:
+    safe_exploration:
+      enabled: true
+      required_tags: [safe, exploration]
+      selection: random
+      selection_seed: 2701
+      max_attempts: 2
+      fallback_behavior: quiet_observation
+    social_distance:
+      enabled: true
+      required_tags: [safe, social_distance]
+      minimum_distance_from_owner_m: 1.2
+      selection: random
+      selection_seed: 2701
+      max_attempts: 2
+      fallback_behavior: quiet_observation
+  place_validation:
+    allowed_tags: [safe, exploration, social_distance, owner_zone, quiet, restricted]
+    safe_required_for: [exploration, social_distance]
+    distance_required_for: [social_distance]
+    motion_required_for: [safe, exploration, social_distance]
+
 owner_learning:
   enabled: true
   profile_path: data/owner_profile.json
   min_confidence: 0.55
+
+companion_goals:
+  enabled: true
+  event_cooldown_s: 12.0
+  autonomy_policy:
+    uncertainty:
+      enabled: true
+      confidence_paths: [perception.confidence, perception.vision_confidence, perception.audio_confidence]
+      hold_below: 0.45
+      fallback_semantic: quiet_observation
+      suppress_action_types: [navigation, motion]
+      reason: low_observation_confidence
+    personalization:
+      enabled: true
+      rules:
+        - signal_paths: [preferences.quiet_mode, relationship.preferences.quiet_mode]
+          when: true
+          suppress_action_types: [speech]
+          semantic: quiet_observation
+          reason: owner_prefers_quiet
+        - signal_paths: [preferences.no_follow, relationship.preferences.no_follow]
+          when: true
+          suppress_action_types: [navigation]
+          semantic: quiet_observation
+          reason: owner_disables_follow
+        - signal_paths: [routines.quiet_time, relationship.routines.quiet_time]
+          when: true
+          suppress_action_types: [speech, navigation]
+          semantic: quiet_observation
+          reason: learned_quiet_routine
+    routine_learning:
+      enabled: true
+      min_observations: 3
+      requires_owner_present: true
+      signals:
+        quiet_time: [perception.audio_quiet, perception.low_activity]
+    privacy:
+      enabled: true
+      restricted_zone_paths: [perception.zone, location.zone]
+      restricted_zones: [private]
+      guest_paths: [perception.guest_present, social.guest_present]
+      suppress_action_types: [vision, memory_write]
+      reason: privacy_restricted_context
+    explanation:
+      enabled: true
+      include: [environmental_choice, autonomy_guard, personalization, privacy]
+    capability_gate:
+      enabled: true
+      snapshot_path: capability_health
+      default_required:
+        expression: [expression.event]
+        speech: [speech.short_prompt]
+        navigation: [navigation.goal]
+        motion: [motion.look_around]
+        vision: [vision.semantic]
+        memory_write: [memory.observe]
+      fallback_semantic: quiet_observation
+      reason: capability_unavailable
+    health:
+      enabled: true
+      max_age_s: 2.0
+      required_components: [runtime_profile, pi_hardware, capability_registry]
+      suppress_action_types: [navigation, motion, vision]
+      fallback_semantic: quiet_observation
+      reason: degraded_or_stale_hardware
+
+
+
+
+
+  auto_execute: true
+  pet_companion_enabled: true
+  environment_policy:
+    enabled: true
+    exploration_probability: 0.18
+    exploration_band: 0.12
+    safety_hold_threshold: 0.75
+    seed: 2701
+    signals:
+      novelty: [perception.novelty, perception.scene_change, perception.new_object_confidence]
+      sound_interest: [perception.sound_interest, perception.sound_confidence]
+      motion_interest: [perception.motion_interest, perception.motion_confidence]
+      social: [scores.social, perception.owner_attention]
+      curiosity: [scores.curiosity, needs.curiosity]
+      boredom: [scores.boredom, needs.boredom]
+      energy: [scores.energy, needs.energy]
+      safety: [scores.safety, needs.safety]
+      owner_present: [perception.owner_present]
+    candidates:
+      quiet_observation:
+        base: 0.16
+        behavior: calm_idle
+        recommended_goal: inspect_environment_and_learn
+        semantic: quiet_observation
+        weights: { novelty: 0.12, sound_interest: 0.10, motion_interest: 0.08, energy: 0.08, safety: -0.65 }
+      curious_scan:
+        base: 0.08
+        behavior: curious_scan
+        recommended_goal: inspect_environment_and_learn
+        semantic: curious_scan
+        outputs: [{ type: speech, mode: brief, style: curious_light, utterance: "Bunu merak ettim." }, { type: pose, name: small_head_tilt_or_scan, risk: low }, { type: navigation, policy: safe_exploration, risk: low }]
+        weights: { novelty: 0.58, sound_interest: 0.30, motion_interest: 0.24, curiosity: 0.32, energy: 0.14, safety: -0.85 }
+      social_greeting:
+        base: 0.05
+        behavior: social_engagement
+        recommended_goal: engage_owner
+        semantic: social_greeting
+        weights: { owner_present: 0.34, social: 0.44, novelty: 0.08, energy: 0.12, safety: -0.90 }
+      focused_attention:
+        base: 0.06
+        behavior: focused_attention
+        recommended_goal: companion_then_rest
+        semantic: focused_attention
+        weights: { sound_interest: 0.42, motion_interest: 0.20, social: 0.18, energy: 0.10, safety: -0.80 }
+      frustrated_cooldown:
+        base: 0.02
+        behavior: calm_idle
+        recommended_goal: recover_energy
+        semantic: frustrated_cooldown
+        outputs: [{ type: speech, mode: brief, style: reserved_soft, utterance: "Biraz sakinleşeyim." }, { type: pose, name: settle_nearby, risk: low }, { type: navigation, policy: social_distance, risk: low }]
+        weights: { boredom: 0.24, energy: -0.45, safety: 0.30 }
+      sleep_transition:
+        base: 0.01
+        behavior: recover_energy
+        recommended_goal: recover_energy
+        semantic: sleep_transition
+        weights: { energy: -0.65, boredom: -0.12, safety: 0.18 }
+
+social_policy:
+  enabled: true
+  default_behavior: observe_only
+  known_guest_min_seen_count: 1
+  safe_semantic: quiet_observation
+  person_types:
+    owner:
+      auto_execute: true
+      restricted_action_types: []
+    known_guest:
+      auto_execute: false
+      semantic: quiet_observation
+      restricted_action_types: [navigation, motion, identity_memory]
+    unknown_guest:
+      auto_execute: false
+      semantic: quiet_observation
+      restricted_action_types: [navigation, motion, identity_memory]
+    multiple_people:
+      auto_execute: false
+      semantic: quiet_observation
+      restricted_action_types: [navigation, motion, identity_memory]
+
+outcome_learning:
+  enabled: true
+  max_weight_adjustment: 0.25
+  success_weight_adjustment: 0.05
+  failure_weight_adjustment: -0.15
+  failure_avoid_tags: [motion, navigation]
+  safe_semantic: quiet_observation
+
+companion_goal_executor:
+  enabled: true
+  dry_run_default: true
+  allow_real_hardware: false
+  stop_on_failure: true
+  require_capability_guard: true
+  lifecycle:
+    enabled: true
+    dry_run_state: simulated
+    applied_state: completed
+    unavailable_state: blocked
+    failure_state: failed
+    cancelled_reasons: [executor_disabled, goal_plan_missing, no_actions]
+  recovery_ladder:
+    enabled: true
+    states: [wait, resense, alternate_safe_goal, safe_observation]
+    max_attempts: 2
+    terminal_semantic: quiet_observation
