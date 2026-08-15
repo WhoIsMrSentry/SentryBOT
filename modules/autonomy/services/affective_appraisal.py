@@ -24,6 +24,7 @@ _DEFAULT_RULES: Dict[str, Dict[str, float]] = {
     "owner_returned": {"happiness": 22, "anger": -12, "fear": -10},
     "user_praise": {"happiness": 18, "anger": -10},
     "user_rude": {"anger": 32, "happiness": -12},
+    "command_ok": {"happiness": 6, "anger": -4},
     "command_failed": {"anger": 12, "fear": 6},
     "loud_noise": {"fear": 22, "anger": 5},
     "new_person": {"curiosity": 12},
@@ -90,6 +91,25 @@ class AffectiveAppraisal:
             except Exception:
                 continue
         return str(event).strip().lower()
+
+    def process_event(self, event: str, intensity: float = 1.0) -> Dict[str, Any]:
+        """Appraise an event and return a structured match result dictionary."""
+        deltas = self.appraise(event, intensity)
+        if not deltas:
+            return {
+                "matched": False,
+                "event": str(event).strip().lower(),
+                "intensity": max(0.0, float(intensity)),
+                "mood_deltas": {},
+                "notes": "unmatched_event",
+            }
+        return {
+            "matched": True,
+            "event": str(event).strip().lower(),
+            "intensity": max(0.0, float(intensity)),
+            "mood_deltas": deltas,
+            "notes": f"appraised {event}",
+        }
 
 
 __all__ = ["AffectiveAppraisal"]
