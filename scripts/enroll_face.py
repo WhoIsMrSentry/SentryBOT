@@ -65,26 +65,53 @@ def main() -> int:
         print(f"[INFO] Loaded image from {img_path}")
     else:
         print("[INFO] Capturing frame from camera...")
-        try:
-            # Check if CameraCapture bridge or Picamera2 is available
-            from modules.camera.services.capture import CameraCapture
-            cap = CameraCapture(source=args.camera, width=1280, height=720, fps=15)
-            if cap.start():
-                print("[INFO] Camera started. Stabilizing 2 seconds...")
-                time.sleep(2.0)
-                frame = cap.read_frame()
-                cap.stop()
-        except Exception as exc:
-            print(f"[WARN] CameraCapture bridge fallback: {exc}")
+        import numpy as np
 
+        # 1. Try to fetch frame from active Gateway if robot is already running
+        try:
+            import urllib.request
+            req = urllib.request.Request("http://127.0.0.1:8000/camera/frame")
+            with urllib.request.urlopen(req, timeout=1.5) as resp:
+                if resp.status == 200:
+                    raw_bytes = resp.read()
+                    frame = cv2.imdecode(np.frombuffer(raw_bytes, np.uint8), cv2.IMREAD_COLOR)
+                    if frame is not None:
+                        print("[INFO] Captured live frame from running SentryBOT Gateway.")
+        except Exception:
+            pass
+
+        # 2. Standalone camera capture via Picamera2 Subprocess Bridge
         if frame is None:
-            # Fallback to standard cv2.VideoCapture
-            vcap = cv2.VideoCapture(args.camera)
-            if vcap.isOpened():
-                for _ in range(5):  # warm up auto-exposure
-                    vcap.read()
-                ret, frame = vcap.read()
-                vcap.release()
+            try:
+                from modules.camera.services.capture import CameraCapture, CaptureConfig, FramePublisher
+                cfg = CaptureConfig(camera_num=args.camera, size=(1280, 720), frame_rate=15)
+                pub = FramePublisher()
+                cap = CameraCapture(cfg=cfg, publisher=pub)
+                if cap.start():
+                    print("[INFO] Camera hardware initialized. Waiting for auto-exposure...")
+                    time.sleep(2.0)
+                    for _ in range(30):
+                        jpeg_bytes = pub.get_jpeg()
+                        if jpeg_bytes:
+                            frame = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+                            if frame is not None:
+                                break
+                        time.sleep(0.1)
+                    cap.stop()
+            except Exception as exc:
+                print(f"[WARN] CameraCapture bridge fallback: {exc}")
+
+        # 3. Fallback to standard OpenCV VideoCapture
+        if frame is None:
+            try:
+                vcap = cv2.VideoCapture(args.camera)
+                if vcap.isOpened():
+                    for _ in range(5):  # warm up auto-exposure
+                        vcap.read()
+                    ret, frame = vcap.read()
+                    vcap.release()
+            except Exception as exc:
+                print(f"[WARN] OpenCV VideoCapture fallback: {exc}")
 
     if frame is None:
         print("[ERROR] Failed to capture a frame from the camera. Please check camera connection or supply --image.", file=sys.stderr)
