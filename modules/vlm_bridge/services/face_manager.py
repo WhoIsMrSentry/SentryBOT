@@ -159,7 +159,11 @@ class FaceManager:
 
             if total <= 0:
                 continue
-            score = good / float(total)
+            # ORB yields a small fraction of good matches for 3D faces due to lighting/angle.
+            # Normalizing by 40 good matches gives a much more functional and intuitive 0-100% score
+            # than dividing by total keypoints (~500), which artificially suppresses the score.
+            score = min(1.0, good / 40.0)
+            
             if score > best_score or (abs(score - best_score) < 1e-6 and good > best_good):
                 best_name = name
                 best_score = score
