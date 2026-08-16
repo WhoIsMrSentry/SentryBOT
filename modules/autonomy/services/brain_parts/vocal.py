@@ -114,6 +114,11 @@ class VocalMixin:
 
     def _react_to_sound(self, angle: float) -> None:
         """Turn head towards sound source and trigger LLM reaction."""
+        now = time.time()
+        last_reaction = float(self.state.get("last_sound_reaction_time", 0.0) or 0.0)
+        if (now - last_reaction) < 12.0:
+            return
+        self.state["last_sound_reaction_time"] = now
         logger.info("Sound detected at %s", angle)
         offset = max(-70, min(70, angle))
         target_pan = max(0, min(180, 90 + offset))

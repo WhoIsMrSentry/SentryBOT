@@ -375,11 +375,25 @@ class SpeechService:
         self._utterance_pcm.clear()
 
     def finalize_stt(self, text: str) -> tuple[str, str]:
-        """Apply language detection and optional EN Vosk re-decode."""
+        """Apply Gemini Online STT or language detection and optional Vosk re-decode."""
         if not self._auto_language:
             return str(text or "").strip(), self._default_language
         pcm = bytes(self._utterance_pcm)
         self.clear_utterance_buffer()
+
+        # Try Gemini Online Audio STT if API key is present and audio duration is sufficient
+        if len(pcm) >= 4800:
+            try:
+                from modules.speech.services.online_stt import transcribe_gemini
+                cloud_text = transcribe_gemini(pcm)
+                if cloud_text:
+                    from modules.speech.services.stt_language import _detect_language
+                    detected_lang = _detect_language(cloud_text, default=self._default_language)
+                    self.source_language = detected_lang
+                    return cloud_text, detected_lang
+            except Exception as exc:
+                logger.debug("Online STT fallback to local: %s", exc)
+
         resolved_text, resolved_lang = resolve_stt_text_and_language(
             text,
             pcm,

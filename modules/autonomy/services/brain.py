@@ -417,9 +417,16 @@ class AutonomyBrain(
                 elif isinstance(dir_obj, (int, float)):
                     raw_angle = dir_obj
             if raw_angle is not None:
-                self.interaction_occurred("sound")
-                logger.info("Processing sound direction: %s", raw_angle)
-                self._react_to_sound(raw_angle)
+                now = time.time()
+                last_time = float(self.state.get("last_sound_time", 0.0) or 0.0)
+                last_angle = self.state.get("last_sound_angle", None)
+                # Only react if angle changed meaningfully (>15 deg) or 15s elapsed
+                if last_angle is None or abs(float(raw_angle) - float(last_angle)) >= 15.0 or (now - last_time) >= 15.0:
+                    self.state["last_sound_time"] = now
+                    self.state["last_sound_angle"] = raw_angle
+                    self.interaction_occurred("sound")
+                    logger.info("Processing sound direction: %s", raw_angle)
+                    self._react_to_sound(raw_angle)
         except Exception as e:
             logger.debug(f"Failed to fetch sound direction: {e}")
 
