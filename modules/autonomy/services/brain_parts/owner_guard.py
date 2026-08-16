@@ -176,15 +176,37 @@ class OwnerGuardMixin:
         self.state["owner_lockout_until"] = 0.0
         self.state["rfid_authorized_until"] = 0.0
         affectionate = self._address_owner("affectionate")
-        greet_cooldown = max(10, self.owner_cfg.get("presence_timeout_s", 30) / 2)
+        greet_cooldown = max(8, self.owner_cfg.get("presence_timeout_s", 25) / 2)
         if timestamp - self.state.get("owner_last_greet", 0.0) > greet_cooldown:
-            greeting = self.owner_cfg.get("greeting", "Baba! Gelmene çok sevindim.")
+            # 1. Neopixel celebration effect (Rainbow / Pulse)
+            try:
+                self.client.set_interaction_effect("RAINBOW", duration_ms=2500, force=True)
+            except Exception:
+                pass
+            # 2. OLED Face expression: Happy / Love
+            try:
+                self.client.apply_oled_face(mode="animation", name="love")
+            except Exception:
+                pass
+            # 3. Servo head nod / happy animation
+            try:
+                self._trigger_animation("owner_scan")
+            except Exception:
+                pass
+
+            greeting = self.owner_cfg.get("greeting", "Hoş geldin {name}! Geldiğine çok sevindim.")
+            display_name = self.owner_cfg.get("name") or "Emir"
+            if "{nickname}" in greeting:
+                greeting = greeting.replace("{nickname}", affectionate)
+            if "{name}" in greeting:
+                greeting = greeting.replace("{name}", display_name)
+
             ran = self._run_scene(
                 "owner_return",
-                context={"name": self.owner_cfg.get("name", "Owner"), "nickname": affectionate},
+                context={"name": display_name, "nickname": affectionate},
             )
             if not ran:
-                self._speak_with_mood(greeting.replace("{nickname}", affectionate), emotion="joy")
+                self._speak_with_mood(greeting, emotion="joy")
             self.state["owner_last_greet"] = timestamp
         self.appraise_event("owner_returned")
         self._report_attempts_to_owner()

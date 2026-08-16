@@ -812,22 +812,23 @@ scenes:
       name: scene.emotion_neutral.end
 owner:
   enabled: true
-  name: WhoIsMrSentry
+  name: Emir
   aliases:
   - Emir
+  - WhoIsMrSentry
   addressing:
-    affectionate: Baba
+    affectionate: Emir
     formal: Emir
-    handle: WhoIsMrSentry
-  presence_timeout_s: 45
+    handle: Emir
+  presence_timeout_s: 30
   require_presence: false
   max_requests_without_owner: 3
-  cooldown_s: 20
+  cooldown_s: 15
   speaker_window_s: 10
   polite_message: Sahip yokken de isteğini yerine getirebilirim.
-  angry_message: Baba yokken beni zorlamanı istemiyorum.
-  cooldown_message: Baba gelene kadar konuşmak istemiyorum.
-  greeting: Baba! Geldiğine çok sevindim.
+  angry_message: Emir yokken beni zorlamanı istemiyorum.
+  cooldown_message: Emir gelene kadar konuşmak istemiyorum.
+  greeting: Hoş geldin Emir! Seni gördüğüme çok sevindim.
   restricted_keywords:
   - format
   - kendini kapat

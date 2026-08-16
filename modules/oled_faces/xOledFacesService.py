@@ -81,6 +81,11 @@ class xOledFacesService:
     def on_interaction_event(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
         if not self.cfg.get("enabled", True):
             return
+        # STT final transcription text display on OLED face
+        if event_type in {"speech.final", "speech.transcription", "stt.final", "speech.text"}:
+            txt = (data or {}).get("text") if isinstance(data, dict) else str(data or "")
+            if txt and hasattr(self.display, "_engine") and self.display._engine:
+                self.display._engine.set_stt_text(str(txt), duration_s=4.5)
         if self._event_rate_limited(event_type):
             return
         action = self.mapper.from_interaction_event(event_type)

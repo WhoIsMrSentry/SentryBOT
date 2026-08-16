@@ -54,4 +54,13 @@ def get_router(service: Any) -> APIRouter:
         service.on_interaction_event(event_type, data)
         return {"ok": True}
 
+    @r.post("/stt_text")
+    def post_stt_text(payload: Dict[str, Any]) -> Dict[str, Any]:
+        text = str(payload.get("text", "")).strip()
+        dur = float(payload.get("duration_s", 4.5))
+        if hasattr(service, "display") and hasattr(service.display, "_engine") and service.display._engine:
+            service.display._engine.set_stt_text(text, duration_s=dur)
+            return {"ok": True, "text": text}
+        return {"ok": False, "error": "engine not started"}
+
     return r

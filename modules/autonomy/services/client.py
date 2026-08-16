@@ -458,6 +458,14 @@ class ServiceClient:
             payload["color"] = color
         return self._post("interactions", "/base", payload)
 
+    def apply_oled_face(self, mode: str = "animation", name: str = "love"):
+        """Apply an OLED face expression or animation."""
+        return self._post("oled_faces", "/manual", {"mode": mode, "name": name})
+
+    def set_oled_stt_text(self, text: str, duration_s: float = 4.5):
+        """Display recognized speech text on OLED face display."""
+        return self._post("oled_faces", "/stt_text", {"text": text, "duration_s": duration_s})
+
     def get_person_memory(self, name: str) -> dict:
         """Fetch person details from social_db."""
         return self._get("social_db", f"/api/social_db/person/{name}")

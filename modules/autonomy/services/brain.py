@@ -454,6 +454,7 @@ class AutonomyBrain(
             self.state["last_speech_language"] = detected_lang
         try:
             self.client.push_interaction_event("speech.final", {"text": text, "lang": detected_lang or "tr"})
+            self.client.set_oled_stt_text(text)
         except Exception:
             pass
         self._react_to_speech(text, source_lang=detected_lang)

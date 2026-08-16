@@ -50,10 +50,19 @@ class EyeEngine:
         self._activity_start = 0.0
         self._restore_mood = None                        # mood to return to after a face-swapping gesture
         self._next_blink = self._next_idle = 0.0
+        self._subtitle_text: Optional[str] = None
+        self._subtitle_expiry: float = 0.0
         self._stop = threading.Event()
         self._thread = None
 
     # ------------------------------------------------------------------ API
+    def set_stt_text(self, text: str, duration_s: float = 4.5) -> None:
+        """Display last recognized STT speech text at the bottom of the OLED face."""
+        if not text or not str(text).strip():
+            return
+        with self._lock:
+            self._subtitle_text = str(text).strip()
+            self._subtitle_expiry = time.monotonic() + max(1.0, float(duration_s))
     def start(self):
         if not (self._thread and self._thread.is_alive()):
             self._stop.clear()
@@ -226,4 +235,13 @@ class EyeEngine:
             OVERLAYS[act](d, self.W, self.H, now)
         if gkind in GESTURE_FX:                           # gesture-time extras (e.g. a smoke cloud)
             GESTURE_FX[gkind](d, self.W, self.H, gph, genv)
+
+        # STT recognized speech text banner overlay (128x64 bottom strip)
+        if self._subtitle_text and now < self._subtitle_expiry:
+            txt = self._subtitle_text
+            d.rectangle([0, self.H - 14, self.W - 1, self.H - 1], fill=0)
+            d.line([(0, self.H - 14), (self.W - 1, self.H - 14)], fill=1)
+            display_txt = txt if len(txt) <= 21 else (txt[:19] + "..")
+            d.text((2, self.H - 12), display_txt, fill=1)
+
         return self._img

@@ -100,8 +100,8 @@ visual_context:
 # Living Vision Agent configuration
 vision_llm:
   enabled: true
-  base_url: "http://REMOTE_OLLAMA:11434"  # Remote Ollama HTTP API
-  model: "qwen3-vl:8b"                    # Q4 quantized, ~5GB VRAM on 24GB GPU
+  base_url: "http://127.0.0.1:11434"  # Remote Ollama SSH bridge
+  model: "qwen3.5:9b"
   timeout_s: 18
   max_image_width: 640
   jpeg_quality: 70
