@@ -703,19 +703,10 @@ class VisionProcessor:
         if not probe:
             return True
         try:
-            resp = requests.get(probe, timeout=0.35)
+            resp = requests.get(probe, timeout=1.0)
+            return resp.status_code == 200
         except Exception:
             return False
-        if resp.status_code != 200:
-            return False
-        if probe.endswith("/camera/healthz"):
-            try:
-                payload = resp.json()
-                if isinstance(payload, dict) and "ok" in payload:
-                    return bool(payload.get("ok"))
-            except Exception:
-                return False
-        return True
 
     def _capture_loop(self) -> None:
         cap: Optional[Any] = None
@@ -731,26 +722,10 @@ class VisionProcessor:
 
                 if self._is_http_camera_source() and not self._http_camera_ready():
                     open_fail_count += 1
-                    if open_fail_count >= self._max_camera_wait_attempts:
-                        if not self._camera_gave_up:
-                            self._camera_gave_up = True
-                            logger.warning(
-                                "Camera source unavailable after %d attempts (%s); pausing capture retries",
-                                self._max_camera_wait_attempts,
-                                self.camera_source,
-                            )
-                        time.sleep(3.0)
-                        if self._http_camera_ready():
-                            open_fail_count = 0
-                            self._camera_gave_up = False
-                            logger.info("Camera source recovered: %s", self.camera_source)
-                        continue
-                    if open_fail_count == 1 or open_fail_count == self._max_camera_wait_attempts:
+                    if open_fail_count % 10 == 1:
                         logger.info(
-                            "Camera source not ready yet: %s (attempt=%d/%d), waiting...",
+                            "Camera source not ready yet: %s, waiting...",
                             self.camera_source,
-                            open_fail_count,
-                            self._max_camera_wait_attempts,
                         )
                     time.sleep(1.0)
                     continue

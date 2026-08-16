@@ -36,8 +36,12 @@ class FaceManager:
         min_score: float = 0.15,
         social_db: Optional[object] = None,
     ):
-        self.data_dir = data_dir
-        self.faces_file = os.path.join(data_dir, filename)
+        if not os.path.isabs(data_dir):
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+            self.data_dir = os.path.join(base_dir, data_dir)
+        else:
+            self.data_dir = data_dir
+        self.faces_file = os.path.join(self.data_dir, filename)
         self.ratio_test = float(ratio_test)
         self.min_good_matches = int(min_good_matches)
         self.min_score = float(min_score)
@@ -47,6 +51,13 @@ class FaceManager:
                 from modules.social_db import get_default as _social_default  # type: ignore
 
                 social_db = _social_default()
+            except Exception:
+                social_db = None
+        if social_db is None:
+            try:
+                from modules.social_db.services.repositories import SocialDb
+                db_path = os.path.join(self.data_dir, "social.sqlite3")
+                social_db = SocialDb(db_path=db_path)
             except Exception:
                 social_db = None
         self._social_db = social_db
@@ -220,9 +231,14 @@ class FaceManager:
     def load_faces(self) -> None:
         self.known_face_names = []
         self._known_descriptors = {}
-        if self._social_db is not None and self._load_faces_from_social_db():
-            return
+        if self._social_db is not None:
+            try:
+                self._load_faces_from_social_db()
+            except Exception:
+                pass
         self._load_faces_from_json()
+        self.known_face_names = sorted(self._known_descriptors.keys())
+        logger.info("Total %d known faces registered in FaceManager.", len(self.known_face_names))
 
     def save_faces(self) -> None:
         if self._social_db is not None:
@@ -244,7 +260,6 @@ class FaceManager:
                 logger.info("Faces persisted to social_db.")
             except Exception as exc:
                 logger.error("Failed to persist faces to social_db: %s", exc)
-            return
 
         data: Dict[str, Dict[str, List[List[int]]]] = {}
         for name, desc in self._known_descriptors.items():
@@ -253,9 +268,9 @@ class FaceManager:
         try:
             with open(self.faces_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            logger.info("Faces saved successfully.")
+            logger.info("Faces saved successfully to %s", self.faces_file)
         except Exception as exc:
-            logger.error("Failed to save faces: %s", exc)
+            logger.error("Failed to save faces to %s: %s", self.faces_file, exc)
 
     def register_face(self, name: str, image: np.ndarray) -> bool:
         if not name or not str(name).strip():
