@@ -316,7 +316,12 @@ def request_background_refresh(snapshot: Snapshot) -> None:
     """Keep gateway probes off the terminal render/input thread."""
     if bool(getattr(request_background_refresh, "running", False)):
         return
+    now = time.monotonic()
+    last_run = float(getattr(request_background_refresh, "last_run", 0.0) or 0.0)
+    if (now - last_run) < 1.0:
+        return
     request_background_refresh.running = True
+    request_background_refresh.last_run = now
 
     def _refresh() -> None:
         try:
