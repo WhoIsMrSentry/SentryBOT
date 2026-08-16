@@ -357,4 +357,8 @@ class PersonIdentityManager:
         with self._lock:
             self._save_unlocked()
 
-__all__ = ["PersonIdentityManager", "PersonMemoryRecord", "RECOGNITION_LABELS"]
+
+# Alias for backward-compatible imports
+PersonIdentity = PersonIdentityManager
+
+__all__ = ["PersonIdentityManager", "PersonIdentity", "PersonMemoryRecord", "RECOGNITION_LABELS"]
