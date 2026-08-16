@@ -83,6 +83,11 @@ def resolve_config_url(value: str, gateway_base: Optional[str] = None) -> str:
 
     for prefix in _LOOPBACK_PREFIXES:
         if raw.lower().startswith(prefix):
+            port_match = re.match(r"^https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d+)", raw.lower())
+            if port_match:
+                port_num = int(port_match.group(1))
+                if port_num not in (8080, 8000):
+                    return raw
             suffix = raw.split(":", 2)[-1]
             if "/" in suffix:
                 path = "/" + suffix.split("/", 1)[1]
