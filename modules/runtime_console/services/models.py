@@ -357,21 +357,27 @@ class Snapshot:
     started_at: float = field(default_factory=time.time)
 
     def feed_line(self, line: str) -> None:
-        line = repair_mojibake(line.rstrip("\n"))
-        if not line:
+        line = repair_mojibake(line.rstrip("\r\n"))
+        if not line or line.startswith("--- robot subprocess"):
             return
         self.raw_lines.append(line)
         ev = parse_log_line(line)
         if ev is not None:
             self.feed_event(ev)
         else:
-            if any(x in line for x in ("WARNING", "ERROR", "Runtime console initialized")):
+            clean = strip_ansi(line).strip()
+            if clean:
+                level = "INFO"
+                if any(x in clean for x in ("ERROR", "Traceback", "Exception", "failed", "Error:")):
+                    level = "ERROR"
+                elif any(x in clean for x in ("WARNING", "WARN", "DeprecationWarning")):
+                    level = "WARN"
                 pseudo = LogEvent(
                     time=time.strftime("%H:%M:%S"),
-                    level="INFO",
-                    source="stdout",
-                    channel="CORE",
-                    message=strip_ansi(line),
+                    level=level,
+                    source="runtime",
+                    channel=infer_channel("runtime", clean),
+                    message=clean,
                     raw=line,
                 )
                 self.feed_event(pseudo)
@@ -445,7 +451,13 @@ def parse_log_line(line: str) -> LogEvent | None:
 class LogTailer:
     def __init__(self, root: Path, start_at_end: bool = False) -> None:
         self.root = root
-        self.files = [root / "logs" / "sentry.log", root / "logs" / "runtime_stdout.log"]
+        self.files = [
+            root / "logs" / "tui.log",
+            root / "logs" / "sentry.log",
+            root / "logs" / "errors.log",
+            root / "logs" / "warnings.log",
+            root / "logs" / "runtime_stdout.log",
+        ]
         self.positions: dict[Path, int] = {}
         if start_at_end:
             for path in self.files:
@@ -489,7 +501,7 @@ class UIState:
     root: Path
     active_tab: int = 0
     filter_text: str = ""
-    log_view: str = "human"
+    log_view: str = "full"
     project_search: str = ""
     project_results: list[SearchResult] = field(default_factory=list)
     selected_config: int = 0

@@ -77,7 +77,7 @@ vision:
   disabled_modes:
     depth: true                    # keep MiDaS/depth off until explicitly re-enabled
   alerts:
-    classes: ["person"]
+    classes: []
     distance_threshold_m: 1.2
     announce_interval_s: 8.0
   personalization:

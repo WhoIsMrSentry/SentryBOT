@@ -390,7 +390,8 @@ class AutonomyBrain(
         if self.feedback_learner and hasattr(self.feedback_learner, "record_activity"):
             self.feedback_learner.record_activity()
         if source != "sound":
-            self.liveliness.record_interaction()
+            if hasattr(self.liveliness, "record_interaction"):
+                self.liveliness.record_interaction()
             if self._companion_paused() and not self.state.get("is_sleeping"):
                 try:
                     mode = self.client.get_operational_mode()

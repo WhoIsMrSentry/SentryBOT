@@ -77,6 +77,18 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
 
     cfg = load_config(overrides=overrides)
 
+    # 5-Run Log Archiving and Rotation (each run archived with timestamp in logs/runs/)
+    if bool(cfg.get("enable_run_rotation", True)):
+        try:
+            from .services.run_rotator import rotate_run_logs
+
+            rotate_run_logs(
+                logs_dir="logs",
+                max_runs=int(cfg.get("max_archive_runs", 5)),
+            )
+        except Exception:
+            pass
+
     handlers: Dict[str, Dict[str, Any]] = {}
     root_handlers = []
 
@@ -94,7 +106,21 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
         handlers["console"] = _console_config(cfg)
         root_handlers.append("console")
 
-    # File handler with rotation. Keep this detailed even when console hides noise.
+    # Main Sentry log file (DEBUG level - comprehensive truth log)
+    if cfg.get("enable_file", True):
+        path = str(cfg.get("file_path", "logs/sentry.log"))
+        _ensure_log_dir(path)
+        handlers["file"] = {
+            "class": "logging.handlers.RotatingFileHandler",
+            "level": "DEBUG",
+            "filename": path,
+            "maxBytes": int(cfg.get("rotate_bytes", 2 * 1024 * 1024)),
+            "backupCount": int(cfg.get("backup_count", 5)),
+            "encoding": "utf-8",
+        }
+        root_handlers.append("file")
+
+    # Separate filtered files (warnings, errors, tui)
     split_files = cfg.get("separate_files", {})
     split_files = split_files if isinstance(split_files, dict) else {}
     if bool(split_files.get("enabled", False)):
@@ -103,8 +129,8 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
         warning_path = str(split_files.get("warnings_path", "logs/warnings.log"))
         error_path = str(split_files.get("errors_path", "logs/errors.log"))
         tui_path = str(split_files.get("tui_path", "logs/tui.log"))
-        for path in (warning_path, error_path, tui_path):
-            _ensure_log_dir(path)
+        for p in (warning_path, error_path, tui_path):
+            _ensure_log_dir(p)
         handlers["warnings_file"] = {
             "class": "logging.handlers.RotatingFileHandler",
             "level": "WARNING",
@@ -130,20 +156,7 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
             "backupCount": backups,
             "encoding": "utf-8",
         }
-        root_handlers.extend(["warnings_file", "errors_file"])
-        handlers["tui_file"]["level"] = "DEBUG"
-    elif cfg.get("enable_file", True):
-        path = str(cfg.get("file_path", "logs/sentry.log"))
-        _ensure_log_dir(path)
-        handlers["file"] = {
-            "class": "logging.handlers.RotatingFileHandler",
-            "level": "DEBUG",
-            "filename": path,
-            "maxBytes": int(cfg.get("rotate_bytes", 2 * 1024 * 1024)),
-            "backupCount": int(cfg.get("backup_count", 5)),
-            "encoding": "utf-8",
-        }
-        root_handlers.append("file")
+        root_handlers.extend(["warnings_file", "errors_file", "tui_file"])
 
     # Formatters
     json_format = bool(cfg.get("json_format", False))

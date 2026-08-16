@@ -39,6 +39,10 @@ rotate_bytes: 2097152  # 2MB
 # Yedek dosya sayısı
 backup_count: 5
 
+# Son 5 çalıştırmanın ayrı log klasörlerinde arşivlenmesi
+enable_run_rotation: true
+max_archive_runs: 5
+
 # JSON formatta çıktı
 json_format: false
 

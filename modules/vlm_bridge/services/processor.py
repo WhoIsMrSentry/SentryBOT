@@ -1987,7 +1987,9 @@ class VisionProcessor:
         if not alerts_cfg or not self.mode_flags.get("hazards", True):
             return
 
-        classes = {str(c) for c in alerts_cfg.get("classes", [])}
+        classes = {str(c) for c in alerts_cfg.get("classes", []) if str(c).lower() not in {"person", "human", "face"}}
+        if not classes:
+            return
         dist_thr = float(alerts_cfg.get("distance_threshold_m", 1.0))
         announce_interval = float(alerts_cfg.get("announce_interval_s", 10.0))
         now = time.time()
