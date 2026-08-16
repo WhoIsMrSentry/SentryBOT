@@ -375,26 +375,33 @@ class SpeechService:
         self._utterance_pcm.clear()
 
     def finalize_stt(self, text: str) -> tuple[str, str]:
-        """Apply Gemini Online STT or language detection and optional Vosk re-decode."""
+        """Apply Multi-Language Online Google Speech Recognition or local Vosk decode."""
         if not self._auto_language:
             return str(text or "").strip(), self._default_language
         pcm = bytes(self._utterance_pcm)
         self.clear_utterance_buffer()
 
-        # Try free Google Speech Recognition if audio duration is sufficient
+        # Try free Multi-Language Google Speech Recognition if audio duration >= 150ms
         if len(pcm) >= 4800:
             try:
-                from modules.speech.services.online_stt import transcribe_google
-                cloud_text = transcribe_google(pcm, samplerate=16000, language="tr-TR")
-                if not cloud_text and self._auto_language:
-                    cloud_text = transcribe_google(pcm, samplerate=16000, language="en-US")
+                from modules.speech.services.online_stt import transcribe_google_multilang
+                candidate_langs = ["tr", "en"]
+                rec_cfg = self.cfg.get("recognition", {}) or {}
+                configured_langs = rec_cfg.get("dual_decode_languages")
+                if isinstance(configured_langs, list) and configured_langs:
+                    candidate_langs = [str(l).split("-")[0].lower() for l in configured_langs if l]
+
+                cloud_text, detected_lang = transcribe_google_multilang(
+                    pcm,
+                    samplerate=16000,
+                    languages=candidate_langs,
+                    default_lang=self._default_language,
+                )
                 if cloud_text:
-                    from modules.speech.services.stt_language import _detect_language
-                    detected_lang = _detect_language(cloud_text, default=self._default_language)
                     self.source_language = detected_lang
                     return cloud_text, detected_lang
             except Exception as exc:
-                logger.debug("Online Google STT fallback to local: %s", exc)
+                logger.debug("Online Google STT fallback to local Vosk: %s", exc)
 
         resolved_text, resolved_lang = resolve_stt_text_and_language(
             text,
