@@ -439,10 +439,15 @@ class AutonomyBrain(
             pass
         return False
 
-    def on_speech_final(self, text: str, source_lang: str | None = None) -> None:
+    def on_speech_final(self, text: str, source_lang: str | None = None, ts: float = 0.0) -> None:
         if not text or not text.strip():
             return
         t = text.strip()
+        last_ts = float(self.state.get("last_speech_ts", 0.0) or 0.0)
+        
+        if ts > 0.0 and ts == last_ts:
+            return
+            
         last_text = str(self.state.get("last_speech_text") or "").strip()
         now = time.time()
         if t == last_text and (now - float(self.state.get("last_speech_time", 0.0) or 0.0)) < self._speech_min_interval_s:
@@ -450,6 +455,7 @@ class AutonomyBrain(
             return
         self.state["last_speech_text"] = t
         self.state["last_speech_time"] = now
+        self.state["last_speech_ts"] = ts
         self._dispatch_final_speech(t, source_lang=source_lang)
 
     def _dispatch_final_speech(self, text: str, source_lang: str | None = None) -> None:
@@ -470,6 +476,7 @@ class AutonomyBrain(
         try:
             text = None
             source_lang = None
+            ts = 0.0
             if hasattr(self.client, "get_speech_text"):
                 text = self.client.get_speech_text()
             elif hasattr(self.client, "get_last_speech"):
@@ -477,8 +484,9 @@ class AutonomyBrain(
                 if isinstance(speech_obj, dict) and speech_obj.get("final"):
                     text = speech_obj.get("text")
                     source_lang = speech_obj.get("language")
+                    ts = float(speech_obj.get("ts", 0.0) or 0.0)
             if text and text.strip():
-                self.on_speech_final(text, source_lang=source_lang)
+                self.on_speech_final(text, source_lang=source_lang, ts=ts)
         except Exception as e:
             logger.debug(f"Failed to fetch speech text: {e}")
 

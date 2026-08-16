@@ -124,97 +124,69 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
     speaking_lock = Lock()
     vu_stop = threading.Event()
     vu_thread: threading.Thread | None = None
+    _final_timer: threading.Timer | None = None
+    _pending_text = ""
 
-    def _emit_vu_levels() -> None:
-        capture = getattr(service, "capture", None)
-        left, right = (0.0, 0.0)
-        if capture is not None and hasattr(capture, "get_rms_levels"):
-            try:
-                left, right = capture.get_rms_levels()
-            except Exception:
-                pass
+    def _execute_final():
+        nonlocal last, last_nonempty_text, _pending_text
+        text = _pending_text
+        _pending_text = ""
+        language = getattr(service, "source_language", "tr")
+        if hasattr(service, "finalize_stt"):
+            text, language = service.finalize_stt(text or last_nonempty_text)
+        if text:
+            last_nonempty_text = text
+        last = {
+            "text": text or last_nonempty_text or None,
+            "final": True,
+            "confidence": 1.0,
+            "language": language,
+            "ts": time.time(),
+        }
+        if text:
+            logger.info("STT >>> %s (lang=%s)", text, language)
         else:
-            mono = float(getattr(service, "_last_audio_level", 0.0) or 0.0)
-            left = right = mono
-        _emit_speech_event(
-            "speech.audio_level",
-            {"left": left, "right": right, "level": max(left, right)},
-        )
-
-    def _vu_monitor_loop() -> None:
-        nonlocal last_vu_emit_ts
-        while not vu_stop.is_set():
-            if service.listening:
-                now = time.time()
-                if (now - last_vu_emit_ts) >= 0.04:
-                    last_vu_emit_ts = now
-                    _emit_vu_levels()
-            vu_stop.wait(0.02)
-
-    def _start_vu_monitor() -> None:
-        nonlocal vu_thread
-        vu_stop.clear()
-        if vu_thread is not None and vu_thread.is_alive():
-            return
-        vu_thread = threading.Thread(target=_vu_monitor_loop, name="SpeechVuMonitor", daemon=True)
-        vu_thread.start()
-
-    def _stop_vu_monitor() -> None:
-        vu_stop.set()
-
-    def _mark_speaking(active: bool) -> bool:
-        nonlocal speaking
-        with speaking_lock:
-            if active:
-                if speaking:
-                    return False
-                speaking = True
-                return True
-            if not speaking:
-                return False
-            speaking = False
-            return True
-
-    def _schedule_speech_end(delay: float = 0.5):
-        def _end():
-            if _mark_speaking(False):
-                _emit_speech_event("speech.end")
-        timer = Timer(delay, _end)
-        timer.daemon = True
-        timer.start()
+            logger.debug("stt final empty")
+        
+        last_partial_text = ""
+        
+        if text or last_nonempty_text:
+            final_spoken = text or last_nonempty_text
+            _emit_speech_event("speech.final", {"text": final_spoken, "language": language})
+            threading.Thread(
+                target=_notify_autonomy,
+                args=(final_spoken, language),
+                daemon=True,
+            ).start()
+            if _mark_speaking(True):
+                _emit_speech_event("speech.start")
+            _schedule_speech_end()
 
     def _cb(r):
-        nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text, last_vu_emit_ts
+        nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text, last_vu_emit_ts, _final_timer, _pending_text
         now = time.time()
         if hasattr(service, "is_stt_suppressed") and service.is_stt_suppressed():
             return
         text = (r.text or "").strip()
         language = getattr(service, "source_language", "tr")
-        if r.is_final and hasattr(service, "finalize_stt"):
-            text, language = service.finalize_stt(text or last_nonempty_text)
-        if text:
-            last_nonempty_text = text
-        if text and contains_wakeword(text):
-            remainder = strip_wakewords(text)
-            if r.is_final or len(remainder.split()) < 2:
-                threading.Thread(target=_barge_in_for_wakeword, daemon=True).start()
-        last = {
-            "text": text or last_nonempty_text or None,
-            "final": r.is_final,
-            "confidence": r.confidence,
-            "language": language,
-            "ts": time.time(),
-        }
-        # STT logs should be visible even when downstream modules (e.g. ollama)
-        # are offline; log both partial and final recognition results.
+
         if r.is_final:
-            if text:
-                logger.info("STT >>> %s (lang=%s)", text, language)
-            else:
-                logger.debug("stt final empty")
-            last_partial_text = ""
+            _pending_text = text or last_nonempty_text
+            if _final_timer:
+                _final_timer.cancel()
+            _final_timer = threading.Timer(1.5, _execute_final)
+            _final_timer.daemon = True
+            _final_timer.start()
         else:
-            now = time.time()
+            if _final_timer:
+                _final_timer.cancel()
+                _final_timer = None
+
+            if text and contains_wakeword(text):
+                remainder = strip_wakewords(text)
+                if len(remainder.split()) < 2:
+                    threading.Thread(target=_barge_in_for_wakeword, daemon=True).start()
+
             # Throttle partial logs to avoid log spam but keep visibility.
             if text and (text != last_partial_text or (now - last_partial_ts) >= 0.35):
                 logger.info("STT (partial) >>> %s", text)
@@ -228,18 +200,6 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
                     )
                 except Exception:
                     pass
-
-        if r.is_final and (text or last_nonempty_text):
-            final_spoken = text or last_nonempty_text
-            _emit_speech_event("speech.final", {"text": final_spoken, "language": language})
-            threading.Thread(
-                target=_notify_autonomy,
-                args=(final_spoken, language),
-                daemon=True,
-            ).start()
-            if _mark_speaking(True):
-                _emit_speech_event("speech.start")
-            _schedule_speech_end()
 
     @router.post("/speech/start")
     async def start():
