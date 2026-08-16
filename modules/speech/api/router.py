@@ -220,6 +220,14 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
                 logger.info("STT (partial) >>> %s", text)
                 last_partial_text = text
                 last_partial_ts = now
+                try:
+                    requests.post(
+                        _gw("/oled_faces/stt_text"),
+                        json={"text": text, "duration_s": 3.0},
+                        timeout=0.1,
+                    )
+                except Exception:
+                    pass
 
         if r.is_final and (text or last_nonempty_text):
             final_spoken = text or last_nonempty_text

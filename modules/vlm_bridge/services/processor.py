@@ -1950,7 +1950,7 @@ class VisionProcessor:
             except Exception as exc:
                 logger.debug("vlm_bridge translation failed: %s", exc)
 
-        url = self.config.get("speak", {}).get("endpoint") or "http://localhost:8083/speak/say"
+        url = self.config.get("speak", {}).get("endpoint") or "http://127.0.0.1:8080/speak/say"
         try:
             requests.post(url, json={"text": out_text}, timeout=1.0)
         except Exception as exc:

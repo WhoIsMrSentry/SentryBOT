@@ -176,6 +176,24 @@ class AgentOrchestrator:
             self.speech_arbiter.set_tts_state_callback(lambda active: self.autonomy_client.set_stt_suppressed(bool(active)))
         if self.autonomy_client and hasattr(self.autonomy_client, "stop_speaking"):
             self.speech_arbiter.set_stop_playback_fn(self.autonomy_client.stop_speaking)
+        if self.autonomy_client and hasattr(self.autonomy_client, "speak_preferred"):
+            self.speech_arbiter.set_speak_fn(
+                lambda text, tone=None, language=None, trace_id=None: self.autonomy_client.speak_preferred(
+                    text,
+                    tone=tone,
+                    language=language or "tr",
+                    trace_id=trace_id,
+                )
+            )
+        else:
+            self.speech_arbiter.set_speak_fn(
+                lambda text, tone=None, language=None, trace_id=None: self._handle_speak_fallback(
+                    text,
+                    tone=tone,
+                    language=language or "tr",
+                    trace_id=trace_id,
+                )
+            )
         self._register_action_handlers()
 
     def _init_chat_history(self, agent_cfg):
@@ -289,6 +307,19 @@ class AgentOrchestrator:
         except Exception:
             pass
         return None
+
+    def _handle_speak_fallback(self, text: str, tone: Optional[Dict[str, Any]] = None, language: Optional[str] = None, trace_id: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            import requests  # type: ignore
+            url = f"{self._gateway_base_url}/speak/say"
+            resp = requests.post(
+                url,
+                json={"text": text, "tone": tone, "language": language or "tr", "trace_id": trace_id},
+                timeout=self._action_http_timeout_s,
+            )
+            return resp.json() if resp.status_code == 200 else {"ok": False, "status": resp.status_code}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     def _register_action_handlers(self) -> None:
         """Bind ActionArbiter actions to concrete side effects.

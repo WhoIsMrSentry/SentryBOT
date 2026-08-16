@@ -493,16 +493,16 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
         logger.debug("speech stt status check failed: %s", exc)
     # If gateway config requests speech to start listening on boot, start it.
     try:
-        # cfg is passed to bootstrap and available in outer scope; read flag if present
-        # default: do not auto-start listening here (wakeword handles triggers)
-        # We attempt to read top-level 'speech' config under gateway config for this flag.
         from modules.gateway import config_loader as _gw_cfg  # type: ignore
         gwcfg = _gw_cfg.load_config(None)
-        if isinstance(gwcfg.get("speech"), dict) and bool(gwcfg.get("speech", {}).get("listening", False)):
-            try:
-                svc.start_background()
-            except Exception:
-                pass
+        speech_cfg = _merge_with_agent_section(gwcfg.get("speech", {}), "speech")
+        if bool(speech_cfg.get("listening", False)) or bool(speech_cfg.get("auto_start", False)):
+            if _should_autostart_services():
+                try:
+                    svc.start_background()
+                    logger.info("speech listening auto-started on boot")
+                except Exception as exc:
+                    logger.warning("speech auto-start failed: %s", exc)
     except Exception:
         pass
     app.include_router(get_speech_router(svc, gateway_base_url=str(started.get("gateway_base_url", ""))))

@@ -220,7 +220,7 @@ vlm_bridge:
     fallback_on_error: false
     model: qwen3.5:9b
   speak:
-    endpoint: http://localhost:8083/speak/say
+    endpoint: http://127.0.0.1:8080/speak/say
   translation:
     enabled: false
     endpoint: '@gateway/ollama/translate'
@@ -232,15 +232,15 @@ vlm_bridge:
     default_apply: true
     timeout: 1.5
   vision_llm:
-    enabled: true
+    enabled: false
     provider: ollama
     base_url: http://127.0.0.1:11434
-    model: qwen3-vl:8b
+    model: qwen3.5:9b
     timeout_s: 18
 speak:
   server:
     host: 0.0.0.0
-    port: 8083
+    port: 8080
   audio_out:
     device: null
     samplerate: 22050
@@ -334,9 +334,10 @@ wakeword:
       min_threshold: 0.2
       max_threshold: 0.4
 speech:
+  listening: true
   server:
     host: 0.0.0.0
-    port: 8082
+    port: 8080
   audio:
     device: plughw:0,0
     samplerate: 16000
