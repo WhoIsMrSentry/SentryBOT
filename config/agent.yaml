@@ -211,14 +211,20 @@ vlm_bridge:
     timeout: 12.0
     num_predict: 160
   llm:
-    provider: ollama
+    provider: google_ai_studio
     single_model_mode: true
-    primary_model: qwen3.5:9b
+    primary_model: gemini-2.0-flash
     clm_fallback_enabled: false
     clm_fallback_model: ''
     fallback_on_missing_model: false
     fallback_on_error: false
-    model: qwen3.5:9b
+    model: gemini-2.0-flash
+
+google_ai_studio:
+  api_key: ""
+  model: gemini-2.0-flash
+  base_url: https://generativelanguage.googleapis.com
+  request_timeout: 30.0
   speak:
     endpoint: http://127.0.0.1:8080/speak/say
   translation:

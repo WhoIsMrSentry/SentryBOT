@@ -152,6 +152,11 @@ class SpeechService:
             if self._extra_recognizers:
                 first_lang = next(iter(self._extra_recognizers))
                 self._secondary_recognizer = self._extra_recognizers[first_lang]
+        try:
+            self.recognizer._ensure_model()
+            logger.info("Primary %s Vosk model pre-loaded for STT", primary_lang.upper())
+        except Exception as primary_exc:
+            logger.warning("Primary %s Vosk model pre-warm failed: %s", primary_lang.upper(), primary_exc)
         self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
         # Direction estimator (optional, needs stereo)
         dir_cfg = self.cfg.get("direction", {})

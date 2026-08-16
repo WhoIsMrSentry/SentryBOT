@@ -10,6 +10,18 @@ from modules.speech.services.recognizer import Recognizer
 logger = logging.getLogger("speech.stt_language")
 
 _TR_CHARS = set("çğıöşüÇĞİÖŞÜ")
+_TR_STOPWORDS = frozenset({
+    "ben", "sen", "o", "biz", "siz", "onlar", "bana", "sana", "ona", "bize", "size", "onlara",
+    "benim", "senin", "onun", "bizim", "sizin", "onlarin",
+    "ve", "veya", "ile", "de", "da", "ki", "mi", "mu", "mü", "mı", "ama", "fakat", "lakin",
+    "bu", "şu", "o", "bunlar", "şunlar", "onlar", "burada", "şurada", "orada", "buraya", "oraya",
+    "ne", "nasıl", "neden", "niçin", "kim", "hangi", "nerede", "nereye", "nereden", "kaç", "zaman",
+    "merhaba", "selam", "günaydın", "iyi", "akşamlar", "geceler", "lütfen", "teşekkür", "sağol",
+    "kendini", "tanıt", "anlat", "söyle", "yap", "et", "gel", "git", "bak", "dur", "başla",
+    "robot", "sentrybot", "sentry", "emir", "evet", "hayır", "tamam", "olur", "olmaz",
+    "bir", "iki", "üç", "dört", "beş", "altı", "yedi", "sekiz", "dokuz", "on",
+    "var", "yok", "oldu", "oldu mu", "şimdi", "sonra", "önce", "güzel", "kötü", "nasılsın",
+})
 _EN_STOPWORDS = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",
@@ -33,37 +45,37 @@ def _transcript_score(text: str, target_lang: str) -> float:
     value = str(text or "").strip()
     if not value:
         return 0.0
-    words = re.findall(r"[a-zA-Z']+", value.lower())
+    words = re.findall(r"[a-zA-ZçğıöşüÇĞİÖŞÜ']+", value.lower())
     if not words:
         return 0.0
 
     tr_chars = sum(1 for ch in value if ch in _TR_CHARS)
+    tr_hits = sum(1 for w in words if w in _TR_STOPWORDS)
     en_hits = sum(1 for w in words if w in _EN_STOPWORDS)
     detected = _detect_language(value, default="tr", prefer_online=True)
 
-    if target_lang == "en":
-        score = en_hits * 0.45
-        if detected == "en":
-            score += 3.0
-        if tr_chars == 0:
-            score += 1.2
-        if tr_chars >= 2 and en_hits < 2:
-            score -= 2.5
-        if len(words) >= 3 and tr_chars == 0:
-            score += 0.8
+    if target_lang.startswith("tr"):
+        score = 2.0 if detected == "tr" else 1.0
+        score += tr_hits * 1.5
+        score += tr_chars * 1.0
+        if len(words) >= 2 and tr_hits >= 1:
+            score += 2.0
+        if detected == "en" and tr_chars == 0 and tr_hits == 0 and en_hits >= 2:
+            score -= 2.0
         return score
 
-    if target_lang.startswith("tr"):
-        score = 1.0 if detected == "tr" else 0.4
-        score += tr_chars * 0.35
-        score += min(en_hits, 2) * 0.1
-        if detected == "en" and tr_chars == 0 and en_hits >= 3:
-            score -= 1.5
+    if target_lang == "en":
+        score = 2.0 if detected == "en" else 0.5
+        score += en_hits * 1.5
+        if len(words) >= 2 and en_hits >= 1:
+            score += 2.0
+        if tr_chars >= 1 or tr_hits >= 1:
+            score -= 3.0
         return score
 
     # Generic languages: trust langdetect + transcript length
-    score = 1.0 if detected == target_lang else 0.25
-    score += min(len(words), 8) * 0.08
+    score = 2.0 if detected == target_lang else 0.5
+    score += min(len(words), 8) * 0.2
     return score
 
 
