@@ -85,9 +85,8 @@ def main():
         return 3
 
     if best_name != "Unknown":
-        person_rec = identity_mgr.get_person(best_name)
-        rel = person_rec.relationship.value if person_rec else "bilinmiyor"
-        level = person_rec.recognition_level if person_rec else 1
+        rel = getattr(person_rec.relationship, "value", str(person_rec.relationship)) if person_rec else "bilinmiyor"
+        level = getattr(person_rec, "recognition_level", 1) if person_rec else 1
 
         print(f"  [BAŞARILI] YÜZ TANINDI!")
         print(f"  * Tanınan Kişi:       {best_name}")
