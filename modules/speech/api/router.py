@@ -36,8 +36,18 @@ def _barge_in_urls() -> tuple[str, ...]:
 
 
 def _notify_autonomy(text: str = "", language: str = ""):
-    # Push the final transcript so autonomy reacts immediately instead of
-    # waiting for its polling loop; the bare /interaction ping stays implicit.
+    # 1. Update OLED face subtitle with recognized STT text
+    if text:
+        try:
+            requests.post(
+                _gw("/oled_faces/stt_text"),
+                json={"text": text, "duration_s": 5.0},
+                timeout=0.2,
+            )
+        except Exception:
+            pass
+
+    # 2. Push final transcript so autonomy reacts immediately
     try:
         requests.post(
             _gw("/autonomy/speech"),
@@ -212,9 +222,11 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
                 last_partial_ts = now
 
         if r.is_final and (text or last_nonempty_text):
+            final_spoken = text or last_nonempty_text
+            _emit_speech_event("speech.final", {"text": final_spoken, "language": language})
             threading.Thread(
                 target=_notify_autonomy,
-                args=(text or last_nonempty_text, language),
+                args=(final_spoken, language),
                 daemon=True,
             ).start()
             if _mark_speaking(True):

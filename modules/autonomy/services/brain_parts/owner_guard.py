@@ -155,7 +155,7 @@ class OwnerGuardMixin:
         return candidates[0][0]
 
     def _is_owner_name(self, name: str | None) -> bool:
-        if not name:
+        if not name or name == "Unknown":
             return False
         owner_name = self.owner_cfg.get("name")
         aliases = self.owner_cfg.get("aliases") or []
@@ -169,6 +169,17 @@ class OwnerGuardMixin:
         for n in names:
             if n and lowered == n.lower():
                 return True
+        # Check person memory / social database for owner relationship
+        try:
+            record = self.client.get_person_memory(name)
+            if record:
+                p_data = record.get("record") or {}
+                rel = str(p_data.get("relationship", "")).lower()
+                lvl = int(p_data.get("recognition_level", 0) or 0)
+                if rel == "owner" or lvl >= 5:
+                    return True
+        except Exception:
+            pass
         return False
 
     def _on_owner_seen(self, timestamp: float) -> None:

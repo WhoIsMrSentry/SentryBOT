@@ -101,6 +101,15 @@ endpoints:
   notifier: '@gateway/notify'
   autonomy: '@gateway/autonomy'
   agent_core: '@gateway/agent'
+owner:
+  name: "Emir"
+  aliases:
+    - "emir"
+    - "sahip"
+    - "patron"
+    - "reis"
+  presence_timeout_s: 25
+  greeting: "Hoş geldin {name}! Seni gördüğüme çok sevindim."
 behaviors:
   idle:
     enabled: true

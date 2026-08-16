@@ -465,11 +465,27 @@ def get_router(brain: AutonomyBrain) -> APIRouter:
             return brain.identify_owner_person(payload or {})
         return {"ok": False, "available": False, "reason": "owner_learning_unavailable"}
 
-    @router.post("/scenario/companion-e2e")
-    def run_companion_e2e_scenario(payload: Dict[str, Any] | None = None):
-        if hasattr(brain, "run_companion_e2e_scenario"):
-            return brain.run_companion_e2e_scenario(payload or {})
-        return {"ok": False, "available": False, "reason": "scenario_unavailable"}
+    @router.post("/speech")
+    def handle_speech_input(payload: SpeechFinalPayload):
+        text = (payload.text or "").strip()
+        if text:
+            if hasattr(brain, "on_interaction"):
+                brain.on_interaction()
+            if hasattr(brain, "observe_world_memory"):
+                brain.observe_world_memory({"source": "user_speech", "text": text}, source="stt")
+            if getattr(brain, "agent", None) and brain.config.get("llm", {}).get("enabled", False):
+                try:
+                    brain.agent.step_event("user_speech", f"User said: {text}")
+                except Exception:
+                    pass
+        return {"ok": True, "received": text}
+
+    @router.post("/interaction")
+    def handle_general_interaction(payload: Dict[str, Any] | None = None):
+        if hasattr(brain, "on_interaction"):
+            brain.on_interaction()
+        return {"ok": True}
+
     # END BATCH04 PI HARDWARE OWNER TOPO ROUTES
 
     return router
