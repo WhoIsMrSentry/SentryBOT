@@ -86,15 +86,17 @@ class FaceManager:
         if gray is None:
             return None
 
-        try:
-            faces = self._cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.12,
-                minNeighbors=5,
-                minSize=(56, 56),
-            )
-        except Exception:
-            faces = []
+        faces = []
+        if self._cascade is not None and not getattr(self._cascade, "empty", lambda: True)():
+            try:
+                faces = self._cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,
+                    minNeighbors=3,
+                    minSize=(40, 40),
+                )
+            except Exception:
+                faces = []
 
         if faces is None or len(faces) == 0:
             return None

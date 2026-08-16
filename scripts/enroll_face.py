@@ -84,19 +84,32 @@ def main() -> int:
         if frame is None:
             try:
                 from modules.camera.services.capture import CameraCapture, CaptureConfig, FramePublisher
+                from modules.vlm_bridge.services.face_manager import FaceManager
+
                 cfg = CaptureConfig(camera_num=args.camera, size=(1280, 720), frame_rate=15)
                 pub = FramePublisher()
                 cap = CameraCapture(cfg=cfg, publisher=pub)
                 if cap.start():
-                    print("[INFO] Camera hardware initialized. Waiting for auto-exposure...")
-                    time.sleep(2.0)
-                    for _ in range(30):
+                    print("[INFO] Camera initialized. Please look directly at the camera...")
+                    print("[INFO] Scanning for face across live frames (up to 5 seconds)...")
+                    face_detector = FaceManager()
+                    
+                    for i in range(1, 30):
+                        time.sleep(0.18)
                         jpeg_bytes = pub.get_jpeg()
                         if jpeg_bytes:
-                            frame = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
-                            if frame is not None:
-                                break
-                        time.sleep(0.1)
+                            candidate = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
+                            if candidate is not None:
+                                roi = face_detector._extract_largest_face_roi(candidate)
+                                if roi is not None:
+                                    frame = candidate
+                                    print(f"\n[INFO] Face detected and locked on frame {i}!")
+                                    break
+                                elif frame is None:
+                                    frame = candidate  # keep candidate as fallback
+                        sys.stdout.write(".")
+                        sys.stdout.flush()
+                    print()
                     cap.stop()
             except Exception as exc:
                 print(f"[WARN] CameraCapture bridge fallback: {exc}")
@@ -106,7 +119,7 @@ def main() -> int:
             try:
                 vcap = cv2.VideoCapture(args.camera)
                 if vcap.isOpened():
-                    for _ in range(5):  # warm up auto-exposure
+                    for _ in range(10):  # warm up auto-exposure
                         vcap.read()
                     ret, frame = vcap.read()
                     vcap.release()
