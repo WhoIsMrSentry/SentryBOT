@@ -202,7 +202,7 @@ class VisionProcessor:
         self._face_cascade = load_frontal_face_cascade(logger)
 
         self.face_manager = None
-        if self.processing_mode == "local" and FaceManager is not None:
+        if FaceManager is not None:
             try:
                 face_match_cfg = vision_cfg.get("face_match", {}) if isinstance(vision_cfg.get("face_match", {}), dict) else {}
                 self.face_manager = FaceManager(
