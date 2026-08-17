@@ -35,7 +35,6 @@ from .companion_goal_selector import CompanionGoalSelector
 from .companion_lines import CompanionLineGenerator
 from .companion_rituals import CompanionRituals
 from .expression_director import ExpressionDirector
-from .idle_behaviors import IdleBehaviorPlanner
 from .interaction_feedback import InteractionFeedbackLearner
 from .liveliness import LivelinessScheduler
 from .living_needs import LivingNeedsEngine
@@ -95,7 +94,6 @@ class AutonomyBrain(
         self.appraisal = AffectiveAppraisal(config)
         self.client = ServiceClient(config.get("endpoints", {}), config=config)
         self.expression = ExpressionDirector(self.client)
-        self.idle_planner = IdleBehaviorPlanner(config)
         self.memory = ShortTermMemory(max_items=20)
         companion_cfg = config.get("companion", {}) if isinstance(config.get("companion", {}), dict) else {}
         self.relationship_memory = RelationshipMemory(
@@ -749,8 +747,6 @@ class AutonomyBrain(
                     self._make_agentic_decision(reason="boredom")
                     self._last_agentic_ts = now
                     self._last_idle_action = now
-                elif self._run_idle_behavior(now):
-                    self._last_idle_action = now
         else:
             self.state["is_bored"] = False
 
@@ -761,15 +757,6 @@ class AutonomyBrain(
 
         self._run_companion_rituals(now)
         self._run_companion_proactive(now)
-
-    def _run_idle_behavior(self, now: float) -> bool:
-        choice = self.idle_planner.pick(now=now)
-        if choice is None:
-            return False
-        logger.info("Idle behavior selected: %s", choice.name)
-        self.memory.add_event(f"Idle action: {choice.name}")
-        self._execute_action(choice.action)
-        return True
 
     def _check_darkness_appraisal(self, now: float) -> None:
         sleep_cfg = self.config.get("behaviors", {}).get("sleep", {})

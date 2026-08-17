@@ -415,6 +415,7 @@ class ServiceClient:
         if response_lang:
             params["response_lang"] = str(response_lang)
         timeout = float(self.request_timeouts.get("ollama_chat_s", 20.0))
+        
         return self._post("ollama", "/chat", None, params=params, timeout_s=timeout)
 
     def warmup_ollama(self):
