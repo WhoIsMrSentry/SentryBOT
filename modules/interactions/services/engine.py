@@ -202,16 +202,11 @@ class InteractionEngine:
     def push_event(self, type_: str, data: Optional[Dict[str, Any]] = None) -> None:
         evt = str(type_ or "").strip()
         event_data = dict(data or {})
-        is_vu_event = evt == "speech.audio_level"
         with self._lock:
             if evt:
                 self._event_counts[evt] = int(self._event_counts.get(evt, 0)) + 1
-            if evt and not is_vu_event:
                 self._last_event = evt
                 self._last_event_data = event_data
-        if is_vu_event:
-            self._dispatch_vu(event_data)
-            return
         if evt.startswith("companion."):
             logger.info("Companion event received: %s data=%s", evt, data or {})
         if evt and self._social_db is not None:
@@ -226,20 +221,6 @@ class InteractionEngine:
                 pass
         with self._event_dispatch_lock:
             self._dispatch_rule_for_event(evt)
-
-    def _dispatch_vu(self, data: Dict[str, Any]) -> None:
-        if not hasattr(self.neo, "companion_vu"):
-            return
-        left = data.get("left")
-        right = data.get("right")
-        level = data.get("level")
-        try:
-            if left is not None and right is not None:
-                self.neo.companion_vu(float(left), right=float(right))
-            elif level is not None:
-                self.neo.companion_vu(float(level))
-        except Exception:
-            pass
 
     def register_event_handler(self, handler) -> None:
         if handler is None:
