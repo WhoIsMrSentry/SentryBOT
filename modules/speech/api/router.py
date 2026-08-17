@@ -131,13 +131,16 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         nonlocal last, last_nonempty_text, _pending_text
         text = _pending_text
         _pending_text = ""
+        if not text:
+            return
+            
         language = getattr(service, "source_language", "tr")
         if hasattr(service, "finalize_stt"):
-            text, language = service.finalize_stt(text or last_nonempty_text)
+            text, language = service.finalize_stt(text)
         if text:
             last_nonempty_text = text
         last = {
-            "text": text or last_nonempty_text or None,
+            "text": text or None,
             "final": True,
             "confidence": 1.0,
             "language": language,
@@ -150,8 +153,8 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         
         last_partial_text = ""
         
-        if text or last_nonempty_text:
-            final_spoken = text or last_nonempty_text
+        if text:
+            final_spoken = text
             _emit_speech_event("speech.final", {"text": final_spoken, "language": language})
             threading.Thread(
                 target=_notify_autonomy,
@@ -171,7 +174,9 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         language = getattr(service, "source_language", "tr")
 
         if r.is_final:
-            _pending_text = text or last_nonempty_text
+            if not text and not _pending_text:
+                return
+            _pending_text = text or _pending_text
             if _final_timer:
                 _final_timer.cancel()
             _final_timer = threading.Timer(1.5, _execute_final)
