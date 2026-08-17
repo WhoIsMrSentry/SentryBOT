@@ -19,7 +19,7 @@ ACT_MOOD = {
     "working": "focused", "listening": "neutral", "editing": "smoking",
     "processing": "focused", "connecting": "attentive",
     "debugging": "suspicious", "building": "focused", "testing": "focused",
-    "deploying": "neutral", "ping_pong": "scared", "waiting": "bored", "glitch": "scared",
+    "deploying": "neutral", "ping_pong": "attentive", "waiting": "bored", "glitch": "scared",
 }
 
 # Self-ending activities: glitch rolls out after ~3s windows (50% chance per window).

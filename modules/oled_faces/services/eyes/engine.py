@@ -238,7 +238,8 @@ class EyeEngine:
 
         # STT recognized speech text banner overlay (128x64 bottom strip)
         if self._subtitle_text and now < self._subtitle_expiry:
-            txt = self._subtitle_text
+            _TR_MAP = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
+            txt = self._subtitle_text.translate(_TR_MAP)
             d.rectangle([0, self.H - 14, self.W - 1, self.H - 1], fill=0)
             d.line([(0, self.H - 14), (self.W - 1, self.H - 14)], fill=1)
             display_txt = txt if len(txt) <= 21 else (txt[:19] + "..")

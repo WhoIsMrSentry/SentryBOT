@@ -55,8 +55,8 @@ idle_bitmap: normal
 fallback_unknown: normal
 
 idle_ambient:
-  enabled: true
-  use_full_catalog: true
+  enabled: false
+  use_full_catalog: false
   min_interval_s: 18
   max_interval_s: 45
   hold_s: 6
