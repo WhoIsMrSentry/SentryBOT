@@ -1,24 +1,51 @@
-# Runtime Console Module
+# Runtime Console
 
-SentryBOT için tasarlanmış logo barındırmayan, TUI (Terminal User Interface) veya panel tabanlı kompakt terminal görünüm modülüdür. Sistem durumlarını, logları ve event akışlarını gözlemlemek için kullanılır.
+SentryBOT'un terminal kontrol merkezidir. TUI ile robot sürecini başlatır, logları izler ve gateway snapshot'larını gösterir. Otonom karar üretmez.
 
-## Özellikler
-- **Event Bus:** Modüller arası olayları (event) toplayarak, ekranda veya API üzerinden canlı akış şeklinde sunar.
-- **Konsol Filtreleme:** Kamera, VLM sağlık kontrolleri gibi sık tekrar eden arka plan HTTP isteklerini gizleyerek log kalabalığını önler.
-- **Çoklu Mod:** Geniş ekran (dashboard) veya dar ekran (compact) çalışma düzenini destekler.
+## Sorumluluklar
 
-## API Uç Noktaları
+- `scripts/run_robot.py` alt sürecini yönetme (`RobotProcess`)
+- Log kuyruğu, kanal sınıflandırma, health-check gürültü filtreleme
+- Config YAML görüntüleme/düzenleme, proje araması
+- Companion / expression / camera snapshot sekmeleri
+- In-process `RuntimeEventBus` (HTTP kuyruğu; gateway mount etmez)
 
-Uç noktalar Gateway altında `/runtime_console` prefix'i ile çalışır.
+## Mimari
 
-- `GET /runtime_console/healthz`
-  Servisin aktif olup olmadığını ve event bus üzerinde birikmiş toplam event sayısını döner.
+- Birleşik launcher: kök `sentrybot.py` → `system_info_tui` + `tui_v2.main`
+- TUI v2: `tui_v2.py` (`run_tui`, `main`)
+- Alt süreç: `services/robot_process.py`
+- Render/input: `services/screen_renderers.py`, `services/input_handler.py`
+- Modeller: `services/models.py` (`TABS`, `Snapshot`, `UIState`)
+- Eski panel/event bus: `dashboard.py`, `event_bus.py`, `renderer.py`
+- HTTP: `api/router.py` (`/runtime_console/healthz`, `/events`) — gateway bootstrap'ta mount edilmez
+- Log entegrasyonu: `logwrapper` `RuntimeConsoleLogHandler` kullanır
 
-- `GET /runtime_console/events?limit=20`
-  Event bus'ın kuyruğundaki (tail) son olayların (event) JSON listesini döndürür. Arayüzler veya dış izleme araçları bu uç noktayı çağırarak robotta neler olup bittiğini okuyabilir.
+Kısa yollar: `apps/run_robot_tui.py` (`--run`), `apps/sentrybot_tui.py`.
 
-## Konfigürasyon (`config/config.yml`)
-- `ui_mode`: Arayüzün görüntülenme modunu belirler (`dashboard` vs `compact`).
-- `hide_health_checks`: Sürekli tekrar eden `/healthz` veya `/status` pinglerini terminalde gizler (varsayılan: `true`).
+## TUI Sekmeler
 
-Tam teknik loglar (debug ve trace düzeyleri) `logs/sentry.log` dosyasına aktarılmaya devam eder, bu modül sadece canlı izleme deneyimini temizler.
+`Overview`, `Logs`, `Signals`, `Config`, `Search`, `Companion`, `Expression`, `Camera`, `Help`
+
+## API (bağımsız; gateway dahil değil)
+
+- `GET /runtime_console/healthz` — event bus uzunluğu
+- `GET /runtime_console/events?limit=20` — kuyruk kuyruğu
+
+## Konfigürasyon
+
+`config/config.yml`:
+- `mode` (`dashboard` / compact)
+- `hidden_paths` — tekrarlayan HTTP gürültüsü
+- `channels` — CORE / AUDIO / TTS / VISION / AI / FACE / MOVE / MEMORY
+
+`config/tui.yml` — TUI görünüm bayrakları (`hide_old_runtime_console`).
+
+## İlişkiler
+
+- `sentrybot.py`: birleşik giriş
+- `scripts/run_robot.py`: gateway/uvicorn alt süreç
+- `logwrapper`: TUI log handler
+- Gateway HTTP: health, companion, expression, camera snapshot'ları
+
+Operatörün yerel gözlem ve süreç kontrol katmanıdır.
