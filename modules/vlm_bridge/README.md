@@ -1,79 +1,85 @@
-# VLM Bridge Module
+# VLM Bridge
 
-Kamera akışını işleyen yerel (Pi5) veya uzak (dizüstü / sunucu) görüntü işleme pipeline sonucunu robota ve diğer modüllere köprüler.
+SentryBOT'un görsel algı ve köprü modülüdür. Yerel OpenCV pipeline'ı veya uzak VLM sonuç ingest'i ile yüz/kişi/nesne bağlamını üretir; takip, hafıza ve otonomi entegrasyonunu sağlar.
 
-Bu modül artık yalnızca görüntü köprülemekle kalmaz; farklı görsel iş yüklerini ayrı modlar halinde yönetebilir. Böylece pahalı işlemler ihtiyaca göre kapatılabilir.
+## Sorumluluklar
 
-## Modlar
-- **local**: Pi5 üzerinde OpenCV yüz algılama + ORB/FLANN yüz tanıma + CSRT takip çalışır.
-- **remote**: Harici cihaz video akışını işler, sonuçları köprüye POST eder. Pi üzerinde ağır model yüklenmez.
+- Local mode: Haar yüz algılama + ORB/FLANN tanıma + CSRT takip
+- Remote mode: dış işlemciden `/vlm/results` ingest
+- Yüz takibi, owner follow, head arbiter
+- Kişi hafızası, görsel bağlam cache'i, semantic scene
+- Autonomy'ye action dispatch (`apply_actions`)
+- Vision event bus ve request gate
 
-config/agent.yaml içindeki vlm_bridge.vision.processing_mode: local|remote ile seçilir.
+## Mimari
 
-## Endpoints
-- `POST /vlm/track { head_tilt, head_pan, drive? }` : Arduino "track" komutu.
-- `POST /vlm/follow/start?person=<name?>` : Yüz takip modunu başlatır (CSRT lock).
-- `POST /vlm/follow/stop` : Yüz takip modunu durdurur.
-- `GET /vlm/follow/status` : Takip durumu, hedef kişi ve aktif bbox.
-- `POST /vlm/analyze` : Tek kare analiz (yalnızca local).
-- `GET  /vlm/video_feed` : Annotated MJPEG akışı (yalnızca local).
-- `GET  /vlm/results/latest` : Son işlenen karedeki nesne/kişi listesi (autonomy vb. modüller bu uçtan beslenebilir).
-- `POST /vlm/results` : Uzak işlemciden obje/kisi tespiti sonuçları (remote veya her iki mod). Header: `X-Auth-Token`.
-- `POST /vlm/blind/start` / `stop` : Görme engelli modu açıklama.
-- `POST /vlm/faces/register` / `GET /vlm/faces` : Yüz kayıt & liste (local).
-- `POST /vlm/memory/chat` : `{ person, text, role? }` kişi hafızasına sohbet satırı ekler.
-- `GET  /vlm/memory/person?person=Alice` : kişinin hafızası (son özet + sohbetler).
-- `GET  /vlm/memory/people` : hafızada kayıtlı isimler.
-- `POST /vlm/mode` : Çalışma modları arasında geçiş (objects/people/ocr/depth...)
+- Giriş noktası: `xVlmBridgeService.py`
+- Ana işlemci: `services/processor.py` (`VisionProcessor`)
+- Alt sistemler: `face_manager.py`, `face_emotion.py`, `semantic_describer.py`, `vision_event_bus.py`, `head_control_arbiter.py`, `google_vlm_client.py`
+- API parçaları: `api/control.py`, `api/config_routes.py`, `api/analysis.py`, `api/person.py`
 
-## Mod Yönetimi Ne Yapar?
-- `objects`, `people`, `faces`, `depth`, `ocr`, `hazards`, `semantic_scene` gibi alt yetenekleri ayrı ayrı açıp kapatır.
-- Görme engelli modu gibi davranışlar yalnızca ilgili mod aktifse çalışır.
-- Ağır iş yüklerini kapatarak CPU ve gecikme baskısını azaltır.
+Graph'ta `VisionProcessor` gateway bootstrap (`_include_vlm_bridge`) ile başlatılır.
 
-### /vlm/results Payload Örneği
-```json
-{
-  "frame_id": 123,
-  "timestamp": 1733123123.12,
-  "objects": [
-    {"label": "person", "confidence": 0.91, "bbox": [10,20,180,400], "distance_m": 1.6, "name": "Alice"},
-    {"label": "chair", "confidence": 0.78, "bbox": [220,100,320,360]}
-  ]
-}
-```
+## Mod Yönetimi
 
-## Güvenlik
-- `remote.auth_token` yapılandırıldıysa `X-Auth-Token` eşleşmelidir.
-- `remote.accept_results: false` ile dış sonuç kabulü kapatılabilir.
+- `processing_mode`: `local` | `remote`
+- Mod bayrakları: `objects`, `people`, `faces`, `depth`, `ocr`, `hazards`, `semantic_scene`
+- Kategori haritası: `local` / `remote` / `onsensor`
+- Profiller: `balanced`, `people_focus`, `objects_focus`, `assistive`, `minimal`
+- Realtime profiller: `fast`, `normal` (VLM timeout/interval tuning)
 
-## Blind Mode (Assistive)
-Aktifken semantik sahne özeti (Ollama varsa LLM tabanlı) ve kişilere özel selam gönderir. Uzak modda gelen sonuçlar üzerinden de çalışır.
+## API (Gateway altında `/vlm/*`)
 
-## VLM LLM Kaynağı
-- VLM Bridge config kaynağı config/agent.yaml içindeki vlm_bridge bölümüdür.
-- endpoint, agent.ollama_base_url değerinden türetilir ve /api/chat olarak normalize edilir.
-- Tek model politikası zorunludur: qwen3.5:9b.
-- Provider yalnızca ollama olabilir.
-- Geriye dönük olarak `ollama.endpoint` değeri `.../api/generate` ise eski doğrudan generate akışı da desteklenir.
+### Kontrol / Takip
+- `POST /vlm/track`
+- `POST /vlm/follow/start`, `/follow/stop`, `GET /follow/status`
+- `POST /vlm/follow/owner/start`
+- `POST /vlm/focus/person`
+- `GET /vlm/head/status`, `POST /vlm/head/move`
 
-## LLM Action Dispatch
-- `config.actions.endpoint`: Genelde `http://<autonomy>/autonomy/apply_actions`. Boşsa özellik kapanır.
-- `config.actions.default_apply`: `true` iken her tespit turu için semantik özet oluşturulur, `[cmd:*]` ve `[[lights …]]` etiketleri otomatik olarak Autonomy’ye iletilir.
-- `config.actions.timeout`: HTTP post için saniye cinsinden bekleme süresi (varsayılan 1.5).
+### Mod / Profil
+- `GET|POST /vlm/mode`
+- `GET|POST /vlm/modes/categories`
+- `GET /vlm/profile`, `POST /vlm/profile/switch`
 
-`VisionActionDispatcher` sınıfı semantik ifadeleri `modules.ollama.services.tags.extract_llm_tags` ile parse eder; örneğin “`Selam [cmd:head_nod] [[lights palette=sunset_gold intensity=0.7]]`” metni servo nod ve LED paletine dönüştürülür. Autonomy bu webhook’u aldığında `ResponseTagMixin` fiziksel aksiyonları uygular, konuşma gerekirse `speak` sahasıyla tetiklenir.
+### Sonuç / Bağlam
+- `GET /vlm/results/latest`
+- `POST /vlm/results`
+- `GET /vlm/context/latest`
+- `POST /vlm/context/refresh`
 
-## Çalıştırma
-- Bağımsız: `python -m modules.vlm_bridge.xVlmBridgeService`
-- Gateway ile: `python -m modules.gateway.xGatewayService` ve `include.vlm_bridge: true`
+### Analiz
+- `POST /vlm/analyze`
+- `POST /vlm/ask`
+- `POST /vlm/ocr`
+- `POST /vlm/fer/analyze`
+- `GET /vlm/video_feed`
 
-## Gelecek Genişletmeler
-- Derinlik / mesafe için stereo / mono depth entegrasyonu (remote).
-- Metin okuma (OCR) sonuç formatı genişletmesi: `objects[].text` alanı.
-- Tehlike uyarıları için tür eşik konfigürasyonu.
-- Duygusal durum geri bildirimi: `interactions` modülü ile LED / ses.
+### Yüz / Hafıza
+- `POST /vlm/faces/register`, `GET /vlm/faces`
+- `POST /vlm/person/remember`, `POST /vlm/person/relationship`
+- `GET /vlm/person/{name}`, `GET /vlm/people`
+- `POST /vlm/memory/chat`, `GET /vlm/memory/person`, `GET /vlm/memory/people`
 
-### Liveliness Starter (opsiyonel)
-`modules/vlm_bridge/tools/liveliness_starter.py` basit heartbeat ve idle lookaround döngüsü sağlar.
-Gateway açıkken çalıştırılabilir ve `interactions` ile `vlm/track` uçlarını kullanır.
+### Assistive
+- `POST /vlm/blind/start`, `/blind/stop`
+
+## Konfigürasyon
+
+Merkezi kaynak: `config/agent.yaml` → `vlm_bridge`
+
+- `vision.processing_mode`
+- `vision_llm` / `google_vlm_client`
+- `remote_multimodal`
+- `actions.endpoint` (genelde `/autonomy/apply_actions`)
+- `vision_request_gate`
+
+## İlişkiler
+
+- `autonomy`: vision hooks, selamlama, world-memory beslemesi
+- `camera`: local capture kaynağı
+- `arduino_serial`: head/track komutları
+- `interactions`, `expression`: görsel olayların ifadeye dönüşümü
+- `ollama` / Google VLM: semantic scene üretimi
+
+Otonomlukta proaktif davranışın görsel algı kapısıdır.

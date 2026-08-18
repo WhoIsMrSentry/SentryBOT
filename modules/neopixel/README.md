@@ -1,146 +1,52 @@
-# Neopixel Module
+# Neopixel
 
-DryCode uyumlu, hem kütüphane hem servis olarak çalışabilen NeoPixel (WS2812) kontrol modülü.
+WS2812/NeoPixel LED kontrol modülüdür. Hem kütüphane hem servis olarak çalışır; duygu paletleri, segment desteği ve preset kütüphanesi sunar.
 
-- Raspberry Pi 5: `pi5neo` ile SPI üzerinden sürer.
-- Jetson Nano desteği kaldırıldı; artık Arduino veya Pi üzerinden sürülür.
-- Donanım yoksa simülatör çalışır.
+## Sorumluluklar
 
-## Özellikler
-- Donanım/simülatör otomatik seçim
-- Efektler: rainbow, theater_chase, fill, clear
-- ESP tarzı gelişmiş animasyonlar: RAINBOW, RAINBOW_CYCLE, SPINNER, BREATHE, METEOR, FIRE, COMET, WAVE, PULSE, TWINKLE, COLOR_WIPE, RANDOM_BLINK, THEATER_CHASE, SNOW, ALTERNATING, GRADIENT, BOUNCING_BALL, RUNNING_LIGHTS, STACKED_BARS, MULTI_GRADIENT, MULTI_WAVE
-- Duygular (emotions) paleti: her duygu için çoklu renk, isimleri ile birlikte
-- FastAPI servisi ile HTTP üzerinden kontrol
+- Donanım/simülatör otomatik seçimi (Pi SPI, Arduino, sim)
+- Temel efektler ve gelişmiş animasyon ailesi
+- Duygu paletleri (`emotions/*.yml`)
+- Segment bazlı kontrol (jewel/stick)
+- Runtime preset CRUD
+- Companion LED yüz/VU/thinking frame render (`companion_leds.py`)
 
-## Kurulum ve Çalıştırma (Servis)
-Python ile:
+## Mimari
 
-```python
-from modules.neopixel.xNeopixelService import create_app
-app = create_app()
-```
+- Giriş noktası: `xNeopixelService.py`
+- Runner: `services/runner.py` (`NeoRunner`)
+- Sürücü: `services/driver.py`
+- Duygu loader: `emotions/loader.py` (`common.emotion_vocab` ile uyumlu)
+- Router: `api/router.py`
 
-Uvicorn ile çalıştırma:
-```bash
-uvicorn modules.neopixel.xNeopixelService:create_app --factory --host 0.0.0.0 --port 8092
-```
+## API (Gateway altında `/neopixel/*`)
 
-## API Uç Noktaları
+- `GET /neopixel/healthz`
+- `POST /neopixel/clear`, `/fill`, `/rainbow`, `/theater_chase`
+- `POST /neopixel/effect`, `/animate`, `/emote`, `/emote_named`
+- `GET /neopixel/segments`
+- `POST /neopixel/segment/clear`
+- `GET /neopixel/presets`
+- `POST /neopixel/preset/apply`, `/preset/set`
+- `GET /neopixel/preset/get`
+- `DELETE /neopixel/preset/delete`
 
-- GET  `/neopixel/healthz`
-- POST `/neopixel/clear`
-- POST `/neopixel/fill?r=255&g=0&b=0`
-- POST `/neopixel/rainbow?wait=0.02&cycles=3`
-- POST `/neopixel/theater_chase?r=255&g=0&b=0&wait=0.05&cycles=10`
-- POST `/neopixel/effect?name=rainbow|theater_chase|fill|clear`
-- POST `/neopixel/emote` body: `{ "text": "joy curiosity", "duration": 0.25 }` veya query `emotions=joy&emotions=fear`
-	- Döner: seçilen renk adları ve rgb: `{ chosen: [{emotion, name, rgb}, ...] }`
-- POST `/neopixel/emote_named?emotion=joy&name=COLOR_SUNSHINE&duration=0.25`
-- POST `/neopixel/animate?name=RAINBOW&emotions=joy&emotions=fear&iterations=2`
+## Konfigürasyon
 
-### Animasyon İsimleri ve Parametreleri
+`modules/neopixel/config/config.yml`:
+- `hardware.backend`: `auto|pi|arduino|sim`
+- `hardware.segments`
+- `presets`
+- `hardware.num_leds`, SPI ayarları
 
-Tek renk kullananlar (c1):
-- SPINNER(color=c1, iterations=1)
-- BREATHE(color=c1, iterations=1, step=5, wait=0.02)
-- METEOR(color=c1, size=5, decay_ms=50)
-- FIRE(color=c1, cycles=1)
-- COMET(color=c1, speed_ms=50)
-- PULSE(color=c1, step=10, wait=0.05)
-- TWINKLE(color=c1, count=5, wait=0.1)
-- COLOR_WIPE(color=c1, speed_ms=50)
-- RANDOM_BLINK(color=c1 veya None, wait=0.1)
-- THEATER_CHASE(color=c1, wait=0.05, cycles=5)
-- SNOW(color=c1, flakes=10, wait=0.2)
-- GRADIENT(color=c1, cycles=5, wait=0.03)
-- BOUNCING_BALL(color=c1, frames=60, wait=0.03)
-- RUNNING_LIGHTS(color=c1, loops=2, wait=0.05)
-- STACKED_BARS(color=c1 veya None, wait_ms=50)
+Env: `NEO_DEVICE`, `NEO_NUM_LEDS`, `NEO_BACKEND`, vb.
 
-Tint’li/çoklu renk kullananlar:
-- RAINBOW(color=c1 veya None, iterations=1, wait=0.02)
-- RAINBOW_CYCLE(color=c1 veya None, iterations=1, wait=0.02)
-- WAVE(color=c1 veya None, wait=0.05)
-- MULTI_GRADIENT(colors=[c1,c2,...], iterations=5, wait=0.03)
-- MULTI_WAVE(colors=[c1,c2,...], iterations=5, wait=0.03)
+## İlişkiler
 
-Notlar:
-- API’de `iterations` parametresi genel amaçlıdır; bazı animasyonlar bu değeri kullanır.
-- Renkler `emotions` listesinden rastgele seçilir (cache). Birden fazla emotion vererek çoklu renkli animasyonlar çalıştırabilirsiniz.
+- `interactions`: kural motoru efekt tetikleme
+- `autonomy`: duygu paletleri, scene orchestration
+- `expression`: LED modality
+- `common.emotion_vocab`: palette/effect eşlemesi
+- `arduino_serial`: fiziksel sürüş fallback'i
 
-## Emotions Paleti
-
-- Yol: `modules/neopixel/emotions/` altında her duygu için `*.yml`
-- Schema:
-
-```yaml
-colors:
-	- { name: COLOR_SUNSHINE, r: 255, g: 215, b: 0 }
-	- "#FF00FF"
-	- [0, 255, 128]
-```
-
-- Loader: `modules/neopixel/emotions/loader.py`
-	- random_color(emotion): (r,g,b)
-	- random_entry(emotion): { name, color }
-	- get_by_name(emotion, name)
-
-## Config
-`modules/neopixel/config/config.yml` içinde.
-
-Ortam değişkenleri:
-- `NEO_DEVICE`, `NEO_NUM_LEDS`, `NEO_SPEED_KHZ`, `NEO_ORDER`, `NEO_HOST`, `NEO_PORT`
-- `NEO_BACKEND` (auto|pi|arduino|sim)
-- `NEO_WS2812_SPI_KHZ` (örn 2400)
-
-Arduino üzerinden sürme (özet):
-- `hardware.backend: arduino`
-- `hardware.device: AUTO`, `/dev/serial/by-id/...`, `/dev/ttyACM0` veya `/dev/ttyUSB0` gibi Linux/Pi Arduino portu
-
-Raspberry Pi 5 için tipik ayar (Pi native driver):
-- `hardware.backend: pi`
-- `hardware.device: /dev/spidev0.0`
-
-Not: WS2812/NeoPixel 5V veri seviyesi ister; ara donanım (Arduino) kullanıyorsanız Arduino tarafında fiziksel sürme ve seviye çevirici uygulanmalıdır.
-
-## Kütüphane Kullanımı
-
-```python
-from modules.neopixel.services.runner import NeoRunner
-from modules.neopixel.services.driver import NeoDriverConfig
-
-runner = NeoRunner(NeoDriverConfig(num_leds=30))
-
-# Basit efekt
-runner.rainbow()
-
-# Duygu sırası ile renk gösterimi
-runner.emote_sequence(["joy", "fear"], duration=0.2)
-
-# Animasyon, duygulardan renk üretip uygular
-runner.animate("ALTERNATING", emotions=["anger", "gratitude"], iterations=10)
-```
-
-## Gateway ile Kullanım
-Gateway çalışırken NeoPixel API uçları tek portta `/neopixel/*` altında sunulur. `interactions` modülü de gateway’de açıksa, kurallar NeoPixel efektlerini otomatik tetikler; modülü ayrı bir servis olarak çalıştırmaya gerek yoktur.
-
-## Segment Desteği (Göz/Gövde Ayrımı)
-NeoPixel API artık segment tanımlarını destekler:
-
-- `GET /neopixel/segments` -> tanımlı segment listesi
-- `POST /neopixel/fill?r_=0&g=0&b=255&segment=jewel` -> sadece segmente renk uygular
-- `POST /neopixel/segment/clear?name=stick` -> sadece segmenti temizler
-- `POST /neopixel/animate` body içinde `segment` alanı verilebilir
-
-## Preset Kütüphanesi
-
-- `GET /neopixel/presets` -> hazır preset isimleri
-- `POST /neopixel/preset/apply?name=owner_welcome` -> segment preset uygular
-- `GET /neopixel/preset/get?name=owner_welcome` -> preset içeriği
-- `POST /neopixel/preset/set` -> runtime preset ekle/güncelle
-- `DELETE /neopixel/preset/delete?name=owner_welcome` -> runtime preset sil
-
-Presetler `config/config.yml` içindeki `presets` bloğundan yüklenir.
-
-`config/config.yml` içinde `hardware.segments` tanımı ile eşlenir.
+Robotun duygusal durumunu ışıkla dışa vuran birincil donanım katmanıdır.
