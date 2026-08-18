@@ -1,61 +1,71 @@
-# Ollama Module
+# Ollama
 
-Central LLM gateway for SentryBOT. Provides FastAPI endpoints to chat with an Ollama model using configurable personas.
+SentryBOT'un merkezi LLM gateway modülüdür. Sohbet, persona yönetimi ve LLM istemci fabrikasını sağlar. Adı "Ollama" olsa da sağlayıcı katmanı artık Google AI Studio/Gemini profilini de destekler.
 
-## Endpoints
-- GET /ollama/healthz
-- GET/POST /ollama/chat?query=...
-	- **Structured Mode**: `structured=true` parametresi ile `SentryResponse` Pydantic şemasına zorlanmış JSON döner: `{ text: "...", thoughts: "...", actions: [...] }`.
-	- **Normal Mode**: Geriye dönük uyumluluk için `answer` (text) ve `raw` alanlarını içeren bir yapı döner.
-	- `apply_actions=true` sorgu parametresi gönderilirse, `actions` alanı Autonomy servisinin `/autonomy/apply_actions` ucuna iletilir.
+## Sorumluluklar
 
-## Supported Actions (Hardware & System)
-Ollama artık robotu aşağıdaki aksiyon türleri ile kontrol edebilir:
-- `servo`: Kafa hareketi (pan/tilt).
-- `lights`: NeoPixel animasyonları (mode, emotions, intensity).
-- `laser`: Lazer kontrolü (id, on, both).
-- `buzzer` / `sound_play`: Sesli uyarılar.
-- `system`: Modül kontrolü (`notifier`, `camera`, `autonomy`).
-- `speak`: Özel tonlama gerektiren sesli yanıtlar.
-- `anim`: Hazır animasyon sekansları.
-- `stand` / `sit` / `home`: Pozisyon komutları.
-- GET /ollama/persona
-- GET /ollama/personas
-- GET /ollama/models
-- POST /ollama/model/add (name, set_default)
-- POST /ollama/persona/select (name)
-- POST /ollama/persona/create_from_url (name, url)
+- LLM istemci fabrikası (`create_llm_client`)
+- Chat endpoint'leri ve structured response modu
+- Persona seçimi/yönetimi
+- Model listeleme ve ekleme
+- Autonomy'ye action forwarding (`apply_actions`)
 
-## Config
-This module now reads only central config/agent.yaml.
+## Mimari
 
-Required sections:
-- agent
-- llm
-- ollama
-- ollama_service
+- Giriş noktası: `xOllamaService.py`
+- İstemciler: `services/clients.py` (`OllamaClient`, `GoogleAIStudioClient`)
+- Chat: `services/chat.py`
+- Router parçaları: `api/chat_routes.py`, `api/persona_routes.py`, `api/models_routes.py`, `api/health.py`
 
-Strict policy:
-- provider must be ollama
-- model must be qwen3.5:9b
+## Sağlayıcı Politikası
 
-Optional path override:
-- Set AGENT_CFG to a custom agent.yaml path.
+`create_llm_client(cfg)` sağlayıcıyı `llm.provider` alanından seçer:
+- `ollama` → `OllamaClient`
+- `google`, `google_ai_studio`, `gemini` → `GoogleAIStudioClient`
 
-In single-model mode, `POST /ollama/persona/select` does not create per-persona models; it only updates active persona text/prompt context.
+Graph'ta çağrıcılar:
+- `agent_core.services.agent.AgentOrchestrator`
+- `vlm_bridge.services.llm_client`
+- `ollama` router/service bootstrap
 
-Personas now live as folders: `modules/ollama/config/personalities/<name>/{persona.txt,urls.txt}`.
+Strict single-model politikası modül config'inde zorlanabilir; `agent_core` tarafında ayrıca model politikası uygulanır.
 
-## Run
-This module is meant to be imported by other modules (e.g., interactions, speech). It can also run as a service via `python -m modules.ollama.xOllamaService`.
+## API (Gateway altında `/ollama/*`)
 
-## Integration contract (other modules)
-- Speech: send recognized text → call `POST /ollama/chat` → receive `answer` (string)
-	- Then pass `answer` to Speak module `/speak/say` for TTS.
-	- Interactions/Neopixel: `actions.blocks` alanını kullanarak LED / servo değişikliklerini otomatik tetikleyebilir veya `apply_actions=true` ile Autonomy'ye devredebilirsiniz.
-- Camera: can request `answer` for descriptions or next actions; not directly dependent.
+- `GET /ollama/healthz`
+- `GET|POST /ollama/chat`
+- `GET /ollama/persona`, `/personas`
+- `GET /ollama/models`
+- `POST /ollama/model/add`
+- `POST /ollama/persona/select`
+- `POST /ollama/persona/create_from_url`
 
-All persona handling is centralized here; modules should not embed prompts. Use persona select to switch tone/role globally.
+Structured mode: `structured=true` → `{ text, thoughts, actions }`
 
-## Gateway ile Kullanım
-Gateway çalışırken bu uçlar tek portta `/ollama/*` altında sunulur; modülü ayrı servis olarak çalıştırmaya gerek yoktur.
+## Konfigürasyon
+
+Merkezi `config/agent.yaml` bölümleri:
+- `agent`
+- `llm`
+- `ollama`
+- `ollama_service`
+- `google_ai_studio` (Google profili seçildiyse)
+- `persona`
+- `actions`
+
+Persona klasörleri: `modules/ollama/config/personalities/<name>/`
+
+## İlişkiler
+
+- `agent_core`: ana ajan LLM çağrıları
+- `autonomy`: companion chat ve LLM kararları
+- `vlm_bridge`: metin üretimi fallback/chat endpoint'i
+- `speech`: tanınan metin → chat → `speak` akışında ara katman
+
+## Çalıştırma
+
+```bash
+python -m modules.ollama.xOllamaService
+```
+
+Gateway aktifken modül ayrı servis olarak başlatılmadan `/ollama/*` altında sunulur.

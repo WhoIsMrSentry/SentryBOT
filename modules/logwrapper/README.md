@@ -1,46 +1,51 @@
-# logwrapper (Merkezi Loglama Servisi)
+# Logwrapper
 
-Merkezi loglama için hafif bir modül. Tüm modüllerin loglarını tek yerde toplar.
+SentryBOT'un merkezi log altyapısı modülüdür. Konsol, dönen dosya handler'ı ve bellek içi halka buffer üzerinden logları toplar.
 
-Özellikler:
-- Console + dönen dosya handler
-- Bellek içi halka buffer (REST ile okunabilir)
-- JSON veya okunabilir format
-- Warnings -> logging
+## Sorumluluklar
+
+- Global logging bootstrap (`init_logging`)
+- Console + rotating file handler
+- Bellek içi ring buffer (REST ile okunabilir)
 - Modül bazlı seviye override
-- FastAPI router (opsiyonel)
+- Opsiyonel FastAPI router
+
+## Mimari
+
+- Giriş noktası: `xLogService.py`
+- Handler'lar: `services/handlers.py`
+- Rotasyon: `services/run_rotator.py`
+- API: `api/router.py`
+
+Graph'ta `init_logging` çağrıcıları:
+- `sentrybot._configure_logging`
+- `scripts.run_robot.main`
+- Modül servisleri (opsiyonel erken init)
+
+## API (Gateway altında `/logs/*`)
+
+- `GET /logs/?n=200` — son log kayıtları
+- `POST /logs/level` — logger seviyesi değiştirme
 
 ## Kullanım
 
-Kütüphane olarak:
-
 ```python
-from modules.logwrapper import init_logging, get_router
+from modules.logwrapper import init_logging
 
-init_logging()  # erken çağırın
-
-# FastAPI ile entegrasyon (opsiyonel)
-app = FastAPI()
-router = get_router()
-if router is not None:
-    app.include_router(router)
+init_logging()  # mümkün olduğunca erken
 ```
 
-CLI/servis gibi çalıştırma:
-
-```bash
-python -m modules.logwrapper.xLogService
-```
+Gateway bootstrap sırasında log modülü mount edilebilir; başarısız olsa bile diğer modüller çalışmaya devam eder.
 
 ## Konfigürasyon
-`modules/logwrapper/config/config.yml` içinde. Ortam değişkenleri ve `init_logging(overrides=...)` ile override edilebilir.
 
-- LOG_LEVEL: konsol seviyesi
-- LOG_FILE: dosya yolu
+`modules/logwrapper/config/config.yml`:
+- konsol/dosya seviyeleri
+- format (JSON veya okunabilir)
+- modül bazlı override'lar
 
-## DryCode Notları
+Env override: `LOG_LEVEL`, `LOG_FILE`
 
-## Gateway Notu
-Gateway içinde merkezi loglama başlatılması opsiyoneldir; mevcut kurulumda gateway başlarken `init_logging()` çağrısı denenir. Başarısız olsa bile modüller çalışmaya devam eder.
-- Tek sorumluluk: modül sadece log altyapısını kurar ve minimal API sunar.
-- Dış bağımlılıklar: yalnızca opsiyonel `PyYAML` ve `FastAPI` (API için). Başka bağımlılık yok.
+## İlişkiler
+
+Logwrapper doğrudan otonom karar üretmez; ancak tüm modüllerin gözlemlenebilirliğini sağlar. Özellikle gateway + çok modüllü Pi5 runtime'ında merkezi teşhis katmanıdır.

@@ -1,45 +1,42 @@
-# common — Shared Helpers
+# Common
 
-Dependency-light helpers shared across SentryBOT modules. Importable from any
-service without pulling heavy module graphs.
+Modüller arasında paylaşılan, hafif yardımcı kütüphaneler modülüdür. Ağır modül grafiklerini import etmeden ortak davranış sağlar.
 
-## Canonical Emotion Vocabulary
+## Sorumluluklar
 
-`emotion_vocab.py` is the **single source of truth** that unifies the three
-historically divergent emotion vocabularies:
+- Kanonik duygu sözlüğü (`emotion_vocab.py`)
+- Latency trace deposu (`latency_trace.py`)
+- HTTP istemci yardımcıları (`http_client.py`)
+- Vision/camera kullanılabilirlik kontrolleri (`vision_availability.py`)
+- Model asset doğruluk raporu (`model_asset_truth.py`)
+- Runtime hedef tespiti (`runtime_target.py`)
+- Sistem prompt yardımcıları (`system_prompts.py`)
+- Genel config yardımcıları (`config.py`)
 
-| Subsystem        | Old vocabulary                         |
-|------------------|----------------------------------------|
-| autonomy (mood)  | ~6 labels (`joy`, `sadness`, `tired`…) |
-| oled_faces       | ~13 event labels (`happy`, `sad`…)     |
-| neopixel         | ~23 palette files                      |
+## Duygu Sözlüğü
 
-Every subsystem now resolves its incoming label to a **canonical** key and
-reads shared render hints, so eyes (OLED), LEDs (NeoPixel), ears (PiServo),
-head body-language and TTS tone all agree on one emotion.
+`emotion_vocab.py`, OLED, NeoPixel, PiServo kulakları, TTS tonu ve agent tool katmanı arasında tek duygu taksonomisi sağlar.
 
-### Usage
+Graph'ta `get_vocab()` 20+ çağrıcıya sahiptir; `autonomy`, `agent_core`, `expression`, `neopixel`, `piservo` gibi modüller bu sözlüğü kullanır.
 
 ```python
 from modules.common.emotion_vocab import get_vocab
 
 vocab = get_vocab()
-vocab.canonical("happy")        # -> "joy"
-r = vocab.render("happy")       # -> EmotionRender(...)
-r.oled                          # -> "happy"   (face bitmap)
-r.palette                       # -> "joy"     (neopixel palette file)
-r.effect                        # -> "RAINBOW_CYCLE"
-r.ears                          # -> "joy"     (piservo pose key)
-r.tone                          # -> "joy"     (speak TTS tone)
-r.rgb                           # -> (0, 200, 60)
+vocab.canonical("happy")   # -> "joy"
+render = vocab.render("happy")
+render.oled, render.palette, render.tone, render.rgb
 ```
 
-### Config
+Konfigürasyon: `config/emotions.yml`
 
-`config/emotions.yml` defines:
+## Diğer Yardımcılar
 
-- `aliases` — canonical → alias labels
-- `render`  — per-canonical render hints (`oled`, `palette`, `effect`, `ears`, `tone`, `rgb`)
-- `default_canonical` — fallback when a label is unknown (`neutral`)
+- `latency_trace`: `speak`, `agent_core` gibi modüllerde uçtan uca gecikme izleri
+- `http_client`: async/sync HTTP wrapper
+- `vision_availability`: kamera/VLM girdisinin gerçekten kullanılabilir olup olmadığını kontrol
+- `runtime_target`: Pi/PC hedef ortamını tespit etme
 
-To add or retune an emotion, edit the YAML only — no code changes required.
+## İlişkiler
+
+`common` bir servis değil, paylaşılan kütüphane katmanıdır. Özellikle otonom ifade senkronizasyonu (`emotion_vocab`) ve performans gözlemi (`latency_trace`) açısından kritiktir.

@@ -1,87 +1,66 @@
-# Arduino Serial Module (NDJSON Contract + ESP Transport)
+# Arduino Serial
 
-Arduino komut kontratını (`contract.py`) tek kaynak olarak tutar ve üretimde komutları ESP bridge üzerinden Mega'ya iletir.
+Arduino/ESP donanımına giden komutların tek kontrat kaynağı ve taşıma katmanıdır. Tüm Pi tarafı komutları `contract.py` içindeki `build_*` fonksiyonları üzerinden üretilmelidir; elle `{"cmd": ...}` payload yazımı yasaktır.
 
-## Özellikler
-- ESP HTTP transport (üretim): Pi -> ESP -> Mega
-- Opsiyonel legacy serial fallback (`transport: serial`)
-- Otomatik heartbeat ve request retry
-- Basit FastAPI router (opsiyonel) ve sürücü sınıfı
-- DryCode: modüler yapı, ayrı config.yml
-- Firmware komut kapsamı: hello/hb, set_servo, set_pose(duration), stepper(pos/vel), stepper_cfg,
-  home/zero_now/zero_set, pid_enable/pid_set/pid_status, stand/sit, imu_read/imu_cal, eeprom_save/load, tune, policy, track,
-  telemetry_start/stop, get_state, estop
-    - Sit modunda stepper dengeleme + "drive" (kullanıcı hızı) karışımı desteklenir.
+## Sorumluluklar
 
-## Kurulum
-- Python bağımlılıkları: `requests`, `pyserial` (legacy fallback), FastAPI kullanacaksanız `fastapi` ve `uvicorn`.
+- NDJSON komut kontratı (`contract.py`)
+- ESP HTTP transport (varsayılan üretim yolu)
+- Opsiyonel legacy serial fallback
+- ACK bekleyen `/arduino/request` akışı
+- Heartbeat, retry ve eşzamanlılık koruması
+- FastAPI router ve sürücü sınıfı
 
-## Kullanım (kütüphane)
+## Mimari
+
+- Giriş noktası: `xArduinoSerialService.py`
+- Kontrat: `contract.py`
+- Router: `api/router.py`
+- Sürücü: `services/driver.py`
+- Konfigürasyon: `config/config.yml` + `config/agent.yaml`
+
+## Kontrat Ailesi
+
+`contract.py` içinde öne çıkan builder'lar:
+- `build_set_servo_cmd`, `build_set_pose_cmd`
+- `build_stepper_cmd`, `build_stepper_cfg_cmd`
+- `build_track_cmd`, `build_drive_cmd`
+- `build_liveliness_cmd`, `build_laser_cmd`, `build_buzzer_cmd`
+- `build_lcd_cmd`, `build_tune_cmd`, `build_policy_cmd`
+
+Bu builder'lar komutu üretir; gönderim `request`/`send` katmanında yapılır.
+
+## API (Gateway altında `/arduino/*`)
+
+- `GET /arduino/healthz`
+- `POST /arduino/send` — fire-and-forget
+- `POST /arduino/request` — ACK bekleyen kritik komutlar
+- `POST /arduino/telemetry/start`, `/telemetry/stop`
+- `GET /arduino/rfid/last`, `/rfid/authorize`
+- `POST /arduino/cute/{name}`, `/cute/emotion/{emotion}`
+- `POST /arduino/sound/out/{mode}`, `/buzzer`, `/sound/play/{name}`
+
+Kritik hareket komutlarında `/arduino/request` tercih edilmelidir (timeout 0.8–1.5s).
+
+## Konfigürasyon
+
+- `transport`: `esp_http` (varsayılan) veya `serial`
+- `esp_base_url`, `esp_request_path`, `esp_send_path`
+- `heartbeat_ms`
+- `rfid.allowed_uids`, `rfid.authorize_window_s`
+
+Env override: `ARDUINO_PORT`, `ARDUINO_BAUD`
+
+## İlişkiler
+
+- `autonomy`, `speech`, `agent_core`, `vlm_bridge`, `animate` gibi modüller bu katman üzerinden donanıma erişir
+- Gateway bootstrap sırasında Arduino servisi mount edilir ve NeoPixel/Autonomy ile kablolanır
+
+## Kullanım
+
 ```python
-from modules.arduino_serial.services.driver import ArduinoDriver
+from modules.arduino_serial.contract import build_set_servo_cmd, SERVO_INDEX_PAN
 
-ardu = ArduinoDriver()
-ardu.start()
-print(ardu.hello())
-ardu.set_head(90, 90)
-# örnek: oturma + denge + ileri sürüş
-ardu.svc.sit()
-ardu.svc.drive(200)        # ileri gitme isteği (steps/s)
-ardu.stop()
+payload = build_set_servo_cmd(SERVO_INDEX_PAN, 90)
+# Gateway: POST /arduino/request
 ```
-
-## Builder Mantigi (Basit Anlatim)
-- `contract.py` icindeki `build_*` fonksiyonlari, Arduino komutunu tek tip formatta uretir.
-- Amaç: Her modulde elle `{"cmd": ...}` yazip farkli format gonderme riskini azaltmak.
-- Ornek:
-    - Eski: Kod icinde dogrudan `{"cmd":"stepper","id":0,...}` yaziliyordu.
-    - Yeni: `build_stepper_cmd(...)` kullaniliyor ve her yerde ayni JSON cikiyor.
-- Sonuc: Hata ayiklama kolaylasir, alan isimleri (`index/deg`, `head_pan`, vb.) karismaz.
-- Not: Builder, komutu sadece uretir; gonderme islemini yine servis (`send/request`) yapar.
-
-## API (opsiyonel)
-Router oluşturmak için:
-```python
-from modules.arduino_serial.api.router import get_router
-from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService
-
-svc = xArduinoSerialService()
-svc.start()
-router = get_router(svc)
-```
-
-### Gateway Üzerinden Erişim
-Gateway çalışırken Arduino uçları tek portta sunulur:
-- GET  `/arduino/healthz`
-- POST `/arduino/send`
-- POST `/arduino/request`
-- POST `/arduino/telemetry/start`
-- POST `/arduino/telemetry/stop`
-- GET  `/arduino/rfid/last` → Son görülen kart UID'sini ve kaç saniye önce okunduğunu döner.
-- GET  `/arduino/rfid/authorize` → `config.yml` içindeki `rfid.allowed_uids` listesine göre kartı doğrular; `authorized: true` ise Autonomy içindeki RFID koruması açılır.
-- POST `/arduino/cute/{name}` → CuteBuzzer sesi çal (`connection`, `disconnection`, `button_pushed`, `mode1`, `mode2`, `mode3`, `surprise`, `ohooh`, `ohooh2`, `cuddly`, `sleeping`, `happy`, `super_happy`, `happy_short`, `sad`, `confused`, `fart1`, `fart2`, `fart3`, `jump`).
-- GET  `/arduino/cute/catalog` → Ses→NeoPixel animasyon/renk eşleşme tablosunu ve emotion map'i döner (Swagger'da görünür).
-- POST `/arduino/cute/emotion/{emotion}` → Emotion adına göre uygun Cute sesi çalar (`happy`, `super_happy`, `sad`, `surprise`, `confused`, `sleeping`, `connected`, `disconnected`).
-- POST `/arduino/sound/out/{mode}` → Varsayılan buzzer çıkışını değiştir (`loud|quiet`).
-- POST `/arduino/buzzer?freq=2200&ms=60&out=loud` → Tek beep komutu.
-- POST `/arduino/sound/play/{name}?out=quiet` → Firmware şarkı isimlerini çal.
-
-Not:
-- Kritik hareket komutlarında `POST /arduino/request` tercih edilmelidir (ACK/error döner).
-- `POST /arduino/send` fire-and-forget içindir.
-- Gateway, desteklenen Arduino komut aileleri için payload doğrulaması yapar; şekli/alanı hatalı isteklerde `400` döner.
-
-## Konfig
-`modules/arduino_serial/config/config.yml` içinde varsayılanlar:
-- transport: `esp_http`
-- esp_base_url: `http://sentrybot.local`
-- esp_request_path: `/request`
-- esp_send_path: `/send`
-- heartbeat_ms: 100
-- rfid.allowed_uids: Yetki verilecek kart UID'leri (HEX, büyük/küçük fark etmez)
-- rfid.authorize_window_s: Son kart okumasının geçerli sayılacağı zaman penceresi (s)
-
-Env override: `ARDUINO_PORT`, `ARDUINO_BAUD`.
-
-## Test
-Basit smoke test `tests/test_smoke.py` fake transport ile çalışır.
