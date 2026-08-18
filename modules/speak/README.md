@@ -1,134 +1,63 @@
-# Speak (TTS) Module
+# Speak
 
-Küçük, tek sorumluluklu bileşenler (DryCode). Hem kütüphane hem servis olarak çalışır.
+SentryBOT'un konuşma çıkış modülüdür. Metni temizler, seçilen TTS motoruyla sentezler, sesi oynatır ve ifade katmanına konuşma başlangıç/bitiş olayları gönderir.
 
-## Özellikler
-- TTS motorları: pyttsx3 (offline), Piper (harici ikili/model; offline, doğal)
-- Uzak TTS: Piper ve XTTS için tek endpoint + engine parametresi desteği
-- MAX98357A I2S amplifikatör üzerinden ses çıkışı (ALSA cihazı)
-- Harici ses çalma: base64 WAV veri oynatma
-- Konuşma sırasında canlılık senkronu: `/interactions/event` ve `/interactions/effect` ile LED tepkisi
-- Temiz API: `/speak/say` (TTS) ve `/speak/play` (codec + base64)
-- Modüler yapı: TTS, Player, Decoder ayrık ve test edilebilir
+## Ana Yetenekler
 
-## Hızlı Başlangıç
-### Python
-```python
-from modules.speak import SpeakService
-svc = SpeakService()
-svc.speak("Merhaba dünya")
-```
+- Birden fazla TTS motoru: `pyttsx3`, `piper`, `xtts`, `dummy`
+- Senkron konuşma ve parçalara bölünmüş streaming konuşma
+- Base64 WAV oynatma
+- Ton/eğilim eşleme: `joy`, `calm`, `tired`, `fear` gibi preset'ler
+- Latency trace üretme
+- Konuşma sırasında expression/event bildirimi
 
-### CLI / Servis
-- Çalıştır: `python -m modules.speak.xSpeakService --api`
-- TTS: POST `/speak/say` body: {"text":"Merhaba"}
+## Mimari
 
-## API
-- GET `/speak/status` → { ready: true }
-- POST `/speak/say`
-	- Body: `{ "text": "...", "engine": "pyttsx3|piper|xtts", "tone": { "rate": 190, "volume": 0.9 } }`
-	- `tone` alanı opsiyoneldir; `rate`, `volume` veya `piper` içindeki `length_scale`, `noise_scale` gibi ayarları anlık olarak override edebilirsiniz.
-	- Dönüş: `{ ok, engine, duration_sec, samplerate }`
-- POST `/speak/play`
-	- Body: `{ "data": "<base64-wav>" }`
-	- Dönüş: `{ ok, duration_sec }`
-
-## Yapılandırma (config/agent.yaml -> speak)
-```yaml
-server:
-	host: 0.0.0.0
-	port: 8083
-
-audio_out:
-	device: null          # ALSA cihaz (örn. hw:1,0)
-	samplerate: 22050
-	channels: 1           # MAX98357A mono; driver stereo ise kod upmix yapar
-	dtype: float32
-
-tts:
-	engine: piper         # pyttsx3 | piper | xtts | dummy
-	language: tr
-	voice: null
-	rate: 170
-	volume: 1.0
-	samplerate: 22050
-	remote:
-		enabled: true
-		endpoint: http://<tts-host>:5000/tts/synthesize
-		timeout: 120
-		auth_token: ""
-	piper:
-		bin_path: piper           # PATH’te yoksa tam yol
-		model_path: null          # gerekli, .onnx/.onnx.gz
-		samplerate: 22050
-		speaker: null
-		length_scale: null
-		noise_scale: null
-		noise_w: null
-	xtts:
-		endpoint: http://<tts-host>:5000/tts/synthesize
-		timeout: 120
-		language: tr
-		speaker_wav: null
-
-liveliness:
-	enabled: true
-	interactions_base_url: http://localhost:8080/interactions
-	speech_effect:
-		name: PULSE
-		tone_effect_map:
-			fast: COMET
-			neutral: PULSE
-			calm: BREATHE
-			tired: THEATER_CHASE
-		min_duration_ms: 400
-		max_duration_ms: 7000
-		chars_per_second: 16
-		force: false
-
-```
-
-Not: Speak modülü artık modül içi config/config.yml okumaz. Kaynak dosya config/agent.yaml içindeki speak bölümüdür.
-
-## Uzak TTS Sözleşmesi (tek endpoint)
-Uzak çağrıda aşağıdaki JSON gönderilir:
-
-```json
-{
-	"text": "Merhaba",
-	"engine": "piper",
-	"language": "tr",
-	"speaker_wav": "/path/ref.wav",
-	"piper": {},
-	"xtts": {}
-}
-```
-
-Yanıt olarak ya doğrudan audio/wav baytları ya da base64 ses içeren JSON beklenir.
-
-`liveliness.enabled: true` iken `speak` akışı otomatik olarak:
-- konuşma başında `speech.start` event gönderir,
-- metin uzunluğu ve tone bilgisine göre efekt süresi hesaplayıp `/interactions/effect` tetikler,
-- konuşma bitince `speech.end` event gönderir.
-
-`tone_effect_map` sayesinde konuşma tonu (`rate`/`volume`) farklı efektlere eşlenebilir.
-`emphasis_effect_map` ile `!` ve `?` gibi vurgu işaretleri için kısa ek efektler gönderilir.
-`rhythm` bloğu ile metin uzunluğuna göre beat sayısı hesaplanıp mikro efekt vuruşları üretilir.
-
-## Donanım ve Kurulum Notları
-- MAX98357A I2S DAC ALSA’da bir çıkış cihayı olarak görünmelidir.
-- `aplay -l` ile kartı bulun ve `audio_out.device` içine yazın (örn. `hw:1,0`).
-- Piper için:
-	- Piper binary ve uygun dil modeli (örn. Türkçe) indirilmelidir.
-	- `tts.engine: piper` ve `tts.piper.model_path` ayarlanmalıdır.
-- Opus ve diğer kodekler için ffmpeg gereklidir.
+- Giriş noktası: `xSpeakService.py`
+- Router: `api/router.py`
+- TTS: `services/tts.py`
+- Oynatıcı: `services/player.py`
+- Yardımcılar: `services/pcm.py`, `services/lang_detect.py`
 
 ## Bağımlılıklar
-- Python: `sounddevice`, `soundfile`, `numpy`, (opsiyonel) `pyttsx3`
-- Harici: `piper` (TTS ikilisi) + model, `ffmpeg` (decode) 
 
-## Test
-- Minimal smoke test: `tests/test_smoke.py`
+- `config_center`: merkezi `config/agent.yaml` içindeki `speak` bölümünü yükleme
+- `common.latency_trace`: gecikme izleri
+- `logwrapper`: merkezi logging
+- İfade katmanı: `expression_base_url` üzerinden `speak.started` ve `speak.finished` olayları
 
-## Gateway ile Kullanım
-Gateway çalışırken TTS uçları tek portta `/speak/*` altında sunulur; modülü ayrı servis olarak başlatmaya gerek yoktur.
+## API
+
+Gateway altında `/speak/*` olarak yayınlanır.
+
+- `GET /speak/status`
+- `GET /speak/latency/latest`
+- `GET /speak/latency/{trace_id}`
+- `POST /speak/stop`
+- `POST /speak/say`
+- `POST /speak/say_stream`
+- `GET /speak/jobs/{job_id}`
+- `POST /speak/play`
+
+## Konfigürasyon
+
+Bu modül modül-içi `config/config.yml` yerine merkezi `config/agent.yaml` içindeki `speak` bölümünü okur.
+
+- `server.*`
+- `audio_out.*`
+- `tts.*`
+- `tts.piper.*`
+- `tts.xtts.*`
+- `liveliness.*`
+
+`config_loader.py`, kısa uyumluluk anahtarlarını normalize eder ve `piper` model yollarını depo köküne göre mutlaklaştırır.
+
+## İlişkiler
+
+- `autonomy` tarafından LLM yanıtlarını seslendirmek için kullanılır
+- `speech` modülünün barge-in akışında kesilebilir
+- Görsel/ifade sistemiyle olay bazlı senkronize olur
+
+## Notlar
+
+Güncel kodda liveliness sinyali doğrudan `interactions` yerine yapılandırılmış bir `expression_base_url` üzerinden gönderilir. Ayrıca streaming konuşma, iş takibi ve latency endpoint'leri mevcut olduğundan README artık yalnızca temel `say` ve `play` yüzeyiyle sınırlı değildir.
