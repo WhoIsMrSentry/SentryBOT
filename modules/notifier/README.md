@@ -1,63 +1,72 @@
 # Notifier
 
-A lightweight bridge for Telegram, Discord, and WhatsApp Web alerts. Telegram support optionally spins up a long-polling bot so you can issue commands back into the platform.
+Telegram, Discord ve WhatsApp Web üzerinden dış dünya ile iletişim köprüsüdür. Uyarı gönderir; Telegram bot ile gateway komutlarını uzaktan proxy eder.
 
-## Setup
-1. Fill out `modules/notifier/config/config.yml`:
-```
+## Sorumluluklar
+
+- Outbound alert: Telegram, Discord, WhatsApp Web
+- Telegram long-polling bot (opsiyonel)
+- Quiet hours (sessiz saat) filtresi
+- `CommandRouter` ile gateway remote control
+
+## Mimari
+
+- Giriş noktası: `xNotifierService.py`
+- Telegram: `services/telegram_bot.py` (`TelegramBot`, `build_telegram_bot`)
+- WhatsApp: `services/whatsapp_web.py` (`WhatsAppWebSender`)
+- Senders: `services/senders.py` (telegram/discord webhook)
+- Komut proxy: `services/command_router.py` (`CommandRouter`)
+- Router: `api/router.py`
+
+Gateway `_include_notifier` Telegram polling'i startup/shutdown'ta başlatır. Not: gateway mount'unda WhatsApp sender router'a geçirilmez; tam WhatsApp desteği için standalone servis gerekir.
+
+## API (Gateway altında `/notify/*`)
+
+- `GET /notify/healthz`
+- `POST /notify/telegram` — `{ text, chat_id? }`
+- `POST /notify/discord` — `{ text }`
+- `POST /notify/whatsapp` — `{ text, to?, delay_sec? }` (standalone serviste aktif)
+- `POST /notify/test` — tüm kanallara test mesajı
+- `POST /notify/start`, `/notify/stop` — Telegram polling kontrolü
+
+## Telegram Bot Komutları
+
+Gateway `base_url` üzerinden proxy:
+- `/status` — `/health` aggregate
+- `/snap` — kamera snapshot (fotoğraf)
+- `/pt <pan> <tilt>`, `/pan`, `/tilt` — `/vlm/track`
+- `/neofill r g b`, `/neoclear` — NeoPixel
+- `/say <metin>` — `/speak/say`
+- `/help`, `/ping`
+
+`allowed_user_ids` boş değilse sadece izinli kullanıcılar etkileşebilir.
+
+## Konfigürasyon
+
+`config/config.yml`:
+```yaml
 telegram:
-	bot_token: "123:ABC"
-	chat_id: "-100..."        # default outbound target
-	allowed_user_ids: [123456] # empty list means everyone
-	polling:
-		enabled: true            # toggle Telegram bot
-		interval_sec: 2.5
+  bot_token: ""
+  chat_id: ""
+  polling: { enabled: false, interval_sec: 2.5 }
 whatsapp_web:
-	enabled: false
-	recipient: "+905551111111"
-	send_mode: "instant"      # instant | schedule
-	schedule_delay_sec: 90     # only used when send_mode=schedule
-	wait_time_sec: 15          # pywhatkit wait before typing
-	close_time_sec: 5          # wait before tab close
-	tab_close: true            # close tab after send
+  enabled: true
+  recipient: "+905..."
+  send_mode: instant   # instant | schedule
 discord:
-	webhook: ""
+  webhook: ""
 quiet_hours:
-	enabled: false
-	start: "23:00"
-	end: "08:00"
+  enabled: false
+  start: "23:00"
+  end: "08:00"
+gateway:
+  base_url: "http://127.0.0.1:8080"
 ```
 
-2. Run the service via `python -m modules.notifier.xNotifierService` (or through your orchestrator).
+WhatsApp için `pywhatkit` gerekir; tarayıcıda WhatsApp Web oturumu açık olmalıdır.
 
-## API
-- GET `/notify/healthz`
-- POST `/notify/telegram` `{ text, chat_id? }` (requires token + chat_id in config)
-- POST `/notify/discord` `{ text }` (requires webhook in config)
-- POST `/notify/whatsapp` `{ text, to?, delay_sec? }` (drives the WhatsApp Web sender)
-- POST `/notify/test`
+## İlişkiler
 
-## Telegram bot
-- When `polling.enabled` is true, the bot listens for `/start`, `/ping`, `/help` in the background.
-- Quiet hours suppress outgoing alerts and respond with an informational notice instead.
-- If `allowed_user_ids` is non-empty, only those Telegram user IDs can interact.
-- Extended commands (proxied to the gateway `base_url`):
-	- `/status` overall module health
-	- `/snap` camera snapshot
-	- `/stream` MJPEG stream info
-	- `/pt <pan> <tilt>` pan/tilt degrees
-	- `/pan <deg>` and `/tilt <deg>` single-axis helpers
-	- `/neofill r g b`, `/neoclear` NeoPixel controls
-	- `/say <text>` triggers the speak service
-
-## WhatsApp Web sender
-- Install `pywhatkit` (and its dependencies) inside the environment: `pip install pywhatkit`.
-- Log into WhatsApp Web manually and keep the browser session open; the sender hijacks that session to send a message.
-- Configure the `whatsapp_web` block:
-	- `recipient` must be an international MSISDN (e.g., `+9055...`).
-	- `send_mode: instant` uses `pywhatkit.sendwhatmsg_instantly` (~15 s prep window).
-	- `send_mode: schedule` falls back to `pywhatkit.sendwhatmsg`, so delivery happens at least `schedule_delay_sec` seconds later.
-	- `wait_time_sec`, `close_time_sec`, and `tab_close` mirror pywhatkit’s browser automation knobs.
-- POST `/notify/whatsapp` with `{ "text": "Hello" }` to deliver; optionally override the destination with `to`.
-- This flow is outbound-only: no inbound commands or media uploads through WhatsApp Web.
-- During sending, avoid touching keyboard/mouse—pywhatkit simulates human interaction and can be interrupted easily.
+- `autonomy`: `ServiceClient` notifier start/stop URL'leri
+- `camera`, `speak`, `neopixel`, `vlm_bridge`: Telegram komut hedefleri
+- Otonomlukta sahip/operatör uzaktan müdahale kanalıdır

@@ -1,28 +1,46 @@
-# ESP Link Module
+# ESP Link
 
-Raspberry Pi tarafında, WiFi üzerinden bağlı olan bir ESP32 "köprü (bridge)" cihazı ile haberleşmeyi sağlayan proxy modülüdür. Bu modül sayesinde robot, ESP32 üzerinden çalışan ek donanımlara veya sensörlere doğrudan erişebilir.
+Raspberry Pi tarafında WiFi üzerindeki ESP32 köprü cihazına HTTP proxy sağlar. Ek sensör/donanım erişimini gateway altında standart API'ye taşır.
 
-## Özellikler
-- **HTTP Köprüsü:** ESP cihazına doğrudan IP/Port vererek gitmek yerine, Gateway içerisinde `/esp` altında standart bir API sunar.
-- **İki Yönlü İletişim:** İster tek yönlü veri gönderimi (fire-and-forget), ister yanıt beklemeli (request-response) iletişim kurulabilir.
+## Sorumluluklar
 
-## API Uç Noktaları
+- ESP32 health ping
+- Fire-and-forget komut gönderimi (`/send`)
+- Senkron request-response (`/request`)
+- Yapılandırılabilir path ve timeout yönetimi
 
-Tüm uç noktalar varsayılan olarak Gateway altında `/esp` prefix'i ile sunulur.
+## Mimari
 
-- `GET /esp/healthz`
-  ESP32 cihazına bir sağlık (ping) isteği atar. Cihaz ağda ve yanıt veriyorsa `ok: true` döner.
+- Giriş noktası: `xEspLinkService.py` (`xEspLinkService`)
+- Router: `api/router.py`
+- HTTP client: `requests`
 
-- `POST /esp/send`
-  ESP32'ye JSON tabanlı asenkron veri veya komut gönderir. Yanıt beklenmeden istek tamamlanır (fire-and-forget komutları için idealdir).
-  **Gövde (JSON):** ESP32 cihazının beklediği herhangi bir JSON yapısı.
+Gateway `_include_esp_link` ile mount edilir.
 
-- `POST /esp/request?timeout=1.0`
-  ESP32'den bilgi talep eden senkron (cevap beklemeli) uç noktadır.
-  **Gövde (JSON):** Talep komutu (örneğin `{ "cmd": "get_sensor" }`).
-  **Dönen Yanıt:** ESP32'den dönen raw JSON objesi.
+## API (Gateway altında `/esp/*`)
 
-## Konfigürasyon (`config/config.yml`)
-- `base_url`: ESP bridge cihazının HTTP adresi (ör: `http://192.168.1.100` veya DNS adı).
-- `paths`: ESP cihazının içerideki rotaları (örneğin `/health`, `/send`, `/request`).
-- `timeouts`: İletişim zaman aşımları (`connect_s`, `io_s`).
+- `GET /esp/healthz` — ESP cihazına ping; `{ ok, resp }`
+- `POST /esp/send` — JSON payload, yanıt beklemeden iletir
+- `POST /esp/request?timeout=1.0` — JSON payload, ESP yanıtını döner
+
+## Konfigürasyon
+
+`config/config.yml`:
+```yaml
+base_url: "http://sentrybot-2.local:8080"
+paths:
+  health: "/healthz"
+  send: "/send"
+  request: "/request"
+timeouts:
+  connect_s: 0.4
+  io_s: 1.2
+```
+
+## İlişkiler
+
+- `arduino_serial`: ana donanım yolu (ESP link alternatif/ek köprü)
+- `gateway`: tek port proxy
+- Otonomlukta doğrudan karar üretmez; uzak donanım iletişim katmanıdır
+
+Montaj ve edge-device entegrasyonu için kullanılır; kritik servo/stepper yolu `arduino_serial` üzerindedir.

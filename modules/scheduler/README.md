@@ -1,34 +1,67 @@
-# Scheduler Module
+# Scheduler
 
-SentryBOT içindeki görevlerin zamanlanması, periyodik işlerin (cron benzeri) arka planda yürütülmesi ve HTTP ping görevlerinin yönetilmesini sağlayan görev yöneticisi (task scheduler) servisidir.
+SentryBOT'un periyodik görev yöneticisidir. HTTP ping, konuşma, diagnostics, state güncelleme ve bildirim işlerini arka planda zamanlar.
 
-## Özellikler
-- **Dinamik Görev Yönetimi:** Yalnızca başlatma sırasında `config.yml` üzerinden değil, çalışma anında (runtime) HTTP API kullanılarak da periyodik görevler eklenebilir, silinebilir veya değiştirilebilir.
-- **HTTP Ping Görevleri:** Özellikle harici servislere veya robotun kendi sensör arayüzlerine düzenli "keep-alive" veya "poll" (yoklama) isteği atabilir.
-- **Sonuç Takibi:** Çalıştırılan görevlerin son çalışma durumlarını ve aldıkları yanıtları saklar.
+## Sorumluluklar
 
-## API Uç Noktaları
+- Runtime'da job ekleme/güncelleme/silme
+- Periyodik HTTP istekleri (keep-alive, poll)
+- Yerleşik job türleri: `speak`, `interaction_event`, `diagnostics`, `state_set`, `notify`
+- Son çalıştırma sonuçlarını saklama
 
-Uç noktalar Gateway altında `/scheduler` prefix'i ile tanımlıdır.
+## Mimari
+
+- Giriş noktası: `xSchedulerService.py`
+- Motor: `services/runner.py` (`Scheduler`)
+- Router: `api/router.py`
+
+Gateway `_mount_scheduler` ile mount edilir; `include.scheduler=true` gerekir. Autostart açıksa startup'ta `Scheduler.start()` çağrılır.
+
+## Job Türleri
+
+| kind | Davranış |
+|---|---|
+| `http` | `url` veya gateway `path` üzerinden HTTP isteği |
+| `speak` | `POST /speak/say` |
+| `interaction_event` | `POST /interactions/event` |
+| `diagnostics` | `POST /diagnostics/run` |
+| `state_set` | `POST /state/set` |
+| `notify` | `POST /notify/test` |
+
+## API (Gateway altında `/scheduler/*`)
 
 - `GET /scheduler/healthz`
-  Servis sağlık kontrolü.
-  
 - `GET /scheduler/jobs`
-  Şu anda kayıtlı ve zamanlanmış olan tüm görevlerin (jobs) listesini döner.
-
-- `POST /scheduler/jobs`
-  Yeni bir görev ekler veya var olanı günceller.
-  **Gövde (JSON):** Görev tanımlarını içerir (interval_s, url, method vb.).
-  
+- `POST /scheduler/jobs` — job ekle/güncelle
 - `DELETE /scheduler/jobs/{job_id}`
-  ID'si belirtilen zamanlanmış görevi sistemden siler.
-
 - `GET /scheduler/results`
-  Görevlerin son çalıştırılma sonuçlarını (başarı/hata durumları, dönen HTTP kodları) listeler.
-
 - `POST /scheduler/run_once/{job_id}`
-  Periyodik süreyi beklemeden ilgili görevi anında bir kereliğine manuel tetikler (asenkron).
 
-## Konfigürasyon (`config/config.yml`)
-- Başlangıçta yüklenecek varsayılan görevler listesi (jobs) buradan tanımlanabilir.
+## Job Şeması (örnek)
+
+```yaml
+- id: hourly_diag
+  kind: diagnostics
+  every_s: 3600
+  enabled: true
+```
+
+HTTP job:
+```yaml
+- id: gateway_ping
+  kind: http
+  method: GET
+  path: /healthz
+  every_s: 30
+```
+
+## Konfigürasyon
+
+`config/config.yml`:
+- `gateway_base_url`
+- `jobs` — başlangıç job listesi
+
+## İlişkiler
+
+- `diagnostics`, `speak`, `interactions`, `state_manager`, `notifier`: hedef servisler
+- Otonomlukta proaktif bakım ve periyodik davranış zamanlayıcısıdır

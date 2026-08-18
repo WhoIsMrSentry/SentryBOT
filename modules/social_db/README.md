@@ -1,63 +1,70 @@
 # Social DB
 
-`vlm_bridge`, `autonomy`, `agent_core`, `interactions` ve `config_center` tarafından paylaşılan, kişi/ilişki/sohbet/mood verilerini tek bir SQLite dosyasında toplayan birleşik sosyal hafıza katmanı.
+SentryBOT'un birleşik sosyal hafıza katmanıdır. Kişi, yüz, sohbet, ilişki, mood ve etkileşim verilerini tek SQLite dosyasında toplar. HTTP servisi yoktur; kütüphane modülüdür.
 
-## Ne İşe Yarar?
-- Kişileri (`persons`), yüz tanıma vektörlerini (`face_descriptors`), görülme kayıtlarını (`sightings`) tek şema altında saklar.
-- Sohbet geçmişini (`chat_episodes`), tercihleri (`relationships`) ve öne çıkan anıları (`moments`) kişi bazlı tutar.
-- Mood anlık görüntülerini (`mood_snapshots`), günlük ritüelleri (`rituals`) ve etkileşim olaylarını (`interaction_events`) loglar.
-- Sahip oturumlarını (`owner_sessions`) izler.
-- Eski JSON tabanlı depoların (`person_identity.json`, `faces.json`, `people_memory.json`, `relationship_memory.json`) yerini alan tek doğruluk kaynağıdır; `tools/social_db_migrate.py` ile geçiş yapılabilir.
+## Sorumluluklar
 
-## Bağımsız Kullanım
-`social_db`'nin kendi HTTP servisi/API yüzeyi yoktur; saf bir kütüphane modülüdür. Diğer modüller `get_default()` ile paylaşılan, süreç geneli tekil örneği alır:
+- Kişi kimliği ve yüz vektörleri
+- Görülme günlüğü, sohbet geçmişi, ilişki tercihleri
+- Mood snapshot, ritüel takibi, etkileşim olayları
+- Sahip oturum pencereleri
+- Eski JSON depolarının yerini alan tek doğruluk kaynağı
+
+## Mimari
+
+- Aggregator: `db.py` (`SocialDB`)
+- Şema: `schema.py` (lazy migrate)
+- Repository'ler: `repositories/` (10 repo)
+- Singleton: `get_default()` / `set_default()`
+
+Gateway `_include_social_db` varsayılan olarak (`include.social_db: true`) startup'ta `SocialDB` oluşturur ve `set_default()` ile kaydeder.
+
+## Repository Yapısı
+
+| Repo | Tablo | Sorumluluk |
+|---|---|---|
+| `PersonsRepo` | `persons` | Kişi CRUD, sahip işaretleme, güven skoru |
+| `FaceDescriptorsRepo` | `face_descriptors` | ORB / face vektör blob'ları |
+| `SightingsRepo` | `sightings` | Görülme günlüğü (append-only) |
+| `ChatEpisodesRepo` | `chat_episodes` | Sohbet geçmişi + budama |
+| `RelationshipsRepo` | `relationships` | Tercih anahtar/değer çiftleri |
+| `MomentsRepo` | `moments` | Salience ağırlıklı anılar |
+| `MoodSnapshotsRepo` | `mood_snapshots` | Periyodik mood kayıtları |
+| `RitualsRepo` | `rituals` | Günlük ritüel takibi |
+| `InteractionEventsRepo` | `interaction_events` | Etkileşim/olay sayaçları |
+| `OwnerSessionsRepo` | `owner_sessions` | Sahip oturum pencereleri |
+
+## Kullanım
 
 ```python
-from modules.social_db import get_default, set_default
-from modules.social_db.db import SocialDB
-from modules.social_db.config_loader import load_config
-
-cfg = load_config(None)
-db = SocialDB(path=cfg["path"], wal=cfg.get("wal", True))
-set_default(db)
-
-...
+from modules.social_db import get_default
 
 db = get_default()
 if db is not None:
     person = db.persons.upsert(name="Emir", trust_score=0.6)
 ```
 
-Testlerde izole, kalıcı olmayan bir örnek oluşturmak için geçici bir dosya kullanılır:
-
+Testlerde izole instance:
 ```python
+from modules.social_db.db import SocialDB
 db = SocialDB(path=tmp_path / "social.sqlite3", wal=False)
-try:
-    ...
-finally:
-    db.close()
 ```
 
-## Repository Yapısı (`repositories/`)
-| Repo | Tablo | Sorumluluk |
-|------|-------|------------|
-| `PersonsRepo` | `persons` | Kişi CRUD, sahip işaretleme, güven skoru ayarı |
-| `FaceDescriptorsRepo` | `face_descriptors` | ORB / face_recognition vektör blob'ları |
-| `SightingsRepo` | `sightings` | Görülme (append-only) günlüğü |
-| `ChatEpisodesRepo` | `chat_episodes` | Sohbet geçmişi + budama (`prune_for_person`) |
-| `RelationshipsRepo` | `relationships` | Anahtar/değer tercihler (likes, dislikes, ...) |
-| `MomentsRepo` | `moments` | Salience ağırlıklı anı metinleri + decay |
-| `MoodSnapshotsRepo` | `mood_snapshots` | Periyodik mood anlık görüntüleri |
-| `RitualsRepo` | `rituals` | Günlük ritüel takibi (idempotent) |
-| `InteractionEventsRepo` | `interaction_events` | Etkileşim/olay sayaç günlüğü |
-| `OwnerSessionsRepo` | `owner_sessions` | Sahip oturum pencereleri |
+## Konfigürasyon
 
-Her repository yalnızca `SocialDB`'nin paylaşılan bağlantısına bir geri referans tutar; kendi state'i yoktur.
+`config/config.yml`:
+- `path` — SQLite dosya yolu
+- `wal`, `cache_size_kb`, `busy_timeout_ms`
+- `default_owner_name`, `auto_migrate`
 
-## Config Anahtarları (`config/config.yml`)
-- `path` — SQLite dosya yolu (proje köküne göre veya mutlak)
-- `wal` — WAL journal modu (varsayılan `true`)
-- `cache_size_kb` — SQLite `PRAGMA cache_size` ayarı
-- `busy_timeout_ms` — kilit bekleme süresi (ms)
-- `default_owner_name` — ilk kurulumda sahip olarak işaretlenecek isim (boşsa atlanır)
-- `auto_migrate` — açılışta şemayı otomatik oluştur/güncelle (varsayılan `true`)
+## İlişkiler
+
+- `vlm_bridge`: yüz/kişi hafızası (`face_manager`, `person_identity`, `people_memory`)
+- `autonomy`: mood, rituals, relationship memory, interaction feedback
+- `agent_core`: tool'lar ve sosyal bağlam
+- `interactions`: olay sayaçları
+- `config_center`: runtime registry snapshot
+
+Otonomlukta uzun süreli sosyal bağlam ve kişiselleştirmenin kalıcı hafıza katmanıdır.
+
+Geçiş: `tools/social_db_migrate.py`

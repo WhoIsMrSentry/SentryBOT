@@ -1,29 +1,51 @@
-# Mutagen Module
+# Mutagen
 
-Mutagen CLI tabanlı dosya senkronizasyon altyapısını robot üzerinden yönetmeye yarayan arayüz modülüdür. Özellikle geliştirici cihazı (PC/Mac) ile robot (Raspberry Pi) arasındaki kodların iki yönlü, gerçek zamanlı ve hızlı eşitlenmesinde OTA sürecine destek olur.
+Mutagen CLI tabanlı dosya senkronizasyonunu gateway üzerinden yönetir. Geliştirici makinesi ile robot (Pi) arasında iki yönlü kod eşitlemesi sağlar.
 
-## Özellikler
-- **Uzaktan Yönetim:** Geliştiricinin SSH veya ekstra terminal açmasına gerek kalmadan, Gateway üzerinden senkronizasyonu başlatıp durdurmasını sağlar.
-- **Durum Gözlemi:** Arka planda çalışan Mutagen oturumunun durumunu veya hata loglarını HTTP ile sunar.
-- **Zorunlu Tarama:** Dosya değişikliklerini beklemeden senkronizasyonu manuel tetikleme (`rescan`).
+## Sorumluluklar
 
-## API Uç Noktaları
+- Mutagen sync oturumu başlatma/durdurma
+- Oturum durumu sorgulama (`mutagen sync list --json`)
+- Zorunlu full rescan (`mutagen sync flush --all`)
 
-Tüm uç noktalar Gateway altında `/mutagen` prefix'i ile erişilebilir.
+## Mimari
+
+- Giriş noktası: `xMutagenService.py`
+- Runner: `services/runner.py` (`MutagenRunner`)
+- Router: `api/router.py`
+
+Gateway `_IMPORT_MODULES` ile `include.mutagen=true` olduğunda mount edilir. Mutagen CLI sistem PATH'inde olmalıdır.
+
+## API (Gateway altında `/mutagen/*`)
 
 - `GET /mutagen/healthz`
-  Servis durumunu kontrol eder.
 - `GET /mutagen/status`
-  Arka planda çalışan mutagen oturumunun güncel bilgisini (bağlantı durumu, bekleyen dosya var mı vb.) JSON olarak döner.
-- `POST /mutagen/start`
-  Mutagen daemon ve senkronizasyon oturumunu başlatır (konfigürasyondaki alpha/beta yollarına göre).
-- `POST /mutagen/stop`
-  Senkronizasyon oturumunu kapatır ve izlemeyi durdurur.
-- `POST /mutagen/rescan`
-  Senkronizasyon klasörlerinin tam taranmasını (full rescan) zorlar. Olası inatçı eşitleme sorunlarını çözer.
+- `POST /mutagen/start` — config'teki `pairs` için sync create
+- `POST /mutagen/stop` — `mutagen sync terminate --all`
+- `POST /mutagen/rescan` — `mutagen sync flush --all`
 
-## Konfigürasyon (`config/config.yml`)
-- `mutagen.session_name`: Oturuma verilecek isim.
-- `mutagen.alpha`: Kaynak cihazın (veya Pi'nin kendisinin) senkronize edilecek dizin yolu.
-- `mutagen.beta`: Hedef dizin yolu.
-- Diğer Mutagen CLI parametreleri (ignore list vb.).
+## Konfigürasyon
+
+`config/config.yml`:
+```yaml
+mutagen:
+  enabled: true
+  pairs:
+    - name: repo
+      alpha: ..
+      beta: /home/pi/SentryBOT
+      mode: two-way-resolved
+  opts:
+    sync_mode: two-way-resolved
+    ignore:
+      - .git
+      - __pycache__
+      - "*.pyc"
+```
+
+## İlişkiler
+
+- `ota`: firmware build artefaktları senkronu
+- Geliştirme workflow'u; production otonomiye dahil değildir
+
+SSH açmadan gateway üzerinden sync yönetimi sağlar.
