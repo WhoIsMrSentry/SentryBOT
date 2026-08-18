@@ -1,24 +1,35 @@
-# Telemetry Module
+# Telemetry
 
-SentryBOT'un iç sistemlerinden gelen metrikleri toplayan ve bu verileri dış izleme sistemlerine (Prometheus, Grafana) sunan telemetri ve olay (event) toplayıcısıdır.
+SentryBOT'un hafif metrik toplayıcısıdır. In-memory counter/gauge registry tutar ve Prometheus scrape formatında sunar.
 
-## Özellikler
-- **Prometheus Entegrasyonu:** Standart Prometheus `text/plain; version=0.0.4` formatında metrik çıktıları üretir.
-- **Olay Sayaçları:** Sistemde fırlatılan farklı tipteki olayların (event) sayılarını takip ederek istatistik tutar.
+## Sorumluluklar
 
-## API Uç Noktaları
+- Olay sayaçları (`POST /events`)
+- Prometheus `text/plain; version=0.0.4` metrik çıktısı
+- Thread-safe in-memory registry
 
-Uç noktalar Gateway altında `/telemetry` prefix'i ile çalışır.
+## Mimari
+
+- Giriş noktası: `xTelemetryService.py`
+- Registry: `services/metrics.py` (`Registry`, `Counter`, `Gauge`)
+- Router: `api/router.py`
+
+Gateway `_IMPORT_MODULES` ile `include.telemetry=true` olduğunda mount edilir.
+
+## API (Gateway altında `/telemetry/*`)
 
 - `GET /telemetry/healthz`
-  Servis sağlık kontrolü.
-  
-- `GET /telemetry/metrics`
-  Tüm toplanmış metrikleri (CPU/RAM kullanımları, özel olay sayaçları vb.) Prometheus'un doğrudan kazıyabileceği (scrape) formata dönüştürerek sunar.
+- `GET /telemetry/metrics` — Prometheus scrape formatı
+- `POST /telemetry/events` — `{ "type": "wakeword" }` → `events_total` ve `event_<type>_total` artar
 
-- `POST /telemetry/events`
-  Sistemde yeni bir olay gerçekleştiğinde (örneğin wakeword tetiklenmesi, hareket algılanması) sayacı artırmak için çağrılır.
-  **Gövde (JSON):** `{ "type": "event_adi", ... }`. Gönderilen type'a göre `event_<type>_total` metrik sayacı 1 artırılır, ayrıca genel `events_total` sayacı artar.
+Not: CPU/RAM otomatik toplanmaz; metrikler yalnızca `/events` POST'ları ve manuel gauge set'leriyle oluşur.
 
 ## Konfigürasyon
-Metriklerin nerede saklanacağı (eğer persistent bir registry kullanılıyorsa) veya hangi öneklerle dışarı aktarılacağı (prefix) ayarlanabilir.
+
+`config/config.yml` — modül-içi minimal ayarlar.
+
+## İlişkiler
+
+- `arduino_serial`: donanım telemetry event'leri (ayrı kanal)
+- Harici izleme: Prometheus/Grafana scrape hedefi
+- Otonom karar üretmez; gözlemlenebilirlik katmanıdır

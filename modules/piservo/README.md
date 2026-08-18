@@ -1,31 +1,54 @@
-# PiServo (Ears) Module
+# PiServo (Ears)
 
-İki servo ile “kulak” hareketleri: 90° yukarı, <90 öne eğik, >90 geriye eğik. Duygu ve olaylara göre poz verir.
+İki servo ile robot kulak hareketlerini yönetir. Duygu, olay ve jest sinyallerini fiziksel kulak pozlarına çevirir.
 
-## Servis Çalıştırma
-```bash
-uvicorn modules.piservo.xPiServoService:create_app --factory --host 0.0.0.0 --port 8093
-```
+## Sorumluluklar
 
-## API
-- GET  /piservo/healthz
-- POST /piservo/set?left=90&right=90
-- POST /piservo/emotion?name=joy
-- POST /piservo/gesture?name=wakeword | sound
-- POST /piservo/event?kind=wakeword | sound
+- Sol/sağ kulak açı kontrolü (0–180°)
+- Duygu → kulak pozu eşlemesi (`EMOTION_POSES` + `common.emotion_vocab`)
+- Jestler: `wakeword`, `sound`
+- Çoklu backend: Arduino (varsayılan), pigpio, sim
+
+## Mimari
+
+- Giriş noktası: `xPiServoService.py`
+- Koordinatör: `services/runner.py` (`EarRunner`)
+- Sürücü: `services/driver.py` (`Servo`, `ServoConfig`)
+- Duygu tablosu: `services/ears.py`
+
+Gateway `_include_piservo` ile mount edilir. Arduino modülü aktifken `arduino_index` config'ten çıkarılır; GPIO değeri PCA9685 kanal indeksi olarak kullanılabilir.
+
+## API (Gateway altında `/piservo/*`)
+
+- `GET /piservo/healthz`
+- `POST /piservo/set?left=90&right=90`
+- `POST /piservo/emotion?name=joy`
+- `POST /piservo/gesture?name=wakeword|sound`
+- `POST /piservo/event?kind=...` (gesture alias)
 
 ## Duygu Eşlemesi
-- EMOTION_POSES içinde: neutral, joy, fear, anger, sadness, surprise, curiosity
 
-## Konfig
-`modules/piservo/config/config.yml`
-- left.gpio, right.gpio: servo sinyal pinleri
-- PWM aralıkları, açı aralıkları `ServoConfig` ile koddan özelleştirilebilir.
+`neutral`, `joy`, `fear`, `anger`, `sadness`, `surprise`, `curiosity` — ayrıca `emotion_vocab` alias'ları (happy, sleepy vb.) otomatik çözülür.
 
-Not: pigpio yoksa simülatör çalışır.
+## Konfigürasyon
 
-Arduino backend (default):
+`config/config.yml`:
+```yaml
+left:
+  gpio: 12
+  arduino_index: 2   # Arduino backend kanalı
+right:
+  gpio: 13
+  arduino_index: 3
+```
 
-- This project now defaults to driving the Pi "ears" (PiServo) via the Arduino backend when available.
-- Configure channel indices in `modules/piservo/config/config.yml` using `arduino_index` (PCA9685/Arduino servo index). Default in this repo: `left.arduino_index = 2`, `right.arduino_index = 3`.
-- Robot head `pan` and `tilt` on the Arduino are exposed as servo indices `0` (pan) and `1` (tilt) in firmware.
+Robot kafa pan/tilt Arduino'da indeks 0/1; kulaklar genelde 2/3.
+
+## İlişkiler
+
+- `interactions`: `_wire_interactions_piservo` — wakeword, vision, emotion olayları
+- `expression`: `ExpressionArbiter` → `PiServoAdapter.set_ears`
+- `wakeword`, `speech`: dolaylı jest tetikleme
+- `common.emotion_vocab`: kanonik duygu çözümlemesi
+
+Otonomlukta duygusal durumun fiziksel kulak ifadesi katmanıdır.

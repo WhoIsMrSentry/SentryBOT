@@ -1,24 +1,39 @@
-# Calibration Module
+# Calibration
 
-SentryBOT'un donanım parçalarını kalibre etmeye ve test etmeye yarayan yardımcı araçları içerir. Servolar için açı/pulse taraması (sweep) yapma ve kamera için satranç tahtası (checkerboard) kalibrasyon parametrelerini üretme gibi işlemleri barındırır.
+Donanım kurulum ve geliştirme aşamasında kullanılan hafif kalibrasyon yardımcı modülüdür. Runtime otonomi akışına dahil değildir.
 
-## API Uç Noktaları
+## Sorumluluklar
 
-Tüm uç noktalar varsayılan olarak `/calib` prefix'i ile Gateway altında sunulur.
+- Kamera checkerboard parametre önerisi
+- Servo sweep profil parametreleri
+- Montaj sırasında referans değer üretimi
+
+## Mimari
+
+- Giriş noktası: `xCalibrationService.py`
+- Servisler: `services/camera_calib.py`, `services/servo_calib.py`
+- Router: `api/router.py`
+
+Gateway `_IMPORT_MODULES` ile `include.calibration=true` olduğunda mount edilir.
+
+## API (Gateway altında `/calib/*`)
 
 - `GET /calib/healthz`
-  Servis durumunu kontrol eder.
-
-- `GET /calib/camera/checkerboard`
-  Kamera distorsiyon kalibrasyonu için kullanılacak satranç tahtası ölçülerini ve köşe noktası koordinat matrislerini önerir.
-  **Parametreler:**
-  - `cols` (int): Sütun köşe sayısı (varsayılan: 9)
-  - `rows` (int): Satır köşe sayısı (varsayılan: 6)
-  - `square_mm` (float): Her bir karenin mm cinsinden boyutu (varsayılan: 25.0)
-
+- `GET /calib/camera/checkerboard?cols=9&rows=6&square_mm=25.0`
+  - Dönen: `{ cols, rows, square_mm }` (parametre echo; gerçek kalibrasyon hesabı yok)
 - `GET /calib/servo/sweep`
-  Servoların min/max mikrosaniye (us) değerlerini ve güvenli çalışma aralıklarını ayarlamak için kullanılacak sinyal tarama (sweep) profilini döndürür.
+  - Dönen: `{ min: 0, max: 180, step: 10 }`
 
 ## Kullanım
 
-Geliştirme veya donanım montaj aşamasında doğrudan Gateway üzerinden API uçlarına çağrı yapılarak kullanılır. Kalibrasyon sonuçları genellikle donanım konfigurasyon dosyalarına (`arduino_serial` veya `piservo`) işlenir.
+Geliştirme/montaj sırasında gateway üzerinden çağrılır. Sonuçlar manuel olarak `piservo`, `arduino_serial` veya kamera config dosyalarına işlenir.
+
+## Konfigürasyon
+
+`config/config.yml` — modül-içi minimal ayarlar.
+
+## İlişkiler
+
+- `camera`: distorsiyon kalibrasyonu hedef modül
+- `piservo` / `arduino_serial`: servo pulse/açı limitleri
+- Otonomlukta kullanılmaz; setup/maintenance aracıdır
