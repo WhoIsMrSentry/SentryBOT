@@ -1,105 +1,53 @@
-# Interactions Module
+# Interactions
 
-Durumlara/olaylara göre NeoPixel animasyonlarını otomatik seçen hafif bir kural motoru.
+Durumlara ve olaylara göre ışık/ifade tepkisi üreten hafif kural motorudur. `InteractionEngine`, sistem metriklerini ve olay akışlarını dinler; NeoPixel tarafına base ve transient efektler uygular.
 
-## Özellikler
-- HTTP üzerinden mevcut NeoPixel servisine bağlanır (`/neopixel`).
-- Base (sürekli) + Transient (kısa) efekt katmanı, öncelik ve cooldown ile.
-- Sistem metrikleri: CPU sıcaklık/yük, ağ burst sezgisi.
-- Olay besleme: `POST /interactions/event` ile (ör: `speech.start`, `error`).
-- Quiet Hours (gece modu): belirli saatlerde dikkat dağıtan transient efektleri baskılar.
-- Donanım haritalama: Jewel (7) + Stick (16 tek sıra). Şimdilik tüm strip’e animasyon uygular.
+## Sorumluluklar
 
-## Kurulum
-- FastAPI uygulaması: `xInteractionsService.create_app()`.
-- Varsayılan port: 8095 (`config/config.yml`).
+- Olay tabanlı efekt tetikleme: `speech.start`, `speech.end`, `error`, benzeri özel event'ler
+- CPU sıcaklığı, CPU yükü ve ağ patlaması gibi sistem sinyallerinden görsel tepki üretme
+- Manual base override ve tek seferlik efekt yürütme
+- Quiet-hours sırasında rahatsız edici efektleri baskılama
+- Gateway URL çözümlemesi ile loopback adreslerini tek port mimariye uyarlama
+
+## Mimari
+
+- Giriş noktası: `xInteractionsService.py`
+- Router: `api/router.py`
+- Motor: `services/engine.py`
+- Kurallar: `services/rules.py`
+- Metrikler: `services/metrics.py`
+- Adaptör: `services/adapters/neopixel_client.py`
+
+## Bağımlılıklar
+
+- `gateway.url`: loopback URL'lerini yeniden yazma
+- `neopixel`: HTTP adaptörü üzerinden efekt gönderimi
+- `hardware`: sistem metrikleri kaynağı
+- `social_db`: varsayılan profil/veri desteği
 
 ## API
-- GET `/interactions/state`: aktif base/effect ve son metrikler.
-- POST `/interactions/event` `{ type, data? }`: olay tetikle (ör: `speech.start`).
-- POST `/interactions/effect` `{ name, duration_ms? }`: manuel kısa efekt.
-  - Opsiyonel: `{ force: true }` ile quiet-hours sırasında da efekt zorlanabilir.
-- POST `/interactions/base` `{ name, color? }`: geçici base override.
 
-### Gateway Entegrasyonu
-Gateway, `interactions` router’ını tek portta sunar. NeoPixel uçları da gateway’de açıksa, kurallar doğrudan bu uçlara istek gönderir; modülü ayrı başlatmaya gerek yoktur.
+Gateway altında `/interactions/*` olarak yayınlanır.
 
-## Varsayılan Davranış (config.yml)
-- Sıcaklık ≥ 75°C: BREATHE kırmızı (base, high)
-- 65–74°C: PULSE turuncu (base, medium)
-- CPU yük ≥ 0.9: PULSE sarı (base, medium)
-- Ağ burst: COMET 800ms (transient, cooldown 3s)
-- speech.start: RAINBOW_CYCLE 1s (transient)
-- speech.end: COMET 600ms (transient)
-- Arduino disconnected: THEATER_CHASE magenta (base, high)
-- error: METEOR 500ms (critical, cooldown 10s)
-- warning: PULSE 400ms (high, cooldown 3s)
-- Hiçbiri değilse: BREATHE teal (idle base)
+- `GET /interactions/state`
+- `POST /interactions/event`
+- `POST /interactions/effect`
+- `POST /interactions/base`
 
-## Kural/Config Yapısı
-`modules/interactions/config/config.yml`
-- `adapter.http_base_url`: NeoPixel HTTP tabanı (varsayılan: `http://localhost:8092/neopixel`).
-- `hardware.segments`: Jewel + Stick tanımı (ileri geliştirme için hazır).
-- `thresholds`: cpu_temp/cpu_load/net burst eşikleri.
-- `rules`: sıralı değerlendirilir. Koşullar (örnek anahtarlar):
-  - `event`, `cpu_temp_gte`, `cpu_temp_lt`, `cpu_load_gte`, `net_burst`, `arduino_connected`
-- `defaults.idle`: boşta gösterilecek base animasyon.
+`/interactions/effect` çağrısı ayrıca `color`, `r/g/b`, `force` ve `emotions` alanlarını destekler.
 
-### Yeni Uyarı/Etkileşim Ekleme
-1. `rules` listesine yeni bir kural ekleyin:
-```yaml
-- id: my_custom
-  when: { event: my.event }
-  action: { effect: { name: COMET, duration_ms: 700 } }
-  priority: high
-  cooldown_ms: 2000
-- id: autonomy_bored
-  when: { event: autonomy.bored }
-  action: { base: { name: BREATHE, color: "#0000FF" } } # Blue breathe
-  priority: medium
+## Konfigürasyon
 
-- id: autonomy_excited
-  when: { event: autonomy.excited }
-  action: { effect: { name: PULSE, duration_ms: 1000 }, base: { name: RAINBOW, color: null } }
-  priority: high
+Varsayılanlar `config_loader.py` içinde tanımlıdır ve modül-içi `config/config.yml` ile birleştirilir.
 
-- id: autonomy_sleep
-  when: { event: autonomy.sleep }
-  action: { base: { name: BREATHE, color: "#100010" } } # Dim purple
-  priority: high
+- `adapter.http_base_url`
+- `hardware.num_leds`, `hardware.segments`
+- `thresholds.cpu_temp`, `thresholds.cpu_load`, `thresholds.net`
+- `defaults.idle`
+- `rules`
+- `quiet_hours`
 
-- id: autonomy_wake
-  when: { event: autonomy.wake }
-  action: { effect: { name: RAINBOW, duration_ms: 2000 }, base: { name: BREATHE, color: "#00FF00" } }
-  priority: high
+## İlişkiler
 
-2. Olayı gönderin:
-```json
-POST /interactions/event
-{ "type": "my.event" }
-```
-3. Renge özel davranmak isterseniz `base.color: "#RRGGBB"` verebilirsiniz (uyumlu animasyonlarda dolgu yapılır, aksi halde animasyon adı oynatılır).
-
-## Notlar
-- Quiet hours varsayılan olarak açıktır (`23:00-07:00`) ve yalnızca kritik olay efektlerine izin verir.
-- NeoPixel servisi yoksa istekler sessizce yok sayılır (No-Op mod).
-- İleride segment/mask desteklemek için NeoPixel API genişletimi önerilir.
-
-## Quiet Hours Konfigürasyonu
-`modules/interactions/config/config.yml` içinde:
-
-```yaml
-quiet_hours:
-  enabled: true
-  start: "23:00"
-  end: "07:00"
-  suppress_effects: true
-  allow_events: ["error", "warning", "owner.locked"]
-```
-
-- `suppress_effects: true` iken transient efektler baskılanır.
-- `allow_events` listesi, gece modu sırasında da çalışmasına izin verilen olay adlarıdır.
-- Base (sabit) aydınlatma için `quiet_hours_idle` kuralı dim bir görünüm uygular.
-
----
-Bu modül DryCode prensiplerine uygundur: tek sorumluluklu dosyalar, config odaklı, sade API.
+Bu modül özellikle `speech`, `autonomy`, `logwrapper`, `scheduler` ve `vlm_bridge` gibi üretici modüllerden gelen olayları görsel tepkiye dönüştürmek için bir ara katman görevi görür. Otonomluğun sahneleme tarafında yardımcı bir altyapıdır; kendi başına karar vermez ama kararların dışa vurumunu standardize eder.
