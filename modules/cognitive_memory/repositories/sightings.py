@@ -49,3 +49,9 @@ class SightingsRepo:
             (max(1, int(limit)),),
         )
         return [{k: r[k] for k in r.keys()} for r in rows]
+
+    def purge_older_than(self, max_age_days: float = 7.0) -> int:
+        cutoff = time.time() - (max_age_days * 86400.0)
+        with self.db.transaction() as conn:
+            cur = conn.execute("DELETE FROM sightings WHERE ts < ?", (cutoff,))
+            return int(cur.rowcount or 0)
