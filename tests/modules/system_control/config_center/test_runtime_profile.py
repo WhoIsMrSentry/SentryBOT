@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modules.config_center.agent_yaml_loader import load_agent_config
-from modules.config_center.runtime_profile import active_runtime_profile, apply_runtime_profile
+from modules.common.config_loader import load_agent_config
+from modules.common.config_loader import active_runtime_profile, apply_runtime_profile
 
 
 def test_runtime_profile_merges_active_profile(tmp_path: Path):

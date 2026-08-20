@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.hardware.xHardwareService import create_app
+from modules.system_control.config_center.xConfigCenterService import create_app
 
 
 def test_create_app():

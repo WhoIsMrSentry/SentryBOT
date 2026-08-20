@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modules.config_center.services.runtime_registry import RuntimeConfigRegistry
-from modules.config_center.services.yaml_runtime_apply import apply_module_yaml
-from modules.social_db.db import SocialDB
+from modules.system_control.config_center.services.runtime_registry import RuntimeConfigRegistry
+from modules.system_control.config_center.services.yaml_runtime_apply import apply_module_yaml
+from modules.cognitive_memory.db import SocialDB
 
 
 def test_yaml_apply_vlm_processing_mode(tmp_path: Path):

@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from modules.config_center.services.runtime_registry import RuntimeConfigRegistry
-from modules.social_db.db import SocialDB
+from modules.system_control.config_center.services.runtime_registry import RuntimeConfigRegistry
+from modules.cognitive_memory.db import SocialDB
 
 
 @pytest.fixture()
