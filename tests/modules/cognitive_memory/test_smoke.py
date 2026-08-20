@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modules.social_db.db import SocialDB
-from modules.social_db.schema import SCHEMA_VERSION
+from modules.cognitive_memory.db import SocialDB
+from modules.cognitive_memory.schema import SCHEMA_VERSION
 
 
 def test_social_db_migrates_and_closes_cleanly(tmp_path: Path) -> None:

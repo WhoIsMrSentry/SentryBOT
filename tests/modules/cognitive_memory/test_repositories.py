@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from modules.social_db.db import SocialDB
+from modules.cognitive_memory.db import SocialDB
 
 
 @pytest.fixture()
@@ -96,3 +96,19 @@ def test_snapshot_stats_includes_schema_version(db: SocialDB) -> None:
     stats = db.snapshot_stats()
     assert stats.get("persons", 0) >= 1
     assert stats.get("schema_version") == 1
+
+
+def test_purge_old_data(db: SocialDB) -> None:
+    p = db.persons.upsert(name="PurgeTest")
+    pid = p["id"]
+    old_ts = time.time() - (10 * 86400)
+    db.sightings.record(pid, ts=old_ts)
+    db.sightings.record(pid, ts=time.time())
+    db.interaction_events.log("event_old", ts=old_ts)
+    db.interaction_events.log("event_new", ts=time.time())
+
+    purged = db.purge_old_data(max_age_days=7.0)
+    assert purged["purged_sightings"] == 1
+    assert purged["purged_interaction_events"] == 1
+    assert len(db.sightings.recent()) == 1
+    assert len(db.interaction_events.recent()) == 1

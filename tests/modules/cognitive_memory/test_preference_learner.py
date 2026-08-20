@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from modules.autonomy.services.preference_learner import PreferenceLearner
+from modules.cognitive_memory.services.preference_learner import PreferenceLearner
 
 
 def test_extracts_name_fact_turkish_and_english():

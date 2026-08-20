@@ -12,7 +12,7 @@ import pytest
 # has a pure-Python fallback for ORB descriptors.
 os.environ.setdefault("SENTRYBOT_DISABLE_NUMPY", "1")
 
-from modules.social_db.db import SocialDB
+from modules.cognitive_memory.db import SocialDB
 
 
 def _write_json(path: Path, data: dict) -> None:
