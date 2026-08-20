@@ -20,12 +20,6 @@ modules:
   path: modules/ollama/config/config.yml
 - name: piservo
   path: modules/piservo/config/config.yml
-- name: mutagen
-  path: modules/mutagen/config/config.yml
-- name: ota
-  path: modules/ota/config/config.yml
-- name: hardware
-  path: modules/hardware/config/config.yml
 - name: telemetry
   path: modules/telemetry/config/config.yml
 - name: diagnostics

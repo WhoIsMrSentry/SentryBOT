@@ -15,11 +15,11 @@ except Exception:
     get_default_registry = lambda: None
     apply_module_yaml = None
 
-from modules.config_center.api.views import get_views_router
-from modules.config_center.api.config_routes import get_config_router
-from modules.config_center.api.write import get_write_router
-from modules.config_center.api.runtime import get_runtime_router
-from modules.config_center.api.scan import get_scan_router
+from modules.system_control.config_center.api.views import get_views_router
+from modules.system_control.config_center.api.config_routes import get_config_router
+from modules.system_control.config_center.api.write import get_write_router
+from modules.system_control.config_center.api.runtime import get_runtime_router
+from modules.system_control.config_center.api.scan import get_scan_router
 
 
 def get_router(cfg: Dict[str, Any], registry: Optional["RuntimeConfigRegistry"] = None) -> APIRouter:

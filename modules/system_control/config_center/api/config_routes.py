@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List
 from fastapi import APIRouter, Response
 
-from modules.config_center.api._helpers import read_yaml, is_within_repo
+from modules.system_control.config_center.api._helpers import read_yaml, is_within_repo
 
 
 def get_config_router(modules: List[dict], repo_root: Path) -> APIRouter:

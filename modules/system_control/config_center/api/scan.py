@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Dict, List
 from fastapi import APIRouter
 
-from modules.config_center.api._helpers import persist_modules_if_possible
+from modules.system_control.config_center.api._helpers import persist_modules_if_possible
 
 
 def get_scan_router(modules: list, repo_root: Path, cfg_file_guess: Path) -> APIRouter:

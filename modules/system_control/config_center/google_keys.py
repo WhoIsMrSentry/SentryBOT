@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Dict
 
-from modules.ollama.services.clients import _sanitize_google_api_key
+from modules.ai_provider.services.clients import _sanitize_google_api_key
 
 logger = logging.getLogger("config_center.google_keys")
 

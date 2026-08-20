@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Body, Query, Response
 import yaml
 
-from modules.config_center.api._helpers import is_within_repo, backup_file, persist_modules_if_possible
+from modules.system_control.config_center.api._helpers import is_within_repo, backup_file, persist_modules_if_possible
 
 
 def get_write_router(
