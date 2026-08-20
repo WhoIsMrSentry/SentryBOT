@@ -158,7 +158,7 @@ class OllamaTranslator:
             self._cache_put(key, translated)
             return translated
         except Exception as exc:
-            from modules.config_center.log_redact import redact_secrets
+            from modules.system_control.config_center.log_redact import redact_secrets
 
             logger.warning(
                 "Translation failed (%s->%s), using original text: %s",
