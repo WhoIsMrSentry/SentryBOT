@@ -46,7 +46,7 @@ def resolve_agent_cfg_path(explicit_path: Optional[str | os.PathLike[str]] = Non
 
 
 def load_agent_config(explicit_path: Optional[str | os.PathLike[str]] = None) -> Dict[str, Any]:
-    from modules.config_center.runtime_profile import apply_runtime_profile
+    from modules.system_control.config_center.runtime_profile import apply_runtime_profile
 
     cfg_path = resolve_agent_cfg_path(explicit_path)
     with open(cfg_path, "r", encoding="utf-8") as f:
@@ -55,11 +55,14 @@ def load_agent_config(explicit_path: Optional[str | os.PathLike[str]] = None) ->
     if not isinstance(raw, dict):
         raise ValueError(f"agent.yaml must be a mapping at top-level: {cfg_path}")
 
-    from modules.config_center.google_keys import inject_google_api_key
+    from modules.system_control.config_center.google_keys import inject_google_api_key
+    from modules.system_control.config_center.runtime_secrets import inject_runtime_secrets, load_dotenv
     from modules.gateway.url import gateway_base_from_agent_cfg, rewrite_loopback_urls
 
+    load_dotenv()
     cfg = apply_runtime_profile(raw)
     cfg = inject_google_api_key(cfg)
+    cfg = inject_runtime_secrets(cfg)
     base = gateway_base_from_agent_cfg(cfg)
     return rewrite_loopback_urls(cfg, base)
 

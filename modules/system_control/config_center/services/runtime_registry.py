@@ -64,7 +64,7 @@ class RuntimeConfigRegistry:
     def __init__(self, social_db: Optional[Any] = None) -> None:
         if social_db is None:
             try:
-                from modules.social_db import get_default as _social_default  # type: ignore
+                from modules.cognitive_memory import get_default as _social_default  # type: ignore
 
                 social_db = _social_default()
             except Exception:
