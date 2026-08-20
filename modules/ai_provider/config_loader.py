@@ -3,8 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
-from modules.config_center.agent_yaml_loader import deep_merge, load_agent_config, require_dict_section
-from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
+from modules.common.config_loader import deep_merge, load_agent_config, require_dict_section, DEFAULT_GEMINI_MODEL
 
 _REQUIRED_MODEL = "qwen3.5:9b"
 _GOOGLE_PROVIDERS = frozenset({"google", "google_ai_studio", "gemini"})
