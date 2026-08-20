@@ -5,8 +5,8 @@ from typing import Any, Dict, List
 from fastapi import APIRouter
 import requests
 
-from modules.ollama.api._helpers import persona_dir, load_persona_text, should_use_persona_model
-from modules.ollama.services.chat import OllamaChatService
+from modules.ai_provider.api._helpers import persona_dir, load_persona_text, should_use_persona_model
+from modules.ai_provider.services.chat import OllamaChatService
 
 logger = logging.getLogger("ollama.api")
 

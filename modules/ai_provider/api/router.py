@@ -10,15 +10,15 @@ try:
     from ..services.chat import OllamaChatService
     from ..services.translator import OllamaTranslator
 except Exception:
-    from modules.ollama.services.clients import create_llm_client
-    from modules.ollama.services.chat import OllamaChatService
-    from modules.ollama.services.translator import OllamaTranslator
+    from modules.ai_provider.services.clients import create_llm_client
+    from modules.ai_provider.services.chat import OllamaChatService
+    from modules.ai_provider.services.translator import OllamaTranslator
 
-from modules.ollama.api._helpers import load_persona_text, should_use_persona_model as _should_use_persona_model
-from modules.ollama.api.health import get_health_router
-from modules.ollama.api.chat_routes import get_chat_router
-from modules.ollama.api.persona_routes import get_persona_router
-from modules.ollama.api.models_routes import get_models_router
+from modules.ai_provider.api._helpers import load_persona_text, should_use_persona_model as _should_use_persona_model
+from modules.ai_provider.api.health import get_health_router
+from modules.ai_provider.api.chat_routes import get_chat_router
+from modules.ai_provider.api.persona_routes import get_persona_router
+from modules.ai_provider.api.models_routes import get_models_router
 
 logger = logging.getLogger("ollama.api")
 

@@ -9,7 +9,7 @@ logger = logging.getLogger("ollama.api")
 
 def _safe_llm_exc_text(exc: Exception) -> str:
     try:
-        from modules.config_center.log_redact import redact_secrets
+        from modules.system_control.config_center.log_redact import redact_secrets
 
         return redact_secrets(str(exc))[:500]
     except Exception:
