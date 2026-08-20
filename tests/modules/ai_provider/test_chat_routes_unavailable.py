@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from modules.ollama.api.chat_routes import get_chat_router
+from modules.ai_provider.api.chat_routes import get_chat_router
 
 
 class MissingModelChat:

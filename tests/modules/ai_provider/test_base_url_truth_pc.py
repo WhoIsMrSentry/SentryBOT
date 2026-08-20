@@ -1,9 +1,9 @@
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from modules.ollama.api.health import get_health_router
-from modules.ollama.config_loader import _normalize_base_url
-from modules.ollama.services.clients import OllamaClient
+from modules.ai_provider.api.health import get_health_router
+from modules.ai_provider.config_loader import _normalize_base_url
+from modules.ai_provider.services.clients import OllamaClient
 
 
 def test_config_loader_rejects_gateway_self_url_for_ollama_daemon():
@@ -37,7 +37,7 @@ def test_health_corrects_gateway_self_url_before_probe(monkeypatch):
         seen["url"] = url
         return ResponseStub()
 
-    monkeypatch.setattr("modules.ollama.api.health.requests.get", fake_get)
+    monkeypatch.setattr("modules.ai_provider.api.health.requests.get", fake_get)
     app = FastAPI()
     app.include_router(get_health_router({"ollama": {"base_url": "http://127.0.0.1:8080"}}, "ollama", "qwen3.5:9b"), prefix="/ollama")
 

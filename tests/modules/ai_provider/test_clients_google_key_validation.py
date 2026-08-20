@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from modules.ollama.services.clients import create_llm_client
+from modules.ai_provider.services.clients import create_llm_client
 
 
 def _google_cfg(api_key: str):

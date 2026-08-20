@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import pytest
 
-from modules.ollama.config_loader import load_config
+from modules.ai_provider.config_loader import load_config
 
 
 def test_load_config_reads_strict_agent_yaml_sections(tmp_path: Path):

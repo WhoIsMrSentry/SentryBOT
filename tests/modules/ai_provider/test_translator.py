@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.ollama.services.translator import OllamaTranslator
+from modules.ai_provider.services.translator import OllamaTranslator
 
 
 class _FakeClient:

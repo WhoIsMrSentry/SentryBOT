@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.ollama.api.router import _should_use_persona_model
+from modules.ai_provider.api.router import _should_use_persona_model
 
 
 def test_should_use_persona_model_for_ollama_when_not_single_model() -> None:

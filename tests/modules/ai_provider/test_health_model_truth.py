@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
-from modules.ollama.api.health import get_health_router
+from modules.ai_provider.api.health import get_health_router
 
 
 class ResponseStub:
@@ -19,7 +19,7 @@ def test_ollama_health_reports_missing_model(monkeypatch):
     def fake_get(url, timeout):
         return ResponseStub(["llama3.2:3b"])
 
-    monkeypatch.setattr("modules.ollama.api.health.requests.get", fake_get)
+    monkeypatch.setattr("modules.ai_provider.api.health.requests.get", fake_get)
     app = FastAPI()
     app.include_router(get_health_router({"ollama": {"base_url": "http://127.0.0.1:11434"}}, "ollama", "qwen3.5:9b"), prefix="/ollama")
 
@@ -35,7 +35,7 @@ def test_ollama_health_accepts_available_model(monkeypatch):
     def fake_get(url, timeout):
         return ResponseStub(["qwen3.5:9b"])
 
-    monkeypatch.setattr("modules.ollama.api.health.requests.get", fake_get)
+    monkeypatch.setattr("modules.ai_provider.api.health.requests.get", fake_get)
     app = FastAPI()
     app.include_router(get_health_router({"ollama": {"base_url": "http://127.0.0.1:11434"}}, "ollama", "qwen3.5:9b"), prefix="/ollama")
 
