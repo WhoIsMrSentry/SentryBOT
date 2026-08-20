@@ -172,7 +172,7 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
                     "()": lambda: formatter,
                 }
             },
-            "filters": {"warning_only": {"()": "modules.logwrapper.services.handlers.WarningOnlyFilter"}},
+            "filters": {"warning_only": {"()": "modules.runtime_console.logwrapper.services.handlers.WarningOnlyFilter"}},
             "handlers": {
                 name: {
                     **opts,

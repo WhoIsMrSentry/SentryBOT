@@ -30,7 +30,7 @@ Graph'ta `init_logging` çağrıcıları:
 ## Kullanım
 
 ```python
-from modules.logwrapper import init_logging
+from modules.runtime_console.logwrapper import init_logging
 
 init_logging()  # mümkün olduğunca erken
 ```
