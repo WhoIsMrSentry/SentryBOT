@@ -1,4 +1,4 @@
-"""SQLite schema definitions for the unified social store."""
+"""SQLite schema definitions for the unified cognitive/social store."""
 
 from __future__ import annotations
 
@@ -136,6 +136,38 @@ _DDL: tuple[str, ...] = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_owner_sessions_start ON owner_sessions(start_ts)",
+    """
+    CREATE TABLE IF NOT EXISTS world_memories (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        details_json TEXT NOT NULL DEFAULT '{}',
+        source TEXT NOT NULL DEFAULT 'unknown',
+        confidence REAL NOT NULL DEFAULT 0.5,
+        salience REAL NOT NULL DEFAULT 0.5,
+        observation_count INTEGER NOT NULL DEFAULT 1,
+        first_seen REAL NOT NULL,
+        last_seen REAL NOT NULL,
+        location TEXT NOT NULL DEFAULT '',
+        tags_json TEXT NOT NULL DEFAULT '[]'
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_world_memories_kind ON world_memories(kind)",
+    "CREATE INDEX IF NOT EXISTS idx_world_memories_last_seen ON world_memories(last_seen DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_world_memories_name ON world_memories(name)",
+    """
+    CREATE TABLE IF NOT EXISTS world_observations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts REAL NOT NULL,
+        memory_id TEXT NOT NULL,
+        source TEXT NOT NULL,
+        text TEXT NOT NULL,
+        details_json TEXT NOT NULL DEFAULT '{}',
+        FOREIGN KEY (memory_id) REFERENCES world_memories(id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_world_observations_ts ON world_observations(ts DESC)",
 )
 
 

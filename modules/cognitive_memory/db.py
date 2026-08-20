@@ -76,6 +76,7 @@ class SocialDB:
         from .repositories.rituals import RitualsRepo
         from .repositories.interaction_events import InteractionEventsRepo
         from .repositories.owner_sessions import OwnerSessionsRepo
+        from .repositories.world_memory import WorldMemoryRepo
 
         self.persons = PersonsRepo(self)
         self.face_descriptors = FaceDescriptorsRepo(self)
@@ -87,6 +88,12 @@ class SocialDB:
         self.rituals = RitualsRepo(self)
         self.interaction_events = InteractionEventsRepo(self)
         self.owner_sessions = OwnerSessionsRepo(self)
+        self.world_memory = WorldMemoryRepo(self)
+
+    def purge_old_data(self, max_age_days: float = 7.0) -> Dict[str, int]:
+        s_count = self.sightings.purge_older_than(max_age_days)
+        i_count = self.interaction_events.prune_older_than(max_age_days)
+        return {"purged_sightings": s_count, "purged_interaction_events": i_count}
 
     def close(self) -> None:
         with self._lock:
