@@ -1,7 +1,7 @@
 import tempfile
 import time
 from pathlib import Path
-from modules.logwrapper.services.run_rotator import rotate_run_logs
+from modules.runtime_console.logwrapper.services.run_rotator import rotate_run_logs
 
 
 def test_rotate_run_logs_empty_directory():

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from modules.logwrapper import xLogService as service
+from modules.runtime_console.logwrapper import xLogService as service
 
 
 def test_separate_warning_error_and_tui_files(tmp_path: Path, monkeypatch):

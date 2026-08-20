@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import logging
 
-from modules.logwrapper import init_logging, get_memory_handler
+from modules.runtime_console.logwrapper import init_logging, get_memory_handler
 
 
 def test_smoke_memory_handler():
     init_logging({"enable_file": False})  # file IO'yu kapat
-    log = logging.getLogger("modules.logwrapper.test")
+    log = logging.getLogger("modules.runtime_console.logwrapper.test")
     log.debug("dbg")
     log.info("info")
     handler = get_memory_handler()
