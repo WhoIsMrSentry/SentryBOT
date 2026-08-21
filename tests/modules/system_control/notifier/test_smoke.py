@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.diagnostics.xDiagnosticsService import create_app
+from modules.system_control.notifier.xNotifierService import create_app
 
 
 def test_create_app():
