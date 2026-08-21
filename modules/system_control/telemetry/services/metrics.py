@@ -1,6 +1,32 @@
 from __future__ import annotations
-from typing import Dict
+from dataclasses import dataclass
+from typing import Dict, Optional
+import os
+from pathlib import Path
 import threading
+
+
+@dataclass
+class SystemSnapshot:
+    cpu_temp_c: Optional[float] = None
+    cpu_load_1m: Optional[float] = None
+
+
+def read_system_snapshot() -> SystemSnapshot:
+    temp_c = None
+    load_1m = None
+    try:
+        if hasattr(os, "getloadavg"):
+            load_1m = float(os.getloadavg()[0])
+    except Exception:
+        pass
+    try:
+        thermal_path = Path("/sys/class/thermal/thermal_zone0/temp")
+        if thermal_path.exists():
+            temp_c = float(thermal_path.read_text().strip()) / 1000.0
+    except Exception:
+        pass
+    return SystemSnapshot(cpu_temp_c=temp_c, cpu_load_1m=load_1m)
 
 
 class Counter:
