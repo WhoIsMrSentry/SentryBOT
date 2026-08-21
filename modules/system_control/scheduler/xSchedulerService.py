@@ -2,6 +2,8 @@ from __future__ import annotations
 from fastapi import FastAPI
 import asyncio
 
+from contextlib import asynccontextmanager
+
 from .config_loader import load_config
 from .api.router import get_router
 from .services.runner import Scheduler
@@ -14,17 +16,16 @@ def create_app(config_path: str | None = None) -> FastAPI:
         gateway_base_url=str(cfg.get("gateway_base_url", "http://127.0.0.1:8080")),
     )
 
-    app = FastAPI(title="Scheduler Service")
-    app.include_router(get_router(cfg, sched))
-
-    @app.on_event("startup")
-    async def _startup():
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
         sched.start()
+        try:
+            yield
+        finally:
+            await sched.stop()
 
-    @app.on_event("shutdown")
-    async def _shutdown():
-        await sched.stop()
-
+    app = FastAPI(title="Scheduler Service", lifespan=lifespan)
+    app.include_router(get_router(cfg, sched))
     return app
 
 
