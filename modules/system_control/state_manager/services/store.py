@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Any, Callable, Dict, List
 import json
 import sqlite3
 import threading
@@ -15,9 +15,15 @@ class StateStore:
         self,
         defaults: Dict[str, Any] | None = None,
         persistence: Dict[str, Any] | None = None,
+        pubsub: Dict[str, Any] | None = None,
     ) -> None:
         self._lock = threading.Lock()
         self._state: Dict[str, Any] = defaults.copy() if defaults else {"operational": "idle", "emotions": []}
+        self._listeners: List[Callable[[str, Any], None]] = []
+        pub = pubsub or {}
+        self._pubsub_enabled = bool(pub.get("enabled", True))
+        keys = pub.get("keys") if isinstance(pub.get("keys"), list) else ["operational", "emotions"]
+        self._pubsub_keys = {str(k) for k in keys}
 
         cfg = persistence or {}
         self._persist_type = str(cfg.get("type", "memory")).strip().lower()
@@ -112,27 +118,58 @@ class StateStore:
                 encoding="utf-8",
             )
 
+    def subscribe(self, listener: Callable[[str, Any], None]) -> None:
+        if not callable(listener):
+            return
+        with self._lock:
+            self._listeners.append(listener)
+
+    def _notify(self, changes: Dict[str, Any]) -> None:
+        if not self._pubsub_enabled or not changes:
+            return
+        with self._lock:
+            listeners = list(self._listeners)
+        for key, value in changes.items():
+            for fn in listeners:
+                try:
+                    fn(key, value)
+                except Exception:
+                    pass
+
     def get(self) -> Dict[str, Any]:
         with self._lock:
             return {**self._state}
 
     def update(self, patch: Dict[str, Any]) -> None:
+        changes: Dict[str, Any] = {}
         with self._lock:
             for key, value in patch.items():
-                self._state[str(key)] = value
+                name = str(key)
+                self._state[name] = value
+                if name in self._pubsub_keys:
+                    changes[name] = value
             self._persist_locked()
+        self._notify(changes)
 
     def set_value(self, key: str, value: Any) -> None:
+        name = str(key)
         with self._lock:
-            self._state[str(key)] = value
+            self._state[name] = value
             self._persist_locked()
+        if name in self._pubsub_keys:
+            self._notify({name: value})
 
     def set_operational(self, val: str) -> None:
         with self._lock:
             self._state["operational"] = val
             self._persist_locked()
+        if "operational" in self._pubsub_keys:
+            self._notify({"operational": val})
 
     def set_emotions(self, vals: List[str]) -> None:
+        values = list(vals)
         with self._lock:
-            self._state["emotions"] = list(vals)
+            self._state["emotions"] = values
             self._persist_locked()
+        if "emotions" in self._pubsub_keys:
+            self._notify({"emotions": values})
