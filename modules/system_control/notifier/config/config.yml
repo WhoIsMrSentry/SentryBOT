@@ -12,8 +12,8 @@ telegram:
     enabled: false
     interval_sec: 2.5
 whatsapp_web:
-  enabled: true
-  recipient: "your_number_here"
+  enabled: false
+  recipient: ""
   send_mode: "instant"   # instant | schedule
   schedule_delay_sec: 90
   wait_time_sec: 15

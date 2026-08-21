@@ -3,10 +3,11 @@ from fastapi import FastAPI
 
 import logging
 
+from contextlib import asynccontextmanager
+
 from .config_loader import load_config
 from .api.router import get_router
 from .services.telegram_bot import build_telegram_bot
-from .services.whatsapp_web import build_whatsapp_web_sender
 
 
 logger = logging.getLogger("notifier")
@@ -15,23 +16,22 @@ logger = logging.getLogger("notifier")
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
     telegram_bot = build_telegram_bot(cfg)
-    whatsapp_web = build_whatsapp_web_sender(cfg)
-
-    app = FastAPI(title="Notifier Service")
-    app.include_router(get_router(cfg, telegram_bot, whatsapp_web))
-
     polling_enabled = cfg.get("telegram", {}).get("polling", {}).get("enabled", False)
-    if telegram_bot and polling_enabled:
-        @app.on_event("startup")
-        async def _start_bot() -> None:
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        if telegram_bot and polling_enabled:
             logger.info("starting telegram bot polling")
             await telegram_bot.start()
+        try:
+            yield
+        finally:
+            if telegram_bot and polling_enabled:
+                logger.info("stopping telegram bot polling")
+                await telegram_bot.stop()
 
-        @app.on_event("shutdown")
-        async def _stop_bot() -> None:
-            logger.info("stopping telegram bot polling")
-            await telegram_bot.stop()
-
+    app = FastAPI(title="Notifier Service", lifespan=lifespan)
+    app.include_router(get_router(cfg, telegram_bot))
     return app
 
 
