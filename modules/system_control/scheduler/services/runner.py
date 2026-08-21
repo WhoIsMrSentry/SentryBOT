@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 import asyncio
 import time
 import threading
+import json
 
 
 class Scheduler:
@@ -35,6 +36,7 @@ class Scheduler:
             "text": str(job.get("text", "")),
             "event": str(job.get("event", "")),
             "target": str(job.get("target", "")),
+            "initial_delay_s": max(0.0, float(job.get("initial_delay_s", 0.0))),
         }
 
     def _ensure_task_locked(self, job_id: str) -> None:
@@ -46,7 +48,11 @@ class Scheduler:
         old = self._tasks.get(job_id)
         if old is not None and not old.done():
             old.cancel()
-        self._tasks[job_id] = asyncio.create_task(self._job_loop(job_id))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._tasks[job_id] = loop.create_task(self._job_loop(job_id))
 
     def start(self) -> None:
         with self._lock:
@@ -101,6 +107,11 @@ class Scheduler:
         return await self._execute_job(job)
 
     async def _job_loop(self, job_id: str) -> None:
+        with self._lock:
+            first = dict(self.jobs.get(job_id, {})) if job_id in self.jobs else {}
+        delay = float(first.get("initial_delay_s", 0.0) or 0.0)
+        if delay > 0:
+            await asyncio.sleep(delay)
         while True:
             with self._lock:
                 if not self._running:
@@ -114,6 +125,14 @@ class Scheduler:
 
             await self._execute_job(job)
             await asyncio.sleep(max(0.5, float(job.get("every_s", 60.0))))
+
+    def _build_gateway_url(self, path: str) -> str:
+        path = str(path).strip()
+        if not path:
+            return self.gateway_base_url
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        return f"{self.gateway_base_url}/{path.lstrip('/')}"
 
     async def _request_http(self, method: str, url: str, timeout_s: float, params: Dict[str, Any] | None, payload: Dict[str, Any] | None) -> Dict[str, Any]:
         try:
@@ -142,41 +161,83 @@ class Scheduler:
             return {"ok": False, "latency_ms": latency_ms, "error": str(exc)}
 
     async def _execute_job(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        from modules.common.job_types import get_job_registry  # type: ignore
+        
         jid = str(job.get("id", ""))
         kind = str(job.get("kind", "http")).lower()
         timeout_s = max(0.1, float(job.get("timeout_s", 1.0)))
         retries = max(0, int(job.get("max_retries", 0)))
 
-        def _gateway(path: str) -> str:
-            return f"{self.gateway_base_url}/{path.lstrip('/')}"
+        registry = get_job_registry()
+        handler = registry.get(kind)
+        
+        if handler is None:
+            return {
+                "id": jid,
+                "kind": kind,
+                "ok": False,
+                "error": f"unknown_job_kind:{kind}",
+                "at": time.time(),
+            }
+
+        # Prepare context for handler
+        from modules.common.job_types import JobDefinition, JobContext  # type: ignore
+        
+        job_def = JobDefinition(
+            id=jid,
+            kind=kind,
+            enabled=job.get("enabled", True),
+            timeout_s=job.get("timeout_s", 1.0),
+            max_retries=job.get("max_retries", 0),
+            params={
+                "method": job.get("method", "GET"),
+                "url": job.get("url"),
+                "path": job.get("path"),
+                "params": job.get("params"),
+                "json": job.get("json"),
+                "text": job.get("text", ""),
+                "event": job.get("event", ""),
+                "target": job.get("target", ""),
+            },
+            metadata={
+                "gateway_base_url": self.gateway_base_url,
+                "job_config": job,
+            },
+        )
+
+        # Prepare services dict for handler
+        services = {
+            "gateway_base_url": self.gateway_base_url,
+        }
+
+        context = job_def  # Using JobDefinition as context for simplicity
+        # For compatibility, add services attribute
+        job_def.services = {
+            "gateway_base_url": self.gateway_base_url,
+        }
 
         attempt = 0
         last: Dict[str, Any] = {"ok": False, "error": "not_executed"}
-        while attempt <= retries:
+        
+        while attempt <= job.get("max_retries", 0):
             attempt += 1
-            if kind == "http":
-                method = str(job.get("method", "GET")).upper()
-                url = str(job.get("url", "")).strip() or _gateway(str(job.get("path", "")))
-                last = await self._request_http(method, url, timeout_s, job.get("params"), job.get("json"))
-            elif kind == "speak":
-                payload = {"text": str(job.get("text", "Zamanlanmis mesaj"))}
-                last = await self._request_http("POST", _gateway("/speak/say"), timeout_s, None, payload)
-            elif kind == "interaction_event":
-                payload = {"type": str(job.get("event", "scheduler.tick"))}
-                last = await self._request_http("POST", _gateway("/interactions/event"), timeout_s, None, payload)
-            elif kind == "diagnostics":
-                last = await self._request_http("POST", _gateway("/diagnostics/run"), timeout_s, None, None)
-            elif kind == "state_set":
-                payload = job.get("json") if isinstance(job.get("json"), dict) else {"operational": str(job.get("target", "idle"))}
-                last = await self._request_http("POST", _gateway("/state/set"), timeout_s, None, payload)
-            elif kind == "notify":
-                payload = {"text": str(job.get("text", "scheduler notify"))}
-                last = await self._request_http("POST", _gateway("/notify/test"), timeout_s, None, payload)
-            else:
-                last = {"ok": False, "error": f"unknown_job_kind:{kind}"}
-
-            if last.get("ok"):
-                break
+            try:
+                if hasattr(handler, 'execute'):
+                    # New handler interface
+                    result = await handler.execute(job_def)
+                    last = {"ok": True, "result": result}
+                else:
+                    # Fallback to legacy HTTP calls for backward compatibility
+                    last = await self._execute_legacy(job)
+                
+                if last.get("ok"):
+                    break
+            except Exception as exc:
+                last = {"ok": False, "error": str(exc)}
+            
+            if attempt < job.get("max_retries", 0):
+                await asyncio.sleep(max(0.1, float(job.get("retry_delay_s", 5.0))))
+                continue
 
         result = {
             "id": jid,
@@ -190,3 +251,32 @@ class Scheduler:
         with self._lock:
             self._results[jid] = result
         return result
+
+    async def _execute_legacy(self, job: Dict[str, Any]) -> Dict[str, Any]:
+        """Legacy job execution for backward compatibility."""
+        kind = str(job.get("kind", "http")).lower()
+        timeout_s = max(0.1, float(job.get("timeout_s", 1.0)))
+
+        def _gateway(path: str) -> str:
+            return self._build_gateway_url(path)
+
+        if kind == "http":
+            method = str(job.get("method", "GET")).upper()
+            url = str(job.get("url", "")).strip() or self._build_gateway_url(str(job.get("path", "")))
+            return await self._request_http(method, url, timeout_s, job.get("params"), job.get("json"))
+        elif kind == "speak":
+            payload = {"text": str(job.get("text", "Zamanlanmis mesaj"))}
+            return await self._request_http("POST", _gateway("/speak/say"), timeout_s, None, payload)
+        elif kind == "interaction_event":
+            payload = {"type": str(job.get("event", "scheduler.tick"))}
+            return await self._request_http("POST", _gateway("/interactions/event"), timeout_s, None, payload)
+        elif kind == "diagnostics":
+            return await self._request_http("POST", _gateway("/diagnostics/run"), timeout_s, None, None)
+        elif kind == "state_set":
+            payload = job.get("json") if isinstance(job.get("json"), dict) else {"operational": str(job.get("target", "idle"))}
+            return await self._request_http("POST", _gateway("/state/set"), timeout_s, None, payload)
+        elif kind == "notify":
+            payload = {"text": str(job.get("text", "scheduler notify"))}
+            return await self._request_http("POST", _gateway("/notify/test"), timeout_s, None, payload)
+        else:
+            return {"ok": False, "error": f"unknown_job_kind:{kind}"}
