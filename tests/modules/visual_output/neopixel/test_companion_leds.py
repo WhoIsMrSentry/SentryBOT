@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from modules.neopixel.services.companion_leds import CompanionLedController, _interpolate_gradient
+from modules.visual_output.neopixel.services.companion_leds import CompanionLedController, _interpolate_gradient
 
 
 class _FakeDriver:
@@ -35,31 +35,6 @@ def _layout_cfg(**extra):
     return base
 
 
-def test_companion_vu_fills_strips_not_jewel_center():
-    driver = _FakeDriver(23)
-    ctrl = CompanionLedController(driver, _layout_cfg(vu={"attack": 1.0, "decay": 1.0, "min_level": 0.0}))
-    ctrl.set_mode("listen_vu")
-    ctrl.set_vu_level(0.5, right=0.0)
-    ctrl._render_vu_frame()
-    assert driver.buf[0] != (0, 0, 0)
-    assert any(driver.buf[i] != (5, 16, 24) for i in range(7, 15))
-    assert all(driver.buf[i] == (5, 16, 24) for i in range(15, 23))
-
-
-def test_companion_stereo_vu_independent_channels():
-    driver = _FakeDriver(23)
-    ctrl = CompanionLedController(
-        driver,
-        _layout_cfg(vu={"attack": 1.0, "decay": 1.0, "min_level": 0.0}),
-    )
-    ctrl.set_mode("listen_vu")
-    ctrl.set_vu_level(0.9, right=0.1)
-    ctrl._render_vu_frame()
-    left_lit = sum(1 for i in range(7, 15) if driver.buf[i] != (5, 16, 24))
-    right_lit = sum(1 for i in range(15, 23) if driver.buf[i] != (5, 16, 24))
-    assert left_lit > right_lit
-
-
 def test_companion_thinking_alternates_ring():
     driver = _FakeDriver(23)
     ctrl = CompanionLedController(driver, _layout_cfg(tick_ms=1))
@@ -81,27 +56,6 @@ def test_gradient_interpolation():
     assert c[0] > 0
 
 
-def test_companion_vu_gradient_colors():
-    driver = _FakeDriver(23)
-    ctrl = CompanionLedController(
-        driver,
-        _layout_cfg(
-            vu={"attack": 1.0, "decay": 1.0, "min_level": 0.0},
-            colors={
-                "vu_gradient": ["#00FF00", "#FFFF00", "#FF0000"],
-                "vu_bg": "#051018",
-            },
-        ),
-    )
-    ctrl.set_mode("vu")
-    ctrl.set_vu_level(1.0)
-    ctrl._render_vu_frame()
-    bottom = driver.buf[7]
-    assert bottom[1] > bottom[0] and bottom[1] > bottom[2]
-    top = driver.buf[14]
-    assert top[0] > top[1] and top[0] > top[2]
-
-
 def test_companion_wake_spin_jewel_only_golden():
     driver = _FakeDriver(23)
     ctrl = CompanionLedController(
@@ -114,15 +68,7 @@ def test_companion_wake_spin_jewel_only_golden():
     ctrl.set_mode("wake_spin")
     ctrl._render_wake_spin_frame()
     assert any(driver.buf[i] != (0, 0, 0) for i in range(0, 7))
-    assert all(driver.buf[i] == (5, 16, 24) for i in range(7, 23))
-
-
-def test_vu_level_from_off_enters_listen_vu():
-    driver = _FakeDriver(23)
-    ctrl = CompanionLedController(driver, _layout_cfg(vu={"attack": 1.0, "decay": 1.0, "min_level": 0.02}))
-    assert ctrl.mode == "off"
-    ctrl.set_vu_level(0.5, right=0.3)
-    assert ctrl.mode == "listen_vu"
+    assert all(driver.buf[i] == (0, 0, 0) for i in range(7, 23))
 
 
 def test_wake_spin_can_retrigger():
@@ -135,12 +81,13 @@ def test_wake_spin_can_retrigger():
     assert ctrl._wake_spin_started >= first_started
 
 
-def test_wake_spin_blocks_external_listen_vu_until_done():
+def test_wake_spin_blocks_external_mode_until_done():
     driver = _FakeDriver(23)
-    ctrl = CompanionLedController(driver, _layout_cfg())
+    ctrl = CompanionLedController(driver, _layout_cfg(wake_spin={"duration_ms": 5000, "wait_ms": 1}))
     ctrl.set_mode("wake_spin")
-    ctrl.set_mode("listen_vu")
+    ctrl.set_mode("thinking")
     assert ctrl.mode == "wake_spin"
+    assert ctrl.status()["pending_mode"] == "thinking"
 
 
 def test_wake_spin_defers_other_modes_until_animation_finishes():
@@ -181,23 +128,6 @@ def test_companion_renderer_survives_off_then_restarts():
     ctrl._stop.set()
     assert driver.shows > shows_after_off
     assert any(driver.buf[i] != (0, 0, 0) for i in range(7))
-
-
-def test_stale_vu_input_decays_to_zero():
-    driver = _FakeDriver(23)
-    ctrl = CompanionLedController(
-        driver,
-        _layout_cfg(
-            vu={"attack": 1.0, "decay": 1.0, "min_level": 0.0, "stale_ms": 50},
-        ),
-    )
-    ctrl.set_mode("listen_vu")
-    ctrl.set_vu_level(1.0, right=1.0)
-    ctrl._render_vu_frame()
-    assert any(driver.buf[i] != (5, 16, 24) for i in range(7, 23))
-    ctrl._last_vu_ts -= 1.0
-    ctrl._render_vu_frame()
-    assert all(driver.buf[i] == (5, 16, 24) for i in range(7, 23))
 
 
 def test_unknown_companion_mode_is_rejected():

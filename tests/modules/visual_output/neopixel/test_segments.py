@@ -3,8 +3,8 @@ from pathlib import Path
 
 import yaml
 
-from modules.neopixel.services.driver import NeoDriverConfig
-from modules.neopixel.services.runner import NeoRunner
+from modules.visual_output.neopixel.services.driver import NeoDriverConfig
+from modules.visual_output.neopixel.services.runner import NeoRunner
 
 
 class _FakeDriver:

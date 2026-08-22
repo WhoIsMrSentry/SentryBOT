@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import time
 
-from modules.neopixel.services.runner import NeoRunner
-from modules.neopixel.services.driver import NeoDriverConfig
-from modules.neopixel.emotions.loader import EmotionStore
+from modules.visual_output.neopixel.services.runner import NeoRunner
+from modules.visual_output.neopixel.services.driver import NeoDriverConfig
+from modules.visual_output.neopixel.emotions.loader import EmotionStore
 
 
 def test_basic_effects_smoke():
