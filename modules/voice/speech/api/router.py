@@ -7,10 +7,10 @@ import time
 from threading import Timer, Lock
 from typing import TYPE_CHECKING, Any
 
-from modules.speech.services.wake_phrase import contains_wakeword, strip_wakewords
+from modules.voice.speech.services.wake_phrase import contains_wakeword, strip_wakewords
 
 if TYPE_CHECKING:
-    from modules.speech.xSpeechService import SpeechService
+    from modules.voice.speech.xSpeechService import SpeechService
 
 logger = logging.getLogger("speech.api")
 

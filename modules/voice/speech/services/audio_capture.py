@@ -218,13 +218,6 @@ class AudioCapture:
             right = self._normalized_peak(self._rms_right_window, self._vu_right_gain)
             return left, right
 
-    def get_rms_raw(self) -> int:
-        """Get raw max RMS value (0-32767) over the sliding window."""
-        with self._rms_lock:
-            if not self._rms_window:
-                return 0
-            return max(self._rms_window)
-
     def _callback(self, indata, frames, time_info, status):
         if status:
             logger.warning("Audio status: %s", status)

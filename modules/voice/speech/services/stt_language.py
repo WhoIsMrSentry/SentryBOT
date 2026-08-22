@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-from modules.speech.services.recognizer import Recognizer
+from modules.voice.speech.services.recognizer import Recognizer
 
 logger = logging.getLogger("speech.stt_language")
 
@@ -35,7 +35,7 @@ _EN_STOPWORDS = frozenset({
 
 
 def _detect_language(text: str, *, default: str, prefer_online: bool = True) -> str:
-    from modules.speak.services.lang_detect import detect_text_language
+    from modules.voice.speak.services.lang_detect import detect_text_language
 
     return detect_text_language(text, default=default, prefer_online=prefer_online)
 
@@ -125,7 +125,9 @@ def resolve_stt_text_and_language(
     if dual_decode_only_if_ambiguous and primary_text:
         detected = _detect_language(primary_text, default=primary_lang, prefer_online=prefer_online_detect)
         primary_score = _transcript_score(primary_text, primary_lang)
-        if detected == primary_lang and primary_score >= 2.0:
+        words = re.findall(r"[a-zA-ZçğıöşüÇĞİÖŞÜ']+", primary_text.lower())
+        tr_hits = sum(1 for w in words if w in _TR_STOPWORDS)
+        if detected == primary_lang and primary_score >= 3.0 and tr_hits >= 1:
             return primary_text, detected
 
     candidates: Dict[str, str] = {primary_lang: primary_text}

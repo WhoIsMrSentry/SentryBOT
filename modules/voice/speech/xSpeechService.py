@@ -1,31 +1,33 @@
 from __future__ import annotations
-import argparse
-import logging
-import struct
-from threading import Event, Lock
-try:
-    import audioop
-except Exception:
-    audioop = None
-    # Don't fail import; we'll degrade direction/downmix functionality and log at runtime.
-from typing import Optional, Callable, Iterable
-import copy
 
-from modules.speech.config_loader import load_config
-from modules.speech.services.audio_capture import AudioCapture, get_shared_capture, release_shared_capture
-from modules.speech.services.recognizer import Recognizer, RecognitionResult
-from modules.speech.services.stt_language import resolve_stt_text_and_language
-from modules.speech.services.direction import DirectionEstimator
-from modules.speech.services.pan_tilt import PanTiltController
-from modules.arduino_serial.contract import build_set_servo_cmd, SERVO_INDEX_PAN
+import argparse
+import copy
+import logging
+from threading import Event, Lock
+import time
+from typing import Optional, Callable, Iterable, TYPE_CHECKING
 from fastapi import FastAPI
-from typing import TYPE_CHECKING
+
+from modules.voice.speech.config_loader import load_config, load_audio_router_config
+from modules.voice.speech.services.recognizer import Recognizer, RecognitionResult
+from modules.voice.speech.services.stt_language import resolve_stt_text_and_language
+from modules.voice.speech.services.direction import DirectionEstimator
+from modules.voice.speech.services.pan_tilt import PanTiltController
+from modules.voice.audio_router import (
+    get_audio_router, AudioRouterConfig, AudioConfig, 
+    VoskConsumerAdapter, register_audio_consumer
+)
+from .services.audio_filters import SpeechAudioFilterMixin
+from .services.sound_tracking import SpeechSoundTrackingMixin
 
 if TYPE_CHECKING:
-    from modules.speech.api import get_router  # type: ignore
+    from modules.voice.speech.api import get_router  # type: ignore
+
+if TYPE_CHECKING:
+    from modules.voice.speech.api import get_router  # type: ignore
 
 try:
-    from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
+    from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
     _init_global_logging()
 except Exception:
     pass
@@ -33,61 +35,7 @@ except Exception:
 logger = logging.getLogger("speech")
 
 
-def _downmix_stereo_pcm(chunk: bytes, dtype: str = "int16") -> bytes:
-    """Downmix interleaved stereo PCM to mono without requiring audioop.
-
-    Supports int16 and a best-effort int32->int16 conversion.
-    """
-    if not chunk:
-        return chunk
-    dt = (dtype or "int16").lower()
-    if dt == "int32":
-        # int32 interleaved stereo -> mix -> int16
-        if len(chunk) < 8:
-            return b""
-        n = len(chunk) // 4
-        vals = struct.unpack("<" + "i" * n, chunk[: n * 4])
-        mono = []
-        for i in range(0, len(vals) - 1, 2):
-            mixed = (vals[i] + vals[i + 1]) // 2
-            mono.append(int(max(-32768, min(32767, mixed >> 16))))
-        if not mono:
-            return b""
-        return struct.pack("<" + "h" * len(mono), *mono)
-
-    # Default: int16
-    if len(chunk) < 4:
-        return b""
-    n = len(chunk) // 2
-    vals = struct.unpack("<" + "h" * n, chunk[: n * 2])
-    mono = []
-    for i in range(0, len(vals) - 1, 2):
-        mono.append((int(vals[i]) + int(vals[i + 1])) // 2)
-    if not mono:
-        return b""
-    return struct.pack("<" + "h" * len(mono), *mono)
-
-
-def _apply_gain_pcm16(chunk: bytes, gain: float) -> bytes:
-    if not chunk or gain == 1.0:
-        return chunk
-    if len(chunk) < 2:
-        return chunk
-    n = len(chunk) // 2
-    vals = struct.unpack("<" + "h" * n, chunk[: n * 2])
-    out = []
-    g = float(gain)
-    for v in vals:
-        s = int(v * g)
-        if s > 32767:
-            s = 32767
-        elif s < -32768:
-            s = -32768
-        out.append(s)
-    return struct.pack("<" + "h" * len(out), *out)
-
-
-class SpeechService:
+class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
     """High-level facade to run audio capture and speech recognition."""
 
     def __init__(self, config_path: Optional[str] = None):
@@ -98,7 +46,14 @@ class SpeechService:
         self._result_lock = Lock()
         self._on_result_cb: Optional[Callable[[RecognitionResult], None]] = None
         self._thread = None
-        self.capture = get_shared_capture(self.cfg.get("audio", {}))
+        
+        # Initialize audio router
+        audio_router_cfg = load_audio_router_config()
+        self._audio_router = get_audio_router(audio_router_cfg)
+        self._audio_router.start()
+        
+        # Create Vosk consumer adapter and register
+        self._vosk_adapter = None
         rec_cfg = self.cfg.get("recognition", {}) or {}
         self.recognizer = Recognizer(rec_cfg)
         self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
@@ -148,7 +103,6 @@ class SpeechService:
                         )
                 except Exception as exc:
                     logger.warning("%s Vosk model unavailable for auto STT: %s", lang.upper(), exc)
-            # Backward-compatible single secondary pointer (first extra)
             if self._extra_recognizers:
                 first_lang = next(iter(self._extra_recognizers))
                 self._secondary_recognizer = self._extra_recognizers[first_lang]
@@ -158,28 +112,43 @@ class SpeechService:
         except Exception as primary_exc:
             logger.warning("Primary %s Vosk model pre-warm failed: %s", primary_lang.upper(), primary_exc)
         self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
-        # Direction estimator (optional, needs stereo)
-        dir_cfg = self.cfg.get("direction", {})
-        self.direction_enabled = bool(dir_cfg.get("enabled", False)) and self.capture.cfg.channels >= 2
-        self._direction = DirectionEstimator(self.capture.cfg.samplerate) if self.direction_enabled else None
+
+        # Audio router will provide the stream
+        # Direction estimator - will be initialized when stream starts
+        self.direction_enabled = False
+        self._direction = None
         self._last_angle = None
-        # Pan-tilt controller (optional)
+
         pt_cfg = self.cfg.get("pan_tilt", {})
         self._pan = PanTiltController(pt_cfg, sender=self._send_pan)
         self._tracking = False
         self._stt_suppressed = False
         self._stt_suppress_lock = Lock()
+        self._stt_suppressed_until = 0.0
+        self._head_arbiter = None
+        
+        self._stream_iter = None
+        self._vosk_adapter = None
 
-    def set_stt_suppressed(self, suppressed: bool) -> None:
+    def set_stt_suppressed(self, suppressed: bool, ttl_s: float = 15.0) -> None:
         with self._stt_suppress_lock:
             self._stt_suppressed = bool(suppressed)
+            if suppressed:
+                self._stt_suppressed_until = time.time() + float(ttl_s)
+            else:
+                self._stt_suppressed_until = 0.0
 
     def is_stt_suppressed(self) -> bool:
         with self._stt_suppress_lock:
-            return bool(self._stt_suppressed)
+            if not self._stt_suppressed:
+                return False
+            if self._stt_suppressed_until > 0.0 and time.time() >= self._stt_suppressed_until:
+                self._stt_suppressed = False
+                self._stt_suppressed_until = 0.0
+                return False
+            return True
 
     def stt_status(self) -> dict:
-        """Return truthful STT model/package readiness without opening the microphone."""
         primary = self.recognizer.status() if self.recognizer is not None else {"ok": False, "error": "recognizer missing"}
         languages: dict[str, dict] = {}
         rec_cfg = self.cfg.get("recognition", {}) if isinstance(self.cfg.get("recognition", {}), dict) else {}
@@ -225,10 +194,6 @@ class SpeechService:
         return bool(self.stt_status().get("available"))
 
     def start(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
-        """Start capturing and recognition in the same thread using a generator pipeline.
-
-        For production, consider running capture in its own thread and feeding a queue.
-        """
         with self._listen_lock:
             if self._listening:
                 return
@@ -248,8 +213,18 @@ class SpeechService:
                     stt_status.get("reason"),
                 )
                 return
-            stream: Iterable[bytes] = self.capture.stream()
-            for result in self.recognizer.run(self._direction_wrapper(stream)):
+            
+            # Initialize Vosk adapter and register with audio router
+            if self._vosk_adapter is None:
+                self._vosk_adapter = VoskConsumerAdapter(self.recognizer)
+                register_audio_consumer("speech_vosk", self._vosk_adapter)
+            
+            # Get stream from audio router
+            self._stream_iter = iter(self._audio_router.get_capture().stream())
+            self._audio_router.get_capture().register_consumer("speech_vosk", self._vosk_adapter)
+            self._vosk_adapter.on_start()
+            
+            for result in self.recognizer.run(self._direction_wrapper(self._stream_iter)):
                 if self.is_stt_suppressed():
                     continue
                 cb = None
@@ -265,126 +240,15 @@ class SpeechService:
             with self._listen_lock:
                 self._listening = False
 
-    def _direction_wrapper(self, stream):
-        if not self._direction:
-            yield from stream
-            return
-        # Control parameters
-        ctrl = (self.cfg.get("direction", {}) or {}).get("control", {})
-        invert = bool(ctrl.get("invert_direction", False))
-        deadband = float(ctrl.get("deadband_deg", 0.0))
-        alpha = float(ctrl.get("smoothing_alpha", 0.0))
-        slew = float(ctrl.get("slew_deg_per_s", 0.0))
-        energy_th = float(ctrl.get("energy_threshold", 0.0))
-        last_out = None
-        last_ts = None
-        for chunk in stream:
-            try:
-                # Energy gate (RMS)
-                import math, time
-                # 16-bit PCM
-                rms = 0.0
-                if len(chunk) >= 2:
-                    import struct
-                    count = len(chunk) // 2
-                    if count:
-                        vals = struct.unpack('<' + 'h'*count, chunk[:count*2])
-                        # use mono mix for energy
-                        step = 2 if self.capture.cfg.channels >= 2 else 1
-                        acc = 0.0
-                        n = 0
-                        for i in range(0, len(vals), step):
-                            acc += (vals[i])*(vals[i])
-                            n += 1
-                        if n:
-                            rms = math.sqrt(acc / n)
-
-                if energy_th and rms < energy_th:
-                    # energy too low; don't update angle
-                    pass
-                else:
-                    angle = self._direction.estimate(chunk)
-                    if invert:
-                        angle = -angle
-                    # deadband vs last_out
-                    if last_out is not None and abs(angle - last_out) < deadband:
-                        angle = last_out
-                    # smoothing
-                    if last_out is not None and 0.0 < alpha < 1.0:
-                        angle = alpha * angle + (1 - alpha) * last_out
-                    # slew-rate limit
-                    now = time.time()
-                    if last_out is not None and last_ts is not None and slew > 0:
-                        dt = max(1e-3, now - last_ts)
-                        max_step = slew * dt
-                        if abs(angle - last_out) > max_step:
-                            angle = last_out + (max_step if angle > last_out else -max_step)
-                    self._last_angle = angle
-                    # if tracking, map to absolute pan angle
-                    if self._tracking:
-                        center = float(self.cfg.get("pan_tilt", {}).get("center_deg", 90.0))
-                        target = center + angle
-                        self._pan.set_target(target)
-                    last_out = angle
-                    last_ts = time.time()
-            except Exception:
-                pass
-            # Track audio level for VU-meter (normalized ~0..1)
-            try:
-                import struct
-                if len(chunk) >= 2:
-                    count = len(chunk) // 2
-                    vals = struct.unpack('<' + 'h' * count, chunk[:count * 2])
-                    step = 2 if self.capture.cfg.channels >= 2 else 1
-                    acc = 0.0
-                    n = 0
-                    for i in range(0, len(vals), step):
-                        acc += float(vals[i]) * float(vals[i])
-                        n += 1
-                    if n:
-                        rms = (acc / n) ** 0.5
-                        self._last_audio_level = min(1.0, rms / 8000.0)
-            except Exception:
-                pass
-            # Downmix to mono for recognizer if input is stereo
-            if self.capture.cfg.channels >= 2:
-                try:
-                    if audioop is not None:
-                        mono = audioop.tomono(chunk, 2, 1.0, 0.0)
-                    else:
-                        mono = _downmix_stereo_pcm(chunk, self.capture.cfg.dtype)
-                except Exception:
-                    mono = _downmix_stereo_pcm(chunk, self.capture.cfg.dtype)
-                mono = _apply_gain_pcm16(mono, self._stt_input_gain)
-                self._append_utterance_pcm(mono)
-                yield mono
-            else:
-                mono = _apply_gain_pcm16(chunk, self._stt_input_gain)
-                self._append_utterance_pcm(mono)
-                yield mono
-
-    def _append_utterance_pcm(self, mono: bytes) -> None:
-        if not mono or not self._auto_language:
-            return
-        self._utterance_pcm.extend(mono)
-        overflow = len(self._utterance_pcm) - self._max_utterance_bytes
-        if overflow > 0:
-            del self._utterance_pcm[:overflow]
-
-    def clear_utterance_buffer(self) -> None:
-        self._utterance_pcm.clear()
-
     def finalize_stt(self, text: str) -> tuple[str, str]:
-        """Apply Multi-Language Online Google Speech Recognition or local Vosk decode."""
         if not self._auto_language:
             return str(text or "").strip(), self._default_language
         pcm = bytes(self._utterance_pcm)
         self.clear_utterance_buffer()
 
-        # Try free Multi-Language Google Speech Recognition if audio duration >= 150ms
         if len(pcm) >= 4800:
             try:
-                from modules.speech.services.online_stt import transcribe_google_multilang
+                from modules.voice.speech.services.online_stt import transcribe_google_multilang
                 candidate_langs = ["tr", "en"]
                 rec_cfg = self.cfg.get("recognition", {}) or {}
                 configured_langs = rec_cfg.get("dual_decode_languages")
@@ -436,12 +300,16 @@ class SpeechService:
 
     def stop(self) -> None:
         self._stop_event.set()
-        release_shared_capture(self.capture)
+        # Unregister from audio router
+        if self._vosk_adapter:
+            self._audio_router.get_capture().unregister_consumer("speech_vosk")
+            self._vosk_adapter.on_stop()
+            self._vosk_adapter = None
+        self._stream_iter = None
         with self._listen_lock:
             self._listening = False
 
     def listen_once(self, timeout_sec: float = 5.0) -> Optional[RecognitionResult]:
-        """Listen until first final result or timeout."""
         res: Optional[RecognitionResult] = None
         def _cb(r: RecognitionResult):
             nonlocal res
@@ -461,65 +329,15 @@ class SpeechService:
         with self._listen_lock:
             return self._listening
 
-    # Pan-tilt controls
-    def track_start(self) -> None:
-        self._tracking = True
-        self._pan.start()
-
-    def track_stop(self) -> None:
-        self._tracking = False
-        self._pan.stop()
-
-    def track_status(self):
-        st = self._pan.status()
-        st["tracking"] = self._tracking
-        st["angle"] = self._last_angle
-        return st
-
-    # Hardware send: route through VLM head arbiter when enabled (unified pan/tilt).
-    def _send_pan(self, angle_deg: float) -> None:
-        pt_cfg = self.cfg.get("pan_tilt", {}) if isinstance(self.cfg.get("pan_tilt"), dict) else {}
-        if bool(pt_cfg.get("use_head_arbiter", True)):
-            try:
-                import requests
-                from modules.gateway.url import gateway_url, resolve_gateway_base_url
-
-                base = resolve_gateway_base_url(self.cfg)
-                url = gateway_url(base, "/vlm/head/move")
-                requests.post(
-                    url,
-                    json={
-                        "pan": float(angle_deg),
-                        "tilt": float(pt_cfg.get("center_tilt_deg", 90.0)),
-                        "source": "sound_direction",
-                        "priority": int(pt_cfg.get("arbiter_priority", 60)),
-                    },
-                    timeout=0.25,
-                )
-                return
-            except Exception as exc:
-                logger.debug("head arbiter pan failed, falling back to Arduino: %s", exc)
-        try:
-            import requests
-            from modules.gateway.url import gateway_url, resolve_gateway_base_url
-
-            url = gateway_url(resolve_gateway_base_url(self.cfg), "/arduino/request")
-            payload = build_set_servo_cmd(SERVO_INDEX_PAN, int(angle_deg))
-            requests.post(url, json=payload, params={"timeout": 0.1}, timeout=0.2)
-        except Exception as e:
-            logger.debug(f"Failed to send pan: {e}")
-
 
 def create_app(config_path: str | None = None) -> FastAPI:
-    """FastAPI app factory for the speech module."""
     service = SpeechService(config_path)
     app = FastAPI()
-    from modules.speech.api import get_router  # local import to avoid circular
+    from modules.voice.speech.api import get_router
     app.include_router(get_router(service))
     return app
 
 
-# CLI Entrypoint
 def main():
     parser = argparse.ArgumentParser(description="Speech input service")
     parser.add_argument("--config", type=str, default=None, help="Path to config.yml")
@@ -530,7 +348,6 @@ def main():
     logging.basicConfig(level=logging.INFO)
 
     if args.api:
-        # Lazy import to avoid uvicorn dependency when not used
         import uvicorn  # type: ignore
         cfg = load_config(args.config)
         host = str(cfg.get("server", {}).get("host", "0.0.0.0"))

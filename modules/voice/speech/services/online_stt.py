@@ -71,7 +71,7 @@ def transcribe_google_multilang(
     if _recognizer is None or not pcm_bytes or len(pcm_bytes) < 3200:
         return "", default_lang
 
-    from modules.speech.services.stt_language import _detect_language, _transcript_score
+    from modules.voice.speech.services.stt_language import _detect_language, _transcript_score
 
     lang_list = languages or ["tr", "en"]
     if default_lang not in lang_list:
