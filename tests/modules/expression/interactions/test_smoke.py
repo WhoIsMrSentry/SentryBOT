@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import time
 
-from modules.interactions.xInteractionsService import xInteractionsService
-from modules.interactions.services.engine import InteractionEngine
+from modules.expression.interactions.xInteractionsService import xInteractionsService
+from modules.expression.interactions.services.engine import InteractionEngine
 
 
 def test_smoke():

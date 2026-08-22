@@ -1,20 +1,16 @@
 from __future__ import annotations
 
-from modules.interactions.services.engine import InteractionEngine
+from modules.expression.interactions.services.engine import InteractionEngine
 
 
 class _CompanionNeo:
     def __init__(self) -> None:
         self.modes: list[str] = []
         self.eye_colors = []
-        self.vu_calls: list[tuple[float, float | None]] = []
 
     def companion_mode(self, mode: str, eye_color=None) -> None:
         self.modes.append(str(mode))
         self.eye_colors.append(eye_color)
-
-    def companion_vu(self, level: float, right=None) -> None:
-        self.vu_calls.append((float(level), None if right is None else float(right)))
 
     def companion_is_active(self) -> bool:
         return bool(self.modes) and self.modes[-1] not in {"", "off"}
@@ -64,11 +60,12 @@ def test_companion_event_is_not_dispatched_again_on_tick():
     assert "event" not in eng.get_state()["ctx"]
 
 
-def test_vu_event_bypasses_general_event_handlers():
+
+def test_via_expression_skips_direct_neopixel_companion():
     eng = _engine_with_companion_rules()
-    handled = []
-    eng.register_event_handler(lambda event, data: handled.append((event, data)))
-    eng.push_event("speech.audio_level", {"left": 0.7, "right": 0.2})
-    assert eng.neo.vu_calls == [(0.7, 0.2)]
-    assert handled == []
-    assert eng.get_state()["last_event"] == ""
+    eng._via_expression = True
+    seen = []
+    eng.register_event_handler(lambda event, data: seen.append(event))
+    eng.push_event("wakeword.detected", {"wakeword": "hey sentry"})
+    assert eng.neo.modes == []
+    assert "wakeword.detected" in seen
