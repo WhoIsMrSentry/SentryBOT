@@ -56,19 +56,6 @@ class NeoDriverConfig:
     ws2812_spi_khz: int = 2400
 
 
-def _parse_spidev_device(path: str) -> tuple[int, int] | None:
-    # Expected format: /dev/spidev<bus>.<device>
-    try:
-        base = path.rsplit("/", 1)[-1]
-        if not base.startswith("spidev"):
-            return None
-        rest = base[len("spidev") :]
-        bus_s, dev_s = rest.split(".", 1)
-        return int(bus_s), int(dev_s)
-    except Exception:
-        return None
-
-
 class _ArduinoStrip:
     """
     Arduino backend support removed in favor of Pi native driver.

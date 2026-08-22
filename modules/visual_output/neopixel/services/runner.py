@@ -1,11 +1,10 @@
 from __future__ import annotations
+
 import queue
 import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
-
-import yaml
 
 try:
     from .driver import NeoDriver, NeoDriverConfig
@@ -36,98 +35,12 @@ try:
 except Exception:
     from driver import NeoDriver, NeoDriverConfig  # type: ignore
 
-
-class _SegmentView:
-    """Adapter that exposes a driver sub-range as if it were a full strip.
-
-    Lets the existing whole-strip animation functions run on a single
-    segment without modifying them: index ``i`` is remapped to
-    ``start + i`` and out-of-range writes are ignored.
-    """
-
-    def __init__(self, driver: Any, start: int, end: int) -> None:
-        self._driver = driver
-        self._start = start
-        self._end = end
-        self.num_leds = max(0, end - start)
-
-    def set(self, idx: int, r: int, g: int, b: int) -> None:
-        if 0 <= idx < self.num_leds:
-            self._driver.set(self._start + idx, r, g, b)
-
-    def show(self) -> None:
-        self._driver.show()
-
-    def clear(self) -> None:
-        for i in range(self._start, self._end):
-            self._driver.set(i, 0, 0, 0)
-        self._driver.show()
-
-    def fill(self, r: int, g: int, b: int) -> None:
-        for i in range(self._start, self._end):
-            self._driver.set(i, r, g, b)
-        self._driver.show()
+from .runner_presets import RunnerPresetsMixin
+from .runner_companion import RunnerCompanionMixin
+from .runner_adapters import _SegmentView, _AnimationCancelled, _AnimationDriver
 
 
-class _AnimationCancelled(RuntimeError):
-    pass
-
-
-class _AnimationDriver:
-    """Buffer animation frames and reject writes from cancelled animations."""
-
-    def __init__(self, runner: Any, generation: int) -> None:
-        self._runner = runner
-        self._generation = generation
-        self._pending: dict[int, tuple[int, int, int]] = {}
-        self.num_leds = runner.driver.num_leds
-
-    def _check(self) -> None:
-        if not self._runner._animation_is_current(self._generation):
-            raise _AnimationCancelled()
-
-    def set(self, idx: int, r: int, g: int, b: int) -> None:
-        self._check()
-        if 0 <= idx < self.num_leds:
-            self._pending[idx] = (r, g, b)
-
-    def show(self) -> None:
-        self._check()
-        with self._runner._frame_lock:
-            self._check()
-            for idx, color in self._pending.items():
-                self._runner.driver.set(idx, *color)
-            self._runner.driver.show()
-        self._pending.clear()
-
-    def clear(self) -> None:
-        self._check()
-        self._pending.clear()
-        with self._runner._frame_lock:
-            self._check()
-            self._runner.driver.clear()
-
-    def fill(self, r: int, g: int, b: int) -> None:
-        self._check()
-        self._pending.clear()
-        with self._runner._frame_lock:
-            self._check()
-            self._runner.driver.fill(r, g, b)
-
-    def animate(
-        self,
-        name: str,
-        r: int = 255,
-        g: int = 255,
-        b: int = 255,
-        iterations: int = 0,
-        speed_ms: int = 50,
-    ) -> bool:
-        self._check()
-        return False
-
-
-class NeoRunner:
+class NeoRunner(RunnerPresetsMixin, RunnerCompanionMixin):
     def __init__(
         self,
         cfg: NeoDriverConfig,
@@ -154,7 +67,6 @@ class NeoRunner:
                 )
             except Exception:
                 self._companion = None
-        # Emotions loader is optional; imported lazily to avoid cost
         self._emotion_store = None
         self._segments: dict[str, tuple[int, int]] = {}
         self._presets: dict[str, Any] = presets if isinstance(presets, dict) else {}
@@ -168,94 +80,6 @@ class NeoRunner:
             daemon=True,
         )
         self._animate_worker.start()
-
-    def _init_segments(self, segments: list[dict[str, Any]]) -> None:
-        for item in segments:
-            if not isinstance(item, dict):
-                continue
-            name = str(item.get("name", "")).strip().lower()
-            if not name:
-                continue
-            start = int(item.get("start", 0))
-            count = int(item.get("count", 0))
-            if count <= 0:
-                continue
-            end = start + count
-            start = max(0, min(self.driver.num_leds, start))
-            end = max(start, min(self.driver.num_leds, end))
-            if end > start:
-                self._segments[name] = (start, end)
-
-    def list_segments(self) -> list[dict[str, int | str]]:
-        out = []
-        for name, (start, end) in sorted(self._segments.items()):
-            out.append({"name": name, "start": start, "count": end - start})
-        return out
-
-    def list_presets(self) -> list[str]:
-        return sorted([str(k) for k in self._presets.keys()])
-
-    def preset_version(self) -> int:
-        return int(self._preset_version)
-
-    def get_preset(self, name: str) -> dict[str, Any] | None:
-        raw = self._presets.get(str(name))
-        if isinstance(raw, dict):
-            return dict(raw)
-        return None
-
-    def set_preset(self, name: str, spec: dict[str, Any], persist: bool = True) -> bool:
-        key = str(name or "").strip()
-        if not key or not isinstance(spec, dict):
-            return False
-        self._presets[key] = dict(spec)
-        if persist:
-            self._persist_presets()
-        return True
-
-    def delete_preset(self, name: str, persist: bool = True) -> bool:
-        key = str(name or "").strip()
-        if not key or key not in self._presets:
-            return False
-        del self._presets[key]
-        if persist:
-            self._persist_presets()
-        return True
-
-    def _persist_presets(self) -> bool:
-        if self._preset_store_path is None:
-            return False
-        try:
-            data: dict[str, Any] = {}
-            if self._preset_store_path.exists():
-                with open(self._preset_store_path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            if not isinstance(data, dict):
-                data = {}
-            self._preset_version += 1
-            meta = data.get("presets_meta") if isinstance(data.get("presets_meta"), dict) else {}
-            meta["version"] = self._preset_version
-            data["presets_meta"] = meta
-            data["presets"] = dict(self._presets)
-            self._preset_store_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._preset_store_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(data, f, sort_keys=False, allow_unicode=False)
-            return True
-        except Exception:
-            return False
-
-    def _segment_bounds(self, name: str | None) -> tuple[int, int] | None:
-        if not name:
-            return None
-        key = str(name).strip().lower()
-        bounds = self._segments.get(key)
-        if bounds is not None:
-            return bounds
-        aliases = {"jewel": "head", "stick": "body", "head": "jewel", "body": "stick"}
-        alt = aliases.get(key)
-        if alt:
-            return self._segments.get(alt)
-        return None
 
     def _drain_animate_queue(self) -> None:
         try:
@@ -278,7 +102,6 @@ class NeoRunner:
         return current and not self.companion_is_active()
 
     def _wait_for_animations(self, timeout: float = 5.0) -> bool:
-        """Wait for all queued animations to complete. Returns True if completed, False on timeout."""
         try:
             self._animate_queue.join()
             return True
@@ -292,7 +115,6 @@ class NeoRunner:
         except Exception:
             pass
 
-    # Exposed operations
     def clear(self) -> bool:
         if self.companion_is_active():
             return False
@@ -326,52 +148,6 @@ class NeoRunner:
     def clear_segment(self, name: str) -> bool:
         return self.fill_segment(name, 0, 0, 0)
 
-    @staticmethod
-    def _parse_color(raw: Any) -> tuple[int, int, int] | None:
-        if isinstance(raw, (list, tuple)) and len(raw) == 3:
-            try:
-                return (int(raw[0]) & 255, int(raw[1]) & 255, int(raw[2]) & 255)
-            except Exception:
-                return None
-        if isinstance(raw, str):
-            s = raw.strip()
-            if s.startswith("#") and len(s) >= 7:
-                try:
-                    v = int(s[1:7], 16)
-                    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
-                except Exception:
-                    return None
-        return None
-
-    def apply_preset(self, name: str) -> bool:
-        if self.companion_is_active():
-            return False
-        preset = self._presets.get(str(name))
-        if not isinstance(preset, dict):
-            return False
-        self._cancel_animations()
-        animations: list[tuple[str, tuple[int, int, int] | None, str]] = []
-        for seg_name, spec in preset.items():
-            if not isinstance(spec, dict):
-                continue
-            color = self._parse_color(spec.get("color"))
-            effect = spec.get("effect")
-            if isinstance(effect, str) and effect:
-                animations.append((effect, color, str(seg_name)))
-                continue
-            if color is not None:
-                bounds = self._segment_bounds(str(seg_name))
-                if bounds is None:
-                    continue
-                start, end = bounds
-                with self._frame_lock:
-                    for idx in range(start, end):
-                        self.driver.set(idx, *color)
-                    self.driver.show()
-        for effect, color, segment in animations:
-            self.animate(effect, color=color, segment=segment, coalesce=False)
-        return True
-
     def rainbow(self, wait: float = 0.02, cycles: int = 3) -> bool:
         return self.animate("RAINBOW", iterations=cycles)
 
@@ -385,14 +161,10 @@ class NeoRunner:
     ) -> bool:
         return self.animate("THEATER_CHASE", color=(r, g, b), iterations=cycles)
 
-    # --- Emotions ---
     def show_color(self, r: int, g: int, b: int, duration: float = 0.3, clear_after: bool = False) -> bool:
-        # Immediate visual update; do not block the caller waiting for duration.
         if not self.fill(r, g, b):
             return False
         if duration > 0:
-            import threading
-
             def _clear_after():
                 try:
                     time.sleep(duration)
@@ -408,7 +180,7 @@ class NeoRunner:
     def _get_store(self):
         if self._emotion_store is None:
             try:
-                from modules.neopixel.emotions.loader import EmotionStore  # type: ignore
+                from modules.visual_output.neopixel.emotions.loader import EmotionStore  # type: ignore
             except Exception:
                 from ..emotions.loader import EmotionStore  # type: ignore
             self._emotion_store = EmotionStore()
@@ -420,7 +192,6 @@ class NeoRunner:
             r, g, b = store.random_color(emo)
             self.show_color(r, g, b, duration=duration, clear_after=False)
 
-    # --- Animations ---
     def _colors_from_emotions(self, emotions: list[str] | None) -> list[tuple[int, int, int]]:
         if not emotions:
             return []
@@ -436,7 +207,6 @@ class NeoRunner:
         segment: str | None = None,
         generation: int | None = None,
     ) -> None:
-        """Synchronous implementation of animation (may block)."""
         if generation is None:
             with self._animation_lock:
                 generation = self._animation_generation
@@ -447,8 +217,6 @@ class NeoRunner:
         cols = self._colors_from_emotions(emotions)
         c1 = color if color is not None else (cols[0] if cols else None)
 
-        # Segment target: run the *actual* animation scoped to the segment's
-        # LED range (falling back to a solid fill for that segment only).
         if segment:
             bounds = self._segment_bounds(segment)
             if bounds is not None:
@@ -458,14 +226,11 @@ class NeoRunner:
                     fill = c1 if c1 is not None else (255, 255, 255)
                     view.fill(*fill)
                 return
-            # Unknown segment name: degrade to whole-strip behaviour below.
 
         if not self._run_named_animation(name, animation_driver, cols, c1, iterations):
-            # Unknown animation name: try backend-native animation first.
             r, g, b = c1 if c1 else (255, 255, 255)
             if animation_driver.animate(name_lower, r, g, b, iterations or 0, 50):
                 return
-            # last-resort fallback simple fill
             if c1:
                 animation_driver.fill(*c1)
 
@@ -528,63 +293,6 @@ class NeoRunner:
                     self._active_animation = ""
                 self._animate_queue.task_done()
 
-    def companion_set_mode(self, mode: str) -> bool:
-        if self._companion is None:
-            return False
-        active = str(mode or "").strip().lower() not in {"", "off"}
-        if active:
-            self._cancel_animations()
-        ok = self._companion.set_mode(mode)
-        if active and ok:
-            try:
-                with self._frame_lock:
-                    self.driver.clear()
-            except Exception:
-                pass
-        return bool(ok)
-
-    def companion_set_vu_level(self, level: float, *, right: Optional[float] = None) -> bool:
-        if self._companion is None:
-            return False
-        self._companion.set_vu_level(level, right=right)
-        return True
-
-    def companion_is_active(self) -> bool:
-        if self._companion is None:
-            return False
-        return self._companion.is_active
-
-    def companion_set_eye_color(self, r: int, g: int, b: int) -> bool:
-        if self._companion is None:
-            return False
-        self._companion.set_eye_color((int(r) & 255, int(g) & 255, int(b) & 255))
-        return True
-
-    def companion_apply_semantic(self, semantic: str, *, revision: str = "", duration_ms: Optional[int] = None) -> bool:
-        if self._companion is None:
-            return False
-        self._cancel_animations()
-        return self._companion.apply_semantic(semantic, revision=revision, duration_ms=duration_ms)
-
-    def companion_semantic_catalog(self) -> dict[str, Any]:
-        if self._companion is None:
-            return {}
-        return self._companion.semantic_catalog()
-
-    def companion_status(self) -> dict[str, Any]:
-        if self._companion is None:
-            return {"enabled": False, "mode": "off"}
-        with self._animation_lock:
-            generation = self._animation_generation
-            active_animation = self._active_animation
-        return {
-            "enabled": True,
-            **self._companion.status(),
-            "animation_generation": generation,
-            "active_animation": active_animation,
-            "animation_queue_size": self._animate_queue.qsize(),
-        }
-
     def animate(
         self,
         name: str,
@@ -595,7 +303,6 @@ class NeoRunner:
         *,
         coalesce: bool = True,
     ) -> bool:
-        """Queue animations so only one runs at a time; drop pending when coalesce=True."""
         if self.companion_is_active():
             return False
         if coalesce:
