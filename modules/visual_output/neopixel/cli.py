@@ -1,8 +1,8 @@
 from __future__ import annotations
 import sys
 
-from modules.neopixel.services.driver import NeoDriverConfig
-from modules.neopixel.services.runner import NeoRunner
+from modules.visual_output.neopixel.services.driver import NeoDriverConfig
+from modules.visual_output.neopixel.services.runner import NeoRunner
 
 
 def main(argv: list[str] | None = None) -> int:

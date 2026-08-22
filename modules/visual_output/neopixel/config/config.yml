@@ -76,26 +76,14 @@ companion:
     thinking: "#0066CC"
     eye_default: "#30E3CA"
     wake_spin: "#FFD700"
-    vu_bar: "#00AAFF"
-    vu_bg: "#051018"
-    # VU gradient: green (quiet) -> yellow (mid) -> red (loud)
-    vu_gradient:
-      - "#00FF00"
-      - "#FFFF00"
-      - "#FF0000"
   thinking:
     step_ms: 120
   eye:
     breathe_ms: 800
-  vu:
-    attack: 0.78
-    decay: 0.22
-    min_level: 0.02
-    stale_ms: 180
   wake_spin:
     duration_ms: 1200
     wait_ms: 45
-    next_mode: listen_vu
+    next_mode: eye
 
 # Pi5-specific driver hint
 pi5neo:

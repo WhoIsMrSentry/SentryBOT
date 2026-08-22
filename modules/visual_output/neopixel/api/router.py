@@ -52,14 +52,8 @@ class EmotionsResponse(BaseModel):
 
 
 class CompanionModeRequest(BaseModel):
-    mode: str = Field(..., description="off | vu | listen | listen_vu | thinking | eye | wake_spin | wake_chase")
+    mode: str = Field(..., description="off | listen | thinking | eye | wake_spin | wake_chase")
     eye_color: Optional[str] = Field(None, description='Optional "#RRGGBB" for center eye')
-
-
-class CompanionVuRequest(BaseModel):
-    level: Optional[float] = Field(None, ge=0.0, le=1.0, description="Mono level 0..1 (both sticks)")
-    left: Optional[float] = Field(None, ge=0.0, le=1.0, description="Left channel level 0..1")
-    right: Optional[float] = Field(None, ge=0.0, le=1.0, description="Right channel level 0..1")
 
 
 def _pretty(name: str) -> str:
@@ -272,7 +266,7 @@ def get_router(runner: NeoRunner) -> APIRouter:
             seq = ["neutral"]
         # Collect names if available
         try:
-            from modules.neopixel.emotions.loader import EmotionStore  # type: ignore
+            from modules.visual_output.neopixel.emotions.loader import EmotionStore  # type: ignore
         except Exception:
             from ..emotions.loader import EmotionStore  # type: ignore
         store = EmotionStore()
@@ -292,7 +286,7 @@ def get_router(runner: NeoRunner) -> APIRouter:
     @r.post("/emote_named")
     def emote_named(emotion: str, name: str, duration: float = 0.25):
         try:
-            from modules.neopixel.emotions.loader import EmotionStore  # type: ignore
+            from modules.visual_output.neopixel.emotions.loader import EmotionStore  # type: ignore
         except Exception:
             from ..emotions.loader import EmotionStore  # type: ignore
         store = EmotionStore()
@@ -356,21 +350,6 @@ def get_router(runner: NeoRunner) -> APIRouter:
         ok = runner.companion_set_mode(body.mode)
         return {"ok": ok, "mode": body.mode}
 
-    @r.post("/companion/vu")
-    def companion_vu(body: CompanionVuRequest = Body(...)):
-        left = body.left
-        right = body.right
-        if left is None and right is None:
-            if body.level is None:
-                return {"ok": False, "error": "level or left/right required"}
-            left = right = body.level
-        elif left is None:
-            left = right
-        elif right is None:
-            right = left
-        ok = runner.companion_set_vu_level(float(left), right=float(right))
-        return {"ok": ok, "left": left, "right": right}
-
     @r.post("/prompt")
     def handle_prompt(body: PromptRequest = Body(...)):
         """Basic text-to-action parser for TriLayerRouter to prevent 404s."""
@@ -390,7 +369,7 @@ def get_router(runner: NeoRunner) -> APIRouter:
         emotions = [k for k in keywords if k in prompt]
         if emotions:
             try:
-                from modules.neopixel.emotions.loader import EmotionStore  # type: ignore
+                from modules.visual_output.neopixel.emotions.loader import EmotionStore  # type: ignore
             except Exception:
                 from ..emotions.loader import EmotionStore  # type: ignore
             store = EmotionStore()
