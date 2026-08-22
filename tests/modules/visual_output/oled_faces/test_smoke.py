@@ -1,8 +1,8 @@
-from modules.oled_faces.services.mapper import FaceMapper
+from modules.visual_output.oled_faces.services.mapper import FaceMapper
 
 
 def test_mapper_has_full_catalog():
-    from modules.oled_faces.config_loader import load_config
+    from modules.visual_output.oled_faces.config_loader import load_config
 
     mapper = FaceMapper(load_config())
     assert len(mapper.catalog_bitmaps) >= 31

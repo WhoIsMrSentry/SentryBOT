@@ -5,9 +5,9 @@ import time
 
 import pytest
 
-from modules.oled_faces.services.eyes.engine import EyeEngine
-from modules.oled_faces.services.eyes.moods import MOODS
-from modules.oled_faces.services.legacy_map import resolve_animation, resolve_bitmap, resolve_mood
+from modules.visual_output.oled_faces.services.eyes.engine import EyeEngine
+from modules.visual_output.oled_faces.services.eyes.moods import MOODS
+from modules.visual_output.oled_faces.services.legacy_map import resolve_animation, resolve_bitmap, resolve_mood
 
 
 def test_all_moods_render_headless():
@@ -52,17 +52,17 @@ def test_upstream_mood_catalog_size():
 
 
 def test_upstream_activities_ported():
-    from modules.oled_faces.services.eyes.activities import ACTIVITIES
+    from modules.visual_output.oled_faces.services.eyes.activities import ACTIVITIES
     for name in ("debugging", "building", "testing", "deploying", "glitch", "ping_pong", "waiting", "chill"):
         assert name in ACTIVITIES or name in MOODS
 
 
 def test_smoke_gesture_exists():
-    from modules.oled_faces.services.eyes.gestures import GESTURES_FN
+    from modules.visual_output.oled_faces.services.eyes.gestures import GESTURES_FN
     assert "smoke" in GESTURES_FN
     assert "acknowledge" in GESTURES_FN
 
 
 def test_editing_activity_available():
-    from modules.oled_faces.services.eyes.activities import ACTIVITIES
+    from modules.visual_output.oled_faces.services.eyes.activities import ACTIVITIES
     assert "editing" in ACTIVITIES

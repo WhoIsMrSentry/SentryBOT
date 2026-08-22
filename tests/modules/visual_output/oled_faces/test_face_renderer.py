@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 
 
 def test_face_renderer_begin_uses_config_brightness():
-    from modules.oled_faces.services.face_renderer import FaceRenderer
+    from modules.visual_output.oled_faces.services.face_renderer import FaceRenderer
 
-    with patch("modules.oled_faces.services.face_renderer.PiSsd1306Driver") as driver_cls, patch(
-        "modules.oled_faces.services.face_renderer.EyeEngine"
+    with patch("modules.visual_output.oled_faces.services.face_renderer.PiSsd1306Driver") as driver_cls, patch(
+        "modules.visual_output.oled_faces.services.face_renderer.EyeEngine"
     ) as engine_cls:
         driver = MagicMock()
         driver.begin.return_value = True

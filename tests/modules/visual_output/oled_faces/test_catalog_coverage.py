@@ -1,8 +1,8 @@
 """Ensure every Pip motor entry is wired through config expansion."""
 from __future__ import annotations
 
-from modules.oled_faces.config_loader import load_config
-from modules.oled_faces.services.catalog_registry import (
+from modules.visual_output.oled_faces.config_loader import load_config
+from modules.visual_output.oled_faces.services.catalog_registry import (
     MOTOR_ACTIVITIES,
     MOTOR_GESTURES,
     MOTOR_MOODS,

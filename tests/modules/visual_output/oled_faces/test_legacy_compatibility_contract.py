@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.oled_faces.services.legacy_map import (
+from modules.visual_output.oled_faces.services.legacy_map import (
     OLED_LEGACY_COMPATIBILITY_CONTRACT,
     OLED_LEGACY_COMPATIBILITY_ROLE,
     FaceCommand,
@@ -11,7 +11,7 @@ from modules.oled_faces.services.legacy_map import (
     resolve_logo,
     resolve_mood,
 )
-from modules.oled_faces.services.mapper import (
+from modules.visual_output.oled_faces.services.mapper import (
     OLED_FACE_MAPPER_COMPATIBILITY_CONTRACT,
     FaceMapper,
 )

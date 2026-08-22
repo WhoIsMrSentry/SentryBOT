@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from modules.oled_faces.services.pi_ssd1306_driver import PiSsd1306Driver
+from modules.visual_output.oled_faces.services.pi_ssd1306_driver import PiSsd1306Driver
 
 
 def _make_driver(enabled: bool = False) -> PiSsd1306Driver:

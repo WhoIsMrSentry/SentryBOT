@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import time
 
-from modules.oled_faces.config_loader import load_config
-from modules.oled_faces.services.face_coordinator import FaceCoordinator
-from modules.oled_faces.services.mapper import FaceMapper, OledAction
+from modules.visual_output.oled_faces.config_loader import load_config
+from modules.visual_output.oled_faces.services.face_coordinator import FaceCoordinator
+from modules.visual_output.oled_faces.services.mapper import FaceMapper, OledAction
 
 
 def _coord(overrides=None):

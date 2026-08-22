@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import time
 
-from modules.oled_faces.services.idle_ambient import IdleAmbientPlayer
+from modules.visual_output.oled_faces.services.idle_ambient import IdleAmbientPlayer
 
 
 def test_idle_ambient_draws_from_pool():
