@@ -1,6 +1,6 @@
 # Interactions
 
-Durumlara ve olaylara göre ışık/ifade tepkisi üreten hafif kural motorudur. `InteractionEngine`, sistem metriklerini ve olay akışlarını dinler; NeoPixel tarafına base ve transient efektler uygular.
+Durumlara ve olaylara göre ifade kararı üreten hafif kural motorudur. LED/OLED/kulak çıkışı `expression` üzerinden gider (`output.via_expression`). Yüksek frekanslı VU ölçer doğrudan NeoPixel companion API’de kalır.
 
 ## Sorumluluklar
 
@@ -46,6 +46,7 @@ Varsayılanlar `config_loader.py` içinde tanımlıdır ve modül-içi `config/c
 - `thresholds.cpu_temp`, `thresholds.cpu_load`, `thresholds.net`
 - `defaults.idle`
 - `rules`
+- `output.via_expression` (varsayılan true)
 - `quiet_hours`
 
 ## İlişkiler

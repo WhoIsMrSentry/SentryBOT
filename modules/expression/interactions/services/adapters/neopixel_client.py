@@ -98,15 +98,6 @@ class NeoHttpClient:
                 payload["eye_color"] = f"#{rgb[0]:02x}{rgb[1]:02x}{rgb[2]:02x}"
         self._post("/companion/mode", json=payload)
 
-    def companion_vu(self, level: float, right: Optional[float] = None) -> None:
-        payload: Dict[str, Any] = {}
-        if right is None:
-            payload["level"] = float(level)
-        else:
-            payload["left"] = float(level)
-            payload["right"] = float(right)
-        self._post("/companion/vu", json=payload)
-
 
 class NoOpNeoClient:
     """Safe degraded LED adapter.
@@ -142,10 +133,5 @@ class NoOpNeoClient:
         pass
     def companion_mode(self, mode: str, **kwargs):
         # Safe degraded adapter: optional companion LED mode is ignored when
-        # NeoPixel output is disabled or unavailable.
-        return None
-
-    def companion_vu(self, level: float, **kwargs):
-        # Safe degraded adapter: optional VU meter update is ignored when
         # NeoPixel output is disabled or unavailable.
         return None

@@ -1,24 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime
 import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-try:
-    import requests  # type: ignore
-except Exception:  # pragma: no cover
-    requests = None  # type: ignore
-
 from .metrics import MetricsCollector
 from .rules import Rule, eval_condition, priority_rank
 from .adapters.neopixel_client import NeoHttpClient, NoOpNeoClient
+from .engine_guards import EngineGuardsMixin
+from .engine_render import EngineRenderMixin
 
 logger = logging.getLogger("interactions.engine")
 
 
-class InteractionEngine:
+class InteractionEngine(EngineGuardsMixin, EngineRenderMixin):
     def __init__(
         self,
         cfg: Dict[str, Any],
@@ -30,14 +26,13 @@ class InteractionEngine:
         self._expression_arbiter = expression_arbiter
         if social_db is None:
             try:
-                from modules.social_db import get_default as _social_default  # type: ignore
+                from modules.cognitive_memory import get_default as _social_default  # type: ignore
 
                 social_db = _social_default()
             except Exception:
                 social_db = None
         self._social_db = social_db
         self.metrics = MetricsCollector(window_s=int(cfg.get("thresholds", {}).get("cpu_load", {}).get("window_s", 60)))
-        # If a local neo_client (NeoRunner) is provided, wrap it to match NeoHttpClient interface
         provided = neo_client
         if provided is not None:
             class _LocalNeoAdapter:
@@ -106,8 +101,6 @@ class InteractionEngine:
                         if emotions:
                             kwargs["emotions"] = emotions
                         self._runner.animate(name, **kwargs)
-                        import threading
-                        import time
 
                         def _restore_idle():
                             try:
@@ -136,13 +129,6 @@ class InteractionEngine:
                     except Exception:
                         pass
 
-                def companion_vu(self, level: float, right: Optional[float] = None) -> None:
-                    try:
-                        if hasattr(self._runner, "companion_set_vu_level"):
-                            self._runner.companion_set_vu_level(float(level), right=right)
-                    except Exception:
-                        pass
-
                 def companion_is_active(self) -> bool:
                     try:
                         if hasattr(self._runner, "companion_is_active"):
@@ -155,7 +141,7 @@ class InteractionEngine:
         else:
             base_url = str(cfg.get("adapter", {}).get("http_base_url", "http://localhost:8092/neopixel"))
             self.neo = NeoHttpClient(base_url) if base_url else NoOpNeoClient()
-        # rules
+
         self.rules: List[Rule] = []
         for r in cfg.get("rules", []) or []:
             self.rules.append(Rule(
@@ -167,7 +153,6 @@ class InteractionEngine:
             ))
         self.defaults = dict(cfg.get("defaults", {}))
 
-        # runtime
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.RLock()
@@ -185,6 +170,8 @@ class InteractionEngine:
         self._last_event_data: Dict[str, Any] = {}
         self._lights_claim_generation = 0
         self.quiet_hours_cfg = dict(cfg.get("quiet_hours", {}))
+        output_cfg = cfg.get("output") if isinstance(cfg.get("output"), dict) else {}
+        self._via_expression = bool(output_cfg.get("via_expression", True))
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -198,7 +185,6 @@ class InteractionEngine:
         if self._thread:
             self._thread.join(timeout=1.0)
 
-    # API
     def push_event(self, type_: str, data: Optional[Dict[str, Any]] = None) -> None:
         evt = str(type_ or "").strip()
         event_data = dict(data or {})
@@ -279,24 +265,11 @@ class InteractionEngine:
                 "ctx": {k: v for k, v in self._ctx.items() if k not in ("metrics",)},
             }
 
-    # Loop
     def _loop(self) -> None:
         interval = float(self.cfg.get("tick_interval_ms", 800)) / 1000.0
         while not self._stop.is_set():
             self._tick()
             time.sleep(interval)
-
-    def _detect_net_burst(self, now: float, metrics) -> bool:
-        try:
-            thr = self.cfg.get("thresholds", {}).get("net", {})
-            burst_mbps = float(thr.get("burst_mbps", 20))
-            min_dur_ms = int(thr.get("min_duration_ms", 200))
-            if metrics.net_mbps and metrics.net_mbps >= burst_mbps:
-                self._last_net_burst = now + max(0.05, min_dur_ms / 1000.0)
-                return True
-            return now < self._last_net_burst
-        except Exception:
-            return False
 
     def _evaluate_rules(self) -> Optional[Rule]:
         chosen: Optional[Rule] = None
@@ -305,127 +278,6 @@ class InteractionEngine:
                 if chosen is None or priority_rank(r.priority) > priority_rank(chosen.priority):
                     chosen = r
         return chosen
-
-    def _render_manual_effect(self, now: float, manual_effect: dict) -> bool:
-        if now < self._active_effect_until:
-            return True
-        if not (bool(manual_effect.get("force")) or self._effect_allowed("manual.effect")):
-            self._schedule_lights_release(0)
-            return True
-        name = str(manual_effect.get("name", "COMET"))
-        duration_ms = int(manual_effect.get("duration_ms", 800))
-        self._active_effect_until = now + duration_ms / 1000.0
-        threading.Thread(
-            target=self.neo.play_effect, args=(name, duration_ms),
-            kwargs={"color": manual_effect.get("color"), "emotions": manual_effect.get("emotions")},
-            daemon=True,
-        ).start()
-        self._schedule_lights_release(duration_ms)
-        return True
-
-    def _render_manual_base(self, now: float, manual_base: tuple) -> bool:
-        if now < self._active_effect_until:
-            return True
-        name, color = manual_base
-        key = (str(name).upper(), color)
-        if key != self._last_base:
-            self._last_base = key
-            self.neo.set_base(name=str(name), color=color)
-        return True
-
-    def _render_rule_companion(self, act: dict, chosen: Rule) -> bool:
-        comp = act.get("companion")
-        if not isinstance(comp, dict):
-            return False
-        mode = str(comp.get("mode", "off"))
-        eye = comp.get("eye_color")
-        if hasattr(self.neo, "companion_mode"):
-            self.neo.companion_mode(mode, eye_color=eye)
-        with self._lock:
-            self._last_base = None
-        chosen.stamp()
-        return True
-
-    def _dispatch_rule_for_event(self, evt: str) -> bool:
-        if not evt:
-            return False
-        with self._lock:
-            snapshot = dict(self._ctx)
-            snapshot["event"] = evt
-        chosen: Optional[Rule] = None
-        for rule in self.rules:
-            if "event" not in rule.when:
-                continue
-            if not eval_condition(rule.when, snapshot) or not rule.ready():
-                continue
-            if chosen is None or priority_rank(rule.priority) > priority_rank(chosen.priority):
-                chosen = rule
-        if chosen is None:
-            return False
-        act = chosen.action or {}
-        if "companion" in act:
-            return self._render_rule_companion(act, chosen)
-        now = time.time()
-        return self._render_rule_effect(now, act, chosen, event_name=evt) or self._render_rule_base(now, act, chosen)
-
-    def _render_rule_effect(
-        self,
-        now: float,
-        act: dict,
-        chosen: Rule,
-        event_name: Any = None,
-    ) -> bool:
-        if "effect" not in act or now < self._active_effect_until:
-            return False
-        eff = act.get("effect") or {}
-        name = str(eff.get("name", "COMET"))
-        duration_ms = int(eff.get("duration_ms", 800))
-        event_name = event_name or self._ctx.get("event")
-        if not (self._effect_allowed(event_name) and self._claim_lights_for_event(event_name)):
-            return True
-        self._active_effect_until = now + duration_ms / 1000.0
-        chosen.stamp()
-        threading.Thread(
-            target=self.neo.play_effect, args=(name, duration_ms),
-            kwargs={"color": eff.get("color"), "emotions": eff.get("emotions") if isinstance(eff.get("emotions"), list) else None},
-            daemon=True,
-        ).start()
-        self._schedule_lights_release(duration_ms)
-        return True
-
-    def _render_rule_base(self, now: float, act: dict, chosen: Rule) -> bool:
-        if "base" not in act or now < self._active_effect_until:
-            return False
-        base = act["base"] or {}
-        name = str(base.get("name", self.defaults.get("idle", {}).get("base", {}).get("name", "BREATHE")))
-        color = base.get("color")
-        key = (name.upper(), color)
-        if key != self._last_base:
-            self._last_base = key
-            self.neo.set_base(name=name, color=color)
-            chosen.stamp()
-        return True
-
-    def _companion_controls_leds(self) -> bool:
-        try:
-            if hasattr(self.neo, "companion_is_active"):
-                return bool(self.neo.companion_is_active())
-        except Exception:
-            pass
-        return False
-
-    def _render_idle_base(self, now: float) -> None:
-        if now < self._active_effect_until:
-            return
-        if hasattr(self.neo, "companion_is_active") and self.neo.companion_is_active():
-            return
-        idle = self.defaults.get("idle", {}).get("base", {})
-        name = str(idle.get("name", "BREATHE"))
-        color = idle.get("color")
-        key = (name.upper(), color)
-        if key != self._last_base:
-            self._last_base = key
-            self.neo.set_base(name=name, color=color)
 
     def _tick(self) -> None:
         now = time.time()
@@ -453,115 +305,30 @@ class InteractionEngine:
                 self._schedule_lights_release(0)
                 rendered = True
             elif manual_effect and now >= self._active_effect_until:
-                rendered = self._render_manual_effect(now, manual_effect)
+                if self._uses_expression_output():
+                    self._notify_expression("interactions.effect", dict(manual_effect))
+                    rendered = True
+                else:
+                    rendered = self._render_manual_effect(now, manual_effect)
             elif manual_base and now >= self._active_effect_until and not companion_leds:
-                rendered = self._render_manual_base(now, manual_base)
+                if self._uses_expression_output():
+                    self._notify_expression("interactions.base", {"name": manual_base[0], "color": manual_base[1]})
+                    rendered = True
+                else:
+                    rendered = self._render_manual_base(now, manual_base)
             elif chosen:
                 act = chosen.action or {}
-                if "companion" in act:
+                if self._uses_expression_output():
+                    self._notify_expression(f"interactions.{chosen.id}", {"rule": chosen.id, "action": act})
+                    chosen.stamp()
+                    rendered = True
+                elif "companion" in act:
                     rendered = self._render_rule_companion(act, chosen)
                 elif not companion_leds:
                     rendered = self._render_rule_effect(now, act, chosen) or self._render_rule_base(now, act, chosen)
 
             if not rendered and not companion_leds:
-                self._render_idle_base(now)
-
-    def _claim_lights_for_event(self, event_name: Any, *, force: bool = False) -> bool:
-        if self._expression_arbiter is None:
-            return True
-        try:
-            ok = bool(self._expression_arbiter.claim_lights("interactions", force=force))
-            if ok:
-                with self._lock:
-                    self._lights_claim_generation += 1
-            return ok
-        except Exception:
-            return True
-
-    def _schedule_lights_release(self, duration_ms: int) -> None:
-        if self._expression_arbiter is None:
-            return
-        with self._lock:
-            generation = self._lights_claim_generation
-
-        def _release() -> None:
-            time.sleep(max(0.0, duration_ms / 1000.0))
-            with self._lock:
-                if generation != self._lights_claim_generation:
-                    return
-            try:
-                self._expression_arbiter.release("interactions")
-            except Exception:
-                pass
-
-        threading.Thread(target=_release, name="InteractionsLightsRelease", daemon=True).start()
-
-    def _effect_allowed(self, event_name: Any) -> bool:
-        if not bool(self.quiet_hours_cfg.get("enabled", False)):
-            return True
-        if not self._is_quiet_hours_active():
-            return True
-        if not bool(self.quiet_hours_cfg.get("suppress_effects", True)):
-            return True
-        allowed = self.quiet_hours_cfg.get("allow_events", []) or []
-        if not isinstance(allowed, list):
-            return False
-        return str(event_name or "").strip() in {str(v).strip() for v in allowed}
-
-    @staticmethod
-    def _parse_hhmm(value: str) -> Optional[Tuple[int, int]]:
-        text = str(value or "").strip()
-        parts = text.split(":")
-        if len(parts) != 2:
-            return None
-        try:
-            hh = int(parts[0])
-            mm = int(parts[1])
-        except Exception:
-            return None
-        if hh < 0 or hh > 23 or mm < 0 or mm > 59:
-            return None
-        return hh, mm
-
-    def _is_quiet_hours_active(self) -> bool:
-        if not bool(self.quiet_hours_cfg.get("enabled", False)):
-            return False
-        start = self._parse_hhmm(str(self.quiet_hours_cfg.get("start", "23:00")))
-        end = self._parse_hhmm(str(self.quiet_hours_cfg.get("end", "07:00")))
-        if start is None or end is None:
-            return False
-        now = datetime.now().hour * 60 + datetime.now().minute
-        start_min = start[0] * 60 + start[1]
-        end_min = end[0] * 60 + end[1]
-        if start_min == end_min:
-            return True
-        if start_min < end_min:
-            return start_min <= now < end_min
-        return now >= start_min or now < end_min
-
-    def _update_arduino_state(self, now: float) -> None:
-        if requests is None:
-            return
-        cfg = self.monitor_cfg.get("arduino") if isinstance(self.monitor_cfg.get("arduino"), dict) else None
-        if not cfg:
-            return
-        interval = float(cfg.get("interval_s", 5.0))
-        if now - self._last_arduino_check < interval:
-            return
-        self._last_arduino_check = now
-        url = str(cfg.get("url"))
-        if not url:
-            return
-        timeout = float(cfg.get("timeout_s", 0.5))
-        ok = False
-        try:
-            resp = requests.get(url, timeout=timeout)
-            if resp.status_code == 200:
-                try:
-                    data = resp.json()
-                except Exception:
-                    data = {}
-                ok = bool(data.get("ok", True))
-        except Exception:
-            ok = False
-        self.set_state(arduino_connected=ok)
+                if self._uses_expression_output():
+                    self._emit_idle_expression()
+                else:
+                    self._render_idle_base(now)

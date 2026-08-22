@@ -21,6 +21,9 @@ hardware:
 
 tick_interval_ms: 800
 
+output:
+  via_expression: true
+
 quiet_hours:
   enabled: true
   start: "23:00"

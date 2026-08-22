@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -26,14 +27,28 @@ class MetricsCollector:
 
     def sample(self) -> SysMetrics:
         m = SysMetrics()
-        # CPU temperature
-        m.cpu_temp = self._read_cpu_temp()
-        # load
-        m.cpu_load = self._read_cpu_load()
-        # network
+        snap = self._hardware_snapshot()
+        if snap is not None:
+            m.cpu_temp = snap.get("cpu_temp_c")
+            load = snap.get("cpu_load_1m")
+            if load is not None:
+                nproc = float(os.cpu_count() or 1)
+                m.cpu_load = min(1.0, float(load) / nproc)
+        if m.cpu_temp is None:
+            m.cpu_temp = self._read_cpu_temp()
+        if m.cpu_load is None:
+            m.cpu_load = self._read_cpu_load()
         m.net_mbps = self._read_net_speed_mbps()
-        # arduino (placeholder): external health check can set this via event/state
         return m
+
+    @staticmethod
+    def _hardware_snapshot() -> Optional[dict]:
+        try:
+            from modules.hardware.services.system import read_system_snapshot
+
+            return read_system_snapshot().to_dict()
+        except Exception:
+            return None
 
     def _read_cpu_temp(self) -> Optional[float]:
         if psutil is None:

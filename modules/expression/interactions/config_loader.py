@@ -33,6 +33,7 @@ def load_config(config_path: Optional[str] = None, overrides: Optional[Dict[str,
             "brightness": 0.6,
             "idle": {"base": {"name": "BREATHE", "color": "#30E3CA", "speed": "slow"}},
         },
+        "output": {"via_expression": True},
         "rules": [],
     }
 

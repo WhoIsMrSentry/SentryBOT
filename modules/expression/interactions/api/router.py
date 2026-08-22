@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 try:
     from ..services.engine import InteractionEngine
 except Exception:  # pragma: no cover
-    from modules.interactions.services.engine import InteractionEngine  # type: ignore
+    from modules.expression.interactions.services.engine import InteractionEngine  # type: ignore
 
 
 def get_router(engine: InteractionEngine) -> APIRouter:
