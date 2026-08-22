@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.speech.services.wake_phrase import contains_wakeword, strip_wakewords
+from modules.voice.speech.services.wake_phrase import contains_wakeword, strip_wakewords
 
 
 def test_contains_wakeword() -> None:

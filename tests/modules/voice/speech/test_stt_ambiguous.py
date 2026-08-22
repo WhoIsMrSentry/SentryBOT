@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from modules.speech.services.stt_language import resolve_stt_text_and_language
+from modules.voice.speech.services.stt_language import resolve_stt_text_and_language
 
 
 def test_skips_dual_decode_when_primary_confident():

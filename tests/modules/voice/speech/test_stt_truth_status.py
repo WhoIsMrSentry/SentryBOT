@@ -7,7 +7,7 @@ import yaml
 
 
 def test_recognizer_status_reports_missing_model(tmp_path: Path) -> None:
-    from modules.speech.services.recognizer import Recognizer
+    from modules.voice.speech.services.recognizer import Recognizer
 
     missing = tmp_path / "missing-vosk"
     rec = Recognizer({"language": "tr", "language_models": {"tr": str(missing)}})
@@ -20,7 +20,7 @@ def test_recognizer_status_reports_missing_model(tmp_path: Path) -> None:
 
 
 def test_speech_service_status_rejects_missing_primary_model(tmp_path: Path) -> None:
-    from modules.speech.xSpeechService import SpeechService
+    from modules.voice.speech.xSpeechService import SpeechService
 
     cfg = {
         "audio": {"device": None, "samplerate": 16000, "channels": 1, "dtype": "int16", "frame_ms": 30},
@@ -50,8 +50,8 @@ def test_speech_service_status_rejects_missing_primary_model(tmp_path: Path) -> 
 
 
 def test_speech_router_start_returns_stt_unavailable(tmp_path: Path) -> None:
-    from modules.speech.xSpeechService import SpeechService
-    from modules.speech.api.router import get_router
+    from modules.voice.speech.xSpeechService import SpeechService
+    from modules.voice.speech.api.router import get_router
 
     cfg = {
         "audio": {"device": None, "samplerate": 16000, "channels": 1, "dtype": "int16", "frame_ms": 30},

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from modules.speak.services.tts import TextToSpeech
-from modules.speech.services.stt_language import resolve_stt_text_and_language
+from modules.voice.speak.services.tts import TextToSpeech
+from modules.voice.speech.services.stt_language import resolve_stt_text_and_language
 
 
 def test_resolve_stt_keeps_turkish_on_primary() -> None:
@@ -52,7 +52,7 @@ def test_piper_locks_voice_from_explicit_language() -> None:
             },
         }
     )
-    from modules.speak.services.lang_detect import piper_voice_for_language
+    from modules.voice.speak.services.lang_detect import piper_voice_for_language
 
     voice = tts._resolve_piper_voice(
         "Merhaba nasılsın",

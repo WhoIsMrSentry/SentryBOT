@@ -1,4 +1,4 @@
-from modules.speech.services.audio_capture import AudioCapture
+from modules.voice.speech.services.audio_capture import AudioCapture
 
 
 def test_merge_config_keeps_device_when_override_is_null() -> None:
@@ -14,7 +14,7 @@ def test_merge_config_applies_explicit_device() -> None:
 
 
 def test_is_alsa_device_name() -> None:
-    from modules.speech.services.audio_capture import _is_alsa_device_name
+    from modules.voice.speech.services.audio_capture import _is_alsa_device_name
 
     assert _is_alsa_device_name("plughw:0,0")
     assert _is_alsa_device_name("hw:1,0")
