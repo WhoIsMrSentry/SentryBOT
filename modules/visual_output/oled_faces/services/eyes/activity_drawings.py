@@ -1,45 +1,17 @@
-"""ACTIVITIES -- a looping "what I'm doing" status: a gaze pose + an overlay icon.
-Each busy activity also wears a fitting face (see ACT_MOOD)."""
 from __future__ import annotations
 
 import itertools
 import math
-
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
 from .primitives import draw_formula, frame, rand, smoothstep
-
-ACTIVITIES = (
-    "idle", "thinking", "scanning", "searching", "processing", "working", "editing",
-    "debugging", "building", "testing", "deploying", "connecting", "ping_pong",
-    "listening", "waiting", "glitch",
-)
-ACT_MOOD = {
-    "thinking": "focused", "scanning": "neutral", "searching": "focused",
-    "working": "focused", "listening": "neutral", "editing": "smoking",
-    "processing": "focused", "connecting": "attentive",
-    "debugging": "suspicious", "building": "focused", "testing": "focused",
-    "deploying": "neutral", "ping_pong": "attentive", "waiting": "bored", "glitch": "scared",
-}
-
-# Self-ending activities: glitch rolls out after ~3s windows (50% chance per window).
-_GLITCH_ROLL_S = 3.0
-_GLITCH_HEAL_ODD = 0.5
-
-
-def _glitch_expired(now: float, start: float) -> bool:
-    k = int((now - start) / _GLITCH_ROLL_S)
-    return k >= 1 and rand(start + k * 7.31) < _GLITCH_HEAL_ODD
-
-
-ACT_EXPIRY = {"glitch": _glitch_expired}
 
 # ping_pong sonar timeline
 _PP_OUT, _PP_HOLD, _PP_SEG = 1.3, 0.6, 1.9
 _PP_CYCLE = 2 * _PP_SEG
 _PP_MAXR, _PP_HMULT = 150, 0.6
 
-# deploying sea spectrum (built once)
+
 def _make_spectrum():
     waves = []
     for i in range(7):
@@ -68,46 +40,6 @@ _WAIT_ACT_DUR = _WAIT_TYPE_DUR + _WAIT_DOTS_DUR + _WAIT_DEL_DUR
 _GLITCH_BEAT, _GLITCH_AMP = 0.07, 6
 
 
-def pose(act, now):
-    """Eased gaze target (x, y) + height multiplier for a looping activity."""
-    if act == "thinking":
-        return math.sin(now * 0.7) * 7, -9 + math.sin(now * 0.4) * 2, 1.0
-    if act == "scanning":
-        line = now * 1.0
-        return (int(line % 1.0 * 4) / 3 * 2 - 1) * 13, (int(line) % 3 - 1) * 5, 1.0
-    if act == "searching":
-        return math.sin(now * 2.2) * 11 + math.sin(now * 1.3) * 5, math.sin(now * 1.7) * 5, 1.0
-    if act == "working":
-        return math.sin(now * 1.6) * 5, 4 + math.sin(now * 0.8) * 1, 0.85
-    if act == "listening":
-        return math.sin(now * 1.8) * 2, math.sin(now * 3.6) * 2, 1.0
-    if act == "processing":
-        return math.sin(now * 1.4) * 4, -2 + math.sin(now * 0.7), 0.92
-    if act == "connecting":
-        return math.sin(now * 1.5) * 3, math.sin(now * 2.0) * 2, 1.0
-    if act == "debugging":
-        return math.sin(now * 1.4) * 12 + math.sin(now * 3.1) * 3, 5 + math.sin(now * 4.0), 0.9
-    if act == "building":
-        return math.sin(now * 1.5) * 1.5, 4 + math.sin(now * 2.0) * 1.5, 0.92
-    if act == "testing":
-        return 5 + math.sin(now * 1.6) * 1.5, 5 + math.sin(now * 1.1) * 1.5, 0.95
-    if act == "deploying":
-        return math.sin(now * 0.25) * 4, 7 + math.sin(now * 1.7) * 1.2, 1.0
-    if act == "ping_pong":
-        return ((-6.0, -4.0, _PP_HMULT) if (now % _PP_CYCLE) < _PP_SEG
-                else (6.0, 4.0, _PP_HMULT))
-    if act == "waiting":
-        return math.sin(now * 0.4) * 2, 2 + math.sin(now * 0.6), 1.0
-    if act == "glitch":
-        f = int(now / _GLITCH_BEAT) % len(_GLITCH_BEATS)
-        if _GLITCH_BEATS[f] is None:
-            return 0.0, 0.0, 1.0
-        jx, jy = rand(f), rand(f, 7)
-        return (round(jx * 4) - 2) * 3, (round(jy * 2) - 1) * 2, 1.0
-    return 0.0, 0.0, 1.0
-
-
-# ---- overlay icons: drawn on top of the eyes. Signature: (d, W, H, now) --------
 def _think(d, W, H, now):
     tokens = ("E=mc^2", "a^2+b^2=c^2", "F=ma", "v=d/t", "2^10", "i^2=-1", "dx/dt",
               "3.14", "1.618", "9.8", "42", "404", "1337", "O(n)", "?")
