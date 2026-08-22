@@ -5,7 +5,7 @@ from typing import Optional
 try:
     from ..xAnimateService import xAnimateService
 except Exception:
-    from modules.animate.xAnimateService import xAnimateService  # type: ignore
+    from modules.expression.animate.xAnimateService import xAnimateService  # type: ignore
 
 
 def get_router(anim: xAnimateService) -> APIRouter:

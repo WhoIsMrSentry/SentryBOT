@@ -6,16 +6,14 @@ YAML tabanlı servo animasyon yürütücüsüdür. `arduino_serial.set_pose()` �
 
 - `animations/*.yml` dosyalarını okuma ve çalıştırma
 - Hız çarpanı (`speed`) ve döngü (`loop`) desteği
-- Legacy 8 değerli pozları 4-servo kontratına normalize etme (pan/tilt)
+- Multimodal eşzamanlı kanal desteği: Arduino servoları, PiServo kulakları, OLED yüz/göz ifadeleri ve NeoPixel ışık efektleri
 - Gateway üzerinden HTTP tetikleme
 
 ## Mimari
 
 - Giriş noktası: `xAnimateService.py` (`xAnimateService`)
 - Router: `api/router.py`
-- Paylaşımlı `xArduinoSerialService` instance'ı gateway'den alınır
-
-Gateway `_include_animate` arduino modülü mount edilmeden animate'i atlar (duplicate serial önleme).
+- Paylaşımlı `xArduinoSerialService`, `piservo`, `oled_faces` ve `neopixel` instance'ları Gateway bootstrap (`_wire_animate_piservo`) üzerinden otomatik bağlanır
 
 ## Yerleşik Animasyonlar
 
@@ -27,15 +25,16 @@ Gateway `_include_animate` arduino modülü mount edilmeden animate'i atlar (dup
 - `POST /animate/run?name=&speed=1.0&loop=false` — thread'de çalıştırır (timeout korumalı)
 - `POST /animate/stop` — çalışan animasyonu durdurur
 
-## YAML Şeması
+## Multimodal YAML Şeması
 
 ```yaml
 name: sit
 loop: false
 steps:
-  - pose: [90, 110, 60, 90]   # 4-servo: [pan, tilt, s2, s3]
+  - pose: [90, 90, 70, 110]   # pan, tilt, ear_l, ear_r
+    face: happy_eyes          # OLED yüz/göz ifadesi
+    led: [0, 255, 128]        # NeoPixel RGB rengi
     duration_ms: 1200
-  - pose: [90, 110, 60, 90]
     hold_ms: 500
 ```
 

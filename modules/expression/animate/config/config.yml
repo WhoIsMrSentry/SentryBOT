@@ -2,3 +2,4 @@
 animations_dir: null  # null -> use default modules/animate/animations
 default_speed: 1.0
 interpolate: true
+rest_pose: [90, 90, 90, 90]  # pan, tilt, ear_l, ear_r

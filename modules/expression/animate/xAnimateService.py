@@ -9,15 +9,11 @@ try:
     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
     from modules.arduino_serial.contract import (  # type: ignore
         SERVO_COUNT,
-        SERVO_INDEX_PAN,
-        SERVO_INDEX_TILT,
     )
 except Exception:
     from ..arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
     from ..arduino_serial.contract import (  # type: ignore
         SERVO_COUNT,
-        SERVO_INDEX_PAN,
-        SERVO_INDEX_TILT,
     )
 
 from .config_loader import load_config
@@ -44,16 +40,37 @@ class xAnimateService:
     name: sit
     loop: false
     steps:
-      - pose: [90,110,60, 90,110,60, 90,90]
+      - pose: [90, 90, 90, 90]  # pan, tilt, ear_l, ear_r
         duration_ms: 1200
-      - pose: [90,110,60, 90,110,60, 90,90]
+      - pose: [90, 90]          # 2 values: ears use rest_pose
         hold_ms: 500
     """
 
-    def __init__(self, serial: Optional[xArduinoSerialService] = None, config_overrides: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        serial: Optional[xArduinoSerialService] = None,
+        config_overrides: Optional[Dict[str, Any]] = None,
+        ears: Any = None,
+    ):
         self.cfg = load_config(overrides=config_overrides)
         self.serial = serial or xArduinoSerialService()
+        self._ears = ears
+        self._oled = None
+        self._neopixel = None
         self._running = False
+        rest = list(self.cfg.get("rest_pose") or [90, 90, 90, 90])
+        while len(rest) < SERVO_COUNT:
+            rest.append(90)
+        self._rest = [_clamp_deg(v) for v in rest[:SERVO_COUNT]]
+
+    def attach_ears(self, ears: Any) -> None:
+        self._ears = ears
+
+    def attach_oled(self, oled: Any) -> None:
+        self._oled = oled
+
+    def attach_neopixel(self, neopixel: Any) -> None:
+        self._neopixel = neopixel
 
     def start(self) -> None:
         self.serial.start()
@@ -91,21 +108,38 @@ class xAnimateService:
                 for step in anim.get("steps", []):
                     if not self._running:
                         break
-                    pose_raw: List[int] = list(step.get("pose", []))
+                    pose_raw: List[Any] = list(step.get("pose", []))
                     pose = self._normalize_pose(pose_raw)
                     dur_ms: int = int(step.get("duration_ms", 0))
                     hold_ms: int = int(step.get("hold_ms", 0))
                     if dur_ms > 0:
                         dur_ms = max(1, int(dur_ms / max(0.01, speed_mul)))
-                    # send pose
                     if pose:
                         try:
-                            self.serial.set_pose(pose, duration_ms=dur_ms if dur_ms > 0 else None)
+                            self._apply_pose(pose, dur_ms if dur_ms > 0 else None)
                         except Exception as exc:
                             logger.warning("animate degraded: pose step skipped (%s)", exc)
                             degraded = True
                             self._running = False
                             break
+                    face = step.get("face") or step.get("eyes")
+                    if face and self._oled is not None:
+                        try:
+                            if hasattr(self._oled, "on_event"):
+                                self._oled.on_event(str(face), {})
+                            elif hasattr(self._oled, "on_mode"):
+                                self._oled.on_mode(str(face))
+                        except Exception as exc:
+                            logger.debug("animate oled step skipped: %s", exc)
+                    led = step.get("led") or step.get("neopixel")
+                    if led and self._neopixel is not None:
+                        try:
+                            if isinstance(led, (list, tuple)) and len(led) == 3:
+                                self._neopixel.fill(int(led[0]), int(led[1]), int(led[2]))
+                            elif isinstance(led, str) and hasattr(self._neopixel, "set_mode"):
+                                self._neopixel.set_mode(led)
+                        except Exception as exc:
+                            logger.debug("animate neopixel step skipped: %s", exc)
                     # hold
                     if hold_ms > 0:
                         time.sleep(max(0.0, hold_ms / 1000.0))
@@ -127,25 +161,46 @@ class xAnimateService:
                 return p
         raise FileNotFoundError(name)
 
-    @staticmethod
-    def _normalize_pose(pose: List[int]) -> List[int]:
-        """Normalize animation pose to 4-servo contract.
+    def _apply_pose(self, pose: List[Optional[int]], duration_ms: Optional[int]) -> None:
+        if len(pose) >= 2 and (len(pose) < 4 or (pose[2] is None and pose[3] is None)):
+            if pose[0] is not None:
+                self.serial.set_servo(0, float(pose[0]))
+            if pose[1] is not None:
+                self.serial.set_servo(1, float(pose[1]))
+            return
 
-        Legacy animations contain 8 values where last 2 are head tilt/pan.
-        Current Arduino contract expects 4 values: [pan, tilt, s2, s3].
-        """
+        values = [self._rest[i] if v is None else int(v) for i, v in enumerate(pose)]
+        while len(values) < SERVO_COUNT:
+            values.append(self._rest[len(values)])
+        self.serial.set_pose(values[:SERVO_COUNT], duration_ms=duration_ms)
+        if self._ears is not None and hasattr(self._ears, "set_angles"):
+            self._ears.set_angles(float(values[2]), float(values[3]))
+
+    def _normalize_pose(self, pose: List[Any]) -> List[Optional[int]]:
+        """Normalize animation pose to 4 channels: [pan, tilt, ear_l, ear_r]."""
         if not pose:
             return []
-        if len(pose) == SERVO_COUNT:
-            return [_clamp_deg(v) for v in pose]
-        if len(pose) == 8:
-            tilt = _clamp_deg(pose[6])
-            pan = _clamp_deg(pose[7])
-            out = [90] * SERVO_COUNT
-            if SERVO_INDEX_PAN < SERVO_COUNT:
-                out[SERVO_INDEX_PAN] = pan
-            if SERVO_INDEX_TILT < SERVO_COUNT:
-                out[SERVO_INDEX_TILT] = tilt
-            return out
-        # Unknown pose size: ignore the step instead of crashing the API route.
+        n = len(pose)
+        if n == 2:
+            return [
+                xAnimateService._opt_deg(pose[0]),
+                xAnimateService._opt_deg(pose[1]),
+                None,
+                None,
+            ]
+        if n == SERVO_COUNT:
+            return [xAnimateService._opt_deg(v) for v in pose]
+        if n == 8:
+            return [
+                xAnimateService._opt_deg(pose[7]),
+                xAnimateService._opt_deg(pose[6]),
+                None,
+                None,
+            ]
         return []
+
+    @staticmethod
+    def _opt_deg(value: Any) -> Optional[int]:
+        if value is None:
+            return None
+        return _clamp_deg(value)

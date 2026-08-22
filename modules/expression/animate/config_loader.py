@@ -12,6 +12,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "animations_dir": None,  # if None, use modules/animate/animations
     "default_speed": 1.0,   # multiplier
     "interpolate": True,
+    "rest_pose": [90, 90, 90, 90],
 }
 
 
