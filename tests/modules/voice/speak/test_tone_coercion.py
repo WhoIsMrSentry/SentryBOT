@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from modules.speak.xSpeakService import SpeakService
+from modules.voice.speak.xSpeakService import SpeakService
 
 
 @dataclass

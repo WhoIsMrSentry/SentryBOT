@@ -65,7 +65,17 @@ class WorldMemoryRAG:
         self.cfg = dict(self.DEFAULTS)
         self.cfg.update(raw)
         self.enabled = bool(self.cfg.get("enabled", True))
-        self.path = Path(str(self.cfg.get("db_path") or self.DEFAULTS["db_path"]))
+        raw_path = self.cfg.get("db_path")
+        if not raw_path:
+            try:
+                from modules.cognitive_memory import get_default as _social_default  # type: ignore
+
+                sdb = _social_default()
+                if sdb is not None and hasattr(sdb, "path"):
+                    raw_path = str(sdb.path)
+            except Exception:
+                raw_path = None
+        self.path = Path(str(raw_path or self.DEFAULTS["db_path"]))
         if not self.path.is_absolute():
             self.path = Path.cwd() / self.path
         self.path.parent.mkdir(parents=True, exist_ok=True)

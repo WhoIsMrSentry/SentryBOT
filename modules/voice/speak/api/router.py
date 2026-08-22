@@ -13,7 +13,7 @@ from fastapi import APIRouter
 from modules.common.latency_trace import latency_trace
 
 if TYPE_CHECKING:
-    from modules.speak.xSpeakService import SpeakService
+    from modules.voice.speak.xSpeakService import SpeakService
 
 logger = logging.getLogger("speak.api")
 
@@ -46,7 +46,11 @@ def get_router(service: SpeakService) -> APIRouter:
     @router.get("/speak/status")
     async def status() -> Dict[str, Any]:
         health = service.tts.health()
-        return {"ready": bool(health.get("available", False)), "tts": health}
+        return {
+            "ready": bool(health.get("available", False)),
+            "tts": health,
+            "is_speaking": bool(getattr(service, "is_speaking", False)),
+        }
 
     @router.get("/speak/latency/latest")
     async def latest_latency() -> Dict[str, Any]:
@@ -88,7 +92,11 @@ def get_router(service: SpeakService) -> APIRouter:
         text = str(payload.get("text", "")).strip()
         if not text:
             return {"ok": False, "error": "text is empty"}
-        chunks = _split_text_chunks(text, max_chars=max(40, int(payload.get("max_chunk_chars", 180))))
+        default_chunk = int(getattr(service, "stream_max_chunk_chars", 180))
+        chunks = _split_text_chunks(
+            text,
+            max_chars=max(40, int(payload.get("max_chunk_chars", default_chunk))),
+        )
         if not chunks:
             return {"ok": False, "error": "text has no speakable chunks"}
 
@@ -106,7 +114,7 @@ def get_router(service: SpeakService) -> APIRouter:
 
         async def run() -> None:
             try:
-                from modules.speak.services.player import _play_stop
+                from modules.voice.speak.services.player import _play_stop
 
                 for index, chunk in enumerate(chunks, start=1):
                     if _play_stop.is_set():

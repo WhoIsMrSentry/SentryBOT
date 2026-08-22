@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.speak.services.tts import DummyBackend, TextToSpeech, TTSUnavailableError, UnavailableBackend
+from modules.voice.speak.services.tts import DummyBackend, TextToSpeech, TTSUnavailableError, UnavailableBackend
 
 
 def test_missing_piper_model_is_unavailable_not_dummy_by_default() -> None:

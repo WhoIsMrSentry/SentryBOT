@@ -1,7 +1,7 @@
 import sys
 from unittest.mock import MagicMock, patch
 
-from modules.wakeword.services.openwakeword_runner import (
+from modules.voice.wakeword.services.openwakeword_runner import (
     BUILTIN_WAKE_MODELS,
     _openwakeword_catalog,
     _resolve_pretrained_models,
@@ -36,16 +36,16 @@ def test_resolve_pretrained_models_hey_mycroft(tmp_path) -> None:
     mock_ow.VAD_MODELS = {}
 
     with patch.dict(sys.modules, {"openwakeword": mock_ow}), patch(
-        "modules.wakeword.services.openwakeword_runner._try_utils_download_models",
+        "modules.voice.wakeword.services.openwakeword_runner._try_utils_download_models",
         return_value=False,
     ), patch(
-        "modules.wakeword.services.openwakeword_runner._openwakeword_models_dir",
+        "modules.voice.wakeword.services.openwakeword_runner._openwakeword_models_dir",
         return_value=tmp_path,
     ), patch(
-        "modules.wakeword.services.openwakeword_runner._module_models_dir",
+        "modules.voice.wakeword.services.openwakeword_runner._module_models_dir",
         return_value=tmp_path,
     ), patch(
-        "modules.wakeword.services.openwakeword_runner._download_framework_asset",
+        "modules.voice.wakeword.services.openwakeword_runner._download_framework_asset",
     ):
         resolved, names = _resolve_pretrained_models(["hey_mycroft"], "onnx")
 

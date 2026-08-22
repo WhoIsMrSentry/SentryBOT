@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import argparse
 import logging
 import os
@@ -9,68 +10,37 @@ from threading import Event, Lock
 from typing import Any, Optional
 
 try:
-    import requests  # type: ignore
-except Exception:
-    requests = None  # type: ignore
-
-try:
     import audioop
 except Exception:
     audioop = None
 
 from fastapi import FastAPI
 
-from modules.wakeword.config_loader import load_config
-from modules.wakeword.services.wakeword_detector import WakewordDetector
-from modules.wakeword.services.openwakeword_runner import OpenWakewordRunner
-from modules.speech.services.audio_capture import AudioCapture, get_shared_capture, release_shared_capture
-from modules.speech.services.recognizer import Recognizer, RecognitionResult
-from modules.speech.services.wake_phrase import strip_wakewords
+from modules.voice.wakeword.config_loader import load_config, load_audio_router_config
+from modules.voice.wakeword.services.wakeword_detector import WakewordDetector
+from modules.voice.wakeword.services.openwakeword_runner import OpenWakewordRunner
+from modules.voice.wakeword.services.wakeword_actions import (
+    WakewordActions,
+    _now,
+    _post_json,
+    _get_json,
+    _normalize_command_text,
+    _is_wakeword_only,
+)
+from modules.voice.speech.services.recognizer import Recognizer, RecognitionResult
+from modules.voice.audio_router import (
+    get_audio_router, AudioRouterConfig, AudioConfig,
+    VoskConsumerAdapter, OpenWakeWordConsumerAdapter,
+    register_audio_consumer, unregister_audio_consumer
+)
 
 try:
-    from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
+    from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
     _init_global_logging()
 except Exception:
     pass
 
 logger = logging.getLogger("wakeword")
-
-
-def _now() -> float:
-    return time.time()
-
-
-def _post_json(url: str, payload: dict | None = None, timeout: float = 0.2) -> None:
-    if not url or requests is None:
-        return
-    try:
-        requests.post(url, json=payload or {}, timeout=timeout)
-    except Exception as exc:
-        logger.debug("wakeword http post failed: %s", exc)
-
-
-def _normalize_command_text(text: str, wakeword: str = "") -> str:
-    lowered = strip_wakewords(str(text or ""))
-    extra = str(wakeword or "").strip().lower()
-    if extra:
-        lowered = lowered.replace(extra, " ").strip()
-    return " ".join(lowered.split())
-
-
-def _is_wakeword_only(text: str, wakeword: str = "") -> bool:
-    return len(_normalize_command_text(text, wakeword)) < 2
-
-
-def _get_json(url: str, timeout: float = 0.2) -> dict:
-    if not url or requests is None:
-        return {}
-    try:
-        resp = requests.get(url, timeout=timeout)
-        if resp.status_code == 200:
-            return resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-    except Exception:
-        return {}
-    return {}
 
 
 def _resolve_model_paths(rec_cfg: dict) -> dict:
@@ -91,87 +61,6 @@ def _resolve_model_paths(rec_cfg: dict) -> dict:
     return cfg
 
 
-class WakewordActions:
-    def __init__(self, cfg: dict):
-        self.speech_start_url = str(cfg.get("speech_start_url", ""))
-        self.speech_stop_url = str(cfg.get("speech_stop_url", ""))
-        self.speech_last_url = str(cfg.get("speech_last_url", ""))
-        self.interactions_event_url = str(cfg.get("interactions_event_url", ""))
-        self.neopixel_url = str(cfg.get("neopixel_url", ""))
-        self.listen_window_sec = float(cfg.get("listen_window_sec", 8.0))
-        self.min_listen_before_final_sec = float(cfg.get("min_listen_before_final_sec", 1.5))
-        self.min_listen_before_final_sec_vad = float(
-            cfg.get("min_listen_before_final_sec_vad", self.min_listen_before_final_sec)
-        )
-        self.vad_enabled = bool(cfg.get("vad_enabled", False))
-        self.stop_on_final = bool(cfg.get("stop_on_final", True))
-        self.poll_interval_ms = int(cfg.get("poll_interval_ms", 200))
-        self.speak_stop_url = str(cfg.get("speak_stop_url", "http://localhost:8080/speak/stop"))
-        self.agent_interrupt_url = str(
-            cfg.get("agent_interrupt_url", "http://localhost:8080/agent/speech/interrupt")
-        )
-        self._interactions_engine: Any | None = None
-
-    def interrupt_robot_speech(self) -> None:
-        _post_json(self.speak_stop_url)
-        _post_json(self.agent_interrupt_url)
-
-    def start_speech(self) -> None:
-        _post_json(self.speech_start_url)
-
-    def stop_speech(self) -> None:
-        _post_json(self.speech_stop_url)
-
-    def emit_event(self, event_type: str, wakeword: str) -> None:
-        engine = self._interactions_engine
-        if engine is not None and hasattr(engine, "push_event"):
-            try:
-                engine.push_event(event_type, {"wakeword": wakeword})
-                return
-            except Exception:
-                pass
-        if not self.interactions_event_url:
-            return
-        _post_json(self.interactions_event_url, {"type": event_type, "wakeword": wakeword})
-
-    def has_final_speech(self, since_ts: float | None = None, wakeword: str = "") -> bool:
-        if not self.speech_last_url:
-            return False
-        data = _get_json(self.speech_last_url)
-        if not data.get("final"):
-            return False
-        text = str(data.get("text", "")).strip()
-        if not text:
-            return False
-        if since_ts is not None:
-            try:
-                if float(data.get("ts", 0.0)) < float(since_ts):
-                    return False
-            except Exception:
-                return False
-        if _is_wakeword_only(text, wakeword):
-            return False
-        return True
-
-    def _neopixel_post(self, endpoint: str, payload: dict | None = None) -> None:
-        """POST to neopixel API endpoint."""
-        if not self.neopixel_url or requests is None:
-            return
-        try:
-            url = f"{self.neopixel_url.rstrip('/')}/{endpoint.lstrip('/')}"
-            requests.post(url, json=payload or {}, timeout=0.2)
-        except Exception as exc:
-            logger.debug("neopixel http post failed: %s", exc)
-
-    def neopixel_set_mode(self, mode: str) -> None:
-        """Set neopixel companion mode."""
-        self._neopixel_post("companion/mode", {"mode": mode})
-
-    def neopixel_set_vu_level(self, level: float) -> None:
-        """Set VU meter level (0.0 - 1.0)."""
-        self._neopixel_post("companion/vu", {"level": max(0.0, min(1.0, float(level)))})
-
-
 class WakewordService:
     """Continuously listen for a wakeword and start/stop speech recognition."""
 
@@ -185,7 +74,15 @@ class WakewordService:
         self._thread: Optional[threading.Thread] = None
         self._degraded_reason: Optional[str] = None
 
-        self.capture = get_shared_capture(self.cfg.get("audio", {}))
+        # Initialize audio router
+        audio_router_cfg = load_audio_router_config()
+        self._audio_router = get_audio_router(audio_router_cfg)
+        self._audio_router.start()
+        
+        # Create adapters and register
+        self._vosk_adapter = None
+        self._openwakeword_adapter = None
+        
         wake_cfg = self.cfg.get("wakeword", {})
         self.engine = str(wake_cfg.get("engine", "vosk")).lower()
         self.detector = WakewordDetector(wake_cfg)
@@ -197,6 +94,8 @@ class WakewordService:
                 audio_channels = int((self.cfg.get("audio", {}) or {}).get("channels", 1))
                 ow_cfg.setdefault("input_channels", audio_channels)
                 self._openwakeword = OpenWakewordRunner(ow_cfg)
+                # Create adapter and register
+                self._openwakeword_adapter = OpenWakeWordConsumerAdapter(self._openwakeword)
             except Exception as exc:
                 self._degraded_reason = str(exc)
                 logger.warning("wakeword openwakeword unavailable, falling back to vosk: %s", exc)
@@ -208,6 +107,12 @@ class WakewordService:
                     self._degraded_reason = str(rec_exc)
         else:
             self._recognizer = Recognizer(_resolve_model_paths(self.cfg.get("recognition", {})))
+        
+        # Register Vosk adapter if using vosk
+        if self.engine == "vosk" and self._recognizer:
+            self._vosk_adapter = VoskConsumerAdapter(self._recognizer)
+            register_audio_consumer("wakeword_vosk", self._vosk_adapter)
+        
         self.actions = WakewordActions(self.cfg.get("actions", {}))
         rec_vad = (self.cfg.get("recognition", {}) or {}).get("vad", {})
         if isinstance(rec_vad, dict) and rec_vad.get("enabled"):
@@ -225,29 +130,42 @@ class WakewordService:
                 logger.warning("wakeword service running degraded: no engine available")
                 self._degraded_reason = self._degraded_reason or "no wakeword engine available"
                 return
-            stream = self.capture.stream()
+            
+            # Register with audio router
+            if self.engine == "openwakeword" and self._openwakeword_adapter:
+                register_audio_consumer("wakeword_openwakeword", self._openwakeword_adapter)
+            elif self.engine == "vosk" and self._vosk_adapter:
+                register_audio_consumer("wakeword_vosk", self._vosk_adapter)
+            
             logger.info(
-                "wakeword listening started (engine=%s device=%s)",
+                "wakeword listening started (engine=%s)",
                 self.engine,
-                getattr(self.capture.cfg, "device", None),
             )
-            logger.debug("wakeword listening using engine=%s; capture cfg=%s", self.engine, getattr(self.capture, 'cfg', None))
+            
             if self.engine == "openwakeword" and self._openwakeword is not None:
-                for label in self._openwakeword.run(stream):
+                # Get stream from audio router
+                self._stream_iter = iter(self._audio_router.get_capture().stream())
+                self._audio_router.get_capture().register_consumer("wakeword_openwakeword", self._openwakeword_adapter)
+                self._openwakeword_adapter.on_start()
+                
+                for label in self._openwakeword.run(self._stream_iter):
                     if self._stop_event.is_set():
                         break
                     logger.info("openwakeword detected: %s", label)
                     self._on_wakeword(label)
             else:
-                # Recognizer (Vosk) expects mono PCM. Capture may be stereo for DOA,
-                # so downmix on-the-fly here without altering the original capture.
+                # Get stream from audio router
+                self._stream_iter = iter(self._audio_router.get_capture().stream())
+                self._audio_router.get_capture().register_consumer("wakeword_vosk", self._vosk_adapter)
+                self._vosk_adapter.on_start()
+                
                 def mono_generator(src_stream):
                     for chunk in src_stream:
                         if not chunk:
                             yield chunk
                             continue
                         try:
-                            if getattr(self.capture.cfg, 'channels', None) is not None and self.capture.cfg.channels >= 2 and audioop is not None:
+                            if audioop is not None:
                                 mono = audioop.tomono(chunk, 2, 1.0, 0.0)
                                 logger.debug("downmixing stereo->mono, chunk_len=%d", len(chunk))
                                 yield mono
@@ -256,7 +174,7 @@ class WakewordService:
                         except Exception:
                             yield chunk
 
-                for result in self._recognizer.run(mono_generator(stream)):
+                for result in self._recognizer.run(mono_generator(self._stream_iter)):
                     if self._stop_event.is_set():
                         break
                     self._handle_result(result)
@@ -278,7 +196,6 @@ class WakewordService:
         self._thread.start()
 
     def _ensure_listener_restarted(self, retries: int = 6, delay_sec: float = 0.2) -> None:
-        """Try to restart listener even if previous thread is still winding down."""
         for _ in range(max(1, retries)):
             self.start_background()
             time.sleep(max(0.05, delay_sec))
@@ -287,6 +204,14 @@ class WakewordService:
 
     def stop(self) -> None:
         self._stop_event.set()
+        # Unregister from audio router
+        if self.engine == "openwakeword" and self._openwakeword_adapter:
+            self._audio_router.get_capture().unregister_consumer("wakeword_openwakeword")
+            self._openwakeword_adapter.on_stop()
+        elif self.engine == "vosk" and self._vosk_adapter:
+            self._audio_router.get_capture().unregister_consumer("wakeword_vosk")
+            self._vosk_adapter.on_stop()
+        self._stream_iter = None
         with self._lock:
             self._listening = False
             self._active_window = False
@@ -376,7 +301,7 @@ class WakewordService:
 def create_app(config_path: str | None = None) -> FastAPI:
     service = WakewordService(config_path)
     app = FastAPI()
-    from modules.wakeword.api import get_router  # local import to avoid circular
+    from modules.voice.wakeword.api import get_router
     app.include_router(get_router(service))
     return app
 

@@ -6,7 +6,7 @@ import os
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict
-from modules.config_center.agent_yaml_loader import load_agent_config, require_dict_section
+from modules.common.config_loader import load_agent_config, require_dict_section
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 

@@ -14,6 +14,7 @@ tts:
   rate: 170
   volume: 1.0
   samplerate: 22050
+  stream_max_chunk_chars: 180
   piper:
     voice: tr
     auto_language: true

@@ -3,7 +3,7 @@ from fastapi import APIRouter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from modules.wakeword.xWakewordService import WakewordService
+    from modules.voice.wakeword.xWakewordService import WakewordService
 
 
 def get_router(service: "WakewordService") -> APIRouter:

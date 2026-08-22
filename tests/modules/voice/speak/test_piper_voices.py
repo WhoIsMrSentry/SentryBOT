@@ -2,21 +2,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modules.speak.config_loader import _resolve_piper_paths
-from modules.speak.services.lang_detect import (
+from modules.voice.speak.config_loader import _resolve_piper_paths
+from modules.voice.speak.services.lang_detect import (
     detect_text_language,
     piper_voice_for_language,
     resolve_speak_language,
 )
-from modules.speak.services.tts import DummyBackend, TextToSpeech, PersistentPiperModel, TTSConfig, PiperBackend
+from modules.voice.speak.services.tts import DummyBackend, TextToSpeech, PersistentPiperModel, TTSConfig, PiperBackend
 
 def test_resolve_piper_voice_entry(monkeypatch) -> None:
     class DummyPiperVoice:
         @classmethod
         def load(cls, *args, **kwargs):
             return cls()
-    monkeypatch.setattr("modules.speak.services.tts.Path.is_file", lambda self: True)
-    monkeypatch.setattr("modules.speak.services.tts._load_piper_api", lambda: (DummyPiperVoice, None))
+    monkeypatch.setattr("modules.voice.speak.services.tts.Path.is_file", lambda self: True)
+    monkeypatch.setattr("modules.voice.speak.services.tts._load_piper_api", lambda: (DummyPiperVoice, None))
     cfg = {
         "voice": "glados",
         "model_path": "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx",

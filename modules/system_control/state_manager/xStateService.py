@@ -11,6 +11,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     store = StateStore(
         defaults=cfg.get("defaults", {}),
         persistence=cfg.get("persistence", {}),
+        pubsub=cfg.get("pubsub", {}),
     )
     app = FastAPI(title="State Manager")
     app.state.store = store  # type: ignore[attr-defined]

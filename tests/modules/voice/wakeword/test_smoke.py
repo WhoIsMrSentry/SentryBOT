@@ -1,4 +1,4 @@
 def test_wakeword_smoke_import():
-    from modules.wakeword import WakewordService
+    from modules.voice.wakeword import WakewordService
     svc = WakewordService
     assert svc is not None

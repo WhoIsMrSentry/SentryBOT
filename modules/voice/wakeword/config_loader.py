@@ -6,7 +6,9 @@ from typing import Any, Dict
 
 import yaml
 
-from modules.config_center.agent_yaml_loader import deep_merge, load_agent_config
+from modules.common.config_loader import deep_merge, load_agent_config
+from modules.voice.audio_router import AudioRouterConfig
+
 
 _DEF_CFG_PATH = Path(__file__).parent / "config" / "config.yml"
 
@@ -42,4 +44,30 @@ def load_config(override_path: str | os.PathLike | None = None) -> Dict[str, Any
     except Exception:
         pass
 
+    # Add audio_router config if present
+    audio_router_cfg = agent_cfg.get("audio_router")
+    if isinstance(audio_router_cfg, dict):
+        data["audio_router"] = audio_router_cfg
+
     return data
+
+
+def load_audio_router_config() -> "AudioRouterConfig":
+    """Load audio_router configuration from agent.yaml."""
+    from modules.voice.audio_router import AudioRouterConfig
+    root_cfg = load_agent_config()
+    audio_router_cfg = root_cfg.get("audio_router")
+    if isinstance(audio_router_cfg, dict):
+        capture_cfg = audio_router_cfg.get("capture", {})
+        return AudioRouterConfig(
+            capture=AudioConfig(
+                device=capture_cfg.get("device", "default"),
+                sample_rate=capture_cfg.get("sample_rate", 16000),
+                channels=capture_cfg.get("channels", 2),
+                frame_size=capture_cfg.get("frame_size", 1024),
+                format=capture_cfg.get("format", "int16"),
+                vad_enabled=capture_cfg.get("vad_enabled", True),
+                vad_threshold=capture_cfg.get("vad_threshold", 0.01),
+            )
+        )
+    return AudioRouterConfig()

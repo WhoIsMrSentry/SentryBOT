@@ -1,4 +1,4 @@
-from modules.wakeword.config_loader import load_config
+from modules.voice.wakeword.config_loader import load_config
 
 
 def test_wakeword_config_loads_audio_device() -> None:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from modules.speak.services import tts as tts_mod
+from modules.voice.speak.services import tts as tts_mod
 
 
 @dataclass

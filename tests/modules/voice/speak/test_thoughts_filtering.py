@@ -1,5 +1,5 @@
 import pytest
-from modules.speak.xSpeakService import SpeakService
+from modules.voice.speak.xSpeakService import SpeakService
 
 
 def _svc():

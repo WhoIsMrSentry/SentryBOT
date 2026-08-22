@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modules.speak.config_loader import load_config
+from modules.voice.speak.config_loader import load_config
 
 
 def test_load_config_supports_shorthand_engine_key(tmp_path: Path) -> None:

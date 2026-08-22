@@ -10,7 +10,7 @@ from typing import Dict, List, Any, Optional
 class PeopleMemory:
     """Per-person chat history and last-summary memory.
 
-    Single-responsibility wrapper. When a :class:`modules.social_db.SocialDB`
+    Single-responsibility wrapper. When a :class:`modules.cognitive_memory.SocialDB`
     instance is registered as the process default (or supplied via constructor),
     writes go through the shared SQLite store; otherwise the compatibility JSON path
     is used for backward compatibility.
@@ -27,7 +27,7 @@ class PeopleMemory:
         os.makedirs(data_dir, exist_ok=True)
         if social_db is None:
             try:
-                from modules.social_db import get_default as _social_default  # type: ignore
+                from modules.cognitive_memory import get_default as _social_default  # type: ignore
 
                 social_db = _social_default()
             except Exception:

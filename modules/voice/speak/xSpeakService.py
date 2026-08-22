@@ -16,15 +16,15 @@ except Exception:  # pragma: no cover
 from fastapi import FastAPI
 
 from modules.common.latency_trace import latency_trace
-from modules.speak.config_loader import load_config
-from modules.speak.services.player import AudioPlayer
-from modules.speak.services.tts import TextToSpeech, TTSUnavailableError
+from modules.voice.speak.config_loader import load_config
+from modules.voice.speak.services.player import AudioPlayer
+from modules.voice.speak.services.tts import TextToSpeech, TTSUnavailableError
 
 if TYPE_CHECKING:
-    from modules.speak.api import get_router  # type: ignore
+    from modules.voice.speak.api import get_router  # type: ignore
 
 try:
-    from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
+    from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
 
     _init_global_logging()
 except Exception:
@@ -55,6 +55,22 @@ class SpeakService:
         self.player = AudioPlayer(self.cfg.get("audio_out", {}))
         self._liveliness_cfg = self.cfg.get("liveliness", {}) or {}
         self._speech_lock = threading.RLock()
+        self._is_speaking = False
+        tts_cfg = self.cfg.get("tts", {}) if isinstance(self.cfg.get("tts"), dict) else {}
+        self.stream_max_chunk_chars = max(40, int(tts_cfg.get("stream_max_chunk_chars", 180)))
+
+    @property
+    def is_speaking(self) -> bool:
+        return bool(self._is_speaking)
+
+    def stop(self) -> None:
+        """Stop any running speech output instantly (0ms barge-in)."""
+        self.player.stop_playback()
+        self._is_speaking = False
+
+    def set_stream_max_chunk_chars(self, value: int) -> Dict[str, Any]:
+        self.stream_max_chunk_chars = max(40, int(value))
+        return {"ok": True, "max_chunk_chars": self.stream_max_chunk_chars}
 
     @staticmethod
     def _coerce_tone(tone: Any) -> Optional[Dict[str, Any]]:
@@ -111,8 +127,9 @@ class SpeakService:
             logger.debug("expression event failed: %s", event_type, exc_info=True)
 
     def stop_speaking(self) -> Dict[str, Any]:
+        self._is_speaking = False
         try:
-            from modules.speak.services.tts import cancel_synthesis
+            from modules.voice.speak.services.tts import cancel_synthesis
 
             cancel_synthesis()
         except Exception:
@@ -157,8 +174,9 @@ class SpeakService:
 
         used_engine = overrides.get("engine") or self.cfg.get("tts", {}).get("engine")
         with self._speech_lock:
+            self._is_speaking = True
             try:
-                from modules.speak.services.tts import clear_synthesis_cancel
+                from modules.voice.speak.services.tts import clear_synthesis_cancel
 
                 clear_synthesis_cancel()
                 synth_started = time.monotonic()
@@ -171,6 +189,7 @@ class SpeakService:
                     {"engine": used_engine, "duration_ms": synthesis_ms, "samplerate": pcm.samplerate},
                 )
             except TTSUnavailableError as exc:
+                self._is_speaking = False
                 latency_trace.finish(trace_id, "tts_unavailable", {"detail": str(exc)})
                 logger.warning("speech skipped: %s", exc)
                 return {
@@ -182,6 +201,7 @@ class SpeakService:
                     "duration_sec": 0.0,
                 }
             except Exception as exc:
+                self._is_speaking = False
                 latency_trace.finish(trace_id, "tts_failed", {"detail": repr(exc)})
                 raise
 
@@ -193,6 +213,7 @@ class SpeakService:
             try:
                 duration_sec = self.player.play_blocking(pcm)
             finally:
+                self._is_speaking = False
                 latency_trace.mark(trace_id, "audio.play_done")
                 self._expression_event("speak.finished", {"trace_id": trace_id})
 
@@ -223,7 +244,7 @@ class SpeakService:
 def create_app(config_path: str | None = None) -> FastAPI:
     service = SpeakService(config_path)
     app = FastAPI()
-    from modules.speak.api import get_router
+    from modules.voice.speak.api import get_router
 
     app.include_router(get_router(service))
     return app

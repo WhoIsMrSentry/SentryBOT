@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.speak.config_loader import (
+from modules.voice.speak.config_loader import (
     SPEAK_CONFIG_COMPATIBILITY_CONTRACT,
     SPEAK_CONFIG_COMPATIBILITY_ROLE,
     _normalize_speak_section,
