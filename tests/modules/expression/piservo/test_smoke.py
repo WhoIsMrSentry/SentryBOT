@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from modules.piservo.xPiServoService import create_app
+from modules.expression.piservo.xPiServoService import create_app
 
 
 def test_healthz():
@@ -20,7 +20,7 @@ def test_set_angles():
 
 
 def test_ear_pose_resolves_emotion_aliases():
-    from modules.piservo.services.ears import EMOTION_POSES, pose_for_emotion
+    from modules.expression.piservo.services.ears import EMOTION_POSES, pose_for_emotion
 
     # canonical labels map straight through
     assert pose_for_emotion("joy") == EMOTION_POSES["joy"]
