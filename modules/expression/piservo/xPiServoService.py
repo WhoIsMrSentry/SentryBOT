@@ -7,10 +7,10 @@ try:
     from .services.runner import EarRunner
     from .services.driver import ServoConfig
 except Exception:
-    from config_loader import load_config  # type: ignore
-    from api import get_router  # type: ignore
-    from services.runner import EarRunner  # type: ignore
-    from services.driver import ServoConfig  # type: ignore
+    from modules.expression.piservo.config_loader import load_config  # type: ignore
+    from modules.expression.piservo.api import get_router  # type: ignore
+    from modules.expression.piservo.services.runner import EarRunner  # type: ignore
+    from modules.expression.piservo.services.driver import ServoConfig  # type: ignore
 
 try:
     from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore

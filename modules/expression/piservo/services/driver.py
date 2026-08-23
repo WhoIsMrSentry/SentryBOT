@@ -37,7 +37,7 @@ class _ArduinoWrapper:
             from modules.arduino_serial.services.driver import ArduinoDriver  # type: ignore
         except Exception:
             try:
-                from ..arduino_serial.services.driver import ArduinoDriver  # type: ignore
+                from modules.arduino_serial.services.driver import ArduinoDriver  # type: ignore
             except Exception:
                 ArduinoDriver = None  # type: ignore
         if ArduinoDriver is None:
@@ -74,7 +74,7 @@ class Servo:
             from modules.arduino_serial.services.driver import ArduinoDriver  # type: ignore
         except Exception:
             try:
-                from ..arduino_serial.services.driver import ArduinoDriver  # type: ignore
+                from modules.arduino_serial.services.driver import ArduinoDriver  # type: ignore
             except Exception:
                 ArduinoDriver = None  # type: ignore
 

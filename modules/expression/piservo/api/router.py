@@ -5,7 +5,7 @@ from typing import Optional
 try:
     from ..services.runner import EarRunner
 except Exception:
-    from services.runner import EarRunner  # type: ignore
+    from modules.expression.piservo.services.runner import EarRunner  # type: ignore
 
 
 def get_router(runner: EarRunner) -> APIRouter:
