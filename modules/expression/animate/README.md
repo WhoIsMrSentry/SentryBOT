@@ -42,9 +42,10 @@ Legacy 8 değerli pozlarda son iki değer head tilt/pan olarak yorumlanır.
 
 ## Konfigürasyon
 
-`config/config.yml`:
-- `animations_dir` (null → varsayılan `modules/animate/animations`)
-- `default_speed`, `run_timeout_s`
+`modules/expression/animate/config/config.yml`:
+- `animations_dir` (null → varsayılan `modules/expression/animate/animations`)
+- `default_speed`
+- `run_timeout_s` modül config'inde tanımlı DEĞİLDİR; animasyon YAML'ı başına ayarlanabilir, aksi hâlde router fallback'i **30.0 s** uygular
 
 ## İlişkiler
 

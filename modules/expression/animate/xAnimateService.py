@@ -11,8 +11,8 @@ try:
         SERVO_COUNT,
     )
 except Exception:
-    from ..arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
-    from ..arduino_serial.contract import (  # type: ignore
+    from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
+    from modules.arduino_serial.contract import (  # type: ignore
         SERVO_COUNT,
     )
 
@@ -125,10 +125,20 @@ class xAnimateService:
                     face = step.get("face") or step.get("eyes")
                     if face and self._oled is not None:
                         try:
-                            if hasattr(self._oled, "on_event"):
+                            # Real OLED service surface: xOledFacesService
+                            # exposes apply_manual()/on_interaction_event()
+                            # (NOT on_event/on_mode - those never existed and
+                            # silently skipped every face step, R27).
+                            if hasattr(self._oled, "apply_manual"):
+                                self._oled.apply_manual("animation", str(face))
+                            elif hasattr(self._oled, "on_interaction_event"):
+                                self._oled.on_interaction_event("animate.face", {"emotion": str(face)})
+                            elif hasattr(self._oled, "on_event"):
                                 self._oled.on_event(str(face), {})
                             elif hasattr(self._oled, "on_mode"):
                                 self._oled.on_mode(str(face))
+                            else:
+                                logger.debug("animate oled attach target has no known face API")
                         except Exception as exc:
                             logger.debug("animate oled step skipped: %s", exc)
                     led = step.get("led") or step.get("neopixel")
@@ -136,8 +146,15 @@ class xAnimateService:
                         try:
                             if isinstance(led, (list, tuple)) and len(led) == 3:
                                 self._neopixel.fill(int(led[0]), int(led[1]), int(led[2]))
-                            elif isinstance(led, str) and hasattr(self._neopixel, "set_mode"):
-                                self._neopixel.set_mode(led)
+                            elif isinstance(led, str):
+                                # NeoRunner exposes companion_set_mode(); plain
+                                # set_mode only exists on CompanionLeds.
+                                if hasattr(self._neopixel, "companion_set_mode"):
+                                    self._neopixel.companion_set_mode(led)
+                                elif hasattr(self._neopixel, "set_mode"):
+                                    self._neopixel.set_mode(led)
+                                else:
+                                    logger.debug("animate neopixel attach target has no mode API")
                         except Exception as exc:
                             logger.debug("animate neopixel step skipped: %s", exc)
                     # hold
@@ -164,15 +181,15 @@ class xAnimateService:
     def _apply_pose(self, pose: List[Optional[int]], duration_ms: Optional[int]) -> None:
         if len(pose) >= 2 and (len(pose) < 4 or (pose[2] is None and pose[3] is None)):
             if pose[0] is not None:
-                self.serial.set_servo(0, float(pose[0]))
+                self.serial.set_servo(0, float(pose[0]), source="animate")
             if pose[1] is not None:
-                self.serial.set_servo(1, float(pose[1]))
+                self.serial.set_servo(1, float(pose[1]), source="animate")
             return
 
         values = [self._rest[i] if v is None else int(v) for i, v in enumerate(pose)]
         while len(values) < SERVO_COUNT:
             values.append(self._rest[len(values)])
-        self.serial.set_pose(values[:SERVO_COUNT], duration_ms=duration_ms)
+        self.serial.set_pose(values[:SERVO_COUNT], duration_ms=duration_ms, source="animate")
         if self._ears is not None and hasattr(self._ears, "set_angles"):
             self._ears.set_angles(float(values[2]), float(values[3]))
 
