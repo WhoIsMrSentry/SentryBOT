@@ -27,6 +27,7 @@ class ExpressionOutputBridge:
         custom = self.cfg.get("endpoints") if isinstance(self.cfg.get("endpoints"), dict) else {}
         self.endpoints.update({str(k): str(v) for k, v in custom.items()})
         self._last_apply: Dict[str, Any] = {"ok": True, "applied": False, "reason": "never_applied"}
+        self._last_target_sig = ""
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -48,6 +49,10 @@ class ExpressionOutputBridge:
         if not self.enabled:
             return self._remember(False, "bridge_disabled", [])
         plan = self.plan()
+        sig = json.dumps(plan.get("targets") or {}, sort_keys=True, default=str)
+        if sig == self._last_target_sig:
+            return self._remember(True, "unchanged", [])
+        self._last_target_sig = sig
         results: List[Dict[str, Any]] = []
         for action in plan["actions"]:
             results.append(self._send(action))
@@ -87,7 +92,7 @@ class ExpressionOutputBridge:
     @staticmethod
     def _led_mode(value: Any) -> str:
         mode = str(value or "eye").strip().lower()
-        if mode in {"off", "vu", "listen", "listen_vu", "thinking", "eye", "wake_spin", "wake_chase"}:
+        if mode in {"off", "listen", "thinking", "eye", "wake_spin", "wake_chase"}:
             return mode
         return "eye"
 

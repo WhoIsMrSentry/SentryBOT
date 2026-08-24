@@ -26,34 +26,27 @@ class OledAdapter:
         duration_s: float = 3.0,
         loop: bool = False,
     ) -> bool:
-        """Play an OLED face animation."""
+        """Play an OLED face animation.
+
+        The oled_faces router exposes POST /manual {mode, name}
+        (mode="animation") - there is no /animate endpoint.
+        """
         try:
             resp = await self._client.post(
-                "/oled_faces/animate",
-                json={
-                    "name": name,
-                    "duration_s": round(duration_s, 2),
-                    "loop": loop,
-                },
+                "/oled_faces/manual",
+                json={"mode": "animation", "name": name},
             )
-            if resp.status_code == 200:
-                return True
-            # Fallback: event-based animation
-            resp2 = await self._client.post(
-                "/oled_faces/event",
-                json={"type": f"anim:{name}", "loop": loop},
-            )
-            return resp2.status_code == 200
+            return resp.status_code == 200
         except Exception as e:
             logger.warning("OLED play_animation failed: %s", e)
             return False
-    
+
     async def show_bitmap(self, bitmap: str) -> bool:
-        """Show a static OLED bitmap."""
+        """Show a static OLED bitmap via POST /manual (mode="bitmap")."""
         try:
             resp = await self._client.post(
-                "/oled_faces/show",
-                json={"name": bitmap},
+                "/oled_faces/manual",
+                json={"mode": "bitmap", "name": bitmap},
             )
             return resp.status_code == 200
         except Exception as e:

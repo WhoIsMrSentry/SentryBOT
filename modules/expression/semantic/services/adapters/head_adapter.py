@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 
 from modules.common.http_client import AsyncHTTPClient, get_http_client
+from modules.arduino_serial.contract import SERVO_INDEX_PAN, SERVO_INDEX_TILT, build_set_servo_cmd
 
 logger = logging.getLogger("expression.adapter.head")
 
@@ -25,17 +26,19 @@ class HeadAdapter:
         try:
             # Clamp to safe ranges
             pan = max(30, min(150, int(pan)))
-            tilt = max(50, min(130, int(tilt)))
+            tilt = max(60, min(120, int(tilt)))
             
             resp = await self._client.post(
                 "/arduino/request",
-                json={
-                    "cmd": "set_pose",
-                    "pose": [pan, tilt, 90, 90, 90, 90],
-                    "duration_ms": 800,
-                },
+                json=build_set_servo_cmd(SERVO_INDEX_PAN, pan),
             )
-            return resp.status_code == 200
+            if getattr(resp, "status_code", 0) != 200:
+                return False
+            resp2 = await self._client.post(
+                "/arduino/request",
+                json=build_set_servo_cmd(SERVO_INDEX_TILT, tilt),
+            )
+            return getattr(resp2, "status_code", 0) == 200
         except Exception as e:
             logger.debug("Head move failed: %s", e)
             return False

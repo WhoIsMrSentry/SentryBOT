@@ -124,8 +124,15 @@ class ExpressionArbiter:
             
             now = time.time()
             
-            # Rate limiting (unless forced)
-            if not force:
+            # Emergency or critical alarms automatically bypass visual lock and rate limits
+            is_emergency = (
+                canon in {Emotion.FEAR, Emotion.FURIOUS, Emotion.ANGER}
+                or str(emotion).strip().lower() in {"error", "danger", "alert", "estop", "alarm", "emergency", "critical"}
+            )
+            effective_force = force or is_emergency
+
+            # Rate limiting (unless forced or emergency)
+            if not effective_force:
                 if now - self._last_expression[1] < self._min_interval_s:
                     return {"ok": False, "reason": "rate_limited", "emotion": canon.value}
                 
