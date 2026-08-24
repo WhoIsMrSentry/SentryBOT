@@ -44,11 +44,10 @@ class MetricsCollector:
     @staticmethod
     def _hardware_snapshot() -> Optional[dict]:
         try:
-            from modules.hardware.services.system import read_system_snapshot
-
-            return read_system_snapshot().to_dict()
+            load = float(os.getloadavg()[0])
         except Exception:
             return None
+        return {"cpu_load_1m": load}
 
     def _read_cpu_temp(self) -> Optional[float]:
         if psutil is None:

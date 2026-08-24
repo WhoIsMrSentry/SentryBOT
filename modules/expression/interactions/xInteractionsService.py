@@ -7,9 +7,9 @@ try:
     from .api.router import get_router
     from .services.engine import InteractionEngine
 except Exception:  # pragma: no cover
-    from config_loader import load_config  # type: ignore
-    from api.router import get_router  # type: ignore
-    from services.engine import InteractionEngine  # type: ignore
+    from modules.expression.interactions.config_loader import load_config  # type: ignore
+    from modules.expression.interactions.api.router import get_router  # type: ignore
+    from modules.expression.interactions.services.engine import InteractionEngine  # type: ignore
 
 
 def create_app(config_path: str | None = None) -> FastAPI:

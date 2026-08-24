@@ -15,6 +15,8 @@ Durumlara ve olaylara göre ifade kararı üreten hafif kural motorudur. LED/OLE
 - Giriş noktası: `xInteractionsService.py`
 - Router: `api/router.py`
 - Motor: `services/engine.py`
+- Guard'lar: `services/engine_guards.py` (quiet-hours + lease guard)
+- Render pipeline: `services/engine_render.py`
 - Kurallar: `services/rules.py`
 - Metrikler: `services/metrics.py`
 - Adaptör: `services/adapters/neopixel_client.py`
