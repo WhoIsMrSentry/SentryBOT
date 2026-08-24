@@ -33,7 +33,9 @@ def _piper_service():
     svc.tts = _DummyTTS()
     svc.player = _DummyPlayer()
     svc._liveliness_cfg = {}
-    svc._speech_lock = threading.Lock()
+    # R21 split locks: synthesis and playback serialize independently.
+    svc._synth_lock = threading.RLock()
+    svc._play_lock = threading.Lock()
     return svc
 
 

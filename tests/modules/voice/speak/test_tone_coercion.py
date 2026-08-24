@@ -31,7 +31,8 @@ def test_speak_accepts_string_tone_preset() -> None:
     svc.tts = _DummyTTS()
     svc.player = _DummyPlayer()
     svc._liveliness_cfg = {}
-    svc._speech_lock = threading.RLock()
+    svc._synth_lock = threading.RLock()
+    svc._play_lock = threading.RLock()
 
     result = svc.speak("Merhaba", tone="calm")
 
