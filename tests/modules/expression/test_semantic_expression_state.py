@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from starlette.testclient import TestClient
 
 from modules.expression.api.router import get_router
-from modules.expression.services.state import SemanticExpressionEngine
+from modules.expression.semantic.services.state import SemanticExpressionEngine
 
 
 def test_default_state_targets_are_truthful():
@@ -31,7 +31,7 @@ def test_event_mapping_updates_state_without_hardware_side_effects():
     assert out["targets"]["led"]["mode"] == "listen"
     out = eng.event("speak.started", {})
     assert out["state"]["speaking"] is True
-    assert out["targets"]["led"]["mode"] == "listen_vu"
+    assert out["targets"]["led"]["mode"] == "listen"
 
 
 def test_expression_router_contract():

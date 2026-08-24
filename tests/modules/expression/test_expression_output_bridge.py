@@ -1,5 +1,5 @@
-from modules.expression.services.output_bridge import ExpressionOutputBridge
-from modules.expression.services.state import SemanticExpressionEngine
+from modules.expression.semantic.services.output_bridge import ExpressionOutputBridge
+from modules.expression.semantic.services.state import SemanticExpressionEngine
 
 
 def test_output_bridge_plan_from_semantic_expression_state():
@@ -23,3 +23,12 @@ def test_output_bridge_apply_is_disabled_when_cfg_says_so():
     assert result["ok"] is False
     assert result["applied"] is False
     assert result["reason"] == "bridge_disabled"
+
+
+def test_output_bridge_skips_unchanged_targets():
+    engine = SemanticExpressionEngine()
+    engine.event("interactions.idle", {})
+    bridge = ExpressionOutputBridge(engine, cfg={"enabled": True, "gateway_url": "http://127.0.0.1:9"})
+    first = bridge.apply()
+    second = bridge.apply()
+    assert second["reason"] == "unchanged"

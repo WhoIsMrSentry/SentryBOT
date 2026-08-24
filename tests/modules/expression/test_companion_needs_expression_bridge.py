@@ -1,4 +1,4 @@
-from modules.expression.services.state import SemanticExpressionEngine
+from modules.expression.semantic.services.state import SemanticExpressionEngine
 
 
 def state_after(event, data=None):

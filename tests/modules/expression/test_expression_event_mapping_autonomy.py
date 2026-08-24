@@ -1,4 +1,4 @@
-from modules.expression.services.state import SemanticExpressionEngine
+from modules.expression.semantic.services.state import SemanticExpressionEngine
 
 
 def state_after(engine, event, data=None):
@@ -47,3 +47,13 @@ def test_idle_behavior_selected_payload_mapping():
     s = state_after(e, "idle.behavior.selected", {"behavior": "SIGH"})
     assert s["emotion"] == "sleepy"
     assert s["energy"] == "low"
+
+
+def test_interactions_metric_events_map_to_expression():
+    e = SemanticExpressionEngine()
+    s = state_after(e, "interactions.cpu_hot")
+    assert s["emotion"] == "alert"
+    assert s["reason"] == "cpu_hot"
+    s = state_after(e, "interactions.idle")
+    assert s["emotion"] == "neutral"
+    assert s["attention"] == "idle"

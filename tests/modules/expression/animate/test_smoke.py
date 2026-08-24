@@ -16,18 +16,18 @@ class FakeSerial:
     def stop(self) -> None:
         self._started = False
 
-    def set_pose(self, pose: list[int], duration_ms: int | None = None):
+    def set_pose(self, pose: list[int], duration_ms: int | None = None, source: str = "autonomy"):
         self.sent.append({"cmd": "set_pose", "pose": pose, "duration_ms": duration_ms})
 
-    def set_servo(self, index: int, deg: float):
+    def set_servo(self, index: int, deg: float, source: str = "autonomy"):
         self.sent.append({"cmd": "set_servo", "index": index, "deg": deg})
 
 
 class FailingSerial(FakeSerial):
-    def set_pose(self, pose: list[int], duration_ms: int | None = None):
+    def set_pose(self, pose: list[int], duration_ms: int | None = None, source: str = "autonomy"):
         raise RuntimeError("serial unavailable")
 
-    def set_servo(self, index: int, deg: float):
+    def set_servo(self, index: int, deg: float, source: str = "autonomy"):
         raise RuntimeError("serial unavailable")
 
 
