@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import requests
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header
 from fastapi.responses import JSONResponse, Response, HTMLResponse
 
 from .bootstrap import bootstrap_runtime
@@ -39,6 +39,23 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
         yield
 
     app = FastAPI(title="SentryBOT Remote TTS Server", version="0.1.0", lifespan=lifespan)
+
+    def _extract_auth_token(authorization: Optional[str], x_auth_token: Optional[str]) -> str:
+        if x_auth_token:
+            return str(x_auth_token).strip()
+        if authorization:
+            value = str(authorization).strip()
+            if value.lower().startswith("bearer "):
+                return value[7:].strip()
+            return value
+        return ""
+
+    def _require_auth(authorization: Optional[str], x_auth_token: Optional[str]) -> None:
+        required = str(getattr(cfg, "auth_token", "") or "").strip()
+        if not required:
+            return
+        if _extract_auth_token(authorization, x_auth_token) != required:
+            raise HTTPException(status_code=401, detail="invalid auth token")
 
     @app.get("/healthz")
     def healthz() -> Dict[str, Any]:
@@ -73,22 +90,26 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
         }
 
     @app.get("/tts/voices/piper")
-    def get_piper_voices() -> Dict[str, Any]:
+    def get_piper_voices(authorization: Optional[str] = Header(default=None), x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        _require_auth(authorization, x_auth_token)
         voices = [asdict(voice) for voice in catalog.get_piper_voices()]
         return {"count": len(voices), "voices": voices}
 
     @app.get("/tts/voices/xtts")
-    def get_xtts_source_voices() -> Dict[str, Any]:
+    def get_xtts_source_voices(authorization: Optional[str] = Header(default=None), x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        _require_auth(authorization, x_auth_token)
         voices = [asdict(voice) for voice in catalog.get_xtts_sources()]
         return {"count": len(voices), "voices": voices}
 
     @app.post("/tts/refresh")
-    def refresh_voice_catalog() -> Dict[str, Any]:
+    def refresh_voice_catalog(authorization: Optional[str] = Header(default=None), x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        _require_auth(authorization, x_auth_token)
         counts = catalog.refresh()
         return {"ok": True, "counts": counts}
 
     @app.post("/bootstrap/run")
-    def bootstrap_run(force: bool = False) -> Dict[str, Any]:
+    def bootstrap_run(force: bool = False, authorization: Optional[str] = Header(default=None), x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        _require_auth(authorization, x_auth_token)
         report = bootstrap_runtime(cfg, force=force)
         counts = catalog.refresh()
         return {
@@ -98,7 +119,8 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
         }
 
     @app.post("/tts/voices/xtts/upload")
-    async def upload_xtts_voice(file: UploadFile = File(...)) -> Dict[str, Any]:
+    async def upload_xtts_voice(file: UploadFile = File(...), authorization: Optional[str] = Header(default=None), x_auth_token: Optional[str] = Header(default=None)) -> Dict[str, Any]:
+        _require_auth(authorization, x_auth_token)
         if not file.filename:
             raise HTTPException(status_code=400, detail="Filename missing")
         if not file.filename.lower().endswith(".wav"):
@@ -115,7 +137,8 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
         return {"ok": True, "counts": counts, "filename": file.filename}
 
     @app.post("/tts/synthesize")
-    def synthesize_tts(req: SynthesizeRequest):
+    def synthesize_tts(req: SynthesizeRequest, authorization: Optional[str] = Header(default=None), x_auth_token: Optional[str] = Header(default=None)):
+        _require_auth(authorization, x_auth_token)
         if req.engine == "piper":
             wav_bytes = run_piper_synthesis(
                 text=req.text,
@@ -189,9 +212,13 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
 def run_app() -> None:
     import uvicorn
 
-    host = str(os.getenv("SENTRYBOT_HOST", "0.0.0.0")).strip()
-    port = int(os.getenv("SENTRYBOT_PORT", "5000"))
+    cfg = load_runtime_config()
+    host = str(getattr(cfg, "host", "127.0.0.1") or "127.0.0.1").strip()
+    port = int(getattr(cfg, "port", 5000))
     reload_value = str(os.getenv("SENTRYBOT_RELOAD", "0")).strip().lower()
     reload_enabled = reload_value in {"1", "true", "yes", "on"}
+    public_bind = host.lower() in {"0.0.0.0", "::", "[::]"}
+    if public_bind and not str(getattr(cfg, "auth_token", "") or "").strip():
+        raise RuntimeError("SENTRYBOT_TTS_AUTH_TOKEN is required when remote_tts binds to a public interface")
 
     uvicorn.run("app:app", host=host, port=port, reload=reload_enabled)
