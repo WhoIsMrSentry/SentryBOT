@@ -1,6 +1,6 @@
 # Speech Modülü Mimarisi
 
-Speech modülü (`modules/speech`), mikrofon verisini alarak konuşma tanıma (ASR/STT) işlemi yapar ve sesin geliş yönünü (direction) tahmin eder.
+Speech modülü (`modules/voice/speech`), mikrofon verisini alarak konuşma tanıma (ASR/STT) işlemi yapar ve sesin geliş yönünü (direction) tahmin eder.
 
 ## 🏗️ İş Akışı ve Karar Mekanizmaları (Flowchart)
 

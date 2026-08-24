@@ -14,8 +14,8 @@ from modules.voice.speech.services.stt_language import resolve_stt_text_and_lang
 from modules.voice.speech.services.direction import DirectionEstimator
 from modules.voice.speech.services.pan_tilt import PanTiltController
 from modules.voice.audio_router import (
-    get_audio_router, AudioRouterConfig, AudioConfig, 
-    VoskConsumerAdapter, register_audio_consumer
+    get_audio_router, AudioRouterConfig, AudioConfig,
+    VoskConsumerAdapter
 )
 from .services.audio_filters import SpeechAudioFilterMixin
 from .services.sound_tracking import SpeechSoundTrackingMixin
@@ -214,16 +214,14 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                 )
                 return
             
-            # Initialize Vosk adapter and register with audio router
-            if self._vosk_adapter is None:
-                self._vosk_adapter = VoskConsumerAdapter(self.recognizer)
-                register_audio_consumer("speech_vosk", self._vosk_adapter)
-            
-            # Get stream from audio router
-            self._stream_iter = iter(self._audio_router.get_capture().stream())
-            self._audio_router.get_capture().register_consumer("speech_vosk", self._vosk_adapter)
-            self._vosk_adapter.on_start()
-            
+            # Pull mode: consume the capture stream directly. Do NOT register
+            # the adapter as a push consumer too (would double-feed Vosk).
+            capture = self._audio_router.get_capture()
+            if capture is None:
+                raise RuntimeError("audio router capture not running")
+            self._stream_iter = iter(capture.stream())
+            self._vosk_adapter = VoskConsumerAdapter(self.recognizer)  # kept for status/compat
+
             for result in self.recognizer.run(self._direction_wrapper(self._stream_iter)):
                 if self.is_stt_suppressed():
                     continue
