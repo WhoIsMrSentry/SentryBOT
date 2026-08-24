@@ -24,9 +24,6 @@ except Exception:
 
 logger = logging.getLogger("speech.audio")
 
-# GLOBAL SINGLETON for all audio capture to ensure zero contention
-_SINGLE_CAPTURE_INSTANCE: Optional["AudioCapture"] = None
-_INSTANCE_LOCK = threading.Lock()
 
 def _is_alsa_device_name(device: Any) -> bool:
     if device is None:
@@ -48,20 +45,6 @@ def _portaudio_device(device: Any) -> Any:
     if text.isdigit():
         return int(text)
     return device
-
-def get_shared_capture(cfg: Dict) -> "AudioCapture":
-    """Shared mic for wakeword + speech. Later callers may upgrade device/rate if unset."""
-    global _SINGLE_CAPTURE_INSTANCE
-    with _INSTANCE_LOCK:
-        if _SINGLE_CAPTURE_INSTANCE is None:
-            _SINGLE_CAPTURE_INSTANCE = AudioCapture(cfg)
-        else:
-            _SINGLE_CAPTURE_INSTANCE.merge_config(cfg)
-        return _SINGLE_CAPTURE_INSTANCE
-
-def release_shared_capture(inst: "AudioCapture") -> None:
-    # In this simplified singleton model, we don't actually stop it unless explicitly told.
-    pass
 
 @dataclass
 class AudioConfig:
