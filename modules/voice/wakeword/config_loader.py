@@ -7,7 +7,7 @@ from typing import Any, Dict
 import yaml
 
 from modules.common.config_loader import deep_merge, load_agent_config
-from modules.voice.audio_router import AudioRouterConfig
+from modules.voice.audio_router import AudioConfig, AudioRouterConfig
 
 
 _DEF_CFG_PATH = Path(__file__).parent / "config" / "config.yml"

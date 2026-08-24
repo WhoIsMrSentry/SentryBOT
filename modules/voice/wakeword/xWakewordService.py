@@ -30,8 +30,7 @@ from modules.voice.wakeword.services.wakeword_actions import (
 from modules.voice.speech.services.recognizer import Recognizer, RecognitionResult
 from modules.voice.audio_router import (
     get_audio_router, AudioRouterConfig, AudioConfig,
-    VoskConsumerAdapter, OpenWakeWordConsumerAdapter,
-    register_audio_consumer, unregister_audio_consumer
+    VoskConsumerAdapter, OpenWakeWordConsumerAdapter
 )
 
 try:
@@ -108,11 +107,10 @@ class WakewordService:
         else:
             self._recognizer = Recognizer(_resolve_model_paths(self.cfg.get("recognition", {})))
         
-        # Register Vosk adapter if using vosk
-        if self.engine == "vosk" and self._recognizer:
-            self._vosk_adapter = VoskConsumerAdapter(self._recognizer)
-            register_audio_consumer("wakeword_vosk", self._vosk_adapter)
-        
+        # NOTE: no push-registration of adapters here; start() consumes the
+        # capture stream in pull mode (registering the adapter as a consumer
+        # too would feed every frame to the engine twice).
+
         self.actions = WakewordActions(self.cfg.get("actions", {}))
         rec_vad = (self.cfg.get("recognition", {}) or {}).get("vad", {})
         if isinstance(rec_vad, dict) and rec_vad.get("enabled"):
@@ -130,35 +128,31 @@ class WakewordService:
                 logger.warning("wakeword service running degraded: no engine available")
                 self._degraded_reason = self._degraded_reason or "no wakeword engine available"
                 return
-            
-            # Register with audio router
-            if self.engine == "openwakeword" and self._openwakeword_adapter:
-                register_audio_consumer("wakeword_openwakeword", self._openwakeword_adapter)
-            elif self.engine == "vosk" and self._vosk_adapter:
-                register_audio_consumer("wakeword_vosk", self._vosk_adapter)
-            
+
+            capture = self._audio_router.get_capture()
+            if capture is None:
+                raise RuntimeError("audio router capture not running")
+
             logger.info(
                 "wakeword listening started (engine=%s)",
                 self.engine,
             )
-            
+
+            # Pull mode: the engine consumes the stream directly. Do NOT also
+            # register the adapter as a push consumer (double feed).
             if self.engine == "openwakeword" and self._openwakeword is not None:
-                # Get stream from audio router
-                self._stream_iter = iter(self._audio_router.get_capture().stream())
-                self._audio_router.get_capture().register_consumer("wakeword_openwakeword", self._openwakeword_adapter)
-                self._openwakeword_adapter.on_start()
-                
+                self._stream_iter = iter(capture.stream())
+                self._restart_attempts = 0
+
                 for label in self._openwakeword.run(self._stream_iter):
                     if self._stop_event.is_set():
                         break
                     logger.info("openwakeword detected: %s", label)
                     self._on_wakeword(label)
             else:
-                # Get stream from audio router
-                self._stream_iter = iter(self._audio_router.get_capture().stream())
-                self._audio_router.get_capture().register_consumer("wakeword_vosk", self._vosk_adapter)
-                self._vosk_adapter.on_start()
-                
+                self._stream_iter = iter(capture.stream())
+                self._restart_attempts = 0
+
                 def mono_generator(src_stream):
                     for chunk in src_stream:
                         if not chunk:
@@ -180,10 +174,19 @@ class WakewordService:
                     self._handle_result(result)
         except Exception as exc:
             self._degraded_reason = str(exc)
+            attempts = getattr(self, "_restart_attempts", 0) + 1
+            self._restart_attempts = attempts
             logger.warning("wakeword listener stopped, running degraded: %s", exc)
             if not self._stop_event.is_set():
-                time.sleep(1.0)
-                self._ensure_listener_restarted(retries=3, delay_sec=0.35)
+                if attempts <= 5:
+                    delay = min(30.0, 0.5 * (2 ** (attempts - 1)))
+                    time.sleep(delay)
+                    self.start_background()
+                else:
+                    logger.error(
+                        "wakeword listener failed %d times consecutively; staying degraded",
+                        attempts,
+                    )
         finally:
             with self._lock:
                 self._listening = False
@@ -204,12 +207,15 @@ class WakewordService:
 
     def stop(self) -> None:
         self._stop_event.set()
-        # Unregister from audio router
+        # Unregister from audio router (capture may already be gone)
+        capture = self._audio_router.get_capture()
         if self.engine == "openwakeword" and self._openwakeword_adapter:
-            self._audio_router.get_capture().unregister_consumer("wakeword_openwakeword")
+            if capture is not None:
+                capture.unregister_consumer("wakeword_openwakeword")
             self._openwakeword_adapter.on_stop()
         elif self.engine == "vosk" and self._vosk_adapter:
-            self._audio_router.get_capture().unregister_consumer("wakeword_vosk")
+            if capture is not None:
+                capture.unregister_consumer("wakeword_vosk")
             self._vosk_adapter.on_stop()
         self._stream_iter = None
         with self._lock:
@@ -328,3 +334,35 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# sentrybot_batch06e_xwakeword_no_hardware_init_stub
+def _sentrybot_batch06e_wakeword_hw_disabled():
+    import os as _os
+    return (
+        str(_os.getenv("SENTRYBOT_NO_HARDWARE", "")).lower() in {"1", "true", "yes", "on"}
+        or str(_os.getenv("SENTRYBOT_SKIP_WAKEWORD_AUTOSTART", "")).lower() in {"1", "true", "yes", "on"}
+    )
+
+try:
+    _sentrybot_batch06e_prev_wakeword_init = xWakewordService.__init__
+
+    def _sentrybot_batch06e_wakeword_init(self, *args, **kwargs):
+        if _sentrybot_batch06e_wakeword_hw_disabled():
+            self.enabled = False
+            self.available = False
+            self.running = False
+            self.runner = None
+            self.thread = None
+            self._thread = None
+            self.last_detection = None
+            self.config = kwargs.get("config") or kwargs.get("config_overrides") or {}
+            return None
+
+        return _sentrybot_batch06e_prev_wakeword_init(self, *args, **kwargs)
+
+    xWakewordService.__init__ = _sentrybot_batch06e_wakeword_init
+
+except NameError:
+    pass
+
