@@ -45,6 +45,10 @@ _TONE_PRESETS: Dict[str, Dict[str, float]] = {
     "curious": {"rate": 185, "volume": 0.9},
     "tired": {"rate": 140, "volume": 0.65},
     "fear": {"rate": 200, "volume": 0.9},
+    "anger": {"rate": 210, "volume": 1.0},
+    "angry": {"rate": 210, "volume": 1.0},
+    "frustrated": {"rate": 165, "volume": 0.9},
+    "frustration": {"rate": 165, "volume": 0.9},
 }
 
 
@@ -54,7 +58,11 @@ class SpeakService:
         self.tts = TextToSpeech(self.cfg.get("tts", {}))
         self.player = AudioPlayer(self.cfg.get("audio_out", {}))
         self._liveliness_cfg = self.cfg.get("liveliness", {}) or {}
-        self._speech_lock = threading.RLock()
+        # R21: separate serialization for synthesis (model access) vs playback
+        # (single speaker). _speech_lock kept as alias for compatibility.
+        self._synth_lock = threading.RLock()
+        self._play_lock = threading.RLock()
+        self._speech_lock = self._synth_lock
         self._is_speaking = False
         tts_cfg = self.cfg.get("tts", {}) if isinstance(self.cfg.get("tts"), dict) else {}
         self.stream_max_chunk_chars = max(40, int(tts_cfg.get("stream_max_chunk_chars", 180)))
@@ -173,7 +181,11 @@ class SpeakService:
                 overrides["piper"] = piper_tone
 
         used_engine = overrides.get("engine") or self.cfg.get("tts", {}).get("engine")
-        with self._speech_lock:
+        # Split locks (R21): synthesis and playback no longer serialize each
+        # other. A second say() can synthesize while the first one plays and
+        # only queues at the single speaker resource.
+        pcm = None
+        with self._synth_lock:
             self._is_speaking = True
             try:
                 from modules.voice.speak.services.tts import clear_synthesis_cancel
@@ -205,17 +217,18 @@ class SpeakService:
                 latency_trace.finish(trace_id, "tts_failed", {"detail": repr(exc)})
                 raise
 
-            self._expression_event(
-                "speak.started",
-                {"trace_id": trace_id, "tone": tone if isinstance(tone, str) else "", "chars": len(cleaned_text)},
-            )
-            latency_trace.mark(trace_id, "audio.play_start")
-            try:
+        self._expression_event(
+            "speak.started",
+            {"trace_id": trace_id, "tone": tone if isinstance(tone, str) else "", "chars": len(cleaned_text)},
+        )
+        latency_trace.mark(trace_id, "audio.play_start")
+        try:
+            with self._play_lock:
                 duration_sec = self.player.play_blocking(pcm)
-            finally:
-                self._is_speaking = False
-                latency_trace.mark(trace_id, "audio.play_done")
-                self._expression_event("speak.finished", {"trace_id": trace_id})
+        finally:
+            self._is_speaking = False
+            latency_trace.mark(trace_id, "audio.play_done")
+            self._expression_event("speak.finished", {"trace_id": trace_id})
 
         latency_trace.finish(trace_id, "done", {"duration_sec": duration_sec})
         snapshot = latency_trace.get(trace_id) or {}
