@@ -8,6 +8,7 @@ def test_gateway_url_helper_for_vlm_clients():
     assert gateway_url(base, "/vlm/ask") == "http://127.0.0.1:9090/vlm/ask"
     patched = patch_service_endpoints({"vlm": "http://localhost:8080/vlm"}, base)
     assert patched["vlm"] == "http://127.0.0.1:9090/vlm"
+    assert patched["expression"] == "http://127.0.0.1:9090/expression"
 
 
 def test_camera_gave_up_blocks_local_vision():
