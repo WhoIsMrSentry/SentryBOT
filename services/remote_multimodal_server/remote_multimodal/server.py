@@ -19,14 +19,14 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
     app = FastAPI(title="SentryBOT Remote Multimodal Vision Server", version="0.2.0")
 
     def _require_auth(token: Optional[str]) -> None:
-        if cfg.auth_token and cfg.auth_token != "changeme" and token != cfg.auth_token:
+        if cfg.auth_token and token != cfg.auth_token:
             raise HTTPException(status_code=401, detail="invalid auth token")
 
     @app.get("/healthz")
     def healthz() -> Dict[str, Any]:
         return {
             "ok": True,
-            "auth_enabled": bool(cfg.auth_token and cfg.auth_token != "changeme"),
+            "auth_enabled": bool(cfg.auth_token),
             "config": {
                 "runtime_profile": cfg.runtime_profile,
                 "detector_backend": cfg.detector_backend,
@@ -110,4 +110,7 @@ def run_app() -> None:
     import uvicorn
 
     cfg = load_runtime_config()
+    public_bind = str(cfg.host).strip().lower() in {"0.0.0.0", "::", "[::]"}
+    if public_bind and not str(cfg.auth_token or "").strip():
+        raise RuntimeError("MM_AUTH_TOKEN or SENTRYBOT_VLM_AUTH_TOKEN is required when remote_multimodal binds to a public interface")
     uvicorn.run("app:app", host=cfg.host, port=cfg.port)

@@ -12,11 +12,47 @@ def bool_env(name: str, default: bool) -> bool:
         return default
     return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
+def load_dotenv_once() -> None:
+    candidates = [Path.cwd() / ".env"]
+    try:
+        candidates.append(Path(__file__).resolve().parents[3] / ".env")
+    except Exception:
+        pass
+    for target in candidates:
+        if not target.exists():
+            continue
+        for raw in target.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key and key not in os.environ:
+                os.environ[key] = value.strip().strip('\"').strip("'")
+
+
+def ollama_chat_endpoint_default() -> str:
+    raw = (
+        os.getenv("MM_QWEN_ENDPOINT")
+        or os.getenv("OLLAMA_CHAT_ENDPOINT")
+        or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
+        or os.getenv("OLLAMA_BASE_URL")
+        or os.getenv("OLLAMA_HOST")
+        or "http://whoismrsentry.local:11434"
+    )
+    value = str(raw).strip().rstrip("/")
+    if value.endswith("/api/chat"):
+        return value
+    if value.endswith("/api/tags"):
+        return value[:-9] + "/api/chat"
+    return value + "/api/chat"
+
+
 
 class RuntimeConfig(BaseModel):
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8091
-    auth_token: str = "changeme"
+    auth_token: str = ""
     face_db_path: str = "known_faces.json"
     yolo_model: str = "yolov8n.pt"
     detector_backend: str = "auto"  # auto | yolo | opencv
@@ -28,9 +64,9 @@ class RuntimeConfig(BaseModel):
     enable_face_recognition: bool = True
     enable_age_emotion: bool = True
     enable_qwen_vlm: bool = True
-    qwen_endpoint: str = "http://127.0.0.1:11434/api/chat"
-    qwen_primary_model: str = "qwen2.5vl:7b"
-    qwen_fallback_model: str = "qwen3-vl:8b"
+    qwen_endpoint: str = "http://whoismrsentry.local:11434/api/chat"
+    qwen_primary_model: str = "qwen3.5:9b"
+    qwen_fallback_model: str = "qwen3.5:9b"
     qwen_timeout_s: float = 8.0
     qwen_num_predict: int = 192
     qwen_num_ctx: int = 2048
@@ -44,11 +80,12 @@ class RuntimeConfig(BaseModel):
 
 
 def load_runtime_config() -> RuntimeConfig:
+    load_dotenv_once()
     base_dir = Path(__file__).resolve().parent.parent
     return RuntimeConfig(
-        host=str(os.getenv("MM_HOST", "0.0.0.0")).strip() or "0.0.0.0",
+        host=str(os.getenv("MM_HOST", os.getenv("SENTRYBOT_MM_HOST", "127.0.0.1"))).strip() or "127.0.0.1",
         port=int(os.getenv("MM_PORT", "8091")),
-        auth_token=str(os.getenv("MM_AUTH_TOKEN", "changeme")).strip() or "changeme",
+        auth_token=str(os.getenv("MM_AUTH_TOKEN", os.getenv("SENTRYBOT_VLM_AUTH_TOKEN", ""))).strip(),
         face_db_path=str(os.getenv("MM_FACE_DB", str(base_dir / "known_faces.json"))).strip(),
         yolo_model=str(os.getenv("MM_YOLO_MODEL", "yolov8n.pt")).strip() or "yolov8n.pt",
         detector_backend=str(os.getenv("MM_DETECTOR_BACKEND", "auto")).strip().lower() or "auto",
@@ -60,14 +97,11 @@ def load_runtime_config() -> RuntimeConfig:
         enable_face_recognition=bool_env("MM_ENABLE_FACE_RECOGNITION", True),
         enable_age_emotion=bool_env("MM_ENABLE_AGE_EMOTION", True),
         enable_qwen_vlm=bool_env("MM_ENABLE_QWEN_VLM", True),
-        qwen_endpoint=str(
-            os.getenv("MM_QWEN_ENDPOINT", "http://127.0.0.1:11434/api/chat")
-        ).strip()
-        or "http://127.0.0.1:11434/api/chat",
-        qwen_primary_model=str(os.getenv("MM_QWEN_PRIMARY_MODEL", "qwen2.5vl:7b")).strip()
-        or "qwen2.5vl:7b",
-        qwen_fallback_model=str(os.getenv("MM_QWEN_FALLBACK_MODEL", "qwen3-vl:8b")).strip()
-        or "qwen3-vl:8b",
+        qwen_endpoint=ollama_chat_endpoint_default(),
+        qwen_primary_model=str(os.getenv("MM_QWEN_PRIMARY_MODEL", "qwen3.5:9b")).strip()
+        or "qwen3.5:9b",
+        qwen_fallback_model=str(os.getenv("MM_QWEN_FALLBACK_MODEL", "qwen3.5:9b")).strip()
+        or "qwen3.5:9b",
         qwen_timeout_s=float(os.getenv("MM_QWEN_TIMEOUT", "8.0")),
         qwen_num_predict=int(os.getenv("MM_QWEN_NUM_PREDICT", "192")),
         qwen_num_ctx=int(os.getenv("MM_QWEN_NUM_CTX", "2048")),

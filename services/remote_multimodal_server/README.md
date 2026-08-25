@@ -39,6 +39,7 @@ Default: `http://0.0.0.0:8091`
 - `POST /vision/analyze/cheap` (objects/people/faces/hazards; never wakes Qwen)
 - `POST /vision/analyze/semantic` (explicit semantic VLM budget; may wake Qwen)
 - `POST /vision/register_face`
+- `POST /vision/ocr` (remote OCR backend)
 
 ## Environment Variables
 
@@ -56,9 +57,9 @@ Default: `http://0.0.0.0:8091`
 - `MM_ENABLE_FACE_RECOGNITION` (`true|false`, default `true`)
 - `MM_ENABLE_AGE_EMOTION` (`true|false`, default `true`)
 - `MM_ENABLE_QWEN_VLM` (`true|false`, default `true`)
-- `MM_QWEN_ENDPOINT` (default `http://127.0.0.1:11434/api/chat`)
-- `MM_QWEN_PRIMARY_MODEL` (default `qwen2.5vl:7b`)
-- `MM_QWEN_FALLBACK_MODEL` (default `qwen3-vl:8b`)
+- `MM_QWEN_ENDPOINT` (default `http://whoismrsentry.local:11434/api/chat`)
+- `MM_QWEN_PRIMARY_MODEL` (default `qwen3.5:9b`)
+- `MM_QWEN_FALLBACK_MODEL` (default `qwen3.5:9b`)
 - `MM_QWEN_TIMEOUT` (default `8.0`)
 - `MM_QWEN_NUM_PREDICT` (default `192`)
 - `MM_QWEN_NUM_CTX` (default `2048`)
@@ -71,7 +72,7 @@ Default: `http://0.0.0.0:8091`
 For your selected profile (`balanced`) with Qwen + OpenCV:
 
 - Detector: YOLO (`ultralytics`)
-- Scene reasoning: Qwen VLM via Ollama (`qwen2.5vl:7b`, fallback `qwen3-vl:8b`)
+- Scene reasoning: Qwen VLM via Ollama (`qwen3.5:9b`, fallback `qwen3.5:9b`)
 - Face identity: `face_recognition`
 - Age/emotion: `deepface`
 - Optional caption/reasoning: `transformers` image-to-text backend
@@ -82,8 +83,9 @@ For your selected profile (`balanced`) with Qwen + OpenCV:
 remote_multimodal:
   enabled: true
   endpoint: "http://PC_IP:8091/vision/analyze"
-  cheap_endpoint: "http://PC_IP:8091/vision/analyze/cheap"
-  semantic_endpoint: "http://PC_IP:8091/vision/analyze/semantic"
+  ocr_endpoint: "http://PC_IP:8091/vision/ocr"
   timeout_s: 6.0
+  ocr_timeout_s: 10.0
   auth_token: "YOUR_TOKEN"
+  ocr_languages: ["en", "tr"]
 ```
