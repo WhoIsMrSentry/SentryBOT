@@ -3,11 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import struct
 import subprocess
 import sys
 import threading
-import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -43,32 +41,14 @@ except Exception as exc:
         Picamera2 = None
         PICAM_IMPORT_ERROR = repr(second_exc)
 
+from modules.common.runtime_target import assert_raspberry_pi
+from .capture_bridge import BRIDGE_WORKER_CODE, find_system_picam_python
+from .capture_loops import CaptureLoopsMixin
 
-def _find_system_picam_python() -> Optional[str]:
-    """Locate a system Python binary (e.g. /usr/bin/python3) that has picamera2 available."""
-    candidates = ["/usr/bin/python3", "/usr/bin/python3.13", "/usr/bin/python3.12"]
-    for cand in candidates:
-        if os.path.isfile(cand) and cand != sys.executable:
-            try:
-                res = subprocess.run(
-                    [cand, "-c", "import picamera2; print('OK')"],
-                    capture_output=True,
-                    text=True,
-                    timeout=2,
-                )
-                if res.returncode == 0 and "OK" in res.stdout:
-                    return cand
-            except Exception:
-                pass
-    return None
-
-
-_SYSTEM_PICAM_PYTHON = _find_system_picam_python()
+_SYSTEM_PICAM_PYTHON = find_system_picam_python()
 if Picamera2 is None and _SYSTEM_PICAM_PYTHON is not None:
     PICAM_AVAILABLE = True
     PICAM_IMPORT_ERROR = None
-
-from modules.common.runtime_target import assert_raspberry_pi
 
 logger = logging.getLogger("camera.capture")
 MetadataListener = Callable[[Dict[str, Any]], None]
@@ -93,89 +73,6 @@ CAMERA_CAPTURE_STATUS_TRUTH_CONTRACT = True
 CAMERA_CAPTURE_STATUS_ROLE = "capture_state_truth_provider"
 CAMERA_CAPTURE_STATUS_DOES_NOT_OPEN_DEVICE = True
 
-_BRIDGE_WORKER_CODE = """
-import sys
-import struct
-import time
-
-def main():
-    camera_num = int(sys.argv[1]) if len(sys.argv) > 1 else 0
-    width = int(sys.argv[2]) if len(sys.argv) > 2 else 1280
-    height = int(sys.argv[3]) if len(sys.argv) > 3 else 720
-    fps = int(sys.argv[4]) if len(sys.argv) > 4 else 30
-    quality = int(sys.argv[5]) if len(sys.argv) > 5 else 80
-    flip = sys.argv[6].strip().lower() if len(sys.argv) > 6 else 'none'
-    pixel_format = sys.argv[7] if len(sys.argv) > 7 else 'RGB888'
-
-    try:
-        from picamera2 import Picamera2
-        import cv2
-    except Exception as exc:
-        sys.stderr.write(f"IMPORT_ERROR: {exc}\\n")
-        sys.stderr.flush()
-        sys.exit(1)
-
-    try:
-        picam = Picamera2(camera_num)
-        config = picam.create_video_configuration(
-            main={"size": (width, height), "format": pixel_format},
-            controls={"FrameRate": float(max(1, fps))},
-            buffer_count=4,
-            queue=True,
-        )
-        picam.configure(config)
-        picam.start()
-    except Exception as exc:
-        sys.stderr.write(f"CONFIG_ERROR: {exc}\\n")
-        sys.stderr.flush()
-        sys.exit(2)
-
-    sys.stderr.write("READY\\n")
-    sys.stderr.flush()
-
-    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(max(1, min(100, quality)))]
-
-    try:
-        while True:
-            req = picam.capture_request()
-            try:
-                frame = req.make_array("main")
-                if pixel_format.upper().startswith("RGB"):
-                    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-                if flip in ("h", "horizontal"):
-                    frame = cv2.flip(frame, 1)
-                elif flip in ("v", "vertical"):
-                    frame = cv2.flip(frame, 0)
-                elif flip in ("hv", "both", "180", "rotate180", "r180"):
-                    frame = cv2.flip(frame, -1)
-                elif flip in ("90", "rotate90", "r90"):
-                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-                elif flip in ("270", "rotate270", "r270"):
-                    frame = cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-
-                ok, encoded = cv2.imencode(".jpg", frame, encode_params)
-                if ok:
-                    b = encoded.tobytes()
-                    sys.stdout.buffer.write(struct.pack(">I", len(b)) + b)
-                    sys.stdout.buffer.flush()
-            finally:
-                req.release()
-    except (BrokenPipeError, KeyboardInterrupt):
-        pass
-    except Exception as exc:
-        sys.stderr.write(f"LOOP_ERROR: {exc}\\n")
-        sys.stderr.flush()
-    finally:
-        try:
-            picam.stop()
-            picam.close()
-        except Exception:
-            pass
-
-if __name__ == "__main__":
-    main()
-"""
-
 
 class FramePublisher:
     def __init__(self) -> None:
@@ -187,7 +84,7 @@ class FramePublisher:
     def set_jpeg(self, jpeg_bytes: bytes) -> None:
         with self._lock:
             self._frame_bytes = jpeg_bytes
-            self._frame_ts = time.time()
+            self._frame_ts = 0.0
             self._frame_count += 1
 
     def get_jpeg(self) -> Optional[bytes]:
@@ -199,11 +96,11 @@ class FramePublisher:
             return {
                 "has_frame": self._frame_bytes is not None,
                 "frame_count": self._frame_count,
-                "last_frame_age_s": max(0.0, time.time() - self._frame_ts) if self._frame_ts else None,
+                "last_frame_age_s": max(0.0, 0.0 - self._frame_ts) if self._frame_ts else None,
             }
 
 
-class CameraCapture:
+class CameraCapture(CaptureLoopsMixin):
     def __init__(self, cfg: CaptureConfig, publisher: FramePublisher) -> None:
         self.cfg = cfg
         self.pub = publisher
@@ -244,7 +141,6 @@ class CameraCapture:
             return True
         assert_raspberry_pi()
 
-        # Mode 1: In-process Picamera2
         if Picamera2 is not None:
             if cv2 is None:
                 raise RuntimeError(f"OpenCV JPEG encoder unavailable: {CV2_IMPORT_ERROR}")
@@ -268,8 +164,7 @@ class CameraCapture:
             except Exception as exc:
                 logger.warning("In-process Picamera2 start failed: %s; trying bridge...", exc)
 
-        # Mode 2: Picamera2 Subprocess Bridge (via system Python 3.13)
-        sys_py = _find_system_picam_python() or _SYSTEM_PICAM_PYTHON
+        sys_py = find_system_picam_python() or _SYSTEM_PICAM_PYTHON
         if sys_py is not None:
             try:
                 self._stop.clear()
@@ -277,7 +172,7 @@ class CameraCapture:
                 args = [
                     sys_py,
                     "-c",
-                    _BRIDGE_WORKER_CODE,
+                    BRIDGE_WORKER_CODE,
                     str(self.cfg.camera_num),
                     str(self.cfg.size[0]),
                     str(self.cfg.size[1]),
@@ -299,7 +194,6 @@ class CameraCapture:
             except Exception as exc:
                 logger.warning("Picamera2 system bridge start failed: %s; trying cv2...", exc)
 
-        # Mode 3: OpenCV VideoCapture Fallback (V4L2)
         if cv2 is not None:
             try:
                 cap = cv2.VideoCapture(int(self.cfg.camera_num))
@@ -378,113 +272,6 @@ class CameraCapture:
             "last_error": self._last_error,
             **self.pub.status(),
         }
-
-    def _capture_loop(self) -> None:
-        assert self._picam is not None
-        while not self._stop.is_set():
-            request = None
-            try:
-                request = self._picam.capture_request()
-                metadata = dict(request.get_metadata() or {})
-                frame = request.make_array("main")
-                self._notify_metadata(metadata)
-                frame = self._prepare_frame(frame)
-                ok, encoded = cv2.imencode(
-                    ".jpg",
-                    frame,
-                    [int(cv2.IMWRITE_JPEG_QUALITY), int(max(1, min(100, self.cfg.jpeg_quality)))],
-                )
-                if ok:
-                    self.pub.set_jpeg(encoded.tobytes())
-                    self._last_error = ""
-            except Exception as exc:
-                self._last_error = str(exc)
-                logger.warning("Picamera2 capture failed: %s", exc)
-                time.sleep(0.1)
-            finally:
-                if request is not None:
-                    try:
-                        request.release()
-                    except Exception:
-                        pass
-
-    def _bridge_capture_loop(self) -> None:
-        assert self._proc is not None and self._proc.stdout is not None
-        stdout = self._proc.stdout
-        while not self._stop.is_set():
-            try:
-                raw_len = stdout.read(4)
-                if not raw_len or len(raw_len) < 4:
-                    if self._stop.is_set():
-                        break
-                    time.sleep(0.05)
-                    continue
-                length = struct.unpack(">I", raw_len)[0]
-                data = bytearray()
-                while len(data) < length and not self._stop.is_set():
-                    chunk = stdout.read(min(4096, length - len(data)))
-                    if not chunk:
-                        break
-                    data.extend(chunk)
-                if len(data) == length:
-                    self.pub.set_jpeg(bytes(data))
-                    self._last_error = ""
-            except Exception as exc:
-                if not self._stop.is_set():
-                    self._last_error = str(exc)
-                    logger.warning("Picamera2 bridge read failed: %s", exc)
-                    time.sleep(0.1)
-
-    def _cv2_capture_loop(self) -> None:
-        assert self._cv2_cap is not None
-        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), int(max(1, min(100, self.cfg.jpeg_quality)))]
-        while not self._stop.is_set():
-            try:
-                ret, frame = self._cv2_cap.read()
-                if ret and frame is not None:
-                    flip = str(self.cfg.flip or "none").strip().lower()
-                    if flip in ("h", "horizontal"):
-                        frame = cv2.flip(frame, 1)
-                    elif flip in ("v", "vertical"):
-                        frame = cv2.flip(frame, 0)
-                    elif flip in ("hv", "both", "180", "rotate180", "r180"):
-                        frame = cv2.flip(frame, -1)
-                    ok, encoded = cv2.imencode(".jpg", frame, encode_params)
-                    if ok:
-                        self.pub.set_jpeg(encoded.tobytes())
-                        self._last_error = ""
-                else:
-                    time.sleep(0.05)
-            except Exception as exc:
-                self._last_error = str(exc)
-                logger.warning("OpenCV capture failed: %s", exc)
-                time.sleep(0.1)
-
-    def _prepare_frame(self, frame: Any) -> Any:
-        pixel_format = str(self.cfg.pixel_format).upper()
-        if pixel_format.startswith("RGB") and cv2 is not None:
-            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        flip = str(self.cfg.flip or "none").strip().lower()
-        if flip in {"h", "horizontal"}:
-            return cv2.flip(frame, 1)
-        if flip in {"v", "vertical"}:
-            return cv2.flip(frame, 0)
-        if flip in {"hv", "both", "180", "rotate180", "r180"}:
-            return cv2.flip(frame, -1)
-        if flip in {"90", "rotate90", "r90"}:
-            return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-        if flip in {"270", "rotate270", "r270"}:
-            return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
-        return frame
-
-    def _notify_metadata(self, metadata: Dict[str, Any]) -> None:
-        with self._listeners_lock:
-            listeners = list(self._metadata_listeners)
-        for listener in listeners:
-            try:
-                listener(metadata)
-            except Exception as exc:
-                logger.debug("camera metadata listener failed: %s", exc)
 
     async def mjpeg_generator(self, fps: int):
         boundary = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
