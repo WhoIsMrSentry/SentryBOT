@@ -10,10 +10,10 @@ try:
     from .services.runner import NeoRunner
     from .services.driver import NeoDriverConfig
 except Exception:  # when run as script
-    from config_loader import load_config  # type: ignore
-    from api import get_router  # type: ignore
-    from services.runner import NeoRunner  # type: ignore
-    from services.driver import NeoDriverConfig  # type: ignore
+    from modules.visual_output.neopixel.config_loader import load_config  # type: ignore
+    from modules.visual_output.neopixel.api import get_router  # type: ignore
+    from modules.visual_output.neopixel.services.runner import NeoRunner  # type: ignore
+    from modules.visual_output.neopixel.services.driver import NeoDriverConfig  # type: ignore
 
 try:
     from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore

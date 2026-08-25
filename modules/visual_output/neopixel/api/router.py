@@ -6,7 +6,7 @@ from typing import List, Optional
 try:
     from ..services.runner import NeoRunner
 except Exception:
-    from services.runner import NeoRunner  # type: ignore
+    from modules.visual_output.neopixel.services.runner import NeoRunner  # type: ignore
 
 
 # Pydantic models and helpers at module scope to avoid OpenAPI forward-ref issues
@@ -118,7 +118,7 @@ def get_router(runner: NeoRunner) -> APIRouter:
         try:
             from ..services import ANIMATIONS  # type: ignore
         except Exception:
-            from .services import ANIMATIONS  # type: ignore
+            from ..services import ANIMATIONS  # type: ignore
         names = sorted(list(ANIMATIONS.keys()))
         if show_all:
             payload = [AnimationInfo(name=n, title=_pretty(n)) for n in names]
@@ -131,7 +131,7 @@ def get_router(runner: NeoRunner) -> APIRouter:
         try:
             from ..emotions.loader import EmotionStore  # type: ignore
         except Exception:
-            from .emotions.loader import EmotionStore  # type: ignore
+            from ..emotions.loader import EmotionStore  # type: ignore
         store = EmotionStore()
         palette = store.load()
         names = sorted(list(palette.entries_by_emotion.keys()))
