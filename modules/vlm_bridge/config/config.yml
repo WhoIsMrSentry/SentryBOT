@@ -83,9 +83,9 @@ vision:
   personalization:
     known_people:
       Alice:
-        greeting: "Hoş geldin Alice, seni gördüğüme sevindim."
+        greeting: "HoÅŸ geldin Alice, seni gÃ¶rdÃ¼ÄŸÃ¼me sevindim."
       Bob:
-        greeting: "Selam Bob, bugün nasıl hissediyorsun?"
+        greeting: "Selam Bob, bugÃ¼n nasÄ±l hissediyorsun?"
     greet_cooldown_s: 30
   liveliness:
     heartbeat_interval_s: 30
@@ -100,14 +100,14 @@ visual_context:
 # Living Vision Agent configuration
 vision_llm:
   enabled: true
-  base_url: "http://127.0.0.1:11434"  # Remote Ollama SSH bridge
-  model: "qwen3.5:9b"
+  base_url: http://whoismrsentry.local:11434
+  model: qwen3.5:9b
   timeout_s: 18
   max_image_width: 640
   jpeg_quality: 70
   min_interval_s: 4
   active_question_timeout_s: 15
-  num_predict: 256                         # JSON çıktı için yeterli, hız kazancı
+  num_predict: 256                         # JSON Ã§Ä±ktÄ± iÃ§in yeterli, hÄ±z kazancÄ±
   num_ctx: 2048                            # VLM context (image tokens dominate)
 
 person_identity:
@@ -122,7 +122,7 @@ person_identity:
   owner_name: ""  # Will be set by remember_person tool
 
 remote:
-  auth_token: "sb-vlm-wiXKZjxkyBZ_AbFd_aW3MCKi2kJhtKFo"
+  auth_token: ""
   accept_results: true     # Allow POST /vlm/results ingestion
 
 remote_multimodal:
@@ -131,7 +131,7 @@ remote_multimodal:
   ocr_endpoint: "http://PC_IP:8091/vision/ocr"  # remote OCR backend
   timeout_s: 6.0
   ocr_timeout_s: 10.0
-  auth_token: "sb-vlm-wiXKZjxkyBZ_AbFd_aW3MCKi2kJhtKFo"
+  auth_token: ""
   ocr_languages: ["en", "tr"]
 
 robot:
@@ -139,14 +139,14 @@ robot:
 
 ollama:
   endpoint: "http://localhost:8080/ollama/chat"
-  model: "qwen3.5:9b"
+  model: qwen3.5:9b
   timeout: 10.0
   num_predict: 100
 
 llm:
   provider: "ollama"                 # ollama | google_ai_studio
   single_model_mode: true             # true => ollama.model, VLM ve agent icin ortak model
-  primary_model: "qwen3.5:9b"
+  primary_model: qwen3.5:9b
   clm_fallback_enabled: false
   clm_fallback_model: ""   # primary model uygun degilse fallback kullanilmaz
   fallback_on_missing_model: false
