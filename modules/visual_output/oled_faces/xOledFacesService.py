@@ -3,12 +3,15 @@ OLED_FACE_SERVICE_COMPATIBILITY_CONTRACT = True
 OLED_FACE_SERVICE_ROLE = "gateway_runtime_oled_face_compatibility_service"
 
 
+import logging
 import threading
 import time
 from typing import Any, Dict, List, Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+
+logger = logging.getLogger("oled_faces.service")
 
 from .config_loader import load_config
 from .services.mapper import FaceMapper, OledAction
@@ -104,10 +107,14 @@ class xOledFacesService:
     def _loop(self) -> None:
         interval_s = float(self.cfg.get("poll_interval_s", 0.7))
         while not self._stop.is_set():
-            self._maybe_clear_activity()
-            self._enforce_session_activity()
-            self._maybe_idle_ambient()
-            self._sync_from_state_store()
+            try:
+                self._maybe_clear_activity()
+                self._enforce_session_activity()
+                self._maybe_idle_ambient()
+                self._sync_from_state_store()
+            except Exception as exc:
+                # A single failed iteration must never freeze the face (R32).
+                logger.debug("oled_faces loop iteration failed: %s", exc)
             time.sleep(max(0.05, interval_s))
 
     def _enforce_session_activity(self) -> None:
@@ -239,12 +246,6 @@ class xOledFacesService:
     def _apply(self, action: OledAction, priority: int = 50, force: bool = False) -> bool:
         if not bool(self.cfg.get("enabled", True)):
             return False
-        if self._expression_arbiter is not None:
-            try:
-                if not self._expression_arbiter.claim_oled("oled_faces", force=bool(force)):
-                    return False
-            except Exception:
-                pass
         now = time.time()
         mode = action.mode.strip().lower()
         name = action.name.strip().lower()
@@ -259,6 +260,25 @@ class xOledFacesService:
 
         if sent_key == self._last_sent and mode != "animation":
             return True
+        if mode == "animation":
+            ttl_s = max(1.0, float(self.cfg.get("listen_session_hold_s", 120.0))) if (
+                self.coordinator.listen_session_active() or self.coordinator.speak_session_active()
+            ) else max(0.5, float(self.cfg.get("animation_hold_s", 1.2)))
+        else:
+            ttl_s = max(0.5, float(self.cfg.get("bitmap_hold_s", 0.25)))
+        if self._expression_arbiter is not None:
+            try:
+                from modules.common.led_write_policy import to_canonical_priority
+
+                if not self._expression_arbiter.claim_oled(
+                    "oled_faces",
+                    force=bool(force),
+                    priority=to_canonical_priority(priority),
+                    ttl_s=ttl_s,
+                ):
+                    return False
+            except Exception:
+                pass
         try:
             ok = self.display.apply(mode, name)
             if not ok:
