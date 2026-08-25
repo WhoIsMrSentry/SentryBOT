@@ -48,14 +48,14 @@ class FaceManager:
 
         if social_db is None:
             try:
-                from modules.social_db import get_default as _social_default  # type: ignore
+                from modules.cognitive_memory import get_default as _social_default  # type: ignore
 
                 social_db = _social_default()
             except Exception:
                 social_db = None
         if social_db is None:
             try:
-                from modules.social_db.services.repositories import SocialDb
+                from modules.cognitive_memory.services.repositories import SocialDb
                 db_path = os.path.join(self.data_dir, "social.sqlite3")
                 social_db = SocialDb(db_path=db_path)
             except Exception:
@@ -240,11 +240,13 @@ class FaceManager:
                 self._load_faces_from_social_db()
             except Exception:
                 pass
-        self._load_faces_from_json()
+        if not self._known_descriptors:
+            self._load_faces_from_json()
         self.known_face_names = sorted(self._known_descriptors.keys())
         logger.info("Total %d known faces registered in FaceManager.", len(self.known_face_names))
 
     def save_faces(self) -> None:
+        persisted = False
         if self._social_db is not None:
             try:
                 for name, desc in self._known_descriptors.items():
@@ -262,8 +264,11 @@ class FaceManager:
                         score=1.0,
                     )
                 logger.info("Faces persisted to social_db.")
+                persisted = True
             except Exception as exc:
                 logger.error("Failed to persist faces to social_db: %s", exc)
+        if persisted:
+            return
 
         data: Dict[str, Dict[str, List[List[int]]]] = {}
         for name, desc in self._known_descriptors.items():

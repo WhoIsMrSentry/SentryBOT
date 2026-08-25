@@ -1,11 +1,11 @@
 """Remote Ollama VLM client for SentryBOT.
 
 Sends camera frames to a remote Ollama instance running a vision-language
-model (e.g. ``qwen3-vl:8b``) and parses structured scene observations.
+model (e.g. ``qwen3.5:9b``) and parses structured scene observations.
 
 Design constraints:
 * RPi5 only does local OpenCV; heavy VLM runs on a remote GPU server.
-* We cannot install extra services on the remote — only Ollama HTTP API.
+* We cannot install extra services on the remote â€” only Ollama HTTP API.
 * Network traffic must be controlled: frames are resized + JPEG compressed
   before sending, and a minimum interval prevents request flooding.
 * At most one in-flight VLM request at a time.
@@ -24,9 +24,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("vlm_bridge.ollama_vlm")
 
-# ── Defaults ──────────────────────────────────────────────────────────
-_DEFAULT_BASE_URL = "http://127.0.0.1:11434"
-_DEFAULT_MODEL = "qwen3-vl:8b"
+# â”€â”€ Defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+_DEFAULT_BASE_URL = "http:"
+_DEFAULT_MODEL = "qwen3.5:9b"
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_MAX_WIDTH = 640
 _DEFAULT_JPEG_QUALITY = 70
@@ -123,27 +123,27 @@ def _parse_vlm_json(text: str) -> Dict[str, Any]:
     return result
 
 
-# ── VLM scene analysis prompt ────────────────────────────────────────
+# â”€â”€ VLM scene analysis prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _SCENE_PROMPT_TR = (
-    "Sen bir robotun göz sistemisin. Kameranın gördüğü sahneyi analiz et.\n"
-    "JSON formatında yanıt ver. Şu alanları doldur:\n"
+    "Sen bir robotun gÃ¶z sistemisin. KameranÄ±n gÃ¶rdÃ¼ÄŸÃ¼ sahneyi analiz et.\n"
+    "JSON formatÄ±nda yanÄ±t ver. Åu alanlarÄ± doldur:\n"
     "{\n"
-    '  "summary": "Sahnenin kısa Türkçe özeti (2-3 cümle)",\n'
-    '  "objects": [{"label": "nesne adı", "distance_m": tahmini_mesafe}],\n'
-    '  "people": [{"name": "bilinmiyorsa Unknown", "appearance": "kısa açıklama", "distance_m": tahmini}],\n'
-    '  "hazards": [{"type": "tehlike türü", "severity": "low|medium|high", "distance_m": tahmini}],\n'
-    '  "interesting": ["dikkat çekici detaylar"],\n'
-    '  "recommended_focus": {"type": "person|object|hazard", "reason": "neden odaklanmalı"}\n'
+    '  "summary": "Sahnenin kÄ±sa TÃ¼rkÃ§e Ã¶zeti (2-3 cÃ¼mle)",\n'
+    '  "objects": [{"label": "nesne adÄ±", "distance_m": tahmini_mesafe}],\n'
+    '  "people": [{"name": "bilinmiyorsa Unknown", "appearance": "kÄ±sa aÃ§Ä±klama", "distance_m": tahmini}],\n'
+    '  "hazards": [{"type": "tehlike tÃ¼rÃ¼", "severity": "low|medium|high", "distance_m": tahmini}],\n'
+    '  "interesting": ["dikkat Ã§ekici detaylar"],\n'
+    '  "recommended_focus": {"type": "person|object|hazard", "reason": "neden odaklanmalÄ±"}\n'
     "}\n"
-    "Sadece JSON döndür, başka açıklama ekleme. Türkçe yaz."
+    "Sadece JSON dÃ¶ndÃ¼r, baÅŸka aÃ§Ä±klama ekleme. TÃ¼rkÃ§e yaz."
 )
 
 _QUESTION_PROMPT_TR = (
-    "Sen bir robotun göz sistemisin. Kameranın gördüğü sahneyi analiz et "
-    "ve şu soruyu yanıtla:\n\n"
+    "Sen bir robotun gÃ¶z sistemisin. KameranÄ±n gÃ¶rdÃ¼ÄŸÃ¼ sahneyi analiz et "
+    "ve ÅŸu soruyu yanÄ±tla:\n\n"
     "Soru: {question}\n\n"
-    "Türkçe, doğal ve kısa yanıt ver. Görmediğin şeyi tahmin etme, "
-    "\"göremiyorum\" de."
+    "TÃ¼rkÃ§e, doÄŸal ve kÄ±sa yanÄ±t ver. GÃ¶rmediÄŸin ÅŸeyi tahmin etme, "
+    "\"gÃ¶remiyorum\" de."
 )
 
 
@@ -170,7 +170,7 @@ class OllamaVLMClient:
         self._call_count: int = 0
         self._error_count: int = 0
 
-    # ── Public API ────────────────────────────────────────────────────
+    # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def analyze_frame(
         self,
@@ -269,7 +269,7 @@ class OllamaVLMClient:
             "last_call_age_s": round(time.time() - self._last_call, 1) if self._last_call else None,
         }
 
-    # ── Internal ──────────────────────────────────────────────────────
+    # â”€â”€ Internal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _call_ollama(self, prompt: str, image_b64: str) -> Optional[Dict[str, Any]]:
         """Make the actual HTTP request to Ollama /api/chat."""
@@ -285,6 +285,7 @@ class OllamaVLMClient:
                 }
             ],
             "stream": False,
+            "think": False,
             "options": {
                 "temperature": 0.3,
                 "num_predict": self.num_predict,

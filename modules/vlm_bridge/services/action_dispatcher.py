@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 import requests
 
 try:  # pragma: no cover - optional dependency during tests
-    from modules.ollama.services.tags import extract_llm_tags  # type: ignore
+    from modules.ai_provider.services.tags import extract_llm_tags  # type: ignore
 except Exception:  # pragma: no cover
     extract_llm_tags = None  # type: ignore
 

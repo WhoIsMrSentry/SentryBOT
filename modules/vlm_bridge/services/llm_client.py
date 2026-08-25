@@ -22,7 +22,7 @@ def _default_chat_endpoint() -> str:
         return gateway_url(resolve_gateway_base_url(), "/ollama/chat")
     except Exception:
         return "http://127.0.0.1:8080/ollama/chat"
-_DEFAULT_GENERATE_ENDPOINT = "http://127.0.0.1:11434/api/generate"
+_DEFAULT_GENERATE_ENDPOINT = "http:/api/generate"
 _CHAT_COOLDOWN_UNTIL: Dict[str, float] = {}
 
 
@@ -109,7 +109,7 @@ def _provider_hint() -> Dict[str, Any]:
         "google_key_ready": False,
     }
     try:
-        from modules.ollama.config_loader import load_config as load_ollama_config  # type: ignore
+        from modules.ai_provider.config_loader import load_config as load_ollama_config  # type: ignore
     except Exception:
         return hint
 
@@ -141,8 +141,8 @@ def _mark_cooldown(endpoint: str, seconds: float) -> None:
 
 def _generate_google_text(prompt: str, *, timeout: float) -> Optional[str]:
     try:
-        from modules.ollama.config_loader import load_config as load_ollama_config  # type: ignore
-        from modules.ollama.services.clients import create_llm_client  # type: ignore
+        from modules.ai_provider.config_loader import load_config as load_ollama_config  # type: ignore
+        from modules.ai_provider.services.clients import create_llm_client  # type: ignore
     except Exception:
         return None
 
@@ -193,7 +193,7 @@ def generate_text(
                 model = str((ollama_cfg or {}).get("model", "qwen3.5:9b")).strip() or "qwen3.5:9b"
                 resp = client.post(
                     endpoint,
-                    json={"model": model, "prompt": text, "stream": False},
+                    json={"model": model, "prompt": text, "stream": False, "think": False},
                 )
                 if resp.status_code != 200:
                     return None
@@ -210,6 +210,7 @@ def generate_text(
                         "model": model,
                         "messages": [{"role": "user", "content": text}],
                         "stream": False,
+                        "think": False,
                         "options": {"temperature": 0.4, "num_predict": num_predict},
                     },
                 )

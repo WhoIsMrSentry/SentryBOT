@@ -39,12 +39,26 @@ class HeadCommand:
         return time.time() > self.created_at + self.ttl_s
 
 
-_SOURCE_PRIORITY = {
-    "manual": 100, "safety": 95, "owner_follow": 85,
-    "active_speaker": 75, "agent_core": 65, "sound_direction": 60,
-    "vlm_interest": 50,
-    "autonomy": 30, "idle": 20,
-}
+try:
+    from modules.agent_core.services.action_arbiter import ActionPriority
+    _SOURCE_PRIORITY = {
+        "manual": int(ActionPriority.MANUAL),
+        "safety": int(ActionPriority.SAFETY),
+        "owner_follow": int(ActionPriority.OWNER_FOLLOW),
+        "active_speaker": int(ActionPriority.ACTIVE_SPEAKER),
+        "agent_core": int(ActionPriority.AGENT_TOOL),
+        "sound_direction": int(ActionPriority.FRIEND),
+        "vlm_interest": int(ActionPriority.VLM_INTEREST),
+        "autonomy": int(ActionPriority.AUTONOMY_IDLE),
+        "idle": int(ActionPriority.IDLE),
+    }
+except Exception:
+    _SOURCE_PRIORITY = {
+        "manual": 100, "safety": 95, "owner_follow": 85,
+        "active_speaker": 75, "agent_core": 65, "sound_direction": 60,
+        "vlm_interest": 50,
+        "autonomy": 30, "idle": 20,
+    }
 
 
 class HeadControlArbiter:
