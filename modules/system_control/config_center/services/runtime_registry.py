@@ -144,27 +144,30 @@ class RuntimeConfigRegistry:
         source: str = "api",
     ) -> Dict[str, Any]:
         composed = self._compose(module, name)
+        # Coerce → apply → write run atomically under the lock so two
+        # concurrent set() calls cannot interleave apply order vs stored
+        # value (R53/R54).
         with self._lock:
             entry = self._keys.get(composed)
-        if entry is None:
-            return {"ok": False, "error": "unknown_key", "key": composed}
+            if entry is None:
+                return {"ok": False, "error": "unknown_key", "key": composed}
 
-        coerced, err = self._coerce(entry, value)
-        if err:
-            return {"ok": False, "error": err, "key": composed}
+            coerced, err = self._coerce(entry, value)
+            if err:
+                return {"ok": False, "error": err, "key": composed}
 
-        applied_payload: Optional[Dict[str, Any]] = None
-        if entry.apply_fn is not None:
-            try:
-                applied_payload = entry.apply_fn(coerced)
-            except Exception as exc:
-                logger.warning("apply_fn for %s raised: %s", composed, exc)
-                return {"ok": False, "error": "apply_failed", "exception": str(exc)}
+            applied_payload: Optional[Dict[str, Any]] = None
+            if entry.apply_fn is not None:
+                try:
+                    applied_payload = entry.apply_fn(coerced)
+                except Exception as exc:
+                    logger.warning("apply_fn for %s raised: %s", composed, exc)
+                    return {"ok": False, "error": "apply_failed", "exception": str(exc)}
 
-        prev_value = entry.value
-        entry.value = coerced
-        entry.updated_at = time.time()
-        entry.updated_by = str(actor or "admin")
+            prev_value = entry.value
+            entry.value = coerced
+            entry.updated_at = time.time()
+            entry.updated_by = str(actor or "admin")
 
         self._audit(
             entry,
