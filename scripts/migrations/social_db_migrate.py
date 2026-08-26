@@ -29,7 +29,7 @@ _ROOT = _THIS.parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from modules.social_db.db import SocialDB  # noqa: E402
+from modules.cognitive_memory.db import SocialDB  # noqa: E402
 
 
 def _try_numpy():

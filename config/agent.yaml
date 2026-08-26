@@ -1,5 +1,5 @@
 agent:
-  auth_token: sb-agent-eWcSuwmD-JgFTAnp9oBVHU9putmn2wX4
+  auth_token: ""
   model: qwen3.5:9b
   temperature: 0.15
   num_ctx: 4096
@@ -10,7 +10,7 @@ agent:
   - Beklemedeyim...
   - Islem suruyor...
   - Hala isliyorum...
-  ollama_base_url: http://127.0.0.1:11434
+  ollama_base_url: http://whoismrsentry.local:11434
   max_steps: 4
 llm:
   provider: ollama
@@ -24,39 +24,39 @@ llm:
   think: false
   keep_alive: -1
 ollama:
-  base_url: http://127.0.0.1:11434
+  base_url: http://whoismrsentry.local:11434
   model: qwen3.5:9b
   request_timeout: 60
 google_ai_studio:
   api_key: ''
-  model: gemma-4-31b-it
-  base_url: https://generativelanguage.googleapis.com
+  model: qwen3.5:9b
+  base_url: http://whoismrsentry.local:11434
   request_timeout: 30
 runtime_profile:
   active: remote_ollama
   profiles:
     google_ai_studio:
       llm:
-        provider: google_ai_studio
+        provider: ollama
       agent:
-        model: gemma-4-31b-it
+        model: qwen3.5:9b
         request_timeout: 45
       google_ai_studio:
-        model: gemma-4-31b-it
+        model: qwen3.5:9b
         request_timeout: 45
       vlm_bridge:
         llm:
-          provider: google_ai_studio
+          provider: ollama
         vision_llm:
           enabled: true
-          provider: google_ai_studio
+          provider: ollama
         ollama:
           endpoint: '@gateway/ollama/chat'
           timeout: 12.0
       arduino_serial:
         esp_base_url: http://10.88.255.55:8080
       esp_link:
-        base_url: http://10.88.255.55:8080
+        base_url: http://whoismrsentry.local:11434
     remote_ollama:
       llm:
         provider: ollama
@@ -69,10 +69,10 @@ runtime_profile:
         fallback_on_error: false
       agent:
         model: qwen3.5:9b
-        ollama_base_url: http://127.0.0.1:11434
+        ollama_base_url: http://whoismrsentry.local:11434
         request_timeout: 60
       ollama:
-        base_url: http://127.0.0.1:11434
+        base_url: http://whoismrsentry.local:11434
         model: qwen3.5:9b
         request_timeout: 60
       vlm_bridge:
@@ -88,8 +88,8 @@ runtime_profile:
         vision_llm:
           enabled: true
           provider: ollama
-          base_url: http://127.0.0.1:11434
-          model: qwen3-vl:8b
+          base_url: http://whoismrsentry.local:11434
+          model: qwen3.5:9b
           timeout_s: 18
         ollama:
           endpoint: '@gateway/ollama/chat'
@@ -98,7 +98,7 @@ runtime_profile:
       arduino_serial:
         esp_base_url: http://10.88.255.55:8080
       esp_link:
-        base_url: http://10.88.255.55:8080
+        base_url: http://whoismrsentry.local:11434
       ollama_service:
         llm:
           provider: ollama
@@ -108,7 +108,7 @@ runtime_profile:
           fallback_on_missing_model: false
           fallback_on_error: false
         ollama:
-          base_url: http://127.0.0.1:11434
+          base_url: http://whoismrsentry.local:11434
           model: qwen3.5:9b
           request_timeout: 60
 ollama_service:
@@ -125,7 +125,7 @@ ollama_service:
   translation:
     enabled: false
     default_source_lang: tr
-    model: ''
+    model: qwen3.5:9b
     cache_size: 128
   llm:
     provider: ollama
@@ -135,7 +135,7 @@ ollama_service:
     fallback_on_missing_model: false
     fallback_on_error: false
   ollama:
-    base_url: http://127.0.0.1:11434
+    base_url: http://whoismrsentry.local:11434
     model: qwen3.5:9b
     request_timeout: 60
 vlm_bridge:
@@ -195,7 +195,7 @@ vlm_bridge:
       heartbeat_interval_s: 30
       idle_lookaround_s: 60
   remote:
-    auth_token: sb-vlm-wiXKZjxkyBZ_AbFd_aW3MCKi2kJhtKFo
+    auth_token: ""
     accept_results: true
   remote_multimodal:
     enabled: false
@@ -211,19 +211,19 @@ vlm_bridge:
     timeout: 12.0
     num_predict: 160
   llm:
-    provider: google_ai_studio
+    provider: ollama
     single_model_mode: true
-    primary_model: gemini-2.0-flash
+    primary_model: qwen3.5:9b
     clm_fallback_enabled: false
     clm_fallback_model: ''
     fallback_on_missing_model: false
     fallback_on_error: false
-    model: gemini-2.0-flash
+    model: qwen3.5:9b
 
 google_ai_studio:
-  api_key: ""
-  model: gemini-2.0-flash
-  base_url: https://generativelanguage.googleapis.com
+  api_key: ''
+  model: qwen3.5:9b
+  base_url: http://whoismrsentry.local:11434
   request_timeout: 30.0
   speak:
     endpoint: http://127.0.0.1:8080/speak/say
@@ -240,7 +240,7 @@ google_ai_studio:
   vision_llm:
     enabled: false
     provider: ollama
-    base_url: http://127.0.0.1:11434
+    base_url: http://whoismrsentry.local:11434
     model: qwen3.5:9b
     timeout_s: 18
 speak:
@@ -264,7 +264,7 @@ speak:
       enabled: false
       endpoint: http://192.168.1.100:5000/tts/synthesize
       timeout: 120
-      auth_token: sb-tts-AtG6w3BNcztOFF64tmXh-Wyi2cksngPO
+      auth_token: ""
     piper:
       voice: tr
       auto_language: true
@@ -307,6 +307,14 @@ speak:
     event_timeout_s: 0.35
   naturalness:
     enabled: false
+# Ortak ses yakalama yolu — AudioRouter tek kanonik acilim (R18).
+# Wakeword/speech bu bolumden cihaz/rate/kanal okur; "default" sistem varsayilanini kullanir.
+audio_router:
+  capture:
+    device: default
+    samplerate: 16000
+    channels: 2
+    frame_size: 1024
 wakeword:
   audio:
     device: plughw:0,0
@@ -386,11 +394,15 @@ speech:
       smoothing_alpha: 0.3
       slew_deg_per_s: 120.0
       energy_threshold: 1000
+autonomy:
+  auto_start: true
+  start_on_gateway_boot: true
+
 actions:
   gateway_base_url: http://127.0.0.1:8080
   http_timeout_s: 2.5
 tri_layer:
-  enabled: true
+  enabled: false
   api_native_tools: true
   fast_path:
     enabled: true
@@ -406,7 +418,7 @@ tri_layer:
     max_steps: 4
   persona:
     num_predict: 384
-    stream: true
+    stream: false
 realtime_profile:
   active: fast
   profiles:
@@ -502,14 +514,14 @@ provider_truth:
   runtime_profile: remote_ollama
   reason: raspberry_pi_runtime_with_configured_ollama_provider
   llm_model: qwen3.5:9b
-  ollama_base_url: http://127.0.0.1:11434
+  ollama_base_url: http://whoismrsentry.local:11434
   vlm_provider: ollama
-  vlm_model: qwen3-vl:8b
+  vlm_model: qwen3.5:9b
   remote_multimodal_url: ''
   updated_by: 37_ssh_tunnel_ollama_profile.ps1
 environment:
-  SENTRYBOT_REMOTE_OLLAMA_URL: http://127.0.0.1:11434
-  SENTRYBOT_OLLAMA_BASE_URL: http://127.0.0.1:11434
+  SENTRYBOT_REMOTE_OLLAMA_URL: http://whoismrsentry.local:11434
+  SENTRYBOT_OLLAMA_BASE_URL: http://whoismrsentry.local:11434
 
 startup:
   preflight:

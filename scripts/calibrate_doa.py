@@ -27,8 +27,8 @@ PROJECT_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from modules.speech.services.direction import DirectionEstimator, ArrayGeometry
-from modules.speech.services.audio_capture import AudioCapture, AudioConfig
+from modules.voice.speech.services.direction import DirectionEstimator, ArrayGeometry
+from modules.voice.speech.services.audio_capture import AudioCapture, AudioConfig
 
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, "data", "audio_calibration")
 os.makedirs(OUTPUT_DIR, exist_ok=True)

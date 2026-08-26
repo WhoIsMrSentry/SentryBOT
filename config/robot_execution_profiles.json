@@ -9,7 +9,11 @@
       "blocked_risks": ["critical"],
       "max_parallel_actions": 1,
       "action_timeout_s": 2.0,
-      "stop_on_failure": true
+      "stop_on_failure": true,
+      "vision": {
+        "processing_mode": "local",
+        "hybrid_local_capture": true
+      }
     }
   }
 }
