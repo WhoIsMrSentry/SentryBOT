@@ -178,55 +178,66 @@ def handle_command(ui: UIState, snapshot: Snapshot, text: str) -> None:
         ui.message = f"unknown command: {cmd}"
 
 
-def handle_key(key: str | None, ui: UIState, snapshot: Snapshot) -> None:
-    if key is None:
-        return
-    if ui.command_mode:
-        if key == "ESC":
-            ui.command_mode = ""
-            ui.command_buffer = ""
-            ui.pending_key = ""
-            return
-        if key == "BACKSPACE":
-            ui.command_buffer = ui.command_buffer[:-1]
-            return
-        if key == "ENTER":
-            buf = ui.command_buffer
-            mode = ui.command_mode
-            ui.command_buffer = ""
-            ui.command_mode = ""
-            if mode == "filter":
-                ui.filter_text = buf.strip()
-                ui.active_tab = 1
-                ui.selected_event = 0
-                ui.scroll = 0
-                ui.message = f"filter set: {ui.filter_text or '<none>'}"
-            elif mode == "project_search":
-                ui.project_search = buf.strip()
-                ui.project_results = project_search(ui.root, ui.project_search)
-                ui.active_tab = 4
-                ui.message = f"search complete: {len(ui.project_results)} results"
-            elif mode == "command":
-                handle_command(ui, snapshot, buf)
-            elif mode == "edit_key":
-                ui.pending_key = buf.strip()
-                ui.command_mode = "edit_value"
-            elif mode == "edit_value":
-                ui.message = edit_yaml(ui.root, ui.selected_config, ui.pending_key, buf)
-                ui.pending_key = ""
-            return
-        if len(key) == 1 and key.isprintable():
-            ui.command_buffer += key
-        return
-
-    if key in {"q", "Q"}:
-        raise KeyboardInterrupt
-    if key.isdigit() and 1 <= int(key) <= len(TABS):
-        ui.active_tab = int(key) - 1
+def _submit_command_buffer(mode: str, buf: str, ui: UIState, snapshot: Snapshot) -> None:
+    if mode == "filter":
+        ui.filter_text = buf.strip()
+        ui.active_tab = 1
+        ui.selected_event = 0
         ui.scroll = 0
-        if ui.active_tab == 1:
-            ui.selected_event = 0
-    elif key in {"v", "V"}:
+        ui.message = f"filter set: {ui.filter_text or '<none>'}"
+    elif mode == "project_search":
+        ui.project_search = buf.strip()
+        ui.project_results = project_search(ui.root, ui.project_search)
+        ui.active_tab = 4
+        ui.message = f"search complete: {len(ui.project_results)} results"
+    elif mode == "command":
+        handle_command(ui, snapshot, buf)
+    elif mode == "edit_key":
+        ui.pending_key = buf.strip()
+        ui.command_mode = "edit_value"
+    elif mode == "edit_value":
+        ui.message = edit_yaml(ui.root, ui.selected_config, ui.pending_key, buf)
+        ui.pending_key = ""
+
+
+def _handle_command_mode_key(key: str, ui: UIState, snapshot: Snapshot) -> None:
+    if key == "ESC":
+        ui.command_mode = ""
+        ui.command_buffer = ""
+        ui.pending_key = ""
+        return
+    if key == "BACKSPACE":
+        ui.command_buffer = ui.command_buffer[:-1]
+        return
+    if key == "ENTER":
+        buf = ui.command_buffer
+        mode = ui.command_mode
+        ui.command_buffer = ""
+        ui.command_mode = ""
+        _submit_command_buffer(mode, buf, ui, snapshot)
+        return
+    if len(key) == 1 and key.isprintable():
+        ui.command_buffer += key
+
+
+def _handle_refresh_key(ui: UIState, snapshot: Snapshot) -> None:
+    label = TABS[ui.active_tab] if 0 <= ui.active_tab < len(TABS) else ""
+    if label == "Companion":
+        refresh_companion_snapshot(snapshot, force=True)
+        ui.message = "companion goal refreshed"
+    elif label == "Camera":
+        refresh_camera_snapshot(snapshot, force=True)
+        ui.message = "camera status refreshed"
+    elif label == "Expression":
+        refresh_expression_snapshot(snapshot, force=True)
+        refresh_expression_output_snapshot(snapshot, force=True)
+        ui.message = "expression state/output refreshed"
+    else:
+        ui.message = "refreshed"
+
+
+def _handle_shortcut_key(key: str, ui: UIState, snapshot: Snapshot) -> None:
+    if key in {"v", "V"}:
         order = ["human", "full", "warn"]
         ui.log_view = (
             order[(order.index(ui.log_view) + 1) % len(order)]
@@ -257,19 +268,11 @@ def handle_key(key: str | None, ui: UIState, snapshot: Snapshot) -> None:
         ui.project_results = []
         ui.message = "cleared"
     elif key in {"r", "R"}:
-        if 0 <= ui.active_tab < len(TABS) and TABS[ui.active_tab] == "Companion":
-            refresh_companion_snapshot(snapshot, force=True)
-            ui.message = "companion goal refreshed"
-        elif 0 <= ui.active_tab < len(TABS) and TABS[ui.active_tab] == "Camera":
-            refresh_camera_snapshot(snapshot, force=True)
-            ui.message = "camera status refreshed"
-        elif 0 <= ui.active_tab < len(TABS) and TABS[ui.active_tab] == "Expression":
-            refresh_expression_snapshot(snapshot, force=True)
-            refresh_expression_output_snapshot(snapshot, force=True)
-            ui.message = "expression state/output refreshed"
-        else:
-            ui.message = "refreshed"
-    elif key == "UP":
+        _handle_refresh_key(ui, snapshot)
+
+
+def _handle_navigation_key(key: str, ui: UIState) -> None:
+    if key == "UP":
         if ui.active_tab == 3:
             ui.selected_config = max(0, ui.selected_config - 1)
         elif ui.active_tab == 1:
@@ -297,3 +300,22 @@ def handle_key(key: str | None, ui: UIState, snapshot: Snapshot) -> None:
             ui.scroll = max(ui.scroll, ui.selected_event - 2)
         else:
             ui.scroll = max(0, ui.scroll - 10)
+
+
+def handle_key(key: str | None, ui: UIState, snapshot: Snapshot) -> None:
+    if key is None:
+        return
+    if ui.command_mode:
+        _handle_command_mode_key(key, ui, snapshot)
+        return
+
+    if key in {"q", "Q"}:
+        raise KeyboardInterrupt
+    if key.isdigit() and 1 <= int(key) <= len(TABS):
+        ui.active_tab = int(key) - 1
+        ui.scroll = 0
+        if ui.active_tab == 1:
+            ui.selected_event = 0
+        return
+    _handle_shortcut_key(key, ui, snapshot)
+    _handle_navigation_key(key, ui)

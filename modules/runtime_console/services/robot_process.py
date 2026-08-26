@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import atexit
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -20,8 +22,10 @@ class RobotProcess:
         self.enabled = enabled
         self.proc: subprocess.Popen[str] | None = None
         self.output_log = root / "logs" / "tui.log"
+        self.pid_file = root / "logs" / "sentrybot.pid"
         self.thread: threading.Thread | None = None
         self.profile = str(profile or "")
+        atexit.register(self.stop)
 
     def start(self) -> str:
         if not self.enabled:
@@ -55,6 +59,10 @@ class RobotProcess:
             errors="replace",
             env=env,
         )
+        try:
+            self.pid_file.write_text(str(self.proc.pid), encoding="utf-8")
+        except Exception:
+            pass
         self.thread = threading.Thread(target=self._pump, daemon=True)
         self.thread.start()
         return "robot subprocess started"
@@ -68,7 +76,29 @@ class RobotProcess:
                 fh.flush()
 
     def stop(self) -> None:
+        # Reap an orphaned robot process recorded in the pid file (R58):
+        # if the TUI was SIGKILLed, run_robot.py keeps running and the pid
+        # file is the only handle to it. Clean it up on the next stop.
+        pid_from_file: int | None = None
+        try:
+            if self.pid_file.exists():
+                raw = self.pid_file.read_text(encoding="utf-8").strip()
+                pid_from_file = int(raw) if raw.isdigit() else None
+        except Exception:
+            pid_from_file = None
+
+        try:
+            if self.pid_file.exists():
+                self.pid_file.unlink()
+        except Exception:
+            pass
+
         if self.proc is None or self.proc.poll() is not None:
+            if pid_from_file and pid_from_file != os.getpid():
+                try:
+                    os.kill(pid_from_file, signal.SIGTERM)
+                except Exception:
+                    pass
             return
         self.proc.terminate()
         try:
