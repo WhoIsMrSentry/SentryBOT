@@ -9,12 +9,13 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from .config_loader import load_config
+from modules.gateway.services.agent_api_compat import install_agent_api_compat
 
 logger = logging.getLogger("gateway.service")
 
 # Optional central logging
 try:
-    from modules.logwrapper import init_logging as _init_global_logging  # type: ignore
+    from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
 
     _init_global_logging()
 except Exception as exc:
@@ -40,7 +41,7 @@ def _client_is_loopback(request) -> bool:
 
 def _root_agent_security_cfg() -> dict:
     try:
-        from modules.config_center.agent_yaml_loader import load_agent_config  # type: ignore
+        from modules.common.config_loader import load_agent_config  # type: ignore
 
         loaded = load_agent_config(None)
         return loaded if isinstance(loaded, dict) else {}
@@ -81,7 +82,8 @@ def _check_insecure_defaults(cfg: dict) -> list[str]:
     # Check gateway api_keys
     sec = cfg.get("security", {}) if isinstance(cfg.get("security", {}), dict) else {}
     api_keys = sec.get("api_keys", [])
-    if not api_keys and sec.get("enabled", False):
+    env_api_key = str(os.environ.get("SENTRY_API_KEY", "") or "").strip()
+    if not api_keys and not env_api_key and sec.get("enabled", False):
         warnings.append("SECURITY WARNING: gateway security.enabled=true but no api_keys configured - API will reject all non-loopback requests")
     
     return warnings
@@ -146,11 +148,18 @@ def create_app(config_path: str | None = None) -> FastAPI:
     async def lifespan(app: FastAPI):
         # Bootstrap modules in startup phase so we can start async services cleanly.
         started = {}
+        app.state.started = started
         try:
             from .services.bootstrap import bootstrap  # type: ignore
 
-            started = bootstrap(app, cfg)
-            app.state.started = started  # make started available to runtime
+            started = bootstrap(app, cfg) or {}
+            app.state.started = started
+            try:
+                from modules.gateway.services.agent_core_binding import ensure_agent_core_bound
+
+                ensure_agent_core_bound(app, cfg, app.state.started)
+            except Exception as exc:
+                logger.warning("agent core binding failed: %s", exc)
             started["_startup_health"] = {"ok": True, "stage": "ready", "started_services": sorted(k for k in started if not k.startswith("_"))}
             app.state.startup_health = started["_startup_health"]  # type: ignore[attr-defined]
         except Exception as exc:
@@ -281,9 +290,12 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
             return await call_next(request)
 
+    try:
+        install_agent_api_compat(app)
+    except Exception as exc:
+        logger.warning("agent api compat route install failed: %s", exc)
+
     return app
-
-
 if __name__ == "__main__":
     import uvicorn
 

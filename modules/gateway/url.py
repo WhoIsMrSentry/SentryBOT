@@ -57,7 +57,7 @@ def resolve_gateway_base_url(
         return gateway_base_from_agent_cfg(cfg, port=port)
 
     try:
-        from modules.config_center.agent_yaml_loader import load_agent_config  # type: ignore
+        from modules.common.config_loader import load_agent_config  # type: ignore
 
         return gateway_base_from_agent_cfg(load_agent_config())
     except Exception:
@@ -131,6 +131,7 @@ def patch_service_endpoints(endpoints: Dict[str, Any], gateway_base: str) -> Dic
         "notifier": "/notify",
         "autonomy": "/autonomy",
         "agent_core": "/agent",
+        "expression": "/expression",
     }
 
     out = dict(endpoints or {})
