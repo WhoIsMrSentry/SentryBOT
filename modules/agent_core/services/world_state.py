@@ -1,7 +1,7 @@
 # --- SentryBOT memory/world boundary contract ---
 MEMORY_WORLD_COMPATIBILITY = True
 MEMORY_WORLD_BOUNDARY_ROLE = 'agent_core_compat_world_state'
-MEMORY_WORLD_RUNTIME_OWNER = 'modules.autonomy.services.world_memory'
+MEMORY_WORLD_RUNTIME_OWNER = 'modules.cognitive_memory.services.world_memory'
 MEMORY_WORLD_BOUNDARY_REASON = 'WorldState is still used by AgentOrchestrator, ToolRegistry, SensorFeedbackLoop, and /world_state endpoint; keep as compatibility state surface.'
 # --- End SentryBOT memory/world boundary contract ---
 
@@ -15,6 +15,9 @@ class WorldState:
     Added Chrono-awareness, Location mapping, and Action Outcome handling.
     """
     def __init__(self):
+        import threading as _threading
+
+        self._state_lock = _threading.RLock()
         self.state: Dict[str, Any] = {
             "distance_front_cm": -1,
             "battery_percent": 100,
@@ -35,7 +38,8 @@ class WorldState:
         }
         
     def update_state(self, updates: Dict[str, Any]):
-        self.state.update(updates)
+        with self._state_lock:
+            self.state.update(updates)
 
     def update_scene(self, context: Dict[str, Any]) -> None:
         """Ingest a VLM visual-context snapshot into the environment model.
@@ -64,10 +68,13 @@ class WorldState:
         }
         
     def set_action_feedback(self, feedback: str):
-        self.state["last_action_feedback"] = feedback
-        
+        with self._state_lock:
+            self.state["last_action_feedback"] = feedback
+
     def get_state(self) -> Dict[str, Any]:
-        return self.state.copy()
+        # Copy under lock: readers never see partial updates (R8).
+        with self._state_lock:
+            return dict(self.state)
         
     def inject_world_state(self, base_prompt: str) -> str:
         """

@@ -15,7 +15,7 @@ from __future__ import annotations
 # --- SentryBOT memory/world boundary contract ---
 MEMORY_WORLD_COMPATIBILITY = True
 MEMORY_WORLD_BOUNDARY_ROLE = 'agent_core_memory_consolidator'
-MEMORY_WORLD_RUNTIME_OWNER = 'modules.autonomy.services.world_memory'
+MEMORY_WORLD_RUNTIME_OWNER = 'modules.cognitive_memory.services.world_memory'
 MEMORY_WORLD_BOUNDARY_REASON = 'MemoryConsolidator now uses LLM extraction and writes to WorldMemory for RAG recall.'
 # --- End SentryBOT memory/world boundary contract ---
 
@@ -92,7 +92,7 @@ class MemoryConsolidator:
         if self._learner is not None:
             return self._learner
         try:
-            from modules.autonomy.services.preference_learner import PreferenceLearner
+            from modules.cognitive_memory.services.preference_learner import PreferenceLearner
 
             self._learner = PreferenceLearner()
         except Exception:

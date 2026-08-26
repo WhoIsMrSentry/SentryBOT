@@ -60,7 +60,7 @@ class ActionSafetyFilter:
                         }
                     
         # 2. Check Hardware Limits Contextually (e.g., fast move with low battery)
-        if action_type in ["move_direct", "stepper", "pathfind"]:
+        if action_type in ["stepper", "pathfind"]:
             # If world_state has battery, we could check it here.
             # Example placeholder:
             # if getattr(self, "world_state", None) and self.world_state.get_battery() < 10:
