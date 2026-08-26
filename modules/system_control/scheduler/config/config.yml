@@ -1,0 +1,19 @@
+server:
+  host: 0.0.0.0
+  port: 8094
+
+gateway_base_url: http://127.0.0.1:8080
+
+jobs:
+  - id: gateway_health
+    kind: http
+    method: GET
+    path: /healthz
+    every_s: 30
+    timeout_s: 1.0
+    initial_delay_s: 5
+  - id: diagnostics_hourly
+    kind: diagnostics
+    every_s: 3600
+    timeout_s: 2.0
+    initial_delay_s: 15

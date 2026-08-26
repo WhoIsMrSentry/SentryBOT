@@ -7,13 +7,26 @@ import json
 
 
 class Scheduler:
-    def __init__(self, jobs: List[Dict[str, Any]] | None = None, gateway_base_url: str = "http://127.0.0.1:8080") -> None:
+    def __init__(
+        self,
+        jobs: List[Dict[str, Any]] | None = None,
+        gateway_base_url: str = "http://127.0.0.1:8080",
+        services: Dict[str, Any] | None = None,
+    ) -> None:
         self.gateway_base_url = str(gateway_base_url).rstrip("/")
         self._lock = threading.Lock()
         self.jobs: Dict[str, Dict[str, Any]] = {}
         self._tasks: Dict[str, asyncio.Task] = {}
         self._results: Dict[str, Dict[str, Any]] = {}
         self._running = False
+        # Event loop captured at start(); lets sync callers (HTTP routes)
+        # schedule job tasks safely via call_soon_threadsafe (R39).
+        self._loop: asyncio.AbstractEventLoop | None = None
+        # In-process services handed to job handlers (speak/interactions/...).
+        self._services: Dict[str, Any] = dict(services or {})
+        # Per-job in-flight guard: max_instances=1 semantics so a manual
+        # run_once never overlaps the periodic loop execution (R59).
+        self._inflight: Dict[str, bool] = {}
 
         for job in jobs or []:
             self.add_or_update_job(job)
@@ -45,18 +58,43 @@ class Scheduler:
         job = self.jobs.get(job_id)
         if not job or not bool(job.get("enabled", True)):
             return
-        old = self._tasks.get(job_id)
-        if old is not None and not old.done():
-            old.cancel()
+
+        def _spawn_on_loop() -> None:
+            """Runs on the event loop thread; swaps tasks atomically."""
+            with self._lock:
+                cur = self.jobs.get(job_id)
+                if not cur or not bool(cur.get("enabled", True)) or not self._running:
+                    return
+                old = self._tasks.get(job_id)
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    return
+                # Create the replacement FIRST so the job is never left
+                # without a loop even if the old task cancel races.
+                self._tasks[job_id] = loop.create_task(self._job_loop(job_id))
+                if old is not None and old is not self._tasks[job_id] and not old.done():
+                    old.cancel()
+
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
+            loop = self._loop  # sync caller: defer to captured loop
+        if loop is None:
             return
-        self._tasks[job_id] = loop.create_task(self._job_loop(job_id))
+        try:
+            loop.call_soon_threadsafe(_spawn_on_loop)
+        except RuntimeError:
+            # Event loop already closed; scheduler is shutting down.
+            pass
 
     def start(self) -> None:
         with self._lock:
             self._running = True
+            try:
+                self._loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._loop = None
             for job_id in list(self.jobs.keys()):
                 self._ensure_task_locked(job_id)
 
@@ -102,9 +140,17 @@ class Scheduler:
         jid = str(job_id).strip()
         with self._lock:
             job = dict(self.jobs.get(jid, {})) if jid in self.jobs else None
+            if job is not None and self._inflight.get(jid):
+                return {"ok": False, "error": "job_in_flight", "id": jid}
+            if job is not None:
+                self._inflight[jid] = True
         if not job:
             return {"ok": False, "error": "job_not_found", "id": jid}
-        return await self._execute_job(job)
+        try:
+            return await self._execute_job(job)
+        finally:
+            with self._lock:
+                self._inflight[jid] = False
 
     async def _job_loop(self, job_id: str) -> None:
         with self._lock:
@@ -123,8 +169,24 @@ class Scheduler:
                 await asyncio.sleep(max(0.5, float(job.get("every_s", 60.0))))
                 continue
 
-            await self._execute_job(job)
-            await asyncio.sleep(max(0.5, float(job.get("every_s", 60.0))))
+            # Deadline-based pacing: the interval targets fixed wall-clock
+            # spacing regardless of execution duration (no drift, R60).
+            started_at = time.monotonic()
+            skipped = False
+            with self._lock:
+                if self._inflight.get(job_id):
+                    skipped = True
+                else:
+                    self._inflight[job_id] = True
+            try:
+                if not skipped:
+                    await self._execute_job(job)
+            finally:
+                with self._lock:
+                    self._inflight[job_id] = False
+            every_s = max(0.5, float(job.get("every_s", 60.0)))
+            elapsed = time.monotonic() - started_at
+            await asyncio.sleep(max(0.0, every_s - elapsed))
 
     def _build_gateway_url(self, path: str) -> str:
         path = str(path).strip()
@@ -205,16 +267,16 @@ class Scheduler:
             },
         )
 
-        # Prepare services dict for handler
-        services = {
+        # Prepare services dict for handler (in-process services when the
+        # gateway provided them; handlers fall back to HTTP otherwise).
+        services: Dict[str, Any] = {
             "gateway_base_url": self.gateway_base_url,
+            **self._services,
         }
 
         context = job_def  # Using JobDefinition as context for simplicity
         # For compatibility, add services attribute
-        job_def.services = {
-            "gateway_base_url": self.gateway_base_url,
-        }
+        job_def.services = services
 
         attempt = 0
         last: Dict[str, Any] = {"ok": False, "error": "not_executed"}
@@ -229,9 +291,18 @@ class Scheduler:
                 else:
                     # Fallback to legacy HTTP calls for backward compatibility
                     last = await self._execute_legacy(job)
-                
+
                 if last.get("ok"):
                     break
+            except RuntimeError as exc:
+                # Handler needs an in-process service we don't have
+                # ("... service not available") -> use legacy HTTP path.
+                if "not available" in str(exc).lower():
+                    last = await self._execute_legacy(job)
+                    if last.get("ok"):
+                        break
+                else:
+                    last = {"ok": False, "error": str(exc)}
             except Exception as exc:
                 last = {"ok": False, "error": str(exc)}
             
