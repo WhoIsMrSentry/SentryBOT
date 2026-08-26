@@ -350,3 +350,35 @@ class OwnerGuardMixin:
             if kind.startswith(("companion.", "appraisal:", "autonomy.")):
                 bits.append(kind)
         return ", ".join(bits)
+
+    def _habits_summary(self) -> str:
+        """Summarize repeated habits, peak presence hours, and learned macro patterns."""
+        import datetime
+        from collections import Counter
+
+        bits = []
+        db = self._social_db()
+        if db is not None:
+            try:
+                sightings = db.sightings.recent(limit=20)
+                if len(sightings) >= 3:
+                    hours = []
+                    for s in sightings:
+                        ts = float(s.get("ts", 0.0) or 0.0)
+                        if ts > 0:
+                            hours.append(datetime.datetime.fromtimestamp(ts).hour)
+                    if hours:
+                        top_hour, count = Counter(hours).most_common(1)[0]
+                        bits.append(f"owner peak presence ~{top_hour:02d}:00")
+            except Exception:
+                pass
+
+        shadow = getattr(self, "shadow_learner", None)
+        if shadow is not None and hasattr(shadow, "get_learned_macros"):
+            macros = shadow.get_learned_macros()
+            if macros:
+                m_names = list(macros.keys())[:3]
+                bits.append(f"learned habits: {', '.join(m_names)}")
+
+        return "; ".join(bits)
+
