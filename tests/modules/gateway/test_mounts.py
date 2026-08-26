@@ -16,16 +16,13 @@ def test_gateway_bootstrap_mounts():
         "animate": True,
         "piservo": True,
         "autonomy": True,
-        "hardware": True,
         "telemetry": True,
         "diagnostics": True,
         "state_manager": True,
         "scheduler": True,
         "notifier": True,
-        "calibration": True,
+        "runtime_console": True,
         "config_center": True,
-        "ota": False,
-        "mutagen": False,
     }
 
     cfg = {"include": include_cfg}
@@ -46,12 +43,12 @@ def test_gateway_bootstrap_mounts():
         "animate",
         "piservo",
         "autonomy",
-        "hardware",
         "telemetry",
         "diagnostics",
         "state_manager",
         "scheduler",
         "notifier",
+        "runtime_console",
         "calibration",
         "config_center",
     ]
@@ -61,3 +58,4 @@ def test_gateway_bootstrap_mounts():
 
     assert "ota" not in started
     assert "mutagen" not in started
+    assert "admin_ui" not in started
