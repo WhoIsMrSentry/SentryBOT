@@ -16,7 +16,7 @@ class CompanionRituals:
         self.morning_window = tuple(self.cfg.get("morning_window_h", [6, 11]))
         if social_db is None:
             try:
-                from modules.social_db import get_default as _social_default  # type: ignore
+                from modules.cognitive_memory import get_default as _social_default  # type: ignore
 
                 social_db = _social_default()
             except Exception:

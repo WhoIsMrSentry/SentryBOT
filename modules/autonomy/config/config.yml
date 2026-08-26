@@ -1,3 +1,7 @@
+runtime:
+  auto_start: true
+  start_on_gateway_boot: true
+
 defaults:
   loop_interval_ms: 500
   boredom_threshold_s: 20
@@ -1065,7 +1069,9 @@ outcome_learning:
 
 companion_goal_executor:
   enabled: true
+  follow_runtime_profile: true
   dry_run_default: true
+  dry_run_on_pi: false
   allow_real_hardware: false
   stop_on_failure: true
   require_capability_guard: true
@@ -1081,3 +1087,15 @@ companion_goal_executor:
     states: [wait, resense, alternate_safe_goal, safe_observation]
     max_attempts: 2
     terminal_semantic: quiet_observation
+
+companion_auto_execute:
+  enabled: true
+  follow_runtime_profile: true
+  require_auto_execute_flag: true
+  min_interval_s: 8.0
+  dry_run_default: true
+  dry_run_on_pi: false
+  allow_real_hardware: false
+  allowed_risks: [none, low, semantic]
+  blocked_components: []
+  allowed_priorities: [low, normal, critical]
