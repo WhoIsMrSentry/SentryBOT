@@ -10,6 +10,11 @@ class AnimationSupportMixin:
 
     def _perform_micro_movement(self) -> None:
         """Subtle servo movements to simulate breathing/aliveness."""
+        if getattr(self, "_agentic_decision_in_progress", False):
+            return
+        composer = getattr(self, "behavior_composer", None)
+        if composer is not None and hasattr(composer, "is_pose_locked") and composer.is_pose_locked():
+            return
         profile = {}
         if hasattr(self, "mood") and hasattr(self.mood, "get_body_language_profile"):
             profile = self.mood.get_body_language_profile() or {}
@@ -42,6 +47,9 @@ class AnimationSupportMixin:
         is talking, following a target, or asleep so it never fights deliberate
         motion.
         """
+        composer = getattr(self, "behavior_composer", None)
+        if composer is not None and hasattr(composer, "is_pose_locked") and composer.is_pose_locked(now):
+            return
         sched = getattr(self, "liveliness", None)
         if sched is None or not getattr(sched, "enabled", False):
             return
