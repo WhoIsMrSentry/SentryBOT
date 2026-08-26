@@ -6,7 +6,7 @@ from pathlib import Path
 
 from modules.autonomy.services.brain import AutonomyBrain
 from modules.autonomy.services.proactive_planner import ProactivePlanner
-from modules.social_db.db import SocialDB
+from modules.cognitive_memory.db import SocialDB
 
 
 def _minimal_brain(tmp_path):

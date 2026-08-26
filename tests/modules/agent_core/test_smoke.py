@@ -85,7 +85,7 @@ def test_tool_registry_schemas():
     assert "move_head" in names
     assert "play_sound" in names
     assert "set_lights" in names
-    assert "set_laser" in names
+    assert "set_laser" not in names
     assert "oled_face" in names
     assert "search_memory" in names
     assert "get_vision" in names

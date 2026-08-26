@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modules.autonomy.services.world_memory import WorldMemory
+from modules.cognitive_memory.services.world_memory import WorldMemory
 
 
 def test_world_memory_persists_across_instances(tmp_path: Path):
