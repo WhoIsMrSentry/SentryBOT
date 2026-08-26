@@ -158,7 +158,7 @@ class ResponseTagMixin:
 					self.client.system_control(module, action)
 					self.client.push_interaction_event(f"system.{module}.{action}")
 			elif kind == "laser":
-				self.client.set_laser(on=attrs.get("on", False), id=attrs.get("id", 1), both=attrs.get("both", False))
+				logger.debug("Blocked laser control block from LLM response by safety policy")
 			elif kind == "buzzer":
 				self.client.set_buzzer(out=attrs.get("out", "loud"), freq=attrs.get("freq", 2200), ms=attrs.get("ms", 60))
 			elif kind == "sound_play":

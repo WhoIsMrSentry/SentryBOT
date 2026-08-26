@@ -2,12 +2,15 @@
 
 from .animations import AnimationSupportMixin
 from .capability import CapabilityHealthMixin
+from .decision import DecisionMixin
+from .emotion_sync import EmotionSyncMixin
 from .navigation import NavigationTopomapMixin
 from .owner_guard import OwnerGuardMixin
 from .perception_context import PerceptionContextMixin
 from .responses import ResponseTagMixin
 from .scenario import CompanionScenarioMixin
 from .scenes import SceneMixin
+from .speech_react import SpeechReactMixin
 from .timeline import TimelineMixin
 from .vision import VisionMixin
 from .vocal import VocalMixin
@@ -17,11 +20,14 @@ __all__ = [
     "AnimationSupportMixin",
     "CapabilityHealthMixin",
     "CompanionScenarioMixin",
+    "DecisionMixin",
+    "EmotionSyncMixin",
     "NavigationTopomapMixin",
     "OwnerGuardMixin",
     "PerceptionContextMixin",
     "ResponseTagMixin",
     "SceneMixin",
+    "SpeechReactMixin",
     "TimelineMixin",
     "VisionMixin",
     "VocalMixin",
