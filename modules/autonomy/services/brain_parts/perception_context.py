@@ -77,6 +77,26 @@ class PerceptionContextMixin:
             ctx = ctx_resp.get("context", {}) if isinstance(ctx_resp.get("context", {}), dict) else {}
             hazards = ctx.get("hazards", []) if isinstance(ctx.get("hazards", []), list) else []
             people = ctx.get("people", []) if isinstance(ctx.get("people", []), list) else []
+
+            scene_reg = getattr(self, "scene_register", None)
+            if scene_reg is not None and hasattr(scene_reg, "update_person"):
+                for p in people:
+                    if isinstance(p, dict):
+                        pid = str(p.get("name") or p.get("person_id") or p.get("id") or "person")
+                        box = p.get("bbox") or p.get("box")
+                        dist = p.get("distance_m") or p.get("distance")
+                        try:
+                            scene_reg.update_person(
+                                person_id=pid,
+                                bbox=tuple(box) if isinstance(box, (list, tuple)) and len(box) >= 4 else None,
+                                distance_m=float(dist) if dist is not None else None,
+                            )
+                        except Exception:
+                            pass
+
+            composer = getattr(self, "behavior_composer", None)
+            if composer is not None and hasattr(composer, "check_wake_condition") and people:
+                composer.check_wake_condition("person_entered", {"count": len(people)})
             if hazards:
                 self.client.emit_agent_event("hazard_detected", {"count": len(hazards)})
                 self.appraise_event("loud_noise", intensity=min(1.0, len(hazards) / 3.0))
@@ -132,7 +152,7 @@ class PerceptionContextMixin:
                 self.client.emit_agent_event("new_object_seen", {})
                 if getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
                     try:
-                        self._make_agentic_decision(
+                        self._submit_agentic_decision(
                             reason="vision",
                             context_note="I see a new object that I haven't seen before. I should investigate it.",
                         )
@@ -165,6 +185,20 @@ class PerceptionContextMixin:
             )
             if not is_sound:
                 return {"ok": True, "available": True, "handled": False, "reason": "not_sound_interrupt"}
+
+            scene_reg = getattr(self, "scene_register", None)
+            if scene_reg is not None and hasattr(scene_reg, "update_sound_event"):
+                doa = body.get("direction_deg") or body.get("direction") or body.get("doa")
+                if doa is not None:
+                    try:
+                        scene_reg.update_sound_event(direction_deg=float(doa), salience=1.0)
+                    except Exception:
+                        pass
+
+            composer = getattr(self, "behavior_composer", None)
+            if composer is not None and hasattr(composer, "check_wake_condition"):
+                composer.check_wake_condition("sound", body)
+
             actions = []
             try:
                 actions.append({
