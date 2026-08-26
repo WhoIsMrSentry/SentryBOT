@@ -2,6 +2,10 @@ from __future__ import annotations
 from typing import Dict, Any, Tuple
 import time
 
+# Cross-call stabilization state for latency-triggered heals (R55): a single
+# slow sample under Pi load must not restart camera/speech services.
+_HEAL_STATE: Dict[str, Dict[str, Any]] = {}
+
 
 def _normalize_checks(checks: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     out: Dict[str, Dict[str, Any]] = {}
@@ -85,6 +89,14 @@ def run_http_checks(
                         body_ok = False
                 latency_ok = latency_ms <= latency_warn_ms
                 ok = bool(status_ok and body_ok and latency_ok)
+                state = _HEAL_STATE.get(name)
+                if ok:
+                    if state is not None:
+                        state["consec"] = 0
+                elif status_ok and body_ok and not latency_ok:
+                    if state is None:
+                        state = _HEAL_STATE.setdefault(name, {"consec": 0, "last_heal": 0.0})
+                    state["consec"] = int(state.get("consec", 0)) + 1
                 out[name] = {
                     "ok": ok,
                     "critical": critical,
@@ -100,8 +112,28 @@ def run_http_checks(
                     else:
                         out["degraded"].append(name)
 
-                    if heal_enabled and isinstance(chk.get("heal"), dict):
-                        heal_req = chk.get("heal") or {}
+                    heal_req = chk.get("heal") if isinstance(chk.get("heal"), dict) else None
+                    heal_allowed = True
+                    if heal_req is not None and status_ok and body_ok and not latency_ok:
+                        min_fails = max(1, int(heal_cfg.get("min_consecutive_latency_fails", 3)))
+                        cooldown_s = max(0.0, float(heal_cfg.get("latency_heal_cooldown_s", 900)))
+                        now = time.time()
+                        state = _HEAL_STATE.setdefault(name, {"consec": 0, "last_heal": 0.0})
+                        if (
+                            int(state.get("consec", 0)) < min_fails
+                            or (now - float(state.get("last_heal", 0.0))) < cooldown_s
+                        ):
+                            heal_allowed = False
+                            out[name]["heal_suppressed"] = {
+                                "reason": "latency_stabilization",
+                                "consecutive_fails": int(state.get("consec", 0)),
+                                "min_required": min_fails,
+                            }
+                        else:
+                            state["last_heal"] = now
+                            state["consec"] = 0
+
+                    if heal_enabled and heal_req is not None and heal_allowed:
                         heal_method = str(heal_req.get("method", "POST")).upper()
                         heal_path = str(heal_req.get("path", "")).strip()
                         heal_payload = heal_req.get("json") if isinstance(heal_req.get("json"), dict) else None
