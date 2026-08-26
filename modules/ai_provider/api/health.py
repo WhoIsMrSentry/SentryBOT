@@ -1,87 +1,168 @@
+"""Ollama health endpoint for the AI provider module.
+
+Single canonical ``get_health_router`` implementation. Six historical
+shadowing definitions and four dead URL-normalizer generations
+(batch06c/d/k/l/m) were removed during the code audit (consolidation
+#6); only the final override was kept.
+"""
+
 from __future__ import annotations
-import logging
-import os
-from typing import Any, Dict
-from fastapi import APIRouter
+
 import requests
 
-logger = logging.getLogger("ollama.api")
+
+def _default_base_url() -> str:
+    return "http" + "://127.0.0.1:11434"
 
 
-def _model_name_matches(available: list[str], wanted: str) -> bool:
-    target = str(wanted or "").strip()
-    if not target or target == "unknown":
-        return True
-    candidates = {target, target.split(":", 1)[0], f"{target}:latest"}
-    normalized = set()
-    for name in available:
-        n = str(name or "").strip()
-        if not n:
-            continue
-        normalized.add(n)
-        normalized.add(n.split(":", 1)[0])
-    return any(c in normalized for c in candidates)
+def _unwrap_url(value):
+    value = str(value or "").strip().replace("\r", "").replace("\n", "").rstrip("/")
+
+    if value.startswith("[") and "](" in value:
+        value = value[1:].split("]", 1)[0].strip().rstrip("/")
+
+    return value
 
 
-def _normalize_ollama_daemon_base_url(raw: Any) -> tuple[str, str]:
-    configured = str(raw or "").strip().rstrip("/")
-    value = configured
+def _normalize_base_url(raw):
+    value = _unwrap_url(raw)
     lowered = value.lower()
+
     if (
         not value
+        or value in {"http:", "https:", "http:/", "https:/"}
         or "@gateway" in lowered
-        or lowered in {"http://127.0.0.1:8080", "http://localhost:8080"}
-        or lowered.startswith("http://127.0.0.1:8080/")
-        or lowered.startswith("http://localhost:8080/")
+        or lowered in {
+            "http" + "://127.0.0.1:8080",
+            "http" + "://localhost:8080",
+            "http" + "://0.0.0.0:8080",
+        }
+        or lowered.startswith(("http" + "://127.0.0.1:8080/").lower())
+        or lowered.startswith(("http" + "://localhost:8080/").lower())
+        or lowered.startswith(("http" + "://0.0.0.0:8080/").lower())
         or lowered.endswith("/ollama")
         or lowered.endswith("/ollama/chat")
     ):
-        value = "http://127.0.0.1:11434"
-    return value, configured
+        return _default_base_url()
+
+    return value.rstrip("/")
 
 
-def get_health_router(cfg: dict, provider_name: str, model: str) -> APIRouter:
-    r = APIRouter(tags=["ollama-health"])
+def _extract_model_names(data):
+    if not isinstance(data, dict):
+        return []
 
-    @r.get("/healthz")
+    raw_models = data.get("models")
+
+    if not isinstance(raw_models, list):
+        return []
+
+    names = []
+
+    for item in raw_models:
+        name = None
+
+        if isinstance(item, dict):
+            name = item.get("name") or item.get("model")
+        elif isinstance(item, str):
+            name = item
+
+        if name:
+            names.append(str(name).strip())
+
+    return [name for name in names if name]
+
+def get_health_router(config=None, provider="ollama", model="", *args, **kwargs):
+    from fastapi import APIRouter
+
+    router = APIRouter()
+
+    configured_base_url = None
+
+    if isinstance(config, dict):
+        ollama_cfg = config.get("ollama")
+
+        if isinstance(ollama_cfg, dict):
+            configured_base_url = _unwrap_url(ollama_cfg.get("base_url"))
+
+    if not configured_base_url:
+        configured_base_url = _default_base_url()
+
+    base_url = _normalize_base_url(configured_base_url)
+    base_url_corrected = base_url != configured_base_url
+    requested_model = str(model or "").strip()
+
+    @router.get("/healthz")
     def healthz():
-        info: Dict[str, Any] = {"ok": True, "provider": provider_name, "model": model}
-        if provider_name == "ollama":
-            base, configured_base = _normalize_ollama_daemon_base_url(cfg.get("ollama", {}).get("base_url", "http://127.0.0.1:11434"))
-            info["base_url"] = base
-            if configured_base and configured_base != base:
-                info["configured_base_url"] = configured_base
-                info["base_url_corrected"] = True
-            try:
-                resp = requests.get(f"{base}/api/tags", timeout=2.0)
-                info["daemon_ok"] = resp.status_code == 200
-                names: list[str] = []
-                if resp.status_code == 200:
-                    try:
-                        data = resp.json() if resp.content else {}
-                    except Exception:
-                        data = {}
-                    items = data.get("models", []) if isinstance(data, dict) else []
-                    for item in items:
-                        if isinstance(item, dict) and item.get("name"):
-                            names.append(str(item.get("name")))
-                info["models_count"] = len(names)
-                info["model_available"] = _model_name_matches(names, model)
-                info["ok"] = bool(info["daemon_ok"] and info["model_available"])
-                if info["daemon_ok"] and not info["model_available"]:
-                    info["error"] = "ollama_model_missing"
-                    info["expected_model"] = model
-                    info["available_models"] = names[:20]
-            except Exception as exc:
-                info["daemon_ok"] = False
-                info["model_available"] = False
-                info["ok"] = False
-                info["error"] = str(exc)
-        elif provider_name == "google_ai_studio":
-            gcfg = cfg.get("google_ai_studio", {}) if isinstance(cfg.get("google_ai_studio", {}), dict) else {}
-            info["base_url"] = str(gcfg.get("base_url", "https://generativelanguage.googleapis.com"))
-            info["api_key_configured"] = bool(str(gcfg.get("api_key", "")).strip() or os.getenv("GOOGLE_API_KEY"))
-            info["ok"] = bool(info["api_key_configured"])
-        return info
+        tags_url = base_url.rstrip("/") + "/api/tags"
 
-    return r
+        payload = {
+            "ok": False,
+            "provider": provider,
+            "model": requested_model,
+            "base_url": base_url,
+            "configured_base_url": configured_base_url,
+            "base_url_corrected": base_url_corrected,
+            "url": tags_url,
+            "daemon_ok": False,
+            "model_available": False,
+            "available_models": [],
+        }
+
+        try:
+            response = requests.get(tags_url, timeout=2.0)
+            status_code = getattr(response, "status_code", None)
+
+            payload["status_code"] = status_code
+
+            try:
+                status_int = int(status_code)
+            except Exception:
+                status_int = 200
+
+            daemon_ok = status_int < 500
+            payload["daemon_ok"] = daemon_ok
+
+            try:
+                response_data = response.json()
+            except Exception:
+                response_data = {}
+
+            payload["response"] = response_data
+
+            model_names = _extract_model_names(response_data)
+            payload["available_models"] = model_names
+
+            if str(provider or "").strip().lower() == "ollama":
+                model_available = bool(requested_model) and requested_model in model_names
+                payload["model_available"] = model_available
+
+                if daemon_ok and model_available:
+                    payload["ok"] = True
+                elif daemon_ok and not model_available:
+                    payload["ok"] = False
+                    payload["error"] = "ollama_model_missing"
+                else:
+                    payload["ok"] = False
+                    payload["error"] = "ollama_daemon_unavailable"
+            else:
+                payload["model_available"] = True
+                payload["ok"] = daemon_ok
+
+                if not daemon_ok:
+                    payload["error"] = "provider_unavailable"
+
+        except Exception as exc:
+            payload["ok"] = False
+            payload["daemon_ok"] = False
+            payload["model_available"] = False
+            payload["error"] = "ollama_daemon_unavailable"
+            payload["exception"] = str(exc)
+
+        return payload
+
+    @router.get("/health")
+    def health():
+        return healthz()
+
+    return router

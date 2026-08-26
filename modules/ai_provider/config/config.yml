@@ -6,14 +6,14 @@ llm:
   single_model_mode: true      # Keep one base model; do not create persona-derived models
   use_persona_models: false    # Disable legacy persona model injection
 ollama:
-  base_url: http://127.0.0.1:11434
+  base_url: http://whoismrsentry.local:11434
   model: qwen3.5:9b
   request_timeout: 15
-  num_predict: 100          # Fast mode default — kısa cevaplar
+  num_predict: 100          # Fast mode default â€” kÄ±sa cevaplar
 google_ai_studio:
-  api_key: ""        # boşsa GOOGLE_API_KEY env kullanılır
-  model: gemini-3.1-flash-lite-preview
-  base_url: https://generativelanguage.googleapis.com
+  api_key: ''
+  model: qwen3.5:9b
+  base_url: http://whoismrsentry.local:11434
   request_timeout: 20
 persona:
   default: sentry
@@ -25,5 +25,5 @@ actions:
 translation:
   enabled: true
   default_source_lang: tr
-  model: ""
+  model: qwen3.5:9b
   cache_size: 128

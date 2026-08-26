@@ -54,24 +54,16 @@ def _pick_model(agent_cfg: Dict[str, Any], llm_cfg: Dict[str, Any], ollama_cfg: 
 
 
 def _normalize_base_url(raw: Any) -> str:
-    value = str(raw or "").strip().rstrip("/")
-    env_override = str(os.getenv("SENTRYBOT_OLLAMA_BASE_URL") or os.getenv("OLLAMA_BASE_URL") or "").strip().rstrip("/")
-    if env_override:
-        value = env_override
-    lowered = value.lower()
-    # The gateway usually runs on 8080. It is not the Ollama daemon.
-    # Accidentally probing http://127.0.0.1:8080/api/tags creates false 404/self-call failures.
-    if (
-        not value
-        or "@gateway" in lowered
-        or lowered in {"http://127.0.0.1:8080", "http://localhost:8080"}
-        or lowered.startswith("http://127.0.0.1:8080/")
-        or lowered.startswith("http://localhost:8080/")
-        or lowered.endswith("/ollama")
-        or lowered.endswith("/ollama/chat")
-    ):
-        return "http://127.0.0.1:11434"
-    return value
+    """Normalize an Ollama daemon base URL (canonical single implementation).
+
+    Delegates to ``modules.common.ollama_url`` â€” the consolidated batch06
+    helper family. Call sites pass explicit candidate chains (config values
+    first, then env fallbacks); malformed/gateway-self values map back to the
+    local daemon.
+    """
+    from modules.common.ollama_url import normalize_ollama_url
+
+    return normalize_ollama_url(raw)
 
 
 def load_config(config_path: str | None = None) -> Dict[str, Any]:
@@ -117,7 +109,7 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
                     or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
                     or os.getenv("OLLAMA_BASE_URL")
                     or os.getenv("AGENT_OLLAMA_BASE_URL")
-                    or "http://127.0.0.1:11434"
+                    or "http:"
                 ),
                 "model": _REQUIRED_MODEL,
                 "request_timeout": request_timeout,
@@ -137,7 +129,7 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
             or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
             or os.getenv("OLLAMA_BASE_URL")
             or os.getenv("AGENT_OLLAMA_BASE_URL")
-            or "http://127.0.0.1:11434"
+            or "http:"
         )
         if not base_url:
             raise ValueError("agent.ollama_base_url is required")
