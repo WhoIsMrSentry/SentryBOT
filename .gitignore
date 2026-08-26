@@ -42,3 +42,36 @@ safe_places.json
 pi_runtime_stub_legacy_caller_audit.json
 PI_RUNTIME_STUB_LEGACY_CALLER_AUDIT.md
 .venv
+reports/
+
+# SentryBOT local/runtime artifacts
+config/*.secrets.env
+__pycache__/
+*.py[cod]
+*.pyo
+desktop.ini
+logs/
+scratch/*.sqlite3
+scratch/*.db
+data/*.sqlite3
+data/*.sqlite3-*
+data/*.db
+data/*memory*.json
+data/faces.json
+
+# SentryBOT local secrets
+.env.local
+*.local.env
+
+# SentryBOT runtime data/artifacts
+data/*.sqlite3-wal
+data/*.sqlite3-shm
+logs/*.log
+logs/runs/
+.runtime_artifacts_backup/
+
+# Python/cache
+*.pyc
+.pytest_cache/
+.mypy_cache/
+patches/

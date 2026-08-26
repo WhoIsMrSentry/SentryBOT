@@ -12,7 +12,7 @@ on:
     paths:
       - '**/*.py'
       - 'pytest.ini'
-      - 'install_all_requirements.py'
+      - 'scripts/install_all_requirements.py'
       - 'modules/**/requirements.txt'
       - '.github/workflows/**'
   pull_request:
@@ -46,9 +46,9 @@ jobs:
           # Skip remote tool requirements that are not part of module test matrix
           python scripts/install_all_requirements.py --fail-fast --skip remote_tts_server
           python -m pip install pytest httpx
-          # WebRTC VAD is optional (speech.vad.enabled=false by default) and may abort at interpreter shutdown on CI.
+          # Intentional: CI proves speech/wakeword with mocks, not native audio.
+          # webrtcvad/sounddevice can abort the interpreter on GitHub runners.
           python -m pip uninstall -y webrtcvad || true
-          # Optional audio backends are not required for unit tests and can trigger native shutdown crashes on CI.
           python -m pip uninstall -y sounddevice soundfile || true
 
       - name: Validate test collection
@@ -58,11 +58,15 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          timeout 420s python -m pytest --collect-only -vv modules 2>&1 | tee pytest_collect_output.txt
+          timeout 420s python -m pytest --collect-only -vv tests 2>&1 | tee pytest_collect_output.txt
           code=${PIPESTATUS[0]}
           set -e
           if [ "$code" = "124" ]; then
             echo "Pytest collection timed out after 420s." | tee -a pytest_collect_output.txt
+          fi
+          if [ "$code" = "0" ] && ! grep -Eq "collected [1-9][0-9]* items" pytest_collect_output.txt; then
+            echo "Pytest collected zero tests from tests/." | tee -a pytest_collect_output.txt
+            code=1
           fi
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
@@ -74,7 +78,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          timeout 1800s python -m pytest -q modules \
+          timeout 1800s python -m pytest -q tests \
             --maxfail=1 \
             --durations=20 \
             2>&1 | tee pytest_output.txt

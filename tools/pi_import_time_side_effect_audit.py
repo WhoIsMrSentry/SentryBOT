@@ -39,10 +39,10 @@ CRITICAL_MODULES = [
     "modules.camera.services.imx500_runner",
     "modules.vlm_bridge.api.router",
     "modules.vlm_bridge.services.processor",
-    "modules.expression.services.output_bridge",
-    "modules.speech.xSpeechService",
-    "modules.speak.xSpeakService",
-    "modules.wakeword.xWakewordService",
+    "modules.expression.semantic.services.output_bridge",
+    "modules.voice.speech.xSpeechService",
+    "modules.voice.speak.xSpeakService",
+    "modules.voice.wakeword.xWakewordService",
 ]
 
 SEARCH_TERMS = [

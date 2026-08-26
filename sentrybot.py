@@ -25,7 +25,7 @@ def _as_mapping(value: Any) -> dict[str, Any]:
 
 
 def _load_startup_config() -> dict[str, Any]:
-    from modules.config_center.agent_yaml_loader import load_agent_config
+    from modules.system_control.config_center.agent_yaml_loader import load_agent_config
 
     return _as_mapping(load_agent_config())
 
@@ -42,7 +42,7 @@ def _command(command: list[str], timeout_s: float) -> subprocess.CompletedProces
 
 def _configure_logging() -> None:
     try:
-        from modules.logwrapper import init_logging
+        from modules.runtime_console.logwrapper import init_logging
 
         init_logging()
     except Exception as exc:
