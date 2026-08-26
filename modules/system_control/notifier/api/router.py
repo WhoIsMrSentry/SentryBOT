@@ -2,6 +2,7 @@ from __future__ import annotations
 from datetime import datetime, time
 from typing import Dict, Any
 from fastapi import APIRouter
+from starlette.concurrency import run_in_threadpool
 
 from ..services.senders import send_telegram, send_discord
 from ..services.telegram_bot import TelegramBot
@@ -46,7 +47,7 @@ def get_router(
         if bot:
             ok = await bot.send(text, chat_id=target_chat)
         elif token and target_chat:
-            ok = send_telegram(token, target_chat, text)
+            ok = await run_in_threadpool(send_telegram, token, target_chat, text)
         return {"ok": ok}
 
     @r.post("/discord")
@@ -65,9 +66,11 @@ def get_router(
             if bot:
                 res["telegram"] = await bot.send(msg)
             else:
-                res["telegram"] = send_telegram(t["bot_token"], t["chat_id"], msg)
+                res["telegram"] = await run_in_threadpool(
+                    send_telegram, t["bot_token"], t["chat_id"], msg
+                )
         if d.get("webhook"):
-            res["discord"] = send_discord(d["webhook"], msg)
+            res["discord"] = await run_in_threadpool(send_discord, d["webhook"], msg)
         return {"ok": any(res.values()), "results": res}
 
     @r.post("/start")
