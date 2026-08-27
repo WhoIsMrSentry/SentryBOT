@@ -235,6 +235,9 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
                 except Exception:
                     pass
 
+    if hasattr(service, "set_default_callback"):
+        service.set_default_callback(_cb)
+
     @router.post("/speech/start")
     async def start():
         was_listening = service.listening

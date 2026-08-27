@@ -41,6 +41,8 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self._listen_lock = Lock()
         self._result_lock = Lock()
         self._on_result_cb: Optional[Callable[[RecognitionResult], None]] = None
+        self._default_result_cb: Optional[Callable[[RecognitionResult], None]] = None
+        self.last_result: dict[str, Any] = {}
         self._thread = None
         
         # Initialize audio router
@@ -81,6 +83,12 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self._head_arbiter = None
         
         self._stream_iter = None
+
+    def set_default_callback(self, cb: Optional[Callable[[RecognitionResult], None]]) -> None:
+        with self._result_lock:
+            self._default_result_cb = cb
+            if self._on_result_cb is None:
+                self._on_result_cb = cb
 
     def set_stt_suppressed(self, suppressed: bool, ttl_s: float = 15.0) -> None:
         with self._stt_suppress_lock:
@@ -153,6 +161,9 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         if on_result is not None:
             with self._result_lock:
                 self._on_result_cb = on_result
+        elif self._on_result_cb is None and self._default_result_cb is not None:
+            with self._result_lock:
+                self._on_result_cb = self._default_result_cb
         self._stop_event.clear()
         try:
             stt_status = self.stt_status()
@@ -181,7 +192,7 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                     }
                 cb = None
                 with self._result_lock:
-                    cb = self._on_result_cb
+                    cb = self._on_result_cb or self._default_result_cb
                 if cb:
                     cb(result)
                 if self._stop_event.is_set():
@@ -225,10 +236,13 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         if on_result is not None:
             with self._result_lock:
                 self._on_result_cb = on_result
+        elif self._on_result_cb is None and self._default_result_cb is not None:
+            with self._result_lock:
+                self._on_result_cb = self._default_result_cb
         with self._listen_lock:
             if self._listening and self._thread is not None and self._thread.is_alive():
                 return
-        t = threading.Thread(target=self.start, kwargs={"on_result": None}, daemon=True)
+        t = threading.Thread(target=self.start, kwargs={"on_result": on_result or self._default_result_cb}, daemon=True)
         with self._listen_lock:
             self._thread = t
         t.start()

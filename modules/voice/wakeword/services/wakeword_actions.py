@@ -93,12 +93,18 @@ class WakewordActions:
             _post_json(self.agent_interrupt_url)
 
     def start_speech(self) -> None:
-        if self._speech_service is not None and hasattr(self._speech_service, "start_background"):
-            try:
-                self._speech_service.start_background()
-                return
-            except Exception as exc:
-                logger.debug("direct speech_service start failed: %s", exc)
+        if self._speech_service is not None:
+            if hasattr(self._speech_service, "set_stt_suppressed"):
+                try:
+                    self._speech_service.set_stt_suppressed(False)
+                except Exception:
+                    pass
+            if hasattr(self._speech_service, "start_background"):
+                try:
+                    self._speech_service.start_background()
+                    return
+                except Exception as exc:
+                    logger.debug("direct speech_service start failed: %s", exc)
         _post_json(self.speech_start_url)
 
     def stop_speech(self) -> None:
