@@ -301,18 +301,21 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
         started["camera_handle"] = cam_handle
         started["onsensor_bus"] = bus
         started["imx500_runner"] = runner
-        started["device_manager"] = device_manager
+        fps_val = int(picam_raw.get("frame_rate", ccfg.get("fps_target", 30)))
         try:
             app.include_router(
                 get_cam_router(
                     capture,
-                    runner,
-                    bus,
-                    live_profile_probe_fn=None,
-                )
+                    fps_val,
+                    enabled=camera_enabled,
+                    imx500_runner=runner,
+                    onsensor_bus=bus,
+                ),
+                prefix="/camera",
+                tags=["camera"],
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error("failed to mount camera router: %s", exc)
         logger.info("module camera mounted")
 
 

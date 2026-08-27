@@ -221,6 +221,16 @@ class CameraCapture(CaptureLoopsMixin):
 
         if self._proc is not None:
             try:
+                if self._proc.stdout is not None:
+                    try:
+                        self._proc.stdout.close()
+                    except Exception:
+                        pass
+                if self._proc.stderr is not None:
+                    try:
+                        self._proc.stderr.close()
+                    except Exception:
+                        pass
                 self._proc.terminate()
                 self._proc.wait(timeout=1.5)
             except Exception:

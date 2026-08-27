@@ -44,18 +44,15 @@ def get_router(engine: SemanticExpressionEngine | None = None) -> APIRouter:
         return engine.get_state()
     
     @router.get("/status")
-    def status() -> Dict[str, Any]:
-        result = {"ok": True}
+    async def status() -> Dict[str, Any]:
+        result: Dict[str, Any] = {"ok": True}
         if engine is not None:
             result["engine"] = engine.status()
         if bridge is not None:
             result["output"] = bridge.status()
         if arbiter is not None:
-            result["arbiter"] = asyncio.create_task(arbiter.get_status()) if asyncio.iscoroutine(arbiter.get_status()) else None
-            # synchronously fetch status
             try:
-                future = asyncio.run(arbiter.get_status())
-                result["arbiter"] = future
+                result["arbiter"] = await arbiter.get_status()
             except Exception:
                 result["arbiter"] = {"active": False}
         return result
