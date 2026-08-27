@@ -268,8 +268,8 @@ speak:
     piper:
       voice: tr
       auto_language: true
-      prefer_text_language: false
-      lock_session_language: true
+      prefer_text_language: true
+      lock_session_language: false
       fallback_engine: ''
       language_voices:
         tr: tr
@@ -296,6 +296,7 @@ speak:
           config_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx.json
       preload_voices:
       - tr
+      - glados
     xtts:
       endpoint: http://192.168.1.100:5000/tts/synthesize
       timeout: 120

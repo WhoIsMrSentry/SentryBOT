@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict
 from modules.common.config_loader import load_agent_config, require_dict_section
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _abs_from_repo(raw: Any) -> str:
@@ -16,8 +16,16 @@ def _abs_from_repo(raw: Any) -> str:
     if not text:
         return text
     path = Path(text)
-    if path.is_absolute():
+    if path.is_absolute() and path.exists():
         return str(path)
+    candidates = [
+        _REPO_ROOT / path,
+        _REPO_ROOT.parent / path,
+        Path.cwd() / path,
+    ]
+    for cand in candidates:
+        if cand.exists():
+            return str(cand.resolve())
     return str((_REPO_ROOT / path).resolve())
 
 

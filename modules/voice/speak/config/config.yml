@@ -18,11 +18,12 @@ tts:
   piper:
     voice: tr
     auto_language: true
-    prefer_text_language: false
-    lock_session_language: true
+    prefer_text_language: true
+    lock_session_language: false
     fallback_engine: ''
     preload_voices:
     - tr
+    - glados
   language_voices:
     tr: tr
     en: glados
