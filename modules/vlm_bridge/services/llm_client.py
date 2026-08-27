@@ -148,6 +148,11 @@ def _generate_google_text(prompt: str, *, timeout: float) -> Optional[str]:
 
     try:
         cfg = load_ollama_config(None)
+        if isinstance(cfg, dict):
+            cfg = dict(cfg)
+            llm = dict(cfg.get("llm", {}))
+            llm["provider"] = "google_ai_studio"
+            cfg["llm"] = llm
         client, _ = create_llm_client(cfg)
         client.timeout = float(timeout)
         result = client.chat(

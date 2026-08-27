@@ -8,8 +8,8 @@ llm:
 ollama:
   base_url: http://whoismrsentry.local:11434
   model: qwen3.5:9b
-  request_timeout: 15
-  num_predict: 100          # Fast mode default â€” kÄ±sa cevaplar
+  request_timeout: 45
+  num_predict: 60          # Fast mode default — kısa cevaplar
 google_ai_studio:
   api_key: ''
   model: qwen3.5:9b

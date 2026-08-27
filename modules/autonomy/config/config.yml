@@ -220,8 +220,8 @@ offline_mode:
 request_timeouts:
   default_post_s: 1.0
   default_get_s: 0.8
-  ollama_chat_s: 18.0
-  ollama_warmup_s: 2.5
+  ollama_chat_s: 45.0
+  ollama_warmup_s: 3.5
   speech_min_interval_s: 0.35
 agentic:
   enabled: true
