@@ -68,18 +68,16 @@ SentryBOT'un merkezi yapılandırma yönetim modülüdür. Modül YAML dosyalar�
 **Provider (runtime key yazır):**
 - `gateway/bootstrap_config.py:_register_runtime_keys()` — VLM modes, agent profiles, IMX500, state_manager operational
 
-## ✅ ÇÖZÜLDÜ: CONFIG LOADER DUPLICATION BÜYÜK ÖLÇÜDE GİDERİLDİ
+## ✅ ÇÖZÜLDÜ: CONFIG LOADER DUPLICATION TAMAMEN GİDERİLDİ
 
 Eskiden `ai_provider/config_loader.py` (6407 satır) ile `agent_yaml_loader.py` (2815 satır) neredeyse aynı kodu içeriyordu. Şu an durum:
 
 - `ai_provider/config_loader.py` artık `common/config_loader.py`'dan import ediyor — duplicate kalmadı.
-- `agent_yaml_loader.py` **~84 satıra** indi; merger/validator/scanner/secrets/runtime_profile/google_keys parçaları kaldırıldı.
-
-**NOT:** `agent_yaml_loader.py` hâlâ `common.config_loader`'a bağlanmayan **bağımsız mini `load_agent_config`** içeriyor — tam birleşme (tek kaynak `modules/common/config_loader.py`) bekliyor.
+- `modules/common/config_loader.py` **TEK KAYNAK** (`load_agent_config`) olarak belirlendi.
+- `agent_yaml_loader.py` geriye dönük uyumluluk için `modules.common.config_loader`'a yönlendiren ince bir shim olarak güncellendi.
 
 ## Bilinen Sorunlar
 
-1. **Tam Birleşme Bekliyor** - `agent_yaml_loader.py` içindeki bağımsız mini `load_agent_config`, `common.config_loader`'a henüz bağlanmadı (yukarıdaki NOT).
-2. **Runtime Registry Apply Fn Sync** - `apply_fn` sync çağrılıyor, modül `stop()/start()` blokluyorsa deadlock riski. Async apply + timeout gerekli.
-3. **UI Static Dosyaları** - `static/css/styles.css`, `static/js/app.js`, `static/index.html` — güncel mi? React/Vue yok, vanilla JS.
-4. **Secrets Redaction** - `runtime_secrets.py` redaction var ama `agent.yaml` yazılırken token'lar temizlenmeli (backup'ta da).
+1. **Runtime Registry Apply Fn Sync** - `apply_fn` sync çağrılıyor, modül `stop()/start()` blokluyorsa deadlock riski. Async apply + timeout gerekli.
+2. **UI Static Dosyaları** - `static/css/styles.css`, `static/js/app.js`, `static/index.html` — güncel mi? React/Vue yok, vanilla JS.
+3. **Secrets Redaction** - `runtime_secrets.py` redaction var ama `agent.yaml` yazılırken token'lar temizlenmeli (backup'ta da).
