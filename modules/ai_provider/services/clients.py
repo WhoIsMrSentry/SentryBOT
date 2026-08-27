@@ -132,13 +132,25 @@ class OllamaClient:
 
         with _INFERENCE_SEMAPHORE:
             if self._client is not None:
-                return self._client.chat(
-                    model=selected_model,
-                    messages=messages,
-                    format=format,
-                    options=merged_options,
-                    think=False,
-                )
+                try:
+                    resp = self._client.chat(
+                        model=selected_model,
+                        messages=messages,
+                        format=format,
+                        options=merged_options,
+                    )
+                except Exception:
+                    resp = None
+                if resp is not None:
+                    if isinstance(resp, dict):
+                        return resp
+                    if hasattr(resp, "model_dump"):
+                        return resp.model_dump()
+                    if hasattr(resp, "dict"):
+                        return resp.dict()
+                    msg = getattr(resp, "message", None)
+                    content = getattr(msg, "content", "") if msg else ""
+                    return {"message": {"content": str(content)}, "raw": str(resp)}
 
             url = f"{self.base_url}/api/chat"
             payload: Dict[str, Any] = {

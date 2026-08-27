@@ -41,8 +41,13 @@ class OllamaChatService:
         
         model_name = self.persona_name if self.use_persona_as_model else None
         options: Dict[str, Any] = {"num_predict": self.num_predict}
-        res = self.client.chat(messages, format=response_format, model=model_name, options=options)
-        raw_text = str(res.get("message", {}).get("content", ""))
+        raw_text = ""
+        if isinstance(res, dict):
+            raw_text = str(res.get("message", {}).get("content", ""))
+        elif hasattr(res, "message"):
+            raw_text = str(getattr(res.message, "content", ""))
+        elif hasattr(res, "model_dump"):
+            raw_text = str(res.model_dump().get("message", {}).get("content", ""))
 
         # Fallback action channel: strip [cmd:...] / [[...]] tags the model may
         # emit so the plain-chat path can still drive hardware via apply_actions.
