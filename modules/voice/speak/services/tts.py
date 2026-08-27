@@ -148,7 +148,11 @@ class PiperBackend(TTSBackend):
 
 class TextToSpeech:
     def __init__(self, cfg: Dict[str, Any]) -> None:
-        self._base_cfg = copy.deepcopy(cfg)
+        raw = copy.deepcopy(cfg or {})
+        if "tts" in raw and isinstance(raw["tts"], dict):
+            self._base_cfg = {**raw, **raw["tts"]}
+        else:
+            self._base_cfg = raw
         self.backend = self._build_backend(self._base_cfg)
 
     def _tts_config(self, cfg: Dict[str, Any]) -> TTSConfig:
