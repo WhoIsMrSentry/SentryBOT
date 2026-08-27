@@ -40,7 +40,7 @@ def test_remote_mode_does_not_claim_local_camera_available():
 def test_set_processing_mode_local_blocked_without_hardware():
     from modules.vlm_bridge.services.processor import VisionProcessor
 
-    proc = VisionProcessor({"vision": {"processing_mode": "remote"}})
+    proc = VisionProcessor({"vision": {"processing_mode": "remote", "follow_runtime_profile": False}})
     proc.set_camera_hardware_available(False)
     out = proc.set_processing_mode("local")
     assert out.get("ok") is False
@@ -52,6 +52,6 @@ def test_set_processing_mode_local_blocked_without_hardware():
 def test_has_vision_context_uses_latest_results():
     from modules.vlm_bridge.services.processor import VisionProcessor
 
-    proc = VisionProcessor({"vision": {"processing_mode": "remote"}})
+    proc = VisionProcessor({"vision": {"processing_mode": "remote", "follow_runtime_profile": False}})
     proc.latest_results = [{"label": "person", "name": "Ali"}]
     assert proc.has_vision_context() is True
