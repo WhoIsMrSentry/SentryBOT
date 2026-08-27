@@ -127,6 +127,36 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
     _final_timer: threading.Timer | None = None
     _pending_text = ""
 
+    def _mark_speaking(val: bool) -> bool:
+        nonlocal speaking
+        with speaking_lock:
+            if speaking == val:
+                return False
+            speaking = val
+            return True
+
+    def _schedule_speech_end(delay: float = 2.0) -> None:
+        def _end():
+            if _mark_speaking(False):
+                _emit_speech_event("speech.end")
+        t = Timer(delay, _end)
+        t.daemon = True
+        t.start()
+
+    def _vu_loop():
+        while not vu_stop.is_set():
+            time.sleep(0.1)
+
+    def _start_vu_monitor():
+        nonlocal vu_thread
+        if vu_thread is None or not vu_thread.is_alive():
+            vu_stop.clear()
+            vu_thread = threading.Thread(target=_vu_loop, daemon=True)
+            vu_thread.start()
+
+    def _stop_vu_monitor():
+        vu_stop.set()
+
     def _execute_final():
         nonlocal last, last_nonempty_text, _pending_text
         text = _pending_text
