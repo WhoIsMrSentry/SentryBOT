@@ -89,7 +89,7 @@ class MemoryConsolidator:
         self._stop_event = threading.Event()
 
     def _get_learner(self):
-        if self._learner is not None:
+        if self._learner is not None and hasattr(self._learner, "extract_facts"):
             return self._learner
         try:
             from modules.cognitive_memory.services.preference_learner import PreferenceLearner
@@ -103,8 +103,11 @@ class MemoryConsolidator:
         """Extract facts using regex patterns (fast path)."""
         learner = self._get_learner()
         facts: List[str] = []
-        if learner is not None:
-            facts.extend(learner.extract_facts(text))
+        if learner is not None and hasattr(learner, "extract_facts"):
+            try:
+                facts.extend(learner.extract_facts(text))
+            except Exception:
+                pass
         # Fallback simple patterns
         low = text.lower()
         for pattern, kind, template in _SIMPLE_FACT_PATTERNS:

@@ -21,7 +21,10 @@ class AgentMemorySyncMixin:
     def _build_memory_consolidator(self) -> Any:
         try:
             from .memory_consolidator import MemoryConsolidator
-            return MemoryConsolidator(self.config, self.memory, self.world_state)
+            return MemoryConsolidator(
+                memory=getattr(self, "memory", None),
+                autonomy_client=getattr(self, "autonomy_client", None),
+            )
         except Exception as exc:
             logger.warning("MemoryConsolidator not available: %s", exc)
             return None
