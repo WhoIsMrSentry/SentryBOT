@@ -62,15 +62,19 @@ class SerialLoopsMixin:
 
     def _heartbeat_loop(self) -> None:
         hb_ms = int(self.cfg.get("heartbeat_ms", 100))
+        interval_s = max(0.1, hb_ms / 1000.0)
         while not self._stop.is_set():
             now = time.time()
-            if now - self._last_hb >= hb_ms / 1000.0:
+            if now - self._last_hb >= interval_s:
                 try:
                     self.heartbeat()
                 except Exception as exc:
                     if hasattr(self, "_logger") and self._logger:
                         self._logger.debug("Heartbeat cycle failed: %s", exc)
-            time.sleep(max(0.01, hb_ms / 1000.0 * 0.5))
+                    # Back off when link is failing
+                    time.sleep(max(2.0, interval_s))
+                    continue
+            time.sleep(max(0.05, interval_s * 0.5))
 
     def _writer_loop(self) -> None:
         while not self._stop.is_set():

@@ -104,21 +104,28 @@ class SensorFeedbackLoop:
         if self.pc_test and self.skip_hardware_on_pc:
             return updates
 
-        ultra = self.client.read_sensor("ultra_read")
-        if ultra and isinstance(ultra, dict):
-            dist = ultra.get("cm", ultra.get("distance", -1))
-            updates["distance_front_cm"] = float(dist) if dist is not None else -1
+        try:
+            ultra = self.client.read_sensor("ultra_read")
+            if ultra and isinstance(ultra, dict):
+                dist = ultra.get("cm", ultra.get("distance", -1))
+                updates["distance_front_cm"] = float(dist) if dist is not None else -1
+            elif ultra is None:
+                # Hardware unavailable or degraded — back off
+                self._last["hardware"] = time.time() + 10.0
+                return updates
 
-        imu = self.client.read_sensor("imu_read")
-        if imu and isinstance(imu, dict):
-            updates["imu_pitch"] = float(imu.get("pitch", 0))
-            updates["imu_roll"] = float(imu.get("roll", 0))
+            imu = self.client.read_sensor("imu_read")
+            if imu and isinstance(imu, dict):
+                updates["imu_pitch"] = float(imu.get("pitch", 0))
+                updates["imu_roll"] = float(imu.get("roll", 0))
 
-        rfid = self.client.read_sensor("rfid_last")
-        if rfid and isinstance(rfid, dict):
-            uid = rfid.get("uid")
-            if uid:
-                updates["last_rfid"] = str(uid)
+            rfid = self.client.read_sensor("rfid_last")
+            if rfid and isinstance(rfid, dict):
+                uid = rfid.get("uid")
+                if uid:
+                    updates["last_rfid"] = str(uid)
+        except Exception:
+            self._last["hardware"] = time.time() + 10.0
         return updates
 
     def _read_vision_results(self) -> dict:

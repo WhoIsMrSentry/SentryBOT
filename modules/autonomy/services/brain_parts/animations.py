@@ -15,6 +15,22 @@ class AnimationSupportMixin:
         composer = getattr(self, "behavior_composer", None)
         if composer is not None and hasattr(composer, "is_pose_locked") and composer.is_pose_locked():
             return
+        # If firmware-level liveliness scheduler is enabled, it handles micro-movements natively
+        sched = getattr(self, "liveliness", None)
+        if sched is not None and getattr(sched, "enabled", False):
+            # Only perform eye/ear micro-gestures in software; let firmware handle servos
+            if random.random() < 0.25:
+                self._perform_eye_saccade()
+            if random.random() < 0.2:
+                self._perform_ear_micromovement()
+            return
+
+        now = time.time()
+        last_micro = float(self.state.get("last_micro_movement_ts", 0.0) or 0.0)
+        if now - last_micro < 6.0:
+            return
+        self.state["last_micro_movement_ts"] = now
+
         profile = {}
         if hasattr(self, "mood") and hasattr(self.mood, "get_body_language_profile"):
             profile = self.mood.get_body_language_profile() or {}
@@ -28,7 +44,10 @@ class AnimationSupportMixin:
 
         self.state["current_pan"] = target_pan
         self.state["current_tilt"] = target_tilt
-        self.client.move_head(target_pan, target_tilt)
+        try:
+            self.client.move_head(target_pan, target_tilt)
+        except Exception:
+            pass
 
         evt = profile.get("event")
         if isinstance(evt, str) and evt and random.random() < 0.18:

@@ -22,7 +22,7 @@ write_timeout: 0.1
 reconnect_sec: 2.0
 
 # Link liveness (ESP linkTask also sends UART hb every 200ms)
-heartbeat_ms: 250
+heartbeat_ms: 2000
 auto_heartbeat: true
 # Request/retry tuning (milliseconds for timeouts where noted)
 request_max_retries: 1    # number of additional retries after first attempt

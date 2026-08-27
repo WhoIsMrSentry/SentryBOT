@@ -80,9 +80,15 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
             return None
 
     def _arduino_request(self, payload: Any, timeout: float = 1.0) -> Any:
+        now = time.time()
+        cooldown_until = float(getattr(self, "_arduino_fail_cooldown_until", 0.0) or 0.0)
+        if now < cooldown_until:
+            return None
         data = self._post("arduino", "/request", json=payload, params={"timeout": float(timeout)})
         if not data:
+            self._arduino_fail_cooldown_until = now + 4.0
             return None
+        self._arduino_fail_cooldown_until = 0.0
         if isinstance(data, dict) and "resp" in data:
             return data.get("resp")
         return data

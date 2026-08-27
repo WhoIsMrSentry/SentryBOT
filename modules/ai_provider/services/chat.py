@@ -41,6 +41,7 @@ class OllamaChatService:
         
         model_name = self.persona_name if self.use_persona_as_model else None
         options: Dict[str, Any] = {"num_predict": self.num_predict}
+        res = self.client.chat(messages, format=response_format, model=model_name, options=options)
         raw_text = ""
         if isinstance(res, dict):
             raw_text = str(res.get("message", {}).get("content", ""))
