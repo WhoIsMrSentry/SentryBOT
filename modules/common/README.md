@@ -47,8 +47,7 @@ render = vocab.render("joy")
 | `http_client.py` | Async/sync HTTP wrapper (retry, timeout) | `ai_provider`, `vlm_bridge/google_vlm_client`, `autonomy/client` |
 | `vision_availability.py` | Kamera/VLM girdisinin gerçekten kullanılabilir olup olmadığını kontrol | `agent_core/tools`, `vlm_bridge`, `autonomy/vision_context` |
 | `runtime_target.py` | Pi/PC hedef ortamını tespit etme (`assert_raspberry_pi()`) | `sentrybot.py` preflight, `camera`, `hardware` tests |
-| `system_prompts.py` | Agent persona/system prompt şablonları | `agent_core`, `ai_provider` |
-| `model_asset_truth.py` | Model dosyası varlık doğrulaması (piper, vosk, openwakeword) | `voice/speech`, `voice/speak`, `voice/wakeword` |
+| `model_asset_truth.py` | Model dosyası varlık doğrulaması (piper, openwakeword) | `voice/speech`, `voice/speak`, `voice/wakeword` |
 | `lang_names.py` | Dil kodu → insan okunur dil adı eşlemesi (TTS/STT dili raporlaması için) | `agent_core` |
 
 ## İlişkiler

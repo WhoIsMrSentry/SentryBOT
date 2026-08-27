@@ -16,7 +16,7 @@ def test_snapshot_detects_blockers_and_endpoints() -> None:
     snap = Snapshot()
     for line in [
         '01:19:44 | WARNING  | speak.tts | piper unavailable: model missing',
-        '01:19:44 | ERROR    | gateway.bootstrap | Vosk TR model missing at modules/speech/models/vosk-tr',
+        '01:19:44 | ERROR    | speech.recognizer | SpeechRecognition mic stream failed',
         '01:19:56 | DEBUG    | urllib3.connectionpool | http://127.0.0.1:8080 "GET /vlm/context/latest HTTP/1.1" 200 63',
     ]:
         snap.feed_line(line)
@@ -41,12 +41,12 @@ def test_render_screen_has_opencode_layout(tmp_path: Path) -> None:
 def test_render_screen_is_ascii_safe_for_windows_cmd(tmp_path: Path) -> None:
     (tmp_path / "run_robot.py").write_text("", encoding="utf-8")
     snap = Snapshot()
-    snap.feed_line("01:33:52 | ERROR    | gateway.bootstrap | Vosk TR model missing at C:/Users/emohi/OneDrive/Masaüstü/Project SentryBOT V5/modules/speech/models/vosk-tr — speech/STT will not work")
+    snap.feed_line("01:33:52 | ERROR    | gateway.bootstrap | STT backend unavailable at C:/Users/emohi/OneDrive/Masaüstü/Project SentryBOT V5 — speech/STT will not work")
     snap.feed_line("â”Œâ”€â”€ bad old border â”‚ WARNING â”‚")
     ui = UIState(root=tmp_path, profile="pc-test")
     text = render_screen(snap, ui, "running pid=123", colors=False, ascii_mode=False)
     assert all(ord(ch) < 128 for ch in text)
-    assert "Vosk" in text or "speech" in text
+    assert "STT" in text or "speech" in text
     assert "+" in text and "-" in text and "|" in text
     assert "â" not in text
 

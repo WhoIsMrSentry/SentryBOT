@@ -1,6 +1,6 @@
 """Audio Device Router for SentryBOT.
 
-Single I2S capture → multi-consumer (VoskRecognizer, OpenWakeWordRunner, DoAEstimator).
+Single I2S capture → multi-consumer (SpeechRecognition, OpenWakeWordRunner, DoAEstimator).
 Solves ALSA EBUSY when multiple modules try to open the same I2S device.
 """
 
@@ -379,7 +379,7 @@ class AudioRouter:
             self.config = config
     
     def register_consumer(self, name: str, consumer: AudioConsumer) -> None:
-        """Register a consumer (e.g., VoskRecognizer, OpenWakeWordRunner)."""
+        """Register a consumer (e.g., OpenWakeWordRunner, DoAEstimator)."""
         with self._lock:
             if name in self._consumers:
                 logger.warning("Consumer %s already registered, replacing", name)
@@ -449,41 +449,6 @@ class AudioRouter:
 # Consumer Adapters (for existing modules)
 # =============================================================================
 
-class VoskConsumerAdapter:
-    """Adapter to make VoskRecognizer compatible with AudioConsumer."""
-    
-    def __init__(self, recognizer):
-        self.recognizer = recognizer
-        self._buffer = np.array([], dtype=np.int16)
-        self._channels = 2
-    
-    def on_start(self) -> None:
-        logger.debug("VoskConsumerAdapter started")
-    
-    def on_stop(self) -> None:
-        logger.debug("VoskConsumerAdapter stopped")
-    
-    def on_audio_frame(self, frame: np.ndarray, timestamp: float) -> None:
-        # Vosk expects mono, use first channel
-        if frame.shape[1] > 1:
-            mono = frame[:, 0]
-        else:
-            mono = frame.flatten()
-        
-        # Convert to bytes for Vosk
-        if mono.dtype == np.int16:
-            data = mono.tobytes()
-        else:
-            data = (mono * 32767).astype(np.int16).tobytes()
-        
-        # Feed to Vosk
-        try:
-            if hasattr(self.recognizer, 'accept_waveform'):
-                self.recognizer.accept_waveform(data)
-        except Exception as e:
-            logger.debug("Vosk accept_waveform error: %s", e)
-
-
 class OpenWakeWordConsumerAdapter:
     """Adapter to make OpenWakeWordRunner compatible with AudioConsumer."""
     
@@ -527,20 +492,16 @@ class DoAConsumerAdapter:
         logger.debug("DoAConsumerAdapter stopped")
     
     def on_audio_frame(self, frame: np.ndarray, timestamp: float) -> None:
-        # DoA needs stereo
-        if frame.shape[1] >= 2:
-            left = frame[:, 0]
-            right = frame[:, 1]
-            try:
-                if hasattr(self.doa, 'process'):
-                    angle = self.doa.process(left, right)
-                    # Could emit event or update shared state
-            except Exception as e:
-                logger.debug("DoA process error: %s", e)
+        # DoA expects multi-channel audio
+        try:
+            if hasattr(self.doa, 'process_frame'):
+                self.doa.process_frame(frame)
+        except Exception as e:
+            logger.debug("DoA process_frame error: %s", e)
 
 
 # =============================================================================
-# Global Instance & Helpers
+# Helper Functions
 # =============================================================================
 
 _global_router: Optional[AudioRouter] = None
@@ -623,7 +584,6 @@ __all__ = [
     "stop_audio_capture",
     "register_audio_consumer",
     "unregister_audio_consumer",
-    "VoskConsumerAdapter",
     "OpenWakeWordConsumerAdapter",
     "DoAConsumerAdapter",
 ]

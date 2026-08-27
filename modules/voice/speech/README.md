@@ -1,12 +1,11 @@
 # Voice - Speech (ASR/DoA)
 
-SentryBOT'un konuşma giriş modülüdür. Mikrofon akışını alır, yerel Vosk tabanlı STT çalıştırır, isteğe bağlı çok dilli çözümleme yapar, ses yönünü hesaplar ve gerektiğinde pan hareketini tetikler.
+SentryBOT'un konuşma giriş modülüdür. Mikrofon akışını alır, SpeechRecognition ile Google çoklu dil STT çalıştırır, ses yönünü hesaplar ve gerektiğinde pan hareketini tetikler.
 
 ## Ana Yetenekler
 
 - Ses yakalama ve arka plan dinleme (I2S, ALSA)
-- Yerel Vosk tabanlı STT (offline, Türkçe/İngilizce modeller)
-- İsteğe bağlı çok dilli çözümleme ve çevrimiçi Google çoklu dil fallback'i
+- SpeechRecognition çok dilli STT (çevrimiçi Google Multi-language STT)
 - Wakeword algılama ve barge-in (OpenWakeWord entegrasyonu)
 - Ses yönü kestirimi (DoA - GCC-PHAT, stereo mic gerekli)
 - Pan takibi: **HeadControlArbiter** (priority lease), fallback Arduino servo komutu
@@ -18,13 +17,12 @@ SentryBOT'un konuşma giriş modülüdür. Mikrofon akışını alır, yerel Vos
 - **Router**: `api/router.py`
 - **Ses Yakalama**: `services/audio_capture.py` → `AudioCapture`, `CaptureConfig`, `FramePublisher`
 - **Tanıma**: 
-  - `services/recognizer.py` → `VoskRecognizer` (model management, streaming)
+  - `services/recognizer.py` → `SpeechRecognizer` (SpeechRecognition)
   - `services/stt_language.py` → `STTLanguageResolver` (TR/EN auto-detect, Piper voice lock)
-  - `services/online_stt.py` → Google Cloud STT fallback (opsiyonel)
+  - `services/online_stt.py` → Google Speech Recognition multi-language
 - **Yön ve Takip**: 
   - `services/direction.py` → `DoAEstimator` (GCC-PHAT, stereo frame processing)
   - `services/pan_tilt.py` → `PanTiltTracker` (head arbiter entegrasyonu)
-- **Wakeword**: `services/wake_phrase.py` → `WakePhraseDetector` (metin tabanlı, Vosk sonrası)
 - **Ses Ön İşleme**: `services/audio_filters.py` (downmix/gain PCM filtreleri)
 - **Ses Kaynağı Takibi**: `services/sound_tracking.py` → `SpeechSoundTrackingMixin`
 
@@ -65,19 +63,18 @@ Merkezi `config/agent.yaml` → `speech` section + modül-içi `config/config.ym
 
 - `server.*` - API host/port
 - `audio.*` - I2S device, sample_rate, channels, format
-- `recognition.*` - Vosk model paths, language, max_alternatives
+- `recognition.*` - SpeechRecognition language, max_utterance
 - `recognition.vad` - Voice Activity Detection ayarları (enabled, aggressiveness, hangover_ms)
 - `direction.*` - DoA enabled, mic_distance, angle_smoothing
 - `pan_tilt.*` - Track enabled, deadband, slew_rate, arbiter_priority
 
 ## Notlar
 
-- Kod artık yalnızca "tamamen offline" bir STT servisi değildir. Birincil akış yerel Vosk olsa da, `finalize_stt()` içinde uygun olduğunda çok dilli çevrimiçi çözümleme fallback'i de bulunur.
+- Çevrimiçi Google Speech Recognition ile yüksek doğrulukta çok dilli konuşma tanıma yapılır.
 - **Stereo I2S mic zorunlu** DoA için. Mono mic'de direction çalışmaz.
 - **HeadControlArbiter** ile `vlm_bridge` (face track) ve `autonomy` (vision focus) paylaşımlı - priority lease sistemi.
 
 ## Bilinen Sorunlar
 
-1. **Audio Device Multiplexer Eksik** - `voice/wakeword` (OpenWakeWord) ve `voice/speech` (Vosk) **aynı I2S cihazı** kullanıyor. `voice/audio_router.py` (YENİ GEREKLİ) ile tek capture → multi-consumer yapılmalı.
-2. **WakePhraseDetector Çift İş** - `services/wake_phrase.py` metin tabanlı wakeword, `voice/wakeword` ses tabanlı. İkisi de çalışıyor → false positive riski.
-3. **PanTiltTracker ↔ HeadControlArbiter** - `pan_tilt.py` arbiter kullanıyor ama `direction.py` doğrudan `arduino.track()` çağırıyor (bypass riski).
+1. **Audio Device Multiplexer ✅ ÇÖZÜLDÜ** - `voice/wakeword` (OpenWakeWord) ve `voice/speech` (SpeechRecognition) `modules/voice/audio_router.py` ile tek capture üzerinden paylaşılır.
+2. **PanTiltTracker ↔ HeadControlArbiter** - `pan_tilt.py` arbiter kullanıyor ama `direction.py` doğrudan `arduino.track()` çağırıyor (bypass riski).

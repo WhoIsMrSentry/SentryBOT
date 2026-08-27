@@ -370,16 +370,7 @@ speech:
     - tr
     - en
     utterance_buffer_sec: 20
-    model_path: null
-    language_models:
-      tr: models/vosk-tr
-      en: models/vosk-en
-      en-us: models/vosk-en-us
-      de: models/vosk-de
-      es: models/vosk-es
-      fr: models/vosk-fr
     samplerate: 16000
-    max_alternatives: 0
     input_gain: 3.0
     vad:
       enabled: false

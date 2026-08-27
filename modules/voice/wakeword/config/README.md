@@ -13,20 +13,8 @@ This file documents the default configuration for the wakeword module.
 - dtype: PCM dtype (int16)
 - frame_ms: frame size in ms
 
-## recognition
-- language: model language code
-- model_path: optional explicit model path
-- language_models: per-language model mapping (relative to module root)
-- samplerate: Vosk sample rate
-- max_alternatives: number of alternates
-- vad.enabled: WebRTC VAD toggle
-- vad.aggressiveness: 0..3
-- vad.hangover_ms: VAD hangover time
-
-Note: relative model paths are resolved against the wakeword module directory.
-
 ## wakeword
-- engine: wakeword engine (openwakeword | vosk)
+- engine: wakeword engine (openwakeword)
 - words: list of wakeword phrases
 - trigger_on_partial: allow partial results to trigger
 - min_confidence: minimum confidence for final results

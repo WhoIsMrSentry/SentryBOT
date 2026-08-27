@@ -31,7 +31,7 @@ Ana hedefler:
 - **Social DB:** Eski JSON tabanlı izole hafızalar tek bir birleşik SQLite veritabanında toplandı. Kişiler, yüzler, ilişkiler, anılar ve ritüeller tek merkezden yönetiliyor.
 - **OLED Faces:** SSD1306 I2C OLED için Pip tarzı prosedürel animasyonlu göz ve yüz ifadeleri eklendi. Duygusal ifadeler robotun durumuyla senkronize edilir.
 - **Gelişmiş Otonomi ve Duygu Motoru (autonomy):** Robotun iç durumu (Mutluluk, Enerji, Merak, Korku) davranışlarını ve NeoPixel ışıklarını otomatik etkiler. Ses geldiğinde kafa çevirme, boşta kalınca iç çekme/etrafı izleme özellikleri aktiftir.
-- **Wakeword Modülü:** OpenWakeWord ve Vosk destekli arka plan dinleyicisi eklendi.
+- **Wakeword Modülü:** OpenWakeWord destekli düşük güçlü arka plan dinleyicisi eklendi.
 - **Semantik Router:** İstekler LLM tabanlı vektör/benzerlik ile en doğru sub-agent'a yönlendirilir.
 - **Common Emotion Vocab:** Tüm modüller ortak bir duygu (emotion) sözlüğünü kullanır; gözler, ışıklar ve ses tonu birbiriyle uyumlu çalışır.
 - Servo sürüşü I2C’ye taşındı (PCA9685, 50 Hz). Açı→mikrosaniye darbe haritalaması konfigüre edilebilir (min/max us).
@@ -84,10 +84,10 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- Not: `POST /vlm/mode` ile objects/people/ocr/depth gibi yetenekler tek tek açılıp kapatılabilir.
 		- Sınırlar: Ağ gecikmesi; kontrol döngüsünde stabilite için sınırlamalar (slew/ölü bant) önerilir.
 	- Konuşma Tanıma (modules/speech)
-		- Kapsam: Vosk ile tamamen offline ASR; I2S mikrofon; opsiyonel WebRTC VAD; stereo’da DoA hesaplar.
+		- Kapsam: SpeechRecognition ile çok dilli Google STT; I2S mikrofon; stereo’da DoA hesaplar.
 		- API: `/speech/start`, `/speech/stop`, `/speech/last`, `/speech/direction`, `/speech/track/*`
-		- Veri akışı: ALSA → çerçeveler → (opsiyonel VAD) → Vosk → metin; stereo ise GCC-PHAT → açı.
-		- Sınırlar: DoA için stereo şart; model klasörlerinin doğru konfig edilmesi gerekir.
+		- Veri akışı: ALSA → çerçeveler → SpeechRecognition / Google STT → metin; stereo ise GCC-PHAT → açı.
+		- Sınırlar: DoA için stereo şart.
 	- Telemetri & Durum (modules/telemetry, modules/state_manager)
 		- Telemetry: `/telemetry/metrics` Prometheus; `/telemetry/events` ham olay yayımı.
 		- State Manager: `/state/get`, `/state/set/emotions`, `/state/set/<key>` — global durum ve duygular için kalıcı anahtar/değer desteği.
@@ -286,7 +286,7 @@ Gateway çalışıyorsa tüm uçlar tek porttadır. Aşağıdaki istekler örnek
 	- **system_control**: (eski state_manager, diagnostics, telemetry, config_center, notifier) Global sistem durumu, donanım/yazılım sağlık kontrolü, telemetri verileri ve yapılandırma yönetimi.
 	- **visual_output**: (eski neopixel ve oled_faces) WS2812 LED animasyonları, renk paletleri ve SSD1306 prosedürel göz ifadeleri.
 	- **vlm_bridge**: Yüz algılama/tanıma (OpenCV) ve Vision Language Model isteklerini işleyip donanım komutlarına dönüştürme.
-	- **voice**: (eski speech, speak, wakeword) Vosk ASR, ses yönü, TTS ve uyandırma kelimesi dinleyicisi.
+	- **voice**: (eski speech, speak, wakeword) SpeechRecognition ASR, ses yönü, TTS ve OpenWakeWord dinleyicisi.
 
 
 	## Tipik Senaryolar

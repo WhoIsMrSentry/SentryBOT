@@ -8,7 +8,7 @@ SentryBOT'un düşük güçlü "her zaman dinle" katmanıdır. Wakeword algılan
 - Algı sonrası sınırlı STT penceresi açma
 - TTS/agent için süreç içi barge-in (`speak.stop()`, `agent_core/speech/interrupt`)
 - `expression/interactions` ve `visual_output/neopixel` olay tetikleme
-- OpenWakeWord motor desteği (config'de `engine: openwakeword | vosk` seçeneği durur; Vosk fallback hâlâ mevcuttur)
+- OpenWakeWord motor desteği (tek ve doğrudan uyandırma motoru)
 
 ## Mimari (Güncel: 2026-08-20)
 
@@ -39,7 +39,7 @@ SentryBOT'un düşük güçlü "her zaman dinle" katmanıdır. Wakeword algılan
 
 Merkezi `config/agent.yaml` → `wakeword` section + modül-içi `config/config.yml` (merge):
 
-- `wakeword.engine`: `openwakeword` (veya `vosk` fallback)
+- `wakeword.engine`: `openwakeword`
 - `openwakeword.pretrained_models` - Yerleşik model adları (ilk çalıştırmada otomatik indirilir)
 - `openwakeword.verifier_path` - Kişiye özel verifier (opsiyonel)
 - `openwakeword.input_channels` - Runner giriş kanal sayısı (verilmezse `audio.channels` enjekte edilir)
@@ -61,9 +61,9 @@ Merkezi `config/agent.yaml` → `wakeword` section + modül-içi `config/config.
 
 ## Bilinen Sorunlar (KRİTİK)
 
-1. **Audio Device Multiplexer ✅ ÇÖZÜLDÜ** - `voice/speech` (Vosk) ve `voice/wakeword` (OpenWakeWord) aynı I2S cihazını paylaşıyor; `modules/voice/audio_router.py` (MEVCUT) ile:
+1. **Audio Device Multiplexer ✅ ÇÖZÜLDÜ** - `voice/speech` ve `voice/wakeword` (OpenWakeWord) aynı I2S cihazını paylaşıyor; `modules/voice/audio_router.py` (MEVCUT) ile:
    - Tek `AudioCapture` singleton
-   - Frame publisher → multiple subscribers (VoskRecognizer, OpenWakeWordRunner)
+   - Frame publisher → multiple subscribers (OpenWakeWordRunner)
    - VAD paylaşımlı
 
 2. **Gateway Wire Bypass** - `_wire_wakeword_interactions` in-process call yapıyor, event bus kullanmıyor. Testlerde mock zor.

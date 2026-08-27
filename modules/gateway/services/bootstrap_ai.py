@@ -156,18 +156,18 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
     try:
         stt_status = svc.stt_status() if hasattr(svc, "stt_status") else {}
         if not stt_status.get("available", False):
-            primary = stt_status.get("primary", {}) if isinstance(stt_status.get("primary"), dict) else {}
             pc_test = str(os.environ.get("SENTRYBOT_PC_TEST") or os.environ.get("SENTRYBOT_PROFILE") or "").strip().lower() in {
                 "1", "true", "yes", "pc", "pc-test", "test"
             }
             message = (
-                "Speech/STT unavailable: primary Vosk model directory missing at %s; "
-                "speech will not start after wakeword. Run: python tools/install_vosk_tr.py"
+                "Speech/STT unavailable: SpeechRecognition backend error (%s); "
+                "speech will not start after wakeword. Ensure 'SpeechRecognition' is installed."
             )
+            reason = stt_status.get("reason", "speech_recognition unavailable")
             if pc_test:
-                logger.warning("PC TEST: " + message, primary.get("model_path"))
+                logger.warning("PC TEST: " + message, reason)
             else:
-                logger.error(message, primary.get("model_path"))
+                logger.error(message, reason)
     except Exception as exc:
         logger.debug("speech stt status check failed: %s", exc)
 

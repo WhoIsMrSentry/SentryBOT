@@ -27,10 +27,9 @@ from modules.voice.wakeword.services.wakeword_actions import (
     _normalize_command_text,
     _is_wakeword_only,
 )
-from modules.voice.speech.services.recognizer import Recognizer, RecognitionResult
 from modules.voice.audio_router import (
     get_audio_router, AudioRouterConfig, AudioConfig,
-    VoskConsumerAdapter, OpenWakeWordConsumerAdapter
+    OpenWakeWordConsumerAdapter
 )
 
 try:
@@ -40,24 +39,6 @@ except Exception:
     pass
 
 logger = logging.getLogger("wakeword")
-
-
-def _resolve_model_paths(rec_cfg: dict) -> dict:
-    cfg = dict(rec_cfg or {})
-    module_root = Path(__file__).resolve().parents[1] / "speech"
-    model_path = cfg.get("model_path")
-    if model_path and not os.path.isabs(str(model_path)):
-        cfg["model_path"] = str((module_root / str(model_path)).resolve())
-    language_models = cfg.get("language_models")
-    if isinstance(language_models, dict):
-        resolved = {}
-        for lang, path in language_models.items():
-            if isinstance(path, str) and not os.path.isabs(path):
-                resolved[lang] = str((module_root / path).resolve())
-            else:
-                resolved[lang] = path
-        cfg["language_models"] = resolved
-    return cfg
 
 
 class WakewordService:
@@ -78,38 +59,22 @@ class WakewordService:
         self._audio_router = get_audio_router(audio_router_cfg)
         self._audio_router.start()
         
-        # Create adapters and register
-        self._vosk_adapter = None
         self._openwakeword_adapter = None
         
         wake_cfg = self.cfg.get("wakeword", {})
-        self.engine = str(wake_cfg.get("engine", "vosk")).lower()
+        self.engine = "openwakeword"
         self.detector = WakewordDetector(wake_cfg)
         self._openwakeword = None
-        self._recognizer = None
-        if self.engine == "openwakeword":
-            try:
-                ow_cfg = dict(self.cfg.get("openwakeword", {}) or {})
-                audio_channels = int((self.cfg.get("audio", {}) or {}).get("channels", 1))
-                ow_cfg.setdefault("input_channels", audio_channels)
-                self._openwakeword = OpenWakewordRunner(ow_cfg)
-                # Create adapter and register
-                self._openwakeword_adapter = OpenWakeWordConsumerAdapter(self._openwakeword)
-            except Exception as exc:
-                self._degraded_reason = str(exc)
-                logger.warning("wakeword openwakeword unavailable, falling back to vosk: %s", exc)
-                self.engine = "vosk"
-                try:
-                    self._recognizer = Recognizer(_resolve_model_paths(self.cfg.get("recognition", {})))
-                    self._degraded_reason = None
-                except Exception as rec_exc:
-                    self._degraded_reason = str(rec_exc)
-        else:
-            self._recognizer = Recognizer(_resolve_model_paths(self.cfg.get("recognition", {})))
-        
-        # NOTE: no push-registration of adapters here; start() consumes the
-        # capture stream in pull mode (registering the adapter as a consumer
-        # too would feed every frame to the engine twice).
+        try:
+            ow_cfg = dict(self.cfg.get("openwakeword", {}) or {})
+            audio_channels = int((self.cfg.get("audio", {}) or {}).get("channels", 1))
+            ow_cfg.setdefault("input_channels", audio_channels)
+            self._openwakeword = OpenWakewordRunner(ow_cfg)
+            # Create adapter and register
+            self._openwakeword_adapter = OpenWakeWordConsumerAdapter(self._openwakeword)
+        except Exception as exc:
+            self._degraded_reason = str(exc)
+            logger.warning("wakeword openwakeword unavailable: %s", exc)
 
         self.actions = WakewordActions(self.cfg.get("actions", {}))
         rec_vad = (self.cfg.get("recognition", {}) or {}).get("vad", {})
@@ -124,54 +89,26 @@ class WakewordService:
             self._listening = True
         self._stop_event.clear()
         try:
-            if self._openwakeword is None and self._recognizer is None:
-                logger.warning("wakeword service running degraded: no engine available")
-                self._degraded_reason = self._degraded_reason or "no wakeword engine available"
+            if self._openwakeword is None:
+                logger.warning("wakeword service running degraded: openwakeword not available")
+                self._degraded_reason = self._degraded_reason or "openwakeword not available"
                 return
 
             capture = self._audio_router.get_capture()
             if capture is None:
                 raise RuntimeError("audio router capture not running")
 
-            logger.info(
-                "wakeword listening started (engine=%s)",
-                self.engine,
-            )
+            logger.info("wakeword listening started (engine=openwakeword)")
 
-            # Pull mode: the engine consumes the stream directly. Do NOT also
-            # register the adapter as a push consumer (double feed).
-            if self.engine == "openwakeword" and self._openwakeword is not None:
-                self._stream_iter = iter(capture.stream())
-                self._restart_attempts = 0
+            self._stream_iter = iter(capture.stream())
+            self._restart_attempts = 0
 
-                for label in self._openwakeword.run(self._stream_iter):
-                    if self._stop_event.is_set():
-                        break
-                    logger.info("openwakeword detected: %s", label)
-                    self._on_wakeword(label)
-            else:
-                self._stream_iter = iter(capture.stream())
-                self._restart_attempts = 0
+            for label in self._openwakeword.run(self._stream_iter):
+                if self._stop_event.is_set():
+                    break
+                logger.info("openwakeword detected: %s", label)
+                self._on_wakeword(label)
 
-                def mono_generator(src_stream):
-                    for chunk in src_stream:
-                        if not chunk:
-                            yield chunk
-                            continue
-                        try:
-                            if audioop is not None:
-                                mono = audioop.tomono(chunk, 2, 1.0, 0.0)
-                                logger.debug("downmixing stereo->mono, chunk_len=%d", len(chunk))
-                                yield mono
-                            else:
-                                yield chunk
-                        except Exception:
-                            yield chunk
-
-                for result in self._recognizer.run(mono_generator(self._stream_iter)):
-                    if self._stop_event.is_set():
-                        break
-                    self._handle_result(result)
         except Exception as exc:
             self._degraded_reason = str(exc)
             attempts = getattr(self, "_restart_attempts", 0) + 1
@@ -207,34 +144,15 @@ class WakewordService:
 
     def stop(self) -> None:
         self._stop_event.set()
-        # Unregister from audio router (capture may already be gone)
         capture = self._audio_router.get_capture()
-        if self.engine == "openwakeword" and self._openwakeword_adapter:
+        if self._openwakeword_adapter:
             if capture is not None:
                 capture.unregister_consumer("wakeword_openwakeword")
             self._openwakeword_adapter.on_stop()
-        elif self.engine == "vosk" and self._vosk_adapter:
-            if capture is not None:
-                capture.unregister_consumer("wakeword_vosk")
-            self._vosk_adapter.on_stop()
         self._stream_iter = None
         with self._lock:
             self._listening = False
             self._active_window = False
-
-    def _handle_result(self, result: RecognitionResult) -> None:
-        if not result.text:
-            return
-        if result.is_final:
-            conf = result.confidence if result.confidence is not None else 0.0
-            if conf < self.detector.cfg.min_confidence:
-                return
-        else:
-            if not self.detector.cfg.trigger_on_partial:
-                return
-        match = self.detector.match(result.text)
-        if match:
-            self._on_wakeword(match)
 
     def _on_wakeword(self, wakeword: str) -> None:
         now = _now()
@@ -281,26 +199,19 @@ class WakewordService:
             return self._listening
 
     def status(self) -> dict:
-        recognizer_status = None
-        if self._recognizer is not None and hasattr(self._recognizer, "status"):
-            try:
-                recognizer_status = self._recognizer.status()
-            except Exception as exc:
-                recognizer_status = {"ok": False, "error": str(exc)}
-        engine_ready = bool(self._openwakeword is not None or (recognizer_status or {}).get("ok"))
+        openwakeword_ready = bool(self._openwakeword is not None)
         with self._lock:
             return {
-                "ok": bool(engine_ready and not self._degraded_reason),
+                "ok": bool(openwakeword_ready and not self._degraded_reason),
                 "listening": self._listening,
                 "active_window": self._active_window,
                 "last_trigger_ts": self._last_trigger_ts,
                 "wakewords": list(self.detector.cfg.words),
-                "engine": self.engine,
-                "engine_ready": bool(engine_ready),
+                "engine": "openwakeword",
+                "engine_ready": openwakeword_ready,
                 "degraded": bool(self._degraded_reason),
                 "degraded_reason": self._degraded_reason,
-                "recognizer": recognizer_status,
-                "openwakeword_ready": bool(self._openwakeword is not None),
+                "openwakeword_ready": openwakeword_ready,
             }
 
 

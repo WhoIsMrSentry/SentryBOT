@@ -22,10 +22,6 @@ PC_EXPECTED_HINTS = (
     "ESP bridge unreachable - expected on PC tests",
     "animate degraded",
     "pose step skipped",
-    "Vosk TR model missing",
-    "Vosk model directory not found",
-    "Turkish Vosk model is missing",
-    "Vosk model directory missing",
     "Speech/STT unavailable",
     "speech stt unavailable",
     "speech start rejected",
@@ -86,12 +82,10 @@ SERVICE_RULES: dict[str, tuple[tuple[str, str, str], ...]] = {
     "AUDIO": (
         ("wakeword listening started", "OK", "wakeword listening"),
         ("SpeechArbiter started", "OK", "speech arbiter"),
-        ("Vosk TR model missing", "ERR", "TR Vosk model missing"),
-        ("Vosk model directory not found", "ERR", "Vosk model missing"),
-        ("Speech/STT unavailable", "ERR", "STT model missing"),
+        ("Speech/STT unavailable", "ERR", "STT backend unavailable"),
         ("speech stt unavailable", "ERR", "STT unavailable"),
         ("speech start rejected", "WARN", "STT unavailable"),
-        ("openwakeword unavailable", "WARN", "openwakeword fallback"),
+        ("openwakeword unavailable", "WARN", "openwakeword unavailable"),
     ),
     "TTS": (
         ("First audio", "OK", "audio started"),
@@ -112,7 +106,7 @@ SERVICE_RULES: dict[str, tuple[tuple[str, str, str], ...]] = {
 CHANNEL_HINTS = {
     "AI": ("agent", "ollama", "google", "gemini", "llm", "provider"),
     "VISION": ("vlm", "vision", "camera", "opencv", "face", "qwen", "imx"),
-    "AUDIO": ("wakeword", "speech", "vosk", "microphone", "audio"),
+    "AUDIO": ("wakeword", "speech", "stt", "microphone", "audio"),
     "TTS": ("speak", "tts", "piper", "voice", "glados"),
     "MOVE": ("arduino", "esp", "servo", "animate", "motor", "piservo"),
     "FACE": ("oled", "neopixel", "expression", "emotion"),
@@ -135,8 +129,7 @@ NOISE_HINTS = (
 
 BLOCKER_HINTS = (
     ("piper unavailable", "TTS", "Piper voice model is missing"),
-    ("Vosk TR model missing", "AUDIO", "Turkish Vosk model is missing"),
-    ("Vosk model directory not found", "AUDIO", "Vosk model directory missing"),
+    ("Speech/STT unavailable", "AUDIO", "Speech recognition unavailable"),
     ("ESP bridge unreachable", "MOVE", "ESP bridge unreachable - expected on PC tests"),
     ("OpenCV not available", "VISION", "OpenCV face cascade disabled"),
     ("api_key is missing", "AI", "Google API key missing"),

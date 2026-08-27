@@ -9,23 +9,8 @@ audio:
   dtype: int16
   frame_ms: 30
 
-recognition:
-  language: en
-  # Vosk fallback path when openWakeWord is unavailable (hey mycroft is English).
-  model_path: ../speech/models/vosk-en
-  language_models:
-    tr: models/vosk-tr
-    en: models/vosk-en
-    en-us: models/vosk-en-us
-  samplerate: 16000
-  max_alternatives: 0
-  vad:
-    enabled: false
-    aggressiveness: 2
-    hangover_ms: 300
-
 wakeword:
-  engine: "openwakeword"  # openwakeword | vosk
+  engine: "openwakeword"
   words:
     - "hey mycroft"
     - "mycroft"

@@ -14,14 +14,10 @@ from modules.voice.speech.services.stt_language import resolve_stt_text_and_lang
 from modules.voice.speech.services.direction import DirectionEstimator
 from modules.voice.speech.services.pan_tilt import PanTiltController
 from modules.voice.audio_router import (
-    get_audio_router, AudioRouterConfig, AudioConfig,
-    VoskConsumerAdapter
+    get_audio_router, AudioRouterConfig, AudioConfig
 )
 from .services.audio_filters import SpeechAudioFilterMixin
 from .services.sound_tracking import SpeechSoundTrackingMixin
-
-if TYPE_CHECKING:
-    from modules.voice.speech.api import get_router  # type: ignore
 
 if TYPE_CHECKING:
     from modules.voice.speech.api import get_router  # type: ignore
@@ -52,8 +48,6 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self._audio_router = get_audio_router(audio_router_cfg)
         self._audio_router.start()
         
-        # Create Vosk consumer adapter and register
-        self._vosk_adapter = None
         rec_cfg = self.cfg.get("recognition", {}) or {}
         self.recognizer = Recognizer(rec_cfg)
         self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
@@ -70,47 +64,6 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self._secondary_recognizer: Optional[Recognizer] = None
         self._extra_recognizers: dict[str, Recognizer] = {}
         self._last_audio_level = 0.0
-        lang_models = rec_cfg.get("language_models", {}) if isinstance(rec_cfg.get("language_models"), dict) else {}
-        dual_langs = rec_cfg.get("dual_decode_languages")
-        if not isinstance(dual_langs, list) or not dual_langs:
-            dual_langs = list(lang_models.keys()) if lang_models else ["tr", "en"]
-        primary_lang = str(rec_cfg.get("language") or self.source_language or "tr").split("-", 1)[0]
-        if self._auto_language and self._auto_switch_model:
-            for lang_key in dual_langs:
-                lang = str(lang_key).split("-", 1)[0].lower()
-                if not lang or lang == primary_lang:
-                    continue
-                if lang in self._extra_recognizers:
-                    continue
-                alt_cfg = copy.deepcopy(rec_cfg)
-                alt_cfg["language"] = lang_key
-                alt_cfg.pop("model_path", None)
-                try:
-                    alt_recognizer = Recognizer(alt_cfg)
-                    self._extra_recognizers[lang] = alt_recognizer
-                    alt_status = alt_recognizer.status()
-                    if alt_status.get("ok"):
-                        try:
-                            alt_recognizer._ensure_model()
-                            logger.info("%s Vosk model pre-loaded for dual-decode STT", lang.upper())
-                        except Exception as warm_exc:
-                            logger.warning("%s Vosk model pre-warm failed: %s", lang.upper(), warm_exc)
-                    else:
-                        logger.info(
-                            "%s Vosk model not installed; dual-decode disabled until model exists: %s",
-                            lang.upper(),
-                            alt_status.get("model_path"),
-                        )
-                except Exception as exc:
-                    logger.warning("%s Vosk model unavailable for auto STT: %s", lang.upper(), exc)
-            if self._extra_recognizers:
-                first_lang = next(iter(self._extra_recognizers))
-                self._secondary_recognizer = self._extra_recognizers[first_lang]
-        try:
-            self.recognizer._ensure_model()
-            logger.info("Primary %s Vosk model pre-loaded for STT", primary_lang.upper())
-        except Exception as primary_exc:
-            logger.warning("Primary %s Vosk model pre-warm failed: %s", primary_lang.upper(), primary_exc)
         self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
 
         # Audio router will provide the stream
@@ -128,7 +81,6 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self._head_arbiter = None
         
         self._stream_iter = None
-        self._vosk_adapter = None
 
     def set_stt_suppressed(self, suppressed: bool, ttl_s: float = 15.0) -> None:
         with self._stt_suppress_lock:
@@ -171,8 +123,8 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                 languages[key] = Recognizer(cfg).status()
             except Exception as exc:
                 languages[key] = {"ok": False, "language": key, "error": str(exc)}
-        ready_languages = sorted([lang for lang, st in languages.items() if st.get("ok")])
-        missing_languages = sorted([lang for lang, st in languages.items() if not st.get("ok")])
+        ready_languages = [primary_lang] if primary.get("ok") else []
+        missing_languages = [] if primary.get("ok") else [primary_lang]
         available = bool(primary.get("ok"))
         return {
             "available": available,
@@ -184,10 +136,10 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
             "auto_language": bool(self._auto_language),
             "auto_switch_model": bool(self._auto_switch_model),
             "primary": primary,
-            "languages": languages,
+            "languages": {primary_lang: primary},
             "ready_languages": ready_languages,
             "missing_languages": missing_languages,
-            "reason": "ready" if available else (primary.get("error") or "primary model unavailable"),
+            "reason": "ready" if available else (primary.get("error") or "speech_recognition backend unavailable"),
         }
 
     def is_stt_available(self) -> bool:
@@ -205,22 +157,17 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         try:
             stt_status = self.stt_status()
             if not stt_status.get("available"):
-                primary = stt_status.get("primary", {}) if isinstance(stt_status.get("primary"), dict) else {}
                 logger.warning(
-                    "speech stt unavailable: primary_language=%s model_path=%s reason=%s",
+                    "speech stt unavailable: primary_language=%s reason=%s",
                     stt_status.get("primary_language"),
-                    primary.get("model_path"),
                     stt_status.get("reason"),
                 )
                 return
             
-            # Pull mode: consume the capture stream directly. Do NOT register
-            # the adapter as a push consumer too (would double-feed Vosk).
             capture = self._audio_router.get_capture()
             if capture is None:
                 raise RuntimeError("audio router capture not running")
             self._stream_iter = iter(capture.stream())
-            self._vosk_adapter = VoskConsumerAdapter(self.recognizer)  # kept for status/compat
 
             for result in self.recognizer.run(self._direction_wrapper(self._stream_iter)):
                 if self.is_stt_suppressed():
@@ -239,12 +186,10 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                 self._listening = False
 
     def finalize_stt(self, text: str) -> tuple[str, str]:
-        if not self._auto_language:
-            return str(text or "").strip(), self._default_language
         pcm = bytes(self._utterance_pcm)
         self.clear_utterance_buffer()
 
-        if len(pcm) >= 4800:
+        if len(pcm) >= 1600:
             try:
                 from modules.voice.speech.services.online_stt import transcribe_google_multilang
                 candidate_langs = ["tr", "en"]
@@ -263,24 +208,9 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                     self.source_language = detected_lang
                     return cloud_text, detected_lang
             except Exception as exc:
-                logger.debug("Online Google STT fallback to local Vosk: %s", exc)
+                logger.debug("Online Google STT transcription error: %s", exc)
 
-        resolved_text, resolved_lang = resolve_stt_text_and_language(
-            text,
-            pcm,
-            primary=self.recognizer,
-            extra_recognizers=self._extra_recognizers,
-            secondary=self._secondary_recognizer,
-            primary_lang=self.recognizer.cfg.language if hasattr(self.recognizer, 'cfg') and getattr(self.recognizer.cfg, 'language', None) else "tr",
-            secondary_lang=self._secondary_recognizer.cfg.language if self._secondary_recognizer and hasattr(self._secondary_recognizer, 'cfg') and getattr(self._secondary_recognizer.cfg, 'language', None) else "en",
-            default_language=self._default_language,
-            auto_switch_model=self._auto_switch_model,
-            dual_decode_margin=self._dual_decode_margin,
-            prefer_online_detect=self._prefer_online_detect,
-            dual_decode_only_if_ambiguous=self._dual_decode_only_if_ambiguous,
-        )
-        self.source_language = resolved_lang
-        return resolved_text, resolved_lang
+        return str(text or "").strip(), self.source_language or self._default_language
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
         import threading
@@ -298,11 +228,6 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
 
     def stop(self) -> None:
         self._stop_event.set()
-        # Unregister from audio router
-        if self._vosk_adapter:
-            self._audio_router.get_capture().unregister_consumer("speech_vosk")
-            self._vosk_adapter.on_stop()
-            self._vosk_adapter = None
         self._stream_iter = None
         with self._listen_lock:
             self._listening = False

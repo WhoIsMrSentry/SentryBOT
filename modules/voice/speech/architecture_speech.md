@@ -28,7 +28,7 @@ flowchart TD
         VAD_CHK -- Hayır --> SESSİZLIK((Bekle)) --> CAPTURE_AUDIO
         VAD_CHK -- Evet --> SEND_ASR[Ses Verisini <br> Recognizer Motoruna İlet]
         
-        SEND_ASR --> RECOGNIZER_ENGINE(Vosk / Whisper / Google)
+        SEND_ASR --> RECOGNIZER_ENGINE(SpeechRecognition / Google STT)
         
         RECOGNIZER_ENGINE --> PARSE_RES{"Motor Sonuç <br> Döndürdü mü?"}
         PARSE_RES -- Hayır / Gürültü --> SESSİZLIK

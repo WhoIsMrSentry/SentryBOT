@@ -25,7 +25,7 @@ hidden_paths:
 
 channels:
   CORE: [gateway, run_robot, startup, server, scheduler]
-  AUDIO: [speech, wakeword, stt, microphone, audio, alsa, vosk]
+  AUDIO: [speech, wakeword, stt, microphone, audio, alsa, openwakeword]
   TTS: [speak, tts, piper, glados, voice]
   VISION: [camera, vlm, imx500, qwen, vision, face, object]
   AI: [agent, llm, ollama, google, gemini, tool, planner]

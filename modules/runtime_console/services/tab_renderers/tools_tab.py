@@ -49,7 +49,7 @@ def render_search(width: int, height: int, snapshot: Snapshot, ui: UIState, pal:
     for res in ui.project_results[: max(0, height - 2)]:
         lines.append(f"{pal.cyan(res.path)}:{res.line}  {res.text}")
     if not ui.project_results and not ui.project_search:
-        lines.append("Try: s  piper / vosk / vlm / auth_token / arduino")
+        lines.append("Try: s  piper / openwakeword / vlm / auth_token / arduino")
     return lines[:height]
 
 

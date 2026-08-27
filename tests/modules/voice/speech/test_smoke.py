@@ -13,8 +13,6 @@ def test_config_load():
 
 
 def test_service_init():
-    if os.environ.get("SKIP_VOSK", "1") == "1":
-        return
     from modules.voice.speech.xSpeechService import SpeechService
     svc = SpeechService()
     assert svc is not None

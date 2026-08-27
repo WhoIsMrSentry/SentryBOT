@@ -113,7 +113,7 @@ def service_is_pc_expected(name: str, svc: ServiceStatus) -> bool:
     ):
         return True
     if name == "AUDIO" and any(
-        x in service_text for x in ("vosk", "openwakeword", "wakeword fallback", "model directory missing")
+        x in service_text for x in ("speech_recognition", "openwakeword", "stt unavailable", "microphone")
     ):
         return True
     if name == "VISION" and any(
@@ -219,11 +219,11 @@ def suggested_fix(ev: LogEvent | None, ui: UIState) -> list[str]:
             "PC test: expected until Piper model is installed.",
             "Robot: install or point piper.model_path to a real .onnx.",
         ]
-    elif "vosk tr model missing" in msg or "vosk model directory" in msg:
+    elif "speech/stt unavailable" in msg or "stt backend unavailable" in msg:
         out += [
-            "Speech model missing.",
-            "PC test: expected until Vosk models are present.",
-            "Robot: run tools/install_vosk_tr.py and add EN model if wakeword fallback uses it.",
+            "Speech recognition backend unavailable.",
+            "PC test: expected if SpeechRecognition is not installed.",
+            "Robot: run pip install SpeechRecognition.",
         ]
     elif "esp bridge unreachable" in msg:
         out += [

@@ -38,9 +38,9 @@ for req in "${REQS[@]}"; do
     "$ROOT/.venv/bin/python" -m pip install -r "$req"
   fi
 done
-"$ROOT/.venv/bin/python" -m pip install vosk openwakeword sounddevice soundfile piper-tts requests pyyaml fastapi uvicorn || true
-mkdir -p "$ROOT/data/piper_models" "$ROOT/modules/speech/models" "$ROOT/data/logs" "$ROOT/data/runtime"
-chown -R "${SUDO_USER:-$USER}:${SUDO_USER:-$USER}" "$ROOT/.venv" "$ROOT/data" "$ROOT/modules/speech/models" || true
+"$ROOT/.venv/bin/python" -m pip install SpeechRecognition openwakeword sounddevice soundfile piper-tts requests pyyaml fastapi uvicorn || true
+mkdir -p "$ROOT/data/piper_models" "$ROOT/data/logs" "$ROOT/data/runtime"
+chown -R "${SUDO_USER:-$USER}:${SUDO_USER:-$USER}" "$ROOT/.venv" "$ROOT/data" || true
 cat <<EOF
 PI_DEPENDENCY_INSTALL_OK
 root=$ROOT

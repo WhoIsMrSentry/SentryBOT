@@ -84,7 +84,7 @@ def _decode_pcm(recognizer: Recognizer, pcm: bytes) -> str:
         return str(recognizer.recognize_pcm(pcm) or "").strip()
     except FileNotFoundError:
         lang = getattr(getattr(recognizer, "cfg", None), "language", "?")
-        logger.warning("%s Vosk model missing; skipping dual-decode for that language", lang)
+        logger.warning("%s STT model missing; skipping dual-decode for that language", lang)
     except Exception as exc:
         logger.debug("secondary STT failed: %s", exc)
     return ""

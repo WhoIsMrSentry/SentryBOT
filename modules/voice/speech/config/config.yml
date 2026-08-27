@@ -22,24 +22,9 @@ recognition:
   language: en
   default_language: en
   auto_language: true
-  auto_switch_model: true
-  prefer_online_detect: true
-  dual_decode_margin: 0.35
-  dual_decode_only_if_ambiguous: true
-  # Vosk dual-decode only for installed models; others use langdetect on primary transcript.
   dual_decode_languages: [tr, en, de, es, fr]
   utterance_buffer_sec: 20
-  model_path: null             # explicit path overrides language mapping
-  # Optional per-language mapping to override defaults
-  language_models:
-    tr: models/vosk-tr
-    en: models/vosk-en
-    en-us: models/vosk-en-us
-    de: models/vosk-de
-    es: models/vosk-es
-    fr: models/vosk-fr
   samplerate: 16000
-  max_alternatives: 0
   input_gain: 3.0
 
   vad:

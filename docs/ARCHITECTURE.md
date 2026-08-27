@@ -116,7 +116,7 @@ flowchart LR
             SPEECH_VAD_CHK -- Hayır --> SESSİZLIK((Bekle)) --> SPEECH_CAPTURE_AUDIO
             SPEECH_VAD_CHK -- Evet --> SPEECH_SEND_ASR[Ses Verisini <br> Recognizer Motoruna İlet]
             
-            SPEECH_SEND_ASR --> SPEECH_RECOGNIZER_ENGINE(Vosk / Whisper / Google)
+            SPEECH_SEND_ASR --> SPEECH_RECOGNIZER_ENGINE(SpeechRecognition / Google STT)
             
             SPEECH_RECOGNIZER_ENGINE --> SPEECH_PARSE_RES{"Motor Sonuç <br> Döndürdü mü?"}
             SPEECH_PARSE_RES -- Hayır / Gürültü --> SESSİZLIK

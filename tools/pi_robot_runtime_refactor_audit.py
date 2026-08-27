@@ -63,7 +63,7 @@ PI_TARGET_TERMS = [
     "alsa",
     "pulseaudio",
     "piper",
-    "vosk",
+    "speech_recognition",
     "openwakeword",
 ]
 

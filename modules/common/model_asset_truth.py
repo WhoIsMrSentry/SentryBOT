@@ -11,15 +11,13 @@ from typing import Any, Dict, List, Optional
 DEFAULT_MANIFEST: Dict[str, Any] = {
     "assets": {
         "piper_tr": {"kind": "file_pair", "required": True, "model_path": "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx", "config_path": "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json", "purpose": "Turkish Piper TTS voice"},
-        "vosk_tr": {"kind": "directory", "required": True, "path": "modules/speech/models/vosk-tr", "purpose": "Primary Turkish STT model"},
-        "vosk_en": {"kind": "directory", "required": False, "path": "modules/speech/models/vosk-en", "purpose": "Optional English STT model"},
         "imx500_object_model": {"kind": "file", "required": True, "path": "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk", "purpose": "Raspberry Pi AI Camera IMX500 object model"},
     },
     "python_modules": {
         "picamera2": {"required": True, "purpose": "Raspberry Pi camera pipeline"},
         "piper": {"required": True, "purpose": "Persistent Piper Python runtime"},
-        "vosk": {"required": True, "purpose": "Speech recognition"},
-        "openwakeword": {"required": False, "purpose": "Wakeword engine"},
+        "speech_recognition": {"required": True, "purpose": "Speech recognition"},
+        "openwakeword": {"required": True, "purpose": "Wakeword engine"},
         "numpy": {"required": True, "purpose": "Audio and vision processing"},
     },
     "commands": {

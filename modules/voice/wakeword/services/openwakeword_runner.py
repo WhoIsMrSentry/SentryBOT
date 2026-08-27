@@ -75,7 +75,7 @@ class OpenWakewordRunner(OpenWakewordCalibrationMixin):
             if not any(path.exists() for path in mel_candidates):
                 raise RuntimeError(
                     "openwakeword runtime resource missing: melspectrogram.onnx. "
-                    "Reinstall openwakeword or use wakeword.engine=vosk."
+                    "Please reinstall openwakeword."
                 )
         except RuntimeError:
             raise
