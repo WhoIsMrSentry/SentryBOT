@@ -45,3 +45,17 @@ def test_preflight_requires_strict_i2s_device(monkeypatch):
         "speech": {"audio": {"device": "plughw:0,0", "strict_device": False}},
     }
     assert "i2s_input_not_strict" in sentrybot._preflight_failures(config)
+
+
+def test_load_startup_config(monkeypatch):
+    monkeypatch.setattr("modules.common.config_loader.load_agent_config", lambda: {"robot": {"name": "SentryBOT"}})
+    cfg = sentrybot._load_startup_config()
+    assert isinstance(cfg, dict)
+    assert cfg.get("robot", {}).get("name") == "SentryBOT"
+
+
+def test_agent_yaml_loader_shim():
+    from modules.system_control.config_center import agent_yaml_loader
+
+    assert callable(agent_yaml_loader.load_agent_config)
+    assert callable(agent_yaml_loader.resolve_agent_cfg_path)
