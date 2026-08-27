@@ -25,7 +25,9 @@ class SpeechFinalPayload(BaseModel):
     final: bool = True
 
 
-def get_router(brain: AutonomyBrain) -> APIRouter:
+def get_router(brain: AutonomyBrain | Any) -> APIRouter:
+    if hasattr(brain, "brain"):
+        brain = brain.brain
     router = APIRouter(prefix="/autonomy", tags=["autonomy"])
 
     register_memory_routes(router, brain)
@@ -108,14 +110,21 @@ def get_router(brain: AutonomyBrain) -> APIRouter:
 
     @router.post("/interaction")
     def report_interaction():
-        brain.interaction_occurred(source="api")
-        return {"status": "ok", "mood": int(brain.mood["happiness"])}
+        if hasattr(brain, "interaction_occurred"):
+            brain.interaction_occurred(source="api")
+        mood_val = 50
+        if hasattr(brain, "mood") and hasattr(brain.mood, "get"):
+            mood_val = int(brain.mood.get("happiness", 50))
+        elif hasattr(brain, "mood") and isinstance(brain.mood, dict):
+            mood_val = int(brain.mood.get("happiness", 50))
+        return {"status": "ok", "mood": mood_val}
 
     @router.post("/speech")
     def speech_final(payload: SpeechFinalPayload):
         if not payload.final:
             return {"ok": True, "handled": False, "reason": "not_final"}
-        brain.interaction_occurred(source="speech")
+        if hasattr(brain, "interaction_occurred"):
+            brain.interaction_occurred(source="speech")
         handled = brain.on_speech_final(payload.text, payload.language)
         return {"ok": True, "handled": handled}
 

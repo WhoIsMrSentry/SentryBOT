@@ -311,6 +311,8 @@ class SpeechArbiter:
 
         self._set_tts_active(True)
         try:
+            logger.info("SpeechArbiter dispatching speech: '%s' (lang=%s)", item.text, item.language or "auto")
+            print(f"\n🗣️ [SentryBOT Speak]: {item.text}\n", flush=True)
             kwargs: Dict[str, Any] = {"text": item.text}
             if item.tone:
                 kwargs["tone"] = item.tone

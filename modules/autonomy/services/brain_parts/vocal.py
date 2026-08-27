@@ -126,13 +126,15 @@ class VocalMixin(VocalProsodyMixin):
             if agent_result and agent_result.get("text"):
                 if not self._is_active_request(request_id):
                     return True
-                logger.info("Agent Core handled speech with full pipeline.")
-                self.memory.add_event(f"Agent replied: {agent_result['text']}")
-                self._remember_person_chat(speaker, agent_result["text"], role="assistant")
+                reply_text = agent_result["text"]
+                logger.info("🤖 SentryBOT Reply [%s]: %s", lang, reply_text)
+                print(f"\n========================================\n🤖 [SentryBOT ({lang})]:\n{reply_text}\n========================================\n", flush=True)
+                self.memory.add_event(f"Agent replied: {reply_text}")
+                self._remember_person_chat(speaker, reply_text, role="assistant")
                 if not agent_result.get("speech_handled"):
                     tone = self._tone_profile(self.state.get("last_emotion") or self.mood.get_dominant_emotion())
                     self.agent.speech_arbiter.enqueue_final(
-                        agent_result["text"],
+                        reply_text,
                         language=lang,
                         tone=tone,
                         trace_id=request_id,
@@ -171,8 +173,9 @@ class VocalMixin(VocalProsodyMixin):
         final_lang = lang
         if detect_text_language:
             final_lang = detect_text_language(clean_text, default=lang)
+        logger.info("🤖 SentryBOT Reply [%s]: %s", final_lang, clean_text)
+        print(f"\n========================================\n🤖 [SentryBOT ({final_lang})]:\n{clean_text}\n========================================\n", flush=True)
         self._speak_with_mood(clean_text, language=final_lang)
-        logger.info("Reply: %s", clean_text)
         self.memory.add_event(f"I replied: {clean_text}")
 
     def _react_to_speech(self, text: str, source_lang: str | None = None) -> None:

@@ -116,6 +116,8 @@ def get_router(service: SpeakService) -> APIRouter:
             try:
                 from modules.voice.speak.services.player import _play_stop
 
+                _play_stop.clear()
+                print(f"\n========================================\n🤖 [SentryBOT ({payload.get('language') or 'auto'})]:\n{text}\n========================================\n", flush=True)
                 for index, chunk in enumerate(chunks, start=1):
                     if _play_stop.is_set():
                         stream_jobs[job_id]["status"] = "interrupted"
