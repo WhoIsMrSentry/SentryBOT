@@ -17,6 +17,7 @@ class RecognitionResult:
     text: str
     is_final: bool
     confidence: Optional[float] = None
+    language: Optional[str] = None
 
 
 @dataclass
@@ -66,20 +67,20 @@ class Recognizer:
                 "SpeechRecognition is not available. Install with 'pip install SpeechRecognition'."
             )
 
-    def recognize_pcm(self, pcm: bytes) -> str:
-        """Transcribe mono PCM16 utterance buffer."""
+    def recognize_pcm(self, pcm: bytes) -> tuple[str, str]:
+        """Transcribe mono PCM16 utterance buffer. Returns (text, lang)."""
         if not pcm or len(pcm) < 1600:
-            return ""
+            return "", self.cfg.language
         self._ensure_model()
         from modules.voice.speech.services.online_stt import transcribe_google_multilang
 
-        text, _ = transcribe_google_multilang(
+        text, lang = transcribe_google_multilang(
             pcm,
             samplerate=self.cfg.samplerate,
             languages=[self.cfg.language, "en"],
             default_lang=self.cfg.language,
         )
-        return text
+        return text, lang
 
     def run(self, stream: Iterable[bytes]) -> Iterator[RecognitionResult]:
         """Process streaming audio chunks and yield recognition results."""
@@ -146,10 +147,10 @@ class Recognizer:
                 silence_chunks = 0
                 try:
                     logger.info("Transcribing captured speech (%d bytes, ~%.1fs)...", len(pcm_data), len(pcm_data) / bytes_per_sec)
-                    text = self.recognize_pcm(pcm_data)
+                    text, lang = self.recognize_pcm(pcm_data)
                     if text:
-                        logger.info("Speech recognised: %r", text)
-                        yield RecognitionResult(text=text, is_final=True, confidence=0.9)
+                        logger.info("Speech recognised: %r (lang=%s)", text, lang)
+                        yield RecognitionResult(text=text, is_final=True, confidence=0.9, language=lang)
                     else:
                         logger.debug("Speech recognition returned empty text")
                 except Exception as exc:
@@ -159,10 +160,10 @@ class Recognizer:
             try:
                 pcm_data = bytes(buffer)
                 logger.info("Finalizing speech buffer (%d bytes)...", len(pcm_data))
-                text = self.recognize_pcm(pcm_data)
+                text, lang = self.recognize_pcm(pcm_data)
                 if text:
-                    logger.info("Speech recognised (final): %r", text)
-                    yield RecognitionResult(text=text, is_final=True, confidence=0.9)
+                    logger.info("Speech recognised (final): %r (lang=%s)", text, lang)
+                    yield RecognitionResult(text=text, is_final=True, confidence=0.9, language=lang)
             except Exception as exc:
                 logger.debug("recognize_pcm finalize error: %s", exc)
 

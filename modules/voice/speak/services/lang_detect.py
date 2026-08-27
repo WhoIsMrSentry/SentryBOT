@@ -7,6 +7,14 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger("speak.lang_detect")
 
 _TR_CHARS = set("çğıöşüÇĞİÖŞÜ")
+_TR_STOPWORDS = frozenset({
+    "ben", "sen", "o", "biz", "siz", "onlar", "bu", "şu", "o", "bir", "ve", "veya",
+    "için", "ile", "de", "da", "gibi", "kadar", "daha", "çok", "en", "var", "yok",
+    "merhaba", "selam", "evet", "hayır", "tamam", "nasıl", "neden", "ne", "kim",
+    "nerede", "hangi", "bunu", "şunu", "bana", "sana", "ona", "bize", "size", "onlara",
+    "benim", "senin", "onun", "bizim", "sizin", "onların", "yap", "et", "ol", "gel",
+    "git", "bak", "gör", "bil", "istiyorum", "ediyorum", "teşekkürler", "özür",
+})
 _EN_STOPWORDS = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",
@@ -21,6 +29,7 @@ _EN_STOPWORDS = frozenset({
     "i", "you", "he", "she", "it", "we", "they", "my", "your", "his", "her",
     "its", "our", "their", "me", "him", "us", "them", "yes", "no", "ok", "please",
     "hello", "hi", "thanks", "thank", "sorry", "about", "tell", "know", "think",
+    "introduce", "yourself", "assist", "help", "who", "are", "what", "name",
 })
 
 try:
@@ -58,6 +67,20 @@ def detect_text_language(text: str, *, default: str = "tr", prefer_online: bool 
     if not value:
         return normalize_lang(default)
 
+    tr_chars = sum(1 for ch in value if ch in _TR_CHARS)
+    words = re.findall(r"[a-zA-ZçğıöşüÇĞİÖŞÜ']+", value.lower())
+    en_hits = sum(1 for w in words if w in _EN_STOPWORDS)
+    tr_hits = sum(1 for w in words if w in _TR_STOPWORDS)
+
+    if tr_chars >= 2:
+        return "tr"
+    if tr_hits > en_hits:
+        return "tr"
+    if en_hits > tr_hits:
+        return "en"
+    if tr_chars >= 1:
+        return "tr"
+
     if prefer_online and network_available() and _detect_lang is not None:
         try:
             detected = normalize_lang(str(_detect_lang(value)), fallback=default)
@@ -66,19 +89,7 @@ def detect_text_language(text: str, *, default: str = "tr", prefer_online: bool 
         except Exception as exc:
             logger.debug("langdetect failed: %s", exc)
 
-    tr_chars = sum(1 for ch in value if ch in _TR_CHARS)
-    words = re.findall(r"[a-zA-Z']+", value.lower())
-    en_hits = sum(1 for w in words if w in _EN_STOPWORDS)
-
-    if tr_chars >= 2:
-        return "tr"
-    if tr_chars >= 1 and en_hits < 2:
-        return "tr"
-    if en_hits >= 2:
-        return "en"
-    if len(words) >= 4 and tr_chars == 0:
-        return "en"
-    if tr_chars == 0 and len(words) >= 2 and all(ord(c) < 128 for c in value if c.isalpha()):
+    if len(words) >= 3 and tr_chars == 0 and all(ord(c) < 128 for c in value if c.isalpha()):
         return "en"
     return normalize_lang(default)
 

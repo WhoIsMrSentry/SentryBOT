@@ -157,16 +157,36 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
     def _stop_vu_monitor():
         vu_stop.set()
 
+    _pending_language = ""
+
     def _execute_final():
-        nonlocal last, last_nonempty_text, _pending_text
+        nonlocal last, last_nonempty_text, _pending_text, _pending_language
         text = _pending_text
+        language = _pending_language or getattr(service, "source_language", "tr")
         _pending_text = ""
+        _pending_language = ""
         if not text:
             return
             
-        language = getattr(service, "source_language", "tr")
         if hasattr(service, "finalize_stt"):
-            text, language = service.finalize_stt(text)
+            fin_text, fin_lang = service.finalize_stt(text)
+            if fin_text:
+                text = fin_text
+            if fin_lang:
+                language = fin_lang
+
+        if not language or language == "tr":
+            try:
+                from modules.voice.speak.services.lang_detect import detect_text_language
+                detected = detect_text_language(text, default=language or "tr")
+                if detected:
+                    language = detected
+            except Exception:
+                pass
+
+        if hasattr(service, "source_language"):
+            service.source_language = language
+
         if text:
             last_nonempty_text = text
         last = {
@@ -196,12 +216,14 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
             _schedule_speech_end()
 
     def _cb(r):
-        nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text, last_vu_emit_ts, _final_timer, _pending_text
+        nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text, last_vu_emit_ts, _final_timer, _pending_text, _pending_language
         now = time.time()
         if hasattr(service, "is_stt_suppressed") and service.is_stt_suppressed():
             return
         text = (r.text or "").strip()
-        language = getattr(service, "source_language", "tr")
+        r_lang = getattr(r, "language", None)
+        if r_lang:
+            _pending_language = str(r_lang)
 
         if r.is_final:
             if not text and not _pending_text:

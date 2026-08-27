@@ -176,10 +176,16 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             on_sentence: Optional[Callable[[str, int], None]] = None
             if self.speech_arbiter._speak_fn is not None:
                 def speak_sentence(sentence: str, index: int) -> None:
+                    chunk_lang = session_language
+                    try:
+                        from modules.voice.speak.services.lang_detect import detect_text_language
+                        chunk_lang = detect_text_language(sentence, default=session_language)
+                    except Exception:
+                        pass
                     item_id = self.speech_arbiter.enqueue_final_chunk(
                         sentence,
                         index=index,
-                        language=session_language,
+                        language=chunk_lang,
                         trace_id=trace_id,
                     )
                     if item_id:

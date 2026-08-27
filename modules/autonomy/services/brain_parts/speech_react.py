@@ -59,12 +59,15 @@ class SpeechReactMixin:
     def _dispatch_final_speech(self, text: str, source_lang: str | None = None) -> None:
         self.interaction_occurred("speech")
         detected_lang = source_lang
-        if not detected_lang and detect_text_language:
-            detected_lang = detect_text_language(text, default="tr")
-        if detected_lang:
-            self.state["last_speech_language"] = detected_lang
+        if detect_text_language:
+            text_lang = detect_text_language(text, default=source_lang or "tr")
+            if text_lang:
+                detected_lang = text_lang
+        if not detected_lang:
+            detected_lang = "tr"
+        self.state["last_speech_language"] = detected_lang
         try:
-            self.client.push_interaction_event("speech.final", {"text": text, "lang": detected_lang or "tr"})
+            self.client.push_interaction_event("speech.final", {"text": text, "lang": detected_lang})
             self.client.set_oled_stt_text(text)
         except Exception:
             pass
