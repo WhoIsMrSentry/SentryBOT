@@ -120,7 +120,7 @@ def _gateway_base_url() -> str:
     return os.getenv("SENTRYBOT_TUI_GATEWAY_URL", "http://127.0.0.1:8080").rstrip("/")
 
 
-def _json_get(path: str, timeout: float = 0.35) -> tuple[dict[str, Any] | None, str]:
+def _json_get(path: str, timeout: float = 0.20) -> tuple[dict[str, Any] | None, str]:
     url = _gateway_base_url() + path
     req = urllib.request.Request(url, headers={"Accept": "application/json"})
     try:
@@ -142,7 +142,7 @@ def _json_get(path: str, timeout: float = 0.35) -> tuple[dict[str, Any] | None, 
 
 
 def _json_post(
-    path: str, payload: dict[str, Any] | None = None, timeout: float = 0.6
+    path: str, payload: dict[str, Any] | None = None, timeout: float = 0.4
 ) -> tuple[dict[str, Any] | None, str]:
     url = _gateway_base_url() + path
     body = json.dumps(payload or {}).encode("utf-8")
@@ -176,13 +176,13 @@ def refresh_camera_snapshot(snapshot: Snapshot, force: bool = False) -> None:
         return
     snapshot.camera_last_probe = now
     snapshot.camera_probe_url = _gateway_base_url()
-    status, err = _json_get("/camera/status")
+    status, err = _json_get("/camera/status", timeout=0.20)
     if status is not None:
         snapshot.camera_status = status
         snapshot.camera_probe_error = ""
     else:
         snapshot.camera_probe_error = err
-    latest, err2 = _json_get("/camera/onsensor/latest")
+    latest, err2 = _json_get("/camera/onsensor/latest", timeout=0.20)
     if latest is not None:
         snapshot.camera_onsensor = latest
     elif not snapshot.camera_probe_error:
@@ -191,22 +191,22 @@ def refresh_camera_snapshot(snapshot: Snapshot, force: bool = False) -> None:
 
 def refresh_expression_snapshot(snapshot: Snapshot, force: bool = False) -> None:
     now = time.monotonic()
-    if not force and (now - float(snapshot.expression_last_probe or 0.0)) < 1.5:
+    if not force and (now - float(snapshot.expression_last_probe or 0.0)) < 2.0:
         return
     snapshot.expression_last_probe = now
     snapshot.expression_probe_url = _gateway_base_url()
-    state, err = _json_get("/expression/state", timeout=0.35)
+    state, err = _json_get("/expression/state", timeout=0.20)
     if state is not None:
         snapshot.expression_state = state
         snapshot.expression_probe_error = ""
     else:
         snapshot.expression_probe_error = err
-    status, err2 = _json_get("/expression/status", timeout=0.35)
+    status, err2 = _json_get("/expression/status", timeout=0.20)
     if status is not None:
         snapshot.expression_status = status
     elif not snapshot.expression_probe_error:
         snapshot.expression_probe_error = err2
-    history, _ = _json_get("/expression/history?limit=12", timeout=0.35)
+    history, _ = _json_get("/expression/history?limit=12", timeout=0.20)
     if history is not None:
         snapshot.expression_history = history
 
@@ -214,16 +214,16 @@ def refresh_expression_snapshot(snapshot: Snapshot, force: bool = False) -> None
 def refresh_expression_output_snapshot(snapshot: Snapshot, force: bool = False) -> None:
     now = time.monotonic()
     last = float(getattr(snapshot, "expression_output_last_probe", 0.0) or 0.0)
-    if not force and (now - last) < 1.5:
+    if not force and (now - last) < 2.0:
         return
     snapshot.expression_output_last_probe = now
-    status, err = _json_get("/expression/output/status", timeout=0.35)
+    status, err = _json_get("/expression/output/status", timeout=0.20)
     if status is not None:
         snapshot.expression_output_status = status
         snapshot.expression_output_probe_error = ""
     else:
         snapshot.expression_output_probe_error = err
-    plan, err2 = _json_get("/expression/output/plan", timeout=0.45)
+    plan, err2 = _json_get("/expression/output/plan", timeout=0.25)
     if plan is not None:
         snapshot.expression_output_plan = plan
         if not snapshot.expression_output_probe_error:
@@ -255,49 +255,49 @@ def _expression_core(snapshot: Snapshot) -> dict[str, Any]:
 def refresh_companion_snapshot(snapshot: Snapshot, force: bool = False) -> None:
     now = time.monotonic()
     last = float(getattr(snapshot, "companion_last_probe", 0.0) or 0.0)
-    if not force and (now - last) < 1.8:
+    if not force and (now - last) < 2.5:
         return
     snapshot.companion_last_probe = now
     snapshot.companion_probe_url = _gateway_base_url()
-    needs, err = _json_get("/autonomy/needs", timeout=0.45)
+    needs, err = _json_get("/autonomy/needs", timeout=0.20)
     if needs is not None:
         snapshot.companion_needs = needs
         snapshot.companion_probe_error = ""
     else:
         snapshot.companion_probe_error = err
-    goal, err2 = _json_get("/autonomy/goal", timeout=0.45)
+    goal, err2 = _json_get("/autonomy/goal", timeout=0.20)
     if goal is not None:
         snapshot.companion_goal = goal
         if not snapshot.companion_probe_error:
             snapshot.companion_probe_error = ""
     elif not snapshot.companion_probe_error:
         snapshot.companion_probe_error = err2
-    execution, err3 = _json_get("/autonomy/goal/execution", timeout=0.45)
+    execution, err3 = _json_get("/autonomy/goal/execution", timeout=0.20)
     if execution is not None:
         snapshot.companion_execution = execution
     elif not snapshot.companion_probe_error:
         snapshot.companion_probe_error = err3
-    auto, err4 = _json_get("/autonomy/goal/auto", timeout=0.45)
+    auto, err4 = _json_get("/autonomy/goal/auto", timeout=0.20)
     if auto is not None:
         snapshot.companion_auto = auto
     elif not snapshot.companion_probe_error:
         snapshot.companion_probe_error = err4
-    memory, err6 = _json_get("/autonomy/memory", timeout=0.45)
+    memory, err6 = _json_get("/autonomy/memory", timeout=0.20)
     if memory is not None:
         snapshot.world_memory = memory
     elif not snapshot.companion_probe_error:
         snapshot.companion_probe_error = err6
-    autowrite, err7 = _json_get("/autonomy/memory/autowrite", timeout=0.45)
+    autowrite, err7 = _json_get("/autonomy/memory/autowrite", timeout=0.20)
     if autowrite is not None:
         snapshot.world_memory_autowrite = autowrite
     elif not snapshot.companion_probe_error:
         snapshot.companion_probe_error = err7
-    shadow, err8 = _json_get("/autonomy/memory/decision-shadow", timeout=0.45)
+    shadow, err8 = _json_get("/autonomy/memory/decision-shadow", timeout=0.20)
     if shadow is not None:
         snapshot.memory_shadow = shadow
     elif not snapshot.companion_probe_error:
         snapshot.companion_probe_error = err8
-    bias, err9 = _json_get("/autonomy/memory/needs-bias", timeout=0.45)
+    bias, err9 = _json_get("/autonomy/memory/needs-bias", timeout=0.20)
     if bias is not None:
         snapshot.memory_needs_bias = bias
     elif not snapshot.companion_probe_error:
@@ -305,18 +305,18 @@ def refresh_companion_snapshot(snapshot: Snapshot, force: bool = False) -> None:
 
 
 def execute_companion_goal_dry_run(snapshot: Snapshot) -> None:
-    result, err = _json_post("/autonomy/goal/execute?dry_run=true", {}, timeout=0.8)
+    result, err = _json_post("/autonomy/goal/execute?dry_run=true", {}, timeout=0.5)
     snapshot.companion_probe_url = _gateway_base_url()
     if result is not None:
         snapshot.companion_execution = result
         snapshot.companion_probe_error = ""
-        needs, _err = _json_get("/autonomy/needs", timeout=0.35)
+        needs, _err = _json_get("/autonomy/needs", timeout=0.20)
         if needs is not None:
             snapshot.companion_needs = needs
-        goal, _err2 = _json_get("/autonomy/goal", timeout=0.35)
+        goal, _err2 = _json_get("/autonomy/goal", timeout=0.20)
         if goal is not None:
             snapshot.companion_goal = goal
-        auto, _err3 = _json_get("/autonomy/goal/auto", timeout=0.35)
+        auto, _err3 = _json_get("/autonomy/goal/auto", timeout=0.20)
         if auto is not None:
             snapshot.companion_auto = auto
     else:
@@ -324,7 +324,7 @@ def execute_companion_goal_dry_run(snapshot: Snapshot) -> None:
 
 
 def tick_companion_auto_dry_run(snapshot: Snapshot) -> None:
-    result, err = _json_post("/autonomy/goal/auto/tick?force=true&dry_run=true", {}, timeout=0.9)
+    result, err = _json_post("/autonomy/goal/auto/tick?force=true&dry_run=true", {}, timeout=0.5)
     snapshot.companion_probe_url = _gateway_base_url()
     if result is not None:
         snapshot.companion_auto = result
@@ -332,44 +332,44 @@ def tick_companion_auto_dry_run(snapshot: Snapshot) -> None:
         if execution is not None:
             snapshot.companion_execution = execution
         snapshot.companion_probe_error = ""
-        needs, _err = _json_get("/autonomy/needs", timeout=0.35)
+        needs, _err = _json_get("/autonomy/needs", timeout=0.20)
         if needs is not None:
             snapshot.companion_needs = needs
-        goal, _err2 = _json_get("/autonomy/goal", timeout=0.35)
+        goal, _err2 = _json_get("/autonomy/goal", timeout=0.20)
         if goal is not None:
             snapshot.companion_goal = goal
     else:
         snapshot.companion_probe_error = err
 
 
-def request_background_refresh(snapshot: Snapshot) -> None:
-    """Keep gateway probes off the terminal render/input thread."""
+def request_background_refresh(snapshot: Snapshot, ui: Any | None = None) -> None:
+    """Keep gateway probes off the terminal render/input thread with tab-aware polling."""
     if bool(getattr(request_background_refresh, "running", False)):
         return
     now = time.monotonic()
     last_run = float(getattr(request_background_refresh, "last_run", 0.0) or 0.0)
-    if (now - last_run) < 1.0:
+    if (now - last_run) < 2.0:
         return
     request_background_refresh.running = True
     request_background_refresh.last_run = now
 
+    tab_idx = getattr(ui, "active_tab", 0) if ui is not None else 0
+
     def _refresh() -> None:
         try:
-            refresh_camera_snapshot(snapshot)
-            refresh_expression_snapshot(snapshot)
-            refresh_expression_output_snapshot(snapshot)
-            refresh_companion_snapshot(snapshot)
+            # Tab-routed refresh to avoid overwhelming Gateway event loop
+            if tab_idx == 8:  # Camera
+                refresh_camera_snapshot(snapshot)
+            elif tab_idx == 7:  # Expression
+                refresh_expression_snapshot(snapshot)
+                refresh_expression_output_snapshot(snapshot)
+            elif tab_idx == 6:  # Companion
+                refresh_companion_snapshot(snapshot)
+            else:  # Overview / Logs / other
+                refresh_camera_snapshot(snapshot)
+                refresh_expression_snapshot(snapshot)
         except Exception as exc:
-            snapshot.feed_event(
-                LogEvent(
-                    time.strftime("%H:%M:%S"),
-                    "WARN",
-                    "TUI",
-                    "SYS",
-                    f"background refresh failed: {exc}",
-                    "",
-                )
-            )
+            pass
         finally:
             request_background_refresh.running = False
 

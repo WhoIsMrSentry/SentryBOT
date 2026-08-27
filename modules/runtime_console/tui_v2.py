@@ -148,7 +148,7 @@ def run_tui(
             while True:
                 if not ui.paused:
                     tailer.read_new(snapshot)
-                    request_background_refresh(snapshot)
+                    request_background_refresh(snapshot, ui)
                 key = keys.read()
                 handle_key(key, ui, snapshot)
                 screen = render_screen(

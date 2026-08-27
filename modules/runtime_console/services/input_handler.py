@@ -83,6 +83,9 @@ class KeyReader:
             return None
         ch = sys.stdin.read(1)
         if ch == "\x1b":
+            ready_seq, _, _ = select.select([sys.stdin], [], [], 0.02)
+            if not ready_seq:
+                return "ESC"
             seq = sys.stdin.read(2)
             return {
                 "[A": "UP",

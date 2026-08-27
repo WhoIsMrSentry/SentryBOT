@@ -69,21 +69,27 @@ def filter_events(events: Iterable[LogEvent], text: str, include_debug: bool) ->
     result: list[LogEvent] = []
     text_l = text.lower().strip()
     for ev in events:
-        if not include_debug and ev.level.upper() == "DEBUG":
+        is_debug = getattr(ev, "_is_debug", ev.level.upper() == "DEBUG")
+        if not include_debug and is_debug:
             continue
-        if text_l and text_l not in (ev.raw + ev.message + ev.source + ev.channel).lower():
-            continue
+        if text_l:
+            blob = getattr(ev, "_search_blob", None)
+            if blob is None:
+                blob = f"{ev.raw} {ev.message} {ev.source} {ev.channel}".lower()
+            if text_l not in blob:
+                continue
         result.append(ev)
     return result
 
 
 def is_low_value_startup(ev: LogEvent) -> bool:
     msg = ev.message.lower()
-    if ev.level.upper() == "DEBUG":
+    if getattr(ev, "_is_debug", ev.level.upper() == "DEBUG"):
         return True
     if any(h.lower() in msg for h in NOISE_HINTS):
         return True
-    if ev.level.upper().replace("WARNING", "WARN") in {"WARN", "ERROR", "CRITICAL"}:
+    is_warn_err = getattr(ev, "_is_warn_or_err", ev.level.upper().replace("WARNING", "WARN") in {"WARN", "ERROR", "CRITICAL"})
+    if is_warn_err:
         return False
     startup_fragments = (
         "module ", " mounted", "wired to", "event bridge mounted",
@@ -173,10 +179,15 @@ def events_for_view(snapshot: Snapshot, ui: UIState, include_debug: bool | None 
     if include_debug is None:
         include_debug = bool(ui.filter_text) and ui.filter_text.lower() in {"debug", "all", "*"}
     filter_text = ui.filter_text if ui.filter_text.lower() not in {"debug", "all", "*"} else ""
+    cache_key = (getattr(snapshot, "events_version", len(snapshot.events)), filter_text, ui.log_view.lower(), ui.profile, include_debug)
+    cached = getattr(snapshot, "_view_cache", None)
+    if cached is not None and cached[0] == cache_key:
+        return cached[1]
+
     events = filter_events(snapshot.events, filter_text, include_debug)
     view = ui.log_view.lower()
     if view == "warn":
-        events = [ev for ev in events if ev.level.upper().replace("WARNING", "WARN") in {"WARN", "ERROR", "CRITICAL"}]
+        events = [ev for ev in events if getattr(ev, "_is_warn_or_err", ev.level.upper().replace("WARNING", "WARN") in {"WARN", "ERROR", "CRITICAL"})]
     elif view == "human" and not filter_text:
         events = [ev for ev in events if not is_low_value_startup(ev)]
         if ui.profile == "pc-test":
@@ -184,10 +195,11 @@ def events_for_view(snapshot: Snapshot, ui: UIState, include_debug: bool | None 
                 ev
                 for ev in events
                 if not (
-                    ev.level.upper().replace("WARNING", "WARN") in {"WARN", "ERROR", "CRITICAL"}
+                    getattr(ev, "_is_warn_or_err", False)
                     and event_is_pc_expected(ev)
                 )
             ]
+    snapshot._view_cache = (cache_key, events)
     return events
 
 
@@ -196,7 +208,14 @@ def current_log_events(snapshot: Snapshot, ui: UIState, include_debug: bool | No
 
 
 def newest_first_events(snapshot: Snapshot, ui: UIState) -> list[LogEvent]:
-    return list(reversed(current_log_events(snapshot, ui)))
+    evs = current_log_events(snapshot, ui)
+    rev_key = (getattr(snapshot, "events_version", len(snapshot.events)), ui.filter_text, ui.log_view.lower(), ui.profile)
+    cached = getattr(snapshot, "_newest_cache", None)
+    if cached is not None and cached[0] == rev_key:
+        return cached[1]
+    res = list(reversed(evs))
+    snapshot._newest_cache = (rev_key, res)
+    return res
 
 
 def selected_event(snapshot: Snapshot, ui: UIState) -> LogEvent | None:

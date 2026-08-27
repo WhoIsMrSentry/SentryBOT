@@ -125,8 +125,8 @@ class DecisionMixin:
         if not sleep_cfg.get("enabled"):
             return
         hour = datetime.datetime.now().hour
-        start = int(sleep_cfg.get("start_hour", 23))
-        end = int(sleep_cfg.get("end_hour", 7))
+        start = int(sleep_cfg.get("start_hour", 3))
+        end = int(sleep_cfg.get("end_hour", 6))
         if start > end:
             dark = hour >= start or hour < end
         else:
@@ -340,8 +340,8 @@ class DecisionMixin:
             return
 
         hour = datetime.datetime.now().hour
-        start = sleep_cfg.get("start_hour", 23)
-        end = sleep_cfg.get("end_hour", 7)
+        start = sleep_cfg.get("start_hour", 3)
+        end = sleep_cfg.get("end_hour", 6)
 
         if start > end:
             should_sleep = hour >= start or hour < end

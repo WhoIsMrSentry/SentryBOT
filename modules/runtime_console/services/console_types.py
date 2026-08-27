@@ -98,6 +98,16 @@ class LogEvent:
     channel: str
     message: str
     raw: str
+    _search_blob: str = ""
+    _is_debug: bool = False
+    _is_warn_or_err: bool = False
+
+    def __post_init__(self) -> None:
+        lvl = self.level.upper().replace("WARNING", "WARN")
+        self._is_debug = (lvl == "DEBUG")
+        self._is_warn_or_err = (lvl in {"WARN", "ERROR", "CRITICAL"})
+        if not self._search_blob:
+            self._search_blob = f"{self.raw} {self.message} {self.source} {self.channel}".lower()
 
 
 @dataclass
@@ -156,9 +166,11 @@ class Snapshot:
     companion_last_probe: float = 0.0
     hidden_noise: int = 0
     started_at: float = field(default_factory=time.time)
+    events_version: int = 0
+    _view_cache: tuple[Any, list[LogEvent]] | None = None
 
     def feed_line(self, line: str) -> None:
-        from .console_formatting import repair_mojibake, strip_ansi, crop
+        from .console_formatting import repair_mojibake, strip_ansi
         from .console_helpers import parse_log_line, infer_channel
 
         line = repair_mojibake(line.rstrip("\r\n"))
@@ -190,6 +202,7 @@ class Snapshot:
         from .console_formatting import crop
 
         self.events.append(ev)
+        self.events_version += 1
         lvl = ev.level.upper().replace("WARNING", "WARN")
         self.counts[lvl] += 1
         msg = ev.message
@@ -254,10 +267,8 @@ class LogTailer:
     def __init__(self, root: Path, start_at_end: bool = False) -> None:
         self.root = root
         self.files = [
-            root / "logs" / "tui.log",
             root / "logs" / "sentry.log",
-            root / "logs" / "errors.log",
-            root / "logs" / "warnings.log",
+            root / "logs" / "tui.log",
             root / "logs" / "runtime_stdout.log",
         ]
         self.positions: dict[Path, int] = {}
@@ -270,9 +281,13 @@ class LogTailer:
                     pass
 
     def read_new(self, snapshot: Snapshot) -> None:
-        for path in self.files:
-            if not path.exists():
-                continue
+        primary = self.root / "logs" / "sentry.log"
+        if primary.exists() and primary.stat().st_size > 0:
+            target_files = [primary]
+        else:
+            target_files = [f for f in self.files if f.exists()]
+
+        for path in target_files:
             try:
                 size = path.stat().st_size
                 pos = self.positions.get(path, 0)
@@ -280,19 +295,12 @@ class LogTailer:
                     pos = 0
                 if pos == 0 and size > MAX_TAIL_BYTES:
                     pos = size - MAX_TAIL_BYTES
+                if pos >= size:
+                    continue
                 with path.open("r", encoding="utf-8", errors="replace") as fh:
                     fh.seek(pos)
                     for line in fh:
                         snapshot.feed_line(line)
                     self.positions[path] = fh.tell()
             except Exception as exc:
-                snapshot.feed_event(
-                    LogEvent(
-                        time.strftime("%H:%M:%S"),
-                        "WARN",
-                        "tui",
-                        "SYS",
-                        f"could not read {path.name}: {exc}",
-                        "",
-                    )
-                )
+                pass
