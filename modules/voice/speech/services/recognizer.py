@@ -86,20 +86,19 @@ class Recognizer:
         bytes_per_sec = self.cfg.samplerate * 2  # 16-bit mono PCM
         min_bytes = int(self.cfg.min_utterance_sec * bytes_per_sec)
         max_bytes = int(self.cfg.max_utterance_sec * bytes_per_sec)
-        silence_threshold = 400  # amplitude threshold
+        preroll_bytes = int(0.35 * bytes_per_sec)  # 350ms rolling pre-roll buffer
+        silence_threshold = 250  # amplitude threshold
         silence_chunks = 0
-        max_silence_chunks = int(self.cfg.vad_hangover_ms / 30)  # assuming ~30ms chunk
+        max_silence_chunks = max(8, int(self.cfg.vad_hangover_ms / 30))
+        has_spoken = False
 
         for chunk in stream:
             if not chunk:
                 continue
-            buffer.extend(chunk)
 
-            # Check approximate energy
-            # Simple energy estimation
+            # Check approximate energy of this audio chunk
             is_silent = True
             if len(chunk) >= 2:
-                # Samples check
                 import numpy as np
                 try:
                     samples = np.frombuffer(chunk, dtype=np.int16)
@@ -109,30 +108,47 @@ class Recognizer:
                 except Exception:
                     is_silent = False
 
-            if is_silent:
-                silence_chunks += 1
-            else:
+            if not is_silent:
+                has_spoken = True
                 silence_chunks = 0
+                buffer.extend(chunk)
+            else:
+                if has_spoken:
+                    silence_chunks += 1
+                    buffer.extend(chunk)
+                else:
+                    # Speech has not started yet; keep only the last pre-roll bytes
+                    buffer.extend(chunk)
+                    if len(buffer) > preroll_bytes:
+                        buffer = buffer[-preroll_bytes:]
 
-            # Trigger recognition when silence detected after speech or buffer reaches max
+            # Trigger recognition when silence is detected AFTER speech or buffer reaches maximum length
             should_flush = False
-            if len(buffer) >= max_bytes:
-                should_flush = True
-            elif len(buffer) >= min_bytes and silence_chunks >= max_silence_chunks:
-                should_flush = True
+            if has_spoken:
+                if len(buffer) >= max_bytes:
+                    should_flush = True
+                elif len(buffer) >= min_bytes and silence_chunks >= max_silence_chunks:
+                    should_flush = True
 
-            if should_flush and len(buffer) >= min_bytes:
+            if should_flush:
                 pcm_data = bytes(buffer)
                 buffer.clear()
+                has_spoken = False
                 silence_chunks = 0
-                text = self.recognize_pcm(pcm_data)
+                try:
+                    text = self.recognize_pcm(pcm_data)
+                    if text:
+                        yield RecognitionResult(text=text, is_final=True, confidence=0.9)
+                except Exception as exc:
+                    logger.debug("recognize_pcm error: %s", exc)
+
+        if has_spoken and len(buffer) >= min_bytes:
+            try:
+                text = self.recognize_pcm(bytes(buffer))
                 if text:
                     yield RecognitionResult(text=text, is_final=True, confidence=0.9)
-
-        if len(buffer) >= min_bytes:
-            text = self.recognize_pcm(bytes(buffer))
-            if text:
-                yield RecognitionResult(text=text, is_final=True, confidence=0.9)
+            except Exception as exc:
+                logger.debug("recognize_pcm finalize error: %s", exc)
 
     def finalize(self) -> Optional[RecognitionResult]:
         return None
