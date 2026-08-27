@@ -209,9 +209,8 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
             _pending_text = text or _pending_text
             if _final_timer:
                 _final_timer.cancel()
-            _final_timer = threading.Timer(1.5, _execute_final)
-            _final_timer.daemon = True
-            _final_timer.start()
+                _final_timer = None
+            _execute_final()
         else:
             if _final_timer:
                 _final_timer.cancel()

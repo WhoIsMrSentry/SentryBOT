@@ -16,7 +16,7 @@ wakeword:
     - "mycroft"
   trigger_on_partial: true
   min_confidence: 0.0
-  cooldown_sec: 3.0
+  cooldown_sec: 1.5
 
 openwakeword:
   # Built-in openWakeWord catalog model (auto-downloaded on first run).
@@ -48,8 +48,8 @@ actions:
   speech_last_url: "@gateway/speech/last"
   interactions_event_url: "@gateway/interactions/event"
   neopixel_url: "@gateway/neopixel"
-  listen_window_sec: 8.0
+  listen_window_sec: 12.0
   min_listen_before_final_sec: 1.0   # shorter when VAD filters wakeword echo
   min_listen_before_final_sec_vad: 0.75
   stop_on_final: true
-  poll_interval_ms: 200
+  poll_interval_ms: 100

@@ -172,6 +172,13 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
             for result in self.recognizer.run(self._direction_wrapper(self._stream_iter)):
                 if self.is_stt_suppressed():
                     continue
+                if result and result.text:
+                    self.last_result = {
+                        "text": result.text,
+                        "final": result.is_final,
+                        "confidence": result.confidence,
+                        "ts": time.time(),
+                    }
                 cb = None
                 with self._result_lock:
                     cb = self._on_result_cb
