@@ -23,7 +23,7 @@ actions:
   default_apply: true
   timeout: 1.5
 translation:
-  enabled: true
+  enabled: false
   default_source_lang: tr
   model: qwen3.5:9b
   cache_size: 128
