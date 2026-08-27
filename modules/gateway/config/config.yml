@@ -3,8 +3,8 @@ server:
   port: 8080
 include:
   social_db: true
-  esp_link: true
-  arduino: true
+  esp_link: false
+  arduino: false
   vlm_bridge: true
   neopixel: true
   interactions: true

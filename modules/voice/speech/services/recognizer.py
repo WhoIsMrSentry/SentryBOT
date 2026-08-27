@@ -23,10 +23,11 @@ class RecognitionResult:
 class RecognizerConfig:
     language: str = "tr"
     samplerate: int = 16000
+    channels: int = 2
     vad_enabled: bool = False
     vad_aggressiveness: int = 2
     vad_hangover_ms: int = 400
-    min_utterance_sec: float = 0.6
+    min_utterance_sec: float = 0.5
     max_utterance_sec: float = 15.0
 
 
@@ -38,6 +39,7 @@ class Recognizer:
         self.cfg = RecognizerConfig(
             language=str(cfg.get("language") or cfg.get("source_language") or "tr"),
             samplerate=int(cfg.get("samplerate", 16000)),
+            channels=int(cfg.get("channels", 2)),
             vad_enabled=bool(cfg.get("vad", {}).get("enabled", False) if isinstance(cfg.get("vad"), dict) else False),
             vad_aggressiveness=int(cfg.get("vad", {}).get("aggressiveness", 2) if isinstance(cfg.get("vad"), dict) else 2),
             vad_hangover_ms=int(cfg.get("vad", {}).get("hangover_ms", 400) if isinstance(cfg.get("vad"), dict) else 400),
@@ -87,7 +89,7 @@ class Recognizer:
         min_bytes = int(self.cfg.min_utterance_sec * bytes_per_sec)
         max_bytes = int(self.cfg.max_utterance_sec * bytes_per_sec)
         preroll_bytes = int(0.35 * bytes_per_sec)  # 350ms rolling pre-roll buffer
-        silence_threshold = 250  # amplitude threshold
+        silence_threshold = 120  # amplitude threshold
         silence_chunks = 0
         max_silence_chunks = max(8, int(self.cfg.vad_hangover_ms / 30))
         has_spoken = False
@@ -96,29 +98,36 @@ class Recognizer:
             if not chunk:
                 continue
 
-            # Check approximate energy of this audio chunk
-            is_silent = True
+            mono_chunk = chunk
+            energy = 0.0
             if len(chunk) >= 2:
                 import numpy as np
                 try:
                     samples = np.frombuffer(chunk, dtype=np.int16)
-                    energy = np.mean(np.abs(samples))
-                    if energy > silence_threshold:
-                        is_silent = False
+                    if len(samples) > 0:
+                        if self.cfg.channels == 2 and len(samples) % 2 == 0:
+                            stereo = samples.reshape(-1, 2)
+                            mono_samples = stereo.mean(axis=1).astype(np.int16)
+                            mono_chunk = mono_samples.tobytes()
+                            energy = float(np.mean(np.abs(mono_samples)))
+                        else:
+                            energy = float(np.mean(np.abs(samples)))
                 except Exception:
-                    is_silent = False
+                    pass
+
+            is_silent = energy <= silence_threshold
 
             if not is_silent:
                 has_spoken = True
                 silence_chunks = 0
-                buffer.extend(chunk)
+                buffer.extend(mono_chunk)
             else:
                 if has_spoken:
                     silence_chunks += 1
-                    buffer.extend(chunk)
+                    buffer.extend(mono_chunk)
                 else:
                     # Speech has not started yet; keep only the last pre-roll bytes
-                    buffer.extend(chunk)
+                    buffer.extend(mono_chunk)
                     if len(buffer) > preroll_bytes:
                         buffer = buffer[-preroll_bytes:]
 
@@ -136,16 +145,23 @@ class Recognizer:
                 has_spoken = False
                 silence_chunks = 0
                 try:
+                    logger.info("Transcribing captured speech (%d bytes, ~%.1fs)...", len(pcm_data), len(pcm_data) / bytes_per_sec)
                     text = self.recognize_pcm(pcm_data)
                     if text:
+                        logger.info("Speech recognised: %r", text)
                         yield RecognitionResult(text=text, is_final=True, confidence=0.9)
+                    else:
+                        logger.debug("Speech recognition returned empty text")
                 except Exception as exc:
                     logger.debug("recognize_pcm error: %s", exc)
 
         if has_spoken and len(buffer) >= min_bytes:
             try:
-                text = self.recognize_pcm(bytes(buffer))
+                pcm_data = bytes(buffer)
+                logger.info("Finalizing speech buffer (%d bytes)...", len(pcm_data))
+                text = self.recognize_pcm(pcm_data)
                 if text:
+                    logger.info("Speech recognised (final): %r", text)
                     yield RecognitionResult(text=text, is_final=True, confidence=0.9)
             except Exception as exc:
                 logger.debug("recognize_pcm finalize error: %s", exc)

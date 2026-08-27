@@ -68,7 +68,7 @@ def transcribe_google_multilang(
     Returns:
         tuple[str, str]: (best_text, detected_language_code e.g. 'tr' or 'en')
     """
-    if _recognizer is None or not pcm_bytes or len(pcm_bytes) < 3200:
+    if _recognizer is None or not pcm_bytes or len(pcm_bytes) < 1600:
         return "", default_lang
 
     from modules.voice.speech.services.stt_language import _detect_language, _transcript_score
