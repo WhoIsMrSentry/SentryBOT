@@ -12,8 +12,8 @@ class TabTelemetry(Widget):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.curiosity_history: List[float] = [80.0, 75.0, 80.0, 85.0, 80.0, 82.0] * 5
-        self.ping_history: List[float] = [1.2, 1.0, 1.5, 1.1, 1.2, 1.3] * 5
+        self.curiosity_history: List[float] = [0.0] * 30
+        self.ping_history: List[float] = [0.0] * 30
 
     def compose(self) -> ComposeResult:
         with Vertical(id="telemetry_container"):
@@ -26,7 +26,7 @@ class TabTelemetry(Widget):
                     yield Label("AUTONOMY CURIOSITY DRIVE LEVEL (%)", classes="telem_spark_title", markup=False)
                     yield Sparkline(self.curiosity_history, id="spark_curiosity", summary_function=max)
                 with Vertical(classes="telem_spark_box_last"):
-                    yield Label("ESP32 MOTOR BRIDGE LATENCY (ms)", classes="telem_spark_title", markup=False)
+                    yield Label("GATEWAY PROBE LATENCY (ms)", classes="telem_spark_title", markup=False)
                     yield Sparkline(self.ping_history, id="spark_ping", summary_function=max)
 
             # 4 Quadrant Grid for Deep Real System Diagnostic Telemetry
@@ -35,12 +35,12 @@ class TabTelemetry(Widget):
                 with Vertical(classes="telemetry_card"):
                     yield Label("■ IMU, DISTANCE & SPATIAL POSE", classes="telemetry_card_title", markup=False)
                     yield Static(
-                        "• IMU Pitch / Roll : 0.0° / 0.0° (Level)\n"
-                        "• Ultrasonic Range : 120 cm (Clear Corridor)\n"
-                        "• Current Pose     : 'stand' / upright\n"
-                        "• DoA Voice Angle  : 0° (I2S Stereo VAD)\n"
-                        "• Motion State     : Neutral Stationary\n"
-                        "• Safety Brake     : Armed (Auto-avoid: ON)",
+                        "• IMU Pitch / Roll : Waiting for data...\n"
+                        "• Ultrasonic Range : Waiting for data...\n"
+                        "• Current Pose     : Waiting for data...\n"
+                        "• DoA Voice Angle  : Waiting for data...\n"
+                        "• Motion State     : Waiting for data...\n"
+                        "• Safety Brake     : Waiting for data...",
                         id="telem_imu_content",
                     )
 
@@ -48,12 +48,12 @@ class TabTelemetry(Widget):
                 with Vertical(classes="telemetry_card"):
                     yield Label("■ ESP32 MOTOR & 4-SERVO CONTRACT", classes="telemetry_card_title", markup=False)
                     yield Static(
-                        "• Serial Port      : COM3 / /dev/ttyUSB0 (115200)\n"
-                        "• Protocol Schema  : strict_json_contract_v2\n"
-                        "• Pan / Tilt Servos: Pan: 0.0° | Tilt: 0.0°\n"
-                        "• Ear Servos (L/R) : L: 90.0° | R: 90.0°\n"
-                        "• Steppers (L/R)   : PID Speed: 0 steps/s\n"
-                        "• Lasers / Buzzer  : Laser: OFF | Buzzer: Ready",
+                        "• Serial Port      : Waiting for data...\n"
+                        "• Protocol Schema  : Waiting for data...\n"
+                        "• Pan / Tilt Servos: Waiting for data...\n"
+                        "• Ear Servos (L/R) : Waiting for data...\n"
+                        "• Steppers (L/R)   : Waiting for data...\n"
+                        "• Lasers / Buzzer  : Waiting for data...",
                         id="telem_bridge_content",
                     )
 
@@ -61,12 +61,12 @@ class TabTelemetry(Widget):
                 with Vertical(classes="telemetry_card"):
                     yield Label("■ VISION & IMX500 SENSOR PIPELINE", classes="telemetry_card_title", markup=False)
                     yield Static(
-                        "• Device Driver    : PiCamera2 / IMX500 / OpenCV\n"
-                        "• Processing Mode  : local (Haar & DNN Detector)\n"
-                        "• Face Embeddings  : 128D/512D Vector Matcher\n"
-                        "• Active Tracks    : 0 Human Trackers\n"
-                        "• Visual Memory    : Dynamic Frame Buffer\n"
-                        "• VLM Multimodal   : Standby / Connected",
+                        "• Device Driver    : Waiting for data...\n"
+                        "• Camera Enabled   : Waiting for data...\n"
+                        "• Processing Mode  : Waiting for data...\n"
+                        "• Active Tracks    : Waiting for data...\n"
+                        "• Visual Memory    : Waiting for data...\n"
+                        "• VLM Multimodal   : Waiting for data...",
                         id="telem_vision_content",
                     )
 
@@ -74,12 +74,12 @@ class TabTelemetry(Widget):
                 with Vertical(classes="telemetry_card"):
                     yield Label("■ VOICE I2S & LIVING NEEDS MODEL", classes="telemetry_card_title", markup=False)
                     yield Static(
-                        "• I2S Mic Array    : Stereo 16kHz PCM (Energy VAD)\n"
-                        "• Wakeword Engine  : openWakeWord ('hey sentry')\n"
-                        "• STT / TTS Voice  : Vosk/Whisper & Piper TR-dfki\n"
-                        "• Living Needs     : Curiosity: 80% | Boredom: 20%\n"
-                        "• Social / Rest    : Social: 40% | Rest: 10%\n"
-                        "• Social Memory    : SQLite (data/social.sqlite3)",
+                        "• I2S Mic Array    : Waiting for data...\n"
+                        "• Wakeword Engine  : Waiting for data...\n"
+                        "• STT / TTS Voice  : Waiting for data...\n"
+                        "• Living Needs     : Waiting for data...\n"
+                        "• Social / Rest    : Waiting for data...\n"
+                        "• Social Memory    : Waiting for data...",
                         id="telem_ai_content",
                     )
 

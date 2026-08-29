@@ -35,15 +35,15 @@ class ServiceCard(Widget):
         self.status = status
         self.message = message
         self.is_pc_expected = is_pc_expected
-        
+
         try:
             badge = self.query_one(f"#svc_badge_{self.service_name}", Label)
             msg = self.query_one(f"#svc_msg_{self.service_name}", Label)
-            
+
             display_status = "PC-SIM" if is_pc_expected and status in ("WARN", "ERR", "OFFLINE") else status
             badge.update(f" {display_status} ")
             msg.update(message[:65])
-            
+
             badge.remove_class("badge_ok", "badge_warn", "badge_err", "badge_pc")
             if display_status == "OK":
                 badge.add_class("badge_ok")
@@ -62,9 +62,9 @@ class TabMain(Widget):
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self.cpu_history: List[float] = [10.0] * 30
-        self.ram_history: List[float] = [20.0] * 30
-        self.gw_history: List[float] = [1.0] * 30
+        self.cpu_history: List[float] = [0.0] * 30
+        self.ram_history: List[float] = [0.0] * 30
+        self.gw_history: List[float] = [0.0] * 30
 
     def compose(self) -> ComposeResult:
         with Vertical(id="main_container"):
@@ -72,19 +72,19 @@ class TabMain(Widget):
             with Horizontal(id="main_hero_bar"):
                 with Vertical(classes="hero_metric"):
                     yield Label("CPU LOAD", classes="hero_label", markup=False)
-                    yield Label("0% [░░░░░░░░░░] (0C)", id="metric_cpu", classes="hero_value", markup=False)
+                    yield Label("Waiting...", id="metric_cpu", classes="hero_value", markup=False)
                 with Vertical(classes="hero_metric"):
                     yield Label("MEMORY RAM", classes="hero_label", markup=False)
-                    yield Label("0.0 / 0.0 GiB (0%)", id="metric_ram", classes="hero_value", markup=False)
+                    yield Label("Waiting...", id="metric_ram", classes="hero_value", markup=False)
                 with Vertical(classes="hero_metric"):
                     yield Label("DISK STORAGE", classes="hero_label", markup=False)
-                    yield Label("0 / 0 GiB (0%)", id="metric_disk", classes="hero_value", markup=False)
+                    yield Label("Waiting...", id="metric_disk", classes="hero_value", markup=False)
                 with Vertical(classes="hero_metric"):
                     yield Label("PROCESS / UPTIME", classes="hero_label", markup=False)
-                    yield Label("IDLE | 00:00:00", id="metric_process", classes="hero_value", markup=False)
+                    yield Label("Waiting...", id="metric_process", classes="hero_value", markup=False)
                 with Vertical(classes="hero_metric_last"):
                     yield Label("GATEWAY / IP", classes="hero_label", markup=False)
-                    yield Label("OFFLINE", id="metric_gateway", classes="hero_value", markup=False)
+                    yield Label("Waiting...", id="metric_gateway", classes="hero_value", markup=False)
 
             # Live Dynamic Historical Resource Waveforms (Sparklines)
             with Horizontal(id="main_sparkline_strip"):
@@ -108,31 +108,31 @@ class TabMain(Widget):
                 yield ServiceCard("TTS", id="card_tts", classes="service_card")
                 yield ServiceCard("MOVE", id="card_move", classes="service_card")
 
-            # 3-Way Split: Real Living Needs + Sensors/Actuators + Alerts
+            # 3-Way Split: Panels populated by real gateway telemetry
             with Horizontal(id="main_middle_split"):
-                # Panel 1: Real Living Needs Model
+                # Panel 1: Living Needs Model
                 with Vertical(id="companion_panel"):
                     yield Label("LIVING NEEDS & AUTONOMY", classes="panel_title", markup=False)
                     yield Static(
-                        "• Curiosity  : [████████░░] 80%\n"
-                        "• Boredom    : [██░░░░░░░░] 20%\n"
-                        "• Social     : [████░░░░░░] 40%\n"
-                        "• Rest       : [█░░░░░░░░░] 10%\n"
-                        "• Safety     : [█████████░] 95%\n"
-                        "• Goal       : observe_environment",
+                        "• Curiosity  : [░░░░░░░░░░]  -\n"
+                        "• Boredom    : [░░░░░░░░░░]  -\n"
+                        "• Social     : [░░░░░░░░░░]  -\n"
+                        "• Rest       : [░░░░░░░░░░]  -\n"
+                        "• Safety     : [░░░░░░░░░░]  -\n"
+                        "• Goal       : Waiting for autonomy module...",
                         id="companion_content",
                     )
 
-                # Panel 2: Real Actuators & Sensors
+                # Panel 2: Sensors & Hardware Pose
                 with Vertical(id="attention_panel"):
                     yield Label("SENSORS & HARDWARE POSE", classes="panel_title", markup=False)
                     yield Static(
-                        "• IMU Orientation : Pitch: 0.0° | Roll: 0.0°\n"
-                        "• Distance Sensor : 120 cm (Clear Path)\n"
-                        "• Servos (Pan/Tilt): P: 0.0° | T: 0.0°\n"
-                        "• Ears (L/R)      : L: 90° | R: 90°\n"
-                        "• OLED / NeoPixel : Happy Eyes | Idle Breathe\n"
-                        "• Lasers / Buzzer : Inactive / Ready",
+                        "• IMU Orientation : Waiting for data...\n"
+                        "• Distance Sensor : Waiting for data...\n"
+                        "• Servos (Pan/Tilt): Waiting for data...\n"
+                        "• Ears (L/R)      : Waiting for data...\n"
+                        "• OLED / NeoPixel : Waiting for data...\n"
+                        "• Lasers / Buzzer : Waiting for data...",
                         id="attention_content",
                     )
 
@@ -140,11 +140,11 @@ class TabMain(Widget):
                 with Vertical(id="traffic_panel"):
                     yield Label("RECOGNITION & GATEWAY SIGNALS", classes="panel_title", markup=False)
                     yield Static(
-                        "• People Detected : 0 (No active tracks)\n"
-                        "• DoA Voice Angle : 0° (I2S Stereo VAD)\n"
-                        "• Social Memory   : SQLite Database Ready\n"
-                        "• REST Endpoints  : 14 Routers Mounted\n"
-                        "• Protocol Schema : strict_json_contract_v2",
+                        "• People Detected : Waiting for data...\n"
+                        "• DoA Voice Angle : Waiting for data...\n"
+                        "• Social Memory   : Waiting for data...\n"
+                        "• REST Endpoints  : Waiting for data...\n"
+                        "• Status          : Starting up...",
                         id="traffic_content",
                     )
 

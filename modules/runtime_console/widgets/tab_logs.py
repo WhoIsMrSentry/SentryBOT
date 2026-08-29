@@ -50,7 +50,12 @@ class TabLogs(Widget):
             )
 
     def add_log_entry(self, entry: ParsedLogEntry, rich_text: Text) -> None:
-        if "urllib3.connectionpool" in entry.raw:
+        # Filter noisy HTTP connection internals
+        raw_lower = entry.raw.lower()
+        if any(src in raw_lower for src in (
+            "urllib3.connectionpool", "httpcore.connection", "httpcore.http11",
+            "httpx._client", "httpx", "connect_tcp.started", "connect_tcp.failed",
+        )):
             return
 
         self.log_history.append((entry, rich_text))
