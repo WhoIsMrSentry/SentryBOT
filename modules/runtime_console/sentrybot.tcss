@@ -9,16 +9,8 @@
 
 Screen {
     background: $background;
-    color: #ffffff;
+    color: auto;
     layout: vertical;
-}
-
-Label {
-    color: #ffffff;
-}
-
-Static {
-    color: #ffffff;
 }
 
 /* =========================================================================
@@ -39,7 +31,7 @@ Static {
     width: auto;
     margin-right: 2;
     text-style: bold;
-    color: $primary;
+    color: #FA1E4E;
 }
 
 #header_status_badge {
@@ -56,7 +48,7 @@ Static {
 #header_info_bar {
     width: 1fr;
     content-align: right middle;
-    color: #ffffff;
+    color: #cccccc;
 }
 
 /* =========================================================================
@@ -153,7 +145,7 @@ TabMain, TabLogs, TabTelemetry, TabControls, TabConfig {
 }
 
 .hero_label {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
 }
 
@@ -173,6 +165,8 @@ TabMain, TabLogs, TabTelemetry, TabControls, TabConfig {
     align: center middle;
 }
 
+
+
 .sparkline_box {
     width: 1fr;
     layout: vertical;
@@ -189,19 +183,18 @@ TabMain, TabLogs, TabTelemetry, TabControls, TabConfig {
 }
 
 .sparkline_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     height: 1;
 }
 
 Sparkline {
     height: 2;
-    color: $primary;
 }
 
 /* Subsystem Health Grid (3x2 Matrix) */
 #services_grid_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     margin-bottom: 1;
 }
@@ -236,7 +229,7 @@ ServiceCard:hover, .service_card:hover {
 .service_name {
     text-style: bold;
     width: 1fr;
-    color: $primary;
+    color: #FA1E4E;
 }
 
 .service_badge {
@@ -267,12 +260,12 @@ ServiceCard:hover, .service_card:hover {
 
 .badge_pc {
     background: $secondary;
-    color: $primary;
+    color: #FA1E4E;
     border: solid $primary;
 }
 
 .service_msg {
-    color: #ffffff;
+    color: #cccccc;
     height: 2;
     overflow: hidden;
 }
@@ -311,7 +304,7 @@ ServiceCard:hover, .service_card:hover {
 }
 
 .panel_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     margin-bottom: 1;
     border-bottom: solid $secondary;
@@ -319,8 +312,9 @@ ServiceCard:hover, .service_card:hover {
 }
 
 #companion_content, #attention_content, #traffic_content {
-    color: #ffffff;
-    height: 1fr;
+    background: $panel;
+    padding: 1;
+    color: #cccccc;
 }
 
 /* Action Control Bar */
@@ -335,9 +329,6 @@ ServiceCard:hover, .service_card:hover {
 .action_button {
     margin-right: 1;
     min-width: 14;
-    background: $secondary;
-    color: #ffffff;
-    border: solid $secondary;
     text-style: bold;
 }
 
@@ -364,18 +355,19 @@ ServiceCard:hover, .service_card:hover {
     height: 1;
     margin-bottom: 1;
     padding: 0 1;
-    color: #ffffff;
     background: $surface;
     border-bottom: solid $secondary;
+}
+
+#log_stats_label {
+    color: #cccccc;
 }
 
 #logs_toolbar {
     layout: horizontal;
     height: 3;
     margin-bottom: 1;
-    background: $surface;
-    border: round $secondary;
-    padding: 0 1;
+    padding: 0;
     align: center middle;
 }
 
@@ -383,6 +375,7 @@ ServiceCard:hover, .service_card:hover {
     width: 1fr;
     margin-right: 1;
     border: tall $secondary;
+    height: 3;
 }
 
 #log_search_input:focus {
@@ -392,15 +385,18 @@ ServiceCard:hover, .service_card:hover {
 .filter_btn {
     min-width: 8;
     margin-right: 1;
+    height: 3;
 }
 
 #log_scroll_toggle {
-    min-width: 15;
+    min-width: 17;
     margin-right: 1;
+    height: 3;
 }
 
 #log_clear_btn {
     min-width: 10;
+    height: 3;
 }
 
 #live_rich_log {
@@ -410,7 +406,6 @@ ServiceCard:hover, .service_card:hover {
     padding: 0 1;
     overflow-y: scroll;
     overflow-x: auto;
-    color: #ffffff;
 }
 
 #live_rich_log:focus {
@@ -430,7 +425,7 @@ ServiceCard:hover, .service_card:hover {
 }
 
 #telemetry_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     margin-bottom: 1;
 }
@@ -461,7 +456,7 @@ ServiceCard:hover, .service_card:hover {
 }
 
 .telem_spark_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     height: 1;
 }
@@ -485,15 +480,32 @@ ServiceCard:hover, .service_card:hover {
 }
 
 .telemetry_card_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     margin-bottom: 1;
     border-bottom: solid $secondary;
 }
 
-#telem_hw_content, #telem_bridge_content, #telem_vision_content, #telem_ai_content {
-    color: #ffffff;
+#telem_imu_content, #telem_bridge_content, #telem_vision_content, #telem_ai_content {
     height: 1fr;
+    color: #cccccc;
+}
+
+#telem_controls_bar {
+    height: 3;
+    layout: horizontal;
+    background: $surface;
+    border: round $secondary;
+    padding: 0 1;
+    align: center middle;
+    margin-bottom: 1;
+}
+
+#telem_live_log {
+    height: 1fr;
+    background: $surface;
+    padding: 0 1;
+    overflow-y: scroll;
 }
 
 /* =========================================================================
@@ -508,7 +520,7 @@ ServiceCard:hover, .service_card:hover {
 }
 
 #controls_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     margin-bottom: 1;
 }
@@ -530,7 +542,7 @@ ServiceCard:hover, .service_card:hover {
 }
 
 .controls_section_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     margin-bottom: 1;
     border-bottom: solid $secondary;
@@ -572,7 +584,6 @@ ServiceCard:hover, .service_card:hover {
     border: solid $secondary;
     padding: 0 1;
     overflow-y: scroll;
-    color: #ffffff;
 }
 
 #controls_quick_cmd_bar {
@@ -617,7 +628,7 @@ ServiceCard:hover, .service_card:hover {
 }
 
 #config_tree_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     margin-bottom: 1;
     border-bottom: solid $secondary;
@@ -636,7 +647,6 @@ ServiceCard:hover, .service_card:hover {
     height: 1fr;
     background: $background;
     border: solid $secondary;
-    color: #ffffff;
 }
 
 #config_editor_container {
@@ -657,7 +667,7 @@ ServiceCard:hover, .service_card:hover {
 
 #config_file_path_label {
     width: 1fr;
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
 }
 
@@ -665,7 +675,6 @@ ServiceCard:hover, .service_card:hover {
     min-width: 12;
     padding: 0 1;
     background: $secondary;
-    color: #ffffff;
     margin-right: 1;
     content-align: center middle;
     text-style: bold;
@@ -682,7 +691,6 @@ ServiceCard:hover, .service_card:hover {
     height: 1fr;
     background: $background;
     border: solid $secondary;
-    color: #ffffff;
 }
 
 #config_text_area:focus {
@@ -717,24 +725,25 @@ SysInfoModal, ThemeSelectorModal {
 }
 
 #sysinfo_title, #theme_dialog_title {
-    color: $primary;
+    color: #FA1E4E;
     text-style: bold;
     content-align: center middle;
     margin-bottom: 1;
 }
 
 #theme_hint {
-    color: #ffffff;
     margin-bottom: 1;
     content-align: center middle;
+    color: #aaaaaa;
 }
 
 #theme_option_list {
     height: 1fr;
     background: $surface;
     border: solid $secondary;
-    color: #ffffff;
 }
+
+
 
 #theme_footer_bar {
     layout: horizontal;
@@ -751,7 +760,6 @@ SysInfoModal, ThemeSelectorModal {
 #sysinfo_scroll {
     height: 1fr;
     overflow-y: auto;
-    color: #ffffff;
 }
 
 #sysinfo_close_btn {
@@ -766,6 +774,5 @@ SysInfoModal, ThemeSelectorModal {
 /* Global Footer */
 Footer {
     background: $surface;
-    color: #ffffff;
     border-top: solid $secondary;
 }
