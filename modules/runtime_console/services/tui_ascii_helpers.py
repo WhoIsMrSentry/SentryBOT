@@ -17,6 +17,18 @@ class Palette:
             return text
         return f"\x1b[{code}m{text}\x1b[0m"
 
+    def hex(self, text: str, hexcode: str) -> str:
+        if not self.enabled:
+            return text
+        try:
+            hexcode = hexcode.lstrip('#')
+            if len(hexcode) == 6:
+                r, g, b = tuple(int(hexcode[i:i+2], 16) for i in (0, 2, 4))
+                return f"\x1b[38;2;{r};{g};{b}m{text}\x1b[0m"
+            return text
+        except Exception:
+            return text
+
     def reset(self, text: str) -> str:
         return text
 

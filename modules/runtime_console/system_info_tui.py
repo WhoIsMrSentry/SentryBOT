@@ -46,6 +46,7 @@ from modules.runtime_console.services.tui_ascii_helpers import (
     get_ascii_art_width,
     crop_ansi,
 )
+from modules.runtime_console.themes import get_saved_theme_name, get_theme
 
 
 @dataclass
@@ -105,7 +106,7 @@ def format_info_lines(info: SystemInfo, pal: Palette, label_width: int = 18) -> 
     return lines
 
 
-def render_frame(state: UIState, pal: Palette) -> list[str]:
+def render_frame(state: UIState, pal: Palette, primary_color: str) -> list[str]:
     width, height = state.width, state.height
     art = state.ascii_art
     info_lines = state.info_lines
@@ -120,7 +121,7 @@ def render_frame(state: UIState, pal: Palette) -> list[str]:
         line_parts = []
         if i < len(art):
             art_line = art[i]
-            line_parts.append(pal.green(art_line.ljust(art_width)))
+            line_parts.append(pal.hex(art_line.ljust(art_width), primary_color))
         else:
             line_parts.append(" " * art_width)
 
@@ -150,6 +151,10 @@ def run_tui() -> int:
     info = get_system_info()
     state.info_lines = format_info_lines(info, pal)
 
+    saved_theme_name = get_saved_theme_name()
+    theme_obj = get_theme(saved_theme_name)
+    primary_color = theme_obj.primary
+
     try:
         import msvcrt
         is_windows = True
@@ -166,7 +171,7 @@ def run_tui() -> int:
     try:
         while state.running:
             state.width, state.height = get_terminal_size()
-            frame = render_frame(state, pal)
+            frame = render_frame(state, pal, primary_color)
             print("\x1b[H" + "\n".join(frame), end="", flush=True)
 
             if is_windows:
@@ -228,6 +233,10 @@ def main(argv: list[str] | None = None) -> int:
         info = get_system_info()
         lines = format_info_lines(info, pal)
 
+        saved_theme_name = get_saved_theme_name()
+        theme_obj = get_theme(saved_theme_name)
+        primary_color = theme_obj.primary
+
         width, height = get_terminal_size()
         art_width = get_ascii_art_width(art)
         available_right = max(10, width - art_width - 3)
@@ -236,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         for i in range(max_rows):
             left = art[i] if i < len(art) else ""
             right = crop_ansi(lines[i], available_right) if i < len(lines) else ""
-            print(f"{pal.green(left.ljust(art_width))}  {right}")
+            print(f"{pal.hex(left.ljust(art_width), primary_color)}  {right}")
         return 0
 
     return run_tui()
