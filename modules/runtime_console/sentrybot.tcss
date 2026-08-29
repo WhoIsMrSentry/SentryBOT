@@ -382,9 +382,7 @@ ServiceCard:hover, .service_card:hover {
 #log_search_input {
     width: 1fr;
     margin-right: 1;
-    background: $background;
     border: tall $secondary;
-    color: #ffffff;
 }
 
 #log_search_input:focus {
@@ -394,36 +392,15 @@ ServiceCard:hover, .service_card:hover {
 .filter_btn {
     min-width: 8;
     margin-right: 1;
-    background: $background;
-    color: #ffffff;
-    border: solid $secondary;
-}
-
-.filter_btn:hover {
-    color: $primary;
-    border: solid $primary;
-}
-
-.filter_btn.-active {
-    background: $primary;
-    color: #000000;
-    border: solid $primary;
-    text-style: bold;
 }
 
 #log_scroll_toggle {
     min-width: 15;
     margin-right: 1;
-    background: $secondary;
-    color: #ffffff;
-    border: solid $secondary;
 }
 
 #log_clear_btn {
     min-width: 10;
-    background: $background;
-    color: #ffffff;
-    border: solid $secondary;
 }
 
 #live_rich_log {
@@ -608,9 +585,7 @@ ServiceCard:hover, .service_card:hover {
 #controls_cmd_input {
     width: 1fr;
     margin-right: 1;
-    background: $background;
     border: tall $secondary;
-    color: #ffffff;
 }
 
 #controls_cmd_input:focus {
@@ -650,9 +625,7 @@ ServiceCard:hover, .service_card:hover {
 
 #config_search_input {
     margin-bottom: 1;
-    background: $background;
     border: tall $secondary;
-    color: #ffffff;
 }
 
 #config_search_input:focus {

@@ -33,12 +33,12 @@ class TabLogs(Widget):
             # Toolbar
             with Horizontal(id="logs_toolbar"):
                 yield Input(placeholder="Filter / Search logs... (Press / to focus)", id="log_search_input")
-                yield Button("ALL", id="btn_filter_all", classes="filter_btn -active")
-                yield Button("INFO", id="btn_filter_info", classes="filter_btn")
-                yield Button("WARN", id="btn_filter_warn", classes="filter_btn")
-                yield Button("ERROR", id="btn_filter_err", classes="filter_btn")
+                yield Button("ALL", id="btn_filter_all", classes="filter_btn", variant="primary")
+                yield Button("INFO", id="btn_filter_info", classes="filter_btn", variant="default")
+                yield Button("WARN", id="btn_filter_warn", classes="filter_btn", variant="default")
+                yield Button("ERROR", id="btn_filter_err", classes="filter_btn", variant="default")
                 yield Button("Auto-Scroll: ON", id="log_scroll_toggle", variant="primary")
-                yield Button("Clear", id="log_clear_btn", variant="default")
+                yield Button("Clear", id="log_clear_btn", variant="error")
 
             # Main Full-Width Rich Log
             yield RichLog(
@@ -50,6 +50,9 @@ class TabLogs(Widget):
             )
 
     def add_log_entry(self, entry: ParsedLogEntry, rich_text: Text) -> None:
+        if "urllib3.connectionpool" in entry.raw:
+            return
+
         self.log_history.append((entry, rich_text))
         if len(self.log_history) > self.max_history:
             self.log_history.pop(0)
@@ -112,7 +115,7 @@ class TabLogs(Widget):
         for btn_id in ("btn_filter_all", "btn_filter_info", "btn_filter_warn", "btn_filter_err"):
             try:
                 btn = self.query_one(f"#{btn_id}", Button)
-                btn.remove_class("-active")
+                btn.variant = "default"
             except Exception:
                 pass
 
@@ -125,7 +128,7 @@ class TabLogs(Widget):
             active_id = "btn_filter_err"
 
         try:
-            self.query_one(f"#{active_id}", Button).add_class("-active")
+            self.query_one(f"#{active_id}", Button).variant = "primary"
         except Exception:
             pass
 
