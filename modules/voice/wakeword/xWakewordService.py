@@ -157,6 +157,8 @@ class WakewordService:
     def _on_wakeword(self, wakeword: str) -> None:
         now = _now()
         with self._lock:
+            if self._active_window:
+                return
             if now - self._last_trigger_ts < self.detector.cfg.cooldown_sec:
                 return
             self._last_trigger_ts = now
