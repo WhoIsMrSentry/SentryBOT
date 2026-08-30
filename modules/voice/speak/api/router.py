@@ -43,6 +43,16 @@ def get_router(service: SpeakService) -> APIRouter:
     router = APIRouter()
     stream_jobs: Dict[str, Dict[str, Any]] = {}
 
+    def _prune_stream_jobs(max_items: int = 30, max_age_s: float = 180.0) -> None:
+        now = time.time()
+        expired = [jid for jid, info in stream_jobs.items() if now - float(info.get("created_at", 0)) > max_age_s]
+        for jid in expired:
+            stream_jobs.pop(jid, None)
+        if len(stream_jobs) > max_items:
+            sorted_keys = sorted(stream_jobs.keys(), key=lambda k: float(stream_jobs[k].get("created_at", 0)))
+            for jid in sorted_keys[: len(stream_jobs) - max_items]:
+                stream_jobs.pop(jid, None)
+
     @router.get("/speak/status")
     async def status() -> Dict[str, Any]:
         health = service.tts.health()
@@ -89,6 +99,7 @@ def get_router(service: SpeakService) -> APIRouter:
 
     @router.post("/speak/say_stream")
     async def say_stream(payload: dict) -> Dict[str, Any]:
+        _prune_stream_jobs()
         text = str(payload.get("text", "")).strip()
         if not text:
             return {"ok": False, "error": "text is empty"}
