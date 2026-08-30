@@ -108,13 +108,18 @@ class SpeakService:
             return ""
         raw = re.sub(r"```.*?```", " ", raw, flags=re.DOTALL)
         raw = re.sub(r"`([^`]*)`", r"\1", raw)
+        raw = re.sub(r"\[(düşünce|thinking|iç ses|reasoning|gerekçe).*?\]", " ", raw, flags=re.IGNORECASE)
         clean: list[str] = []
+        thought_re = re.compile(
+            r"^(analysis|reasoning|thinking|internal state|tool_call|düşünce|dusunce|iç ses|ic ses|düşünüyorum|gerekçe|gerekce|analiz|iç durum|ic durum|plan|araç çağrısı|arac cagrisi)\s*:",
+            re.IGNORECASE,
+        )
         for line in raw.splitlines():
             value = line.strip()
             if not value or re.match(r"^[#>*•-]\s*", value):
                 continue
-            low = value.lower()
-            if low.startswith(("analysis:", "reasoning:", "thinking:", "internal state:", "tool_call:")):
+            norm_val = value.replace("İ", "i").replace("I", "ı")
+            if thought_re.match(norm_val):
                 continue
             clean.append(value.replace("*", ""))
         return re.sub(r"\s+", " ", " ".join(clean)).strip()
