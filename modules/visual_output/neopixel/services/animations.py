@@ -401,6 +401,32 @@ def run_animation(driver: NeoDriver, name: str, *args, **kwargs) -> None:
     return fn(driver, *args, **kwargs)
 
 
+
+def emotional_pulse(
+    driver: NeoDriver,
+    color: Color = (0, 180, 255),
+    bpm: float = 60.0,
+    brightness_max: float = 1.0,
+    iterations: int = 1,
+    wait: float = 0.05,
+) -> None:
+    """Organic heartbeat/breathing pulse corresponding to robot's emotional arousal."""
+    period = 60.0 / max(10.0, float(bpm))
+    steps = int(max(10, period / max(0.01, wait)))
+    for _ in range(max(1, iterations)):
+        for step in range(steps):
+            phase = step / float(steps)
+            beat = math.sin(phase * 2 * math.pi)
+            intensity = (0.15 + 0.85 * max(0.0, beat)) * max(0.1, min(1.0, brightness_max))
+            r = int(color[0] * intensity)
+            g = int(color[1] * intensity)
+            b = int(color[2] * intensity)
+            for i in range(driver.num_leds):
+                driver.set(i, r, g, b)
+            driver.show()
+            time.sleep(wait)
+
+
 # canonical name mapping similar to Arduino sketch names
 ANIMATIONS = {
     "RAINBOW": rainbow,
@@ -424,4 +450,5 @@ ANIMATIONS = {
     "RUN": running_lights,
     "STACK": stacked_bars,
     "EYE_EYEBROW": eye_eyebrow,
+    "EMOTIONAL_PULSE": emotional_pulse,
 }
