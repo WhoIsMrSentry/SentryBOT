@@ -48,6 +48,7 @@ class xOledFacesService:
         self._active_priority: int = 0
         self._last_event_ts: Dict[str, float] = {}
         self._last_mode: str = ""
+        self._apply_lock = threading.Lock()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -246,59 +247,60 @@ class xOledFacesService:
     def _apply(self, action: OledAction, priority: int = 50, force: bool = False) -> bool:
         if not bool(self.cfg.get("enabled", True)):
             return False
-        now = time.time()
-        mode = action.mode.strip().lower()
-        name = action.name.strip().lower()
-        sent_key = (mode, name)
+        with self._apply_lock:
+            now = time.time()
+            mode = action.mode.strip().lower()
+            name = action.name.strip().lower()
+            sent_key = (mode, name)
 
-        min_interval = float(self.cfg.get("min_switch_interval_s", 0.45))
-        if not force and sent_key != self._last_sent and (now - self._last_apply_ts) < max(0.03, min_interval):
-            return False
-
-        if not force and now < self._active_hold_until and priority < self._active_priority and sent_key != self._last_sent:
-            return False
-
-        if sent_key == self._last_sent and mode != "animation":
-            return True
-        if mode == "animation":
-            ttl_s = max(1.0, float(self.cfg.get("listen_session_hold_s", 120.0))) if (
-                self.coordinator.listen_session_active() or self.coordinator.speak_session_active()
-            ) else max(0.5, float(self.cfg.get("animation_hold_s", 1.2)))
-        else:
-            ttl_s = max(0.5, float(self.cfg.get("bitmap_hold_s", 0.25)))
-        if self._expression_arbiter is not None:
-            try:
-                from modules.common.led_write_policy import to_canonical_priority
-
-                if not self._expression_arbiter.claim_oled(
-                    "oled_faces",
-                    force=bool(force),
-                    priority=to_canonical_priority(priority),
-                    ttl_s=ttl_s,
-                ):
-                    return False
-            except Exception:
-                pass
-        try:
-            ok = self.display.apply(mode, name)
-            if not ok:
+            min_interval = float(self.cfg.get("min_switch_interval_s", 0.45))
+            if not force and sent_key != self._last_sent and (now - self._last_apply_ts) < max(0.03, min_interval):
                 return False
-            self._last_sent = sent_key
-            self._last_apply_ts = now
-            self._active_priority = int(priority)
-            self._last_mode = mode
+
+            if not force and now < self._active_hold_until and priority < self._active_priority and sent_key != self._last_sent:
+                return False
+
+            if sent_key == self._last_sent and mode != "animation":
+                return True
             if mode == "animation":
-                hold_s = float(self.cfg.get("animation_hold_s", 1.2))
-                if self.coordinator.listen_session_active() or self.coordinator.speak_session_active():
-                    hold_s = max(hold_s, float(self.cfg.get("listen_session_hold_s", 120.0)))
-                self._active_hold_until = now + max(0.2, hold_s)
+                ttl_s = max(1.0, float(self.cfg.get("listen_session_hold_s", 120.0))) if (
+                    self.coordinator.listen_session_active() or self.coordinator.speak_session_active()
+                ) else max(0.5, float(self.cfg.get("animation_hold_s", 1.2)))
             else:
-                self._active_hold_until = now + max(0.05, float(self.cfg.get("bitmap_hold_s", 0.25)))
-            if mode == "bitmap":
-                self.coordinator.note_applied_mood(resolve_mood(name))
-            return True
-        except Exception:
-            return False
+                ttl_s = max(0.5, float(self.cfg.get("bitmap_hold_s", 0.25)))
+            if self._expression_arbiter is not None:
+                try:
+                    from modules.common.led_write_policy import to_canonical_priority
+
+                    if not self._expression_arbiter.claim_oled(
+                        "oled_faces",
+                        force=bool(force),
+                        priority=to_canonical_priority(priority),
+                        ttl_s=ttl_s,
+                    ):
+                        return False
+                except Exception:
+                    pass
+            try:
+                ok = self.display.apply(mode, name)
+                if not ok:
+                    return False
+                self._last_sent = sent_key
+                self._last_apply_ts = now
+                self._active_priority = int(priority)
+                self._last_mode = mode
+                if mode == "animation":
+                    hold_s = float(self.cfg.get("animation_hold_s", 1.2))
+                    if self.coordinator.listen_session_active() or self.coordinator.speak_session_active():
+                        hold_s = max(hold_s, float(self.cfg.get("listen_session_hold_s", 120.0)))
+                    self._active_hold_until = now + max(0.2, hold_s)
+                else:
+                    self._active_hold_until = now + max(0.05, float(self.cfg.get("bitmap_hold_s", 0.25)))
+                if mode == "bitmap":
+                    self.coordinator.note_applied_mood(resolve_mood(name))
+                return True
+            except Exception:
+                return False
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
