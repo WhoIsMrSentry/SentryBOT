@@ -2,9 +2,10 @@ server:
   host: 0.0.0.0
   port: 8093
 
+# SentryBOT V5 Topology:
+# Ear servos are connected directly to Raspberry Pi GPIO pins (left: 12, right: 13).
+# Pan and Tilt servos belong to Arduino.
 left:
   gpio: 12
-  arduino_index: 2
 right:
   gpio: 13
-  arduino_index: 3
