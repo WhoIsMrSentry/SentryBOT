@@ -238,9 +238,9 @@ class xArduinoSerialService(RfidHandlerMixin, SerialLoopsMixin, EspTransportMixi
             self._disconnect()
 
     # -------- public api --------
-    def send(self, obj: Dict[str, Any], source: str = "autonomy") -> None:
+    def send(self, obj: Dict[str, Any], source: str = "autonomy", bypass_arbiter: bool = False) -> None:
         # Apply HeadControlArbiter for head movement commands
-        if self._head_arbiter_wrapper is not None:
+        if not bypass_arbiter and self._head_arbiter_wrapper is not None:
             try:
                 obj = self._head_arbiter_wrapper.wrap_command(obj, source=source)
             except RuntimeError as exc:
@@ -299,7 +299,7 @@ class xArduinoSerialService(RfidHandlerMixin, SerialLoopsMixin, EspTransportMixi
         last_exc: Optional[Exception] = None
         echo_samples: List[str] = []
         for attempt in range(0, max_retries + 1):
-            self.send(obj)
+            self.send(obj, bypass_arbiter=True)
             t0 = time.time()
             try:
                 while True:
