@@ -55,6 +55,43 @@ def _normalize_ollama_daemon_base_url(raw: Any) -> str:
     return value
 
 
+import heapq
+import time
+from contextlib import contextmanager
+
+class PriorityInferenceLock:
+    """Öncelikli çıkarım kuyruğu: Kullanıcı sesli komutları (0) arka plan düşüncelerinin (2) önüne geçer."""
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._active = False
+        self._queue: List[Tuple[int, float, threading.Event]] = []
+
+    @contextmanager
+    def acquire(self, priority: int = 1):
+        evt = threading.Event()
+        with self._lock:
+            if not self._active and not self._queue:
+                self._active = True
+                got_lock = True
+            else:
+                heapq.heappush(self._queue, (priority, time.time(), evt))
+                got_lock = False
+
+        if not got_lock:
+            evt.wait()
+
+        try:
+            yield
+        finally:
+            with self._lock:
+                if self._queue:
+                    _, _, next_evt = heapq.heappop(self._queue)
+                    self._active = True
+                    next_evt.set()
+                else:
+                    self._active = False
+
+_INFERENCE_SCHEDULER = PriorityInferenceLock()
 _INFERENCE_SEMAPHORE = threading.BoundedSemaphore(1)
 
 
@@ -97,6 +134,19 @@ class OllamaClient:
             logger.error("Failed to pull Ollama model '%s': %s", model_name, e)
             return False
 
+    def is_alive(self, timeout: float = 2.0) -> bool:
+        """Probe remote Ollama bridge health."""
+        url = f"{self.base_url}/api/version"
+        try:
+            resp = requests.get(url, timeout=float(timeout))
+            return resp.status_code == 200
+        except Exception:
+            try:
+                resp = requests.get(f"{self.base_url}/api/tags", timeout=float(timeout))
+                return resp.status_code == 200
+            except Exception:
+                return False
+
     def list_models(self) -> List[str]:
         url = f"{self.base_url}/api/tags"
         try:
@@ -124,13 +174,14 @@ class OllamaClient:
         *,
         options: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None,
+        priority: int = 1,
     ) -> Dict[str, Any]:
         selected_model = model or self.model
         merged_options: Dict[str, Any] = {"temperature": 0.6}
         if isinstance(options, dict):
             merged_options.update(options)
 
-        with _INFERENCE_SEMAPHORE:
+        with _INFERENCE_SCHEDULER.acquire(priority=priority):
             if self._client is not None:
                 try:
                     resp = self._client.chat(
@@ -161,18 +212,33 @@ class OllamaClient:
                 "format": format,
                 "options": merged_options,
             }
-            resp = requests.post(url, json=payload, timeout=float(self.timeout))
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, dict) and "message" in data:
-                return data
-            if isinstance(data, dict) and "choices" in data:
+            
+            # Resilient remote bridge execution with 1 transient network retry
+            last_err: Optional[Exception] = None
+            for attempt in range(2):
                 try:
-                    content = data["choices"][0]["message"]["content"]
+                    resp = requests.post(url, json=payload, timeout=float(self.timeout))
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if isinstance(data, dict) and "message" in data:
+                        return data
+                    if isinstance(data, dict) and "choices" in data:
+                        try:
+                            content = data["choices"][0]["message"]["content"]
+                        except Exception:
+                            content = ""
+                        return {"message": {"content": content}, "raw": data}
+                    return {"message": {"content": str(data)}, "raw": data}
+                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                    last_err = exc
+                    if attempt == 0:
+                        time.sleep(0.2)
+                        continue
+                    raise
                 except Exception:
-                    content = ""
-                return {"message": {"content": content}, "raw": data}
-            return {"message": {"content": str(data)}, "raw": data}
+                    raise
+            if last_err:
+                raise last_err
 
 
 class LLMClientProtocol(Protocol):
