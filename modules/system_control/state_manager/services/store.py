@@ -179,9 +179,16 @@ class StateStore:
                 except Exception:
                     pass
 
-    def get(self) -> Dict[str, Any]:
-        # Deep copy: callers must never share references into live state (R42).
+    def get(self, key: Optional[str] = None, *, deep: bool = True) -> Any:
+        # Fast copy/primitive return when key is requested, avoiding 798 fan-in full deepcopy churn
         with self._lock:
+            if key is not None:
+                val = self._state.get(key)
+                if not deep or val is None or isinstance(val, (int, float, str, bool)):
+                    return val
+                return copy.deepcopy(val)
+            if not deep:
+                return dict(self._state)
             return copy.deepcopy(self._state)
 
     def update(self, patch: Dict[str, Any]) -> None:
