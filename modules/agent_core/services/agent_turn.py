@@ -172,6 +172,7 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
         ollama_keep_alive = getattr(self, "ollama_keep_alive", None)
         if ollama_keep_alive is not None:
             kwargs["keep_alive"] = ollama_keep_alive
+        kwargs["priority"] = 0  # Interactive user turn preempts background tasks
         try:
             return self.ollama_client.chat(**kwargs)
         except Exception as exc:
