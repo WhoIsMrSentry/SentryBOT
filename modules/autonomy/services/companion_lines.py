@@ -119,8 +119,14 @@ class CompanionLineGenerator:
             return f"{speaker + ', ' if speaker else ''}biraz sohbet etmek ister misin?"
         if stim >= 75:
             return "Canım sıkıldı, birlikte bir şey deneyelim mi?"
-        if rest <= 25:
-            return "Biraz yorgunum ama yine de buradayım."
+        bat = float(ctx.get("battery_pct", 100) or 100)
+        cpu = float(ctx.get("cpu_temp", 45) or 45)
+        if bat < 15:
+            return "Pilim çok azaldı, biraz dinlenmeye ve şarja ihtiyacım var."
+        if cpu > 75:
+            return "İşlemcim çok ısındı, biraz sakin kalıp soğumaya ihtiyacım var."
+        if rest >= 70 or rest <= 25:
+            return "Biraz dinlenmeye ihtiyacım var, bugün çok enerji harcadım."
         if mood in {"sad", "sadness"}:
             return "Sessizlik oldu, yine de yanınızdayım."
         if bool(ctx.get("owner_present")):
