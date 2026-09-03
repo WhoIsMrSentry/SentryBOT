@@ -68,6 +68,19 @@ class LivingNeedsEngine:
             energy_raw = 100.0
         energy = max(0.0, min(1.0, energy_raw / 100.0 if energy_raw > 1.0 else energy_raw))
 
+        # Organik Homeostaz (Pil seviyesi ve Termal Yorgunluk Etkisi)
+        battery_pct = _as_float(st.get("battery_pct") or st.get("battery_level") or (st.get("battery") or {}).get("pct"), 100.0)
+        cpu_temp = _as_float(st.get("cpu_temp") or st.get("temperature") or (st.get("telemetry") or {}).get("cpu_temp"), 45.0)
+
+        # Düşük batarya (<30%): Enerji doğrudan düşer, dinlenme ihtiyacı (rest) tetiklenir
+        if battery_pct < 30.0:
+            energy *= max(0.1, battery_pct / 30.0)
+
+        # Yüksek CPU sıcaklığı (>70°C): Aşırı ısınmada halsizlik/termal yorgunluk hissi
+        if cpu_temp > 70.0:
+            thermal_penalty = min(0.5, (cpu_temp - 70.0) / 20.0)
+            energy = max(0.1, energy - thermal_penalty)
+
         people_count = self._count_people(vision_map)
         objects_count = self._count_objects(vision_map)
         hazards_count = self._count_hazards(vision_map)
@@ -86,6 +99,10 @@ class LivingNeedsEngine:
         if people_count == 0 and idle_s > 30:
             curiosity = max(curiosity, min(0.85, idle_s / max(1.0, float(self.cfg.get("curiosity_decay_s", 150.0)))))
         rest = _clamp01((float(self.cfg.get("rest_energy_threshold", 0.28)) - energy) / 0.28)
+        if battery_pct < 30.0:
+            rest = max(rest, _clamp01((30.0 - battery_pct) / 30.0))
+        if cpu_temp > 70.0:
+            rest = max(rest, _clamp01((cpu_temp - 70.0) / 20.0))
         safety = _clamp01(hazards_count / 2.0)
         attachment = 1.0 - min(1.0, owner_absent_s / 900.0) if owner_last_seen > 0 else 0.35
 
