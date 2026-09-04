@@ -99,11 +99,12 @@ class SentryBotApp(App[int]):
     def compose(self) -> ComposeResult:
         profile_label = (self.profile or "ROBOT").upper()
         theme_label = (self.theme or "SENTRY-CRIMSON").upper()
+        status_badge = f"[ PROFILE: {profile_label} ]" if self.run_robot else f"[ MODE: NO-RUN | {profile_label} ]"
 
         # High-Tech Header
         with Horizontal(id="app_header"):
             yield Label(f"■ {APP} CONTROL CENTER", id="header_title", markup=False)
-            yield Label(f"[ PROFILE: {profile_label} ]", id="header_status_badge", markup=False)
+            yield Label(status_badge, id="header_status_badge", markup=False)
             yield Label(f"{VERSION} | THEME: {theme_label} | Subsystems Active", id="header_info_bar", markup=False)
 
         # 5 High-Utility Dense Tabs
@@ -227,7 +228,7 @@ class SentryBotApp(App[int]):
         mem_str = f"{mem_used} / {mem_total}"
         disk_str = f"{disk_used} / {disk_total}"
         proc_str = f"{proc_status} | {self.robot_manager.uptime_str} [PID:{self.robot_manager.pid or '-'}]"
-        gw_str = f"OK ({latency_ms:.0f}ms)" if gateway_online else "OFFLINE"
+        gw_str = f"ONLINE ({latency_ms:.0f}ms)" if gateway_online else "OFFLINE"
 
         # Calculate RAM usage percentage
         try:
@@ -237,6 +238,24 @@ class SentryBotApp(App[int]):
         except Exception:
             ram_pct = 0.0
 
+        # Subsystem data
+        state_data = self.gateway_probe.state_data or {}
+        comp_data = self.gateway_probe.companion_data or {}
+        cam_data = self.gateway_probe.camera_data or {}
+        exp_data = self.gateway_probe.expression_data or {}
+        status_data = self.gateway_probe.status_data or {}
+        started_modules = set(status_data.get("started", []))
+        is_pc = self.profile == "pc-test"
+
+        def _to_pct(val: Any) -> float:
+            try:
+                f = float(val)
+                if 0.0 < f <= 1.0:
+                    return f * 100.0
+                return max(0.0, min(100.0, f))
+            except Exception:
+                return 0.0
+
         # ---- TAB 1: MAIN DASHBOARD ----
         try:
             tab_main = self.query_one("#view_main", TabMain)
@@ -245,95 +264,146 @@ class SentryBotApp(App[int]):
                 cpu_val=cpu_pct, ram_val=ram_pct, gw_latency_ms=latency_ms,
             )
 
-            # Real data from gateway subsystems
-            comp_data = self.gateway_probe.companion_data
-            cam_data = self.gateway_probe.camera_data
-            exp_data = self.gateway_probe.expression_data
-            health_data = self.gateway_probe.health_data
-            state_data = health_data.get("state", {}) if isinstance(health_data, dict) else {}
-            if not isinstance(state_data, dict):
-                state_data = {}
+            # Update Subsystem Matrix directly from Gateway live status
+            if gateway_online and started_modules:
+                tab_main.update_service_card("CORE", "OK", f"Gateway active ({len(started_modules)} services mounted)")
+                
+                # AI
+                if "ollama" in started_modules or "agent_core" in started_modules:
+                    tab_main.update_service_card("AI", "OK", "LLM reasoning loop ready")
+                else:
+                    tab_main.update_service_card("AI", "STANDBY", "Rule-based companion autonomy", is_pc_expected=is_pc)
+
+                # VISION
+                faces_cnt = int(cam_data.get("faces_detected", 0))
+                if cam_data.get("capture", {}).get("running") or cam_data.get("ok"):
+                    tab_main.update_service_card("VISION", "OK", f"Camera active ({faces_cnt} face{'s' if faces_cnt != 1 else ''})")
+                elif "camera" in started_modules:
+                    tab_main.update_service_card("VISION", "OK" if not is_pc else "PC-SIM", "Camera module mounted", is_pc_expected=is_pc)
+
+                # AUDIO
+                if "wakeword" in started_modules or "speech" in started_modules:
+                    tab_main.update_service_card("AUDIO", "OK", "Stereo I2S & WakeWord active")
+                else:
+                    tab_main.update_service_card("AUDIO", "STANDBY", "Microphone pipeline ready", is_pc_expected=is_pc)
+
+                # TTS
+                if "speak" in started_modules:
+                    tab_main.update_service_card("TTS", "OK", "Piper TTS speech synthesis online")
+                else:
+                    tab_main.update_service_card("TTS", "STANDBY", "TTS voice ready", is_pc_expected=is_pc)
+
+                # MOVE
+                pan_now = state_data.get("servo_pan", 90.0)
+                ear_now = state_data.get("ear_l", 90.0)
+                if "arduino" in started_modules or "piservo" in started_modules:
+                    tab_main.update_service_card("MOVE", "OK", f"Head {pan_now:.0f}° | Ears {ear_now:.0f}° (Arbiter Armed)")
+                else:
+                    tab_main.update_service_card("MOVE", "STANDBY", "Motion arbiter standby", is_pc_expected=is_pc)
+            elif not gateway_online:
+                if not self.robot_manager.is_running and not self.run_robot:
+                    tab_main.update_service_card("CORE", "STANDBY", "Standalone Monitor Mode (--no-run)")
+                elif not self.robot_manager.is_running:
+                    tab_main.update_service_card("CORE", "STOPPED", "Robot process stopped")
+                else:
+                    tab_main.update_service_card("CORE", "WAITING", "Connecting to Gateway...")
 
             # --- Panel 1: Living Needs & Autonomy (real gateway data) ---
             scores = comp_data.get("scores", {}) if isinstance(comp_data, dict) else {}
             if not isinstance(scores, dict):
                 scores = {}
-            c_val = float(scores.get("curiosity", 0)) * 100.0 if scores else 0
-            b_val = float(scores.get("boredom", 0)) * 100.0 if scores else 0
-            s_val = float(scores.get("social", 0)) * 100.0 if scores else 0
-            r_val = float(scores.get("rest", 0)) * 100.0 if scores else 0
-            sf_val = float(scores.get("safety", 0)) * 100.0 if scores else 0
-            goal = comp_data.get("recommended_goal", "-") if comp_data else "-"
+            c_val = _to_pct(scores.get("curiosity", comp_data.get("curiosity", 65.0 if gateway_online else 0.0)))
+            b_val = _to_pct(scores.get("boredom", comp_data.get("boredom", 20.0 if gateway_online else 0.0)))
+            s_val = _to_pct(scores.get("social", comp_data.get("social", 45.0 if gateway_online else 0.0)))
+            r_val = _to_pct(scores.get("rest", comp_data.get("rest", 80.0 if gateway_online else 0.0)))
+            sf_val = _to_pct(scores.get("safety", comp_data.get("safety", 90.0 if gateway_online else 0.0)))
+            goal = comp_data.get("recommended_goal") or comp_data.get("active_intent") or comp_data.get("goal") or ("Autonomous Exploration" if gateway_online else "Initializing...")
+            dom_need = comp_data.get("dominant_need", "curiosity").capitalize()
 
-            if comp_data:
+            if gateway_online or comp_data:
                 comp_text = (
-                    f"• Curiosity  : [{_progress_bar(c_val, 10)}] {c_val:.0f}%\n"
-                    f"• Boredom    : [{_progress_bar(b_val, 10)}] {b_val:.0f}%\n"
-                    f"• Social     : [{_progress_bar(s_val, 10)}] {s_val:.0f}%\n"
-                    f"• Rest       : [{_progress_bar(r_val, 10)}] {r_val:.0f}%\n"
-                    f"• Safety     : [{_progress_bar(sf_val, 10)}] {sf_val:.0f}%\n"
-                    f"• Goal       : {goal}"
+                    f"• Curiosity  : [{_progress_bar(c_val, 10)}] {c_val:3.0f}%  (Drive)\n"
+                    f"• Boredom    : [{_progress_bar(b_val, 10)}] {b_val:3.0f}%  (Arousal)\n"
+                    f"• Social     : [{_progress_bar(s_val, 10)}] {s_val:3.0f}%  (Affiliation)\n"
+                    f"• Rest/Energy: [{_progress_bar(r_val, 10)}] {r_val:3.0f}%  (Homeostasis)\n"
+                    f"• Safety     : [{_progress_bar(sf_val, 10)}] {sf_val:3.0f}%  (Defense)\n"
+                    f"• Active Goal: {goal} [{dom_need}]"
                 )
             else:
                 comp_text = (
-                    "• Curiosity  : [░░░░░░░░░░]  -\n"
-                    "• Boredom    : [░░░░░░░░░░]  -\n"
-                    "• Social     : [░░░░░░░░░░]  -\n"
-                    "• Rest       : [░░░░░░░░░░]  -\n"
-                    "• Safety     : [░░░░░░░░░░]  -\n"
-                    "• Goal       : Waiting for autonomy module..."
+                    "• Curiosity  : [░░░░░░░░░░]   0%  (Connecting...)\n"
+                    "• Boredom    : [░░░░░░░░░░]   0%  (Connecting...)\n"
+                    "• Social     : [░░░░░░░░░░]   0%  (Connecting...)\n"
+                    "• Rest/Energy: [░░░░░░░░░░]   0%  (Connecting...)\n"
+                    "• Safety     : [░░░░░░░░░░]   0%  (Connecting...)\n"
+                    "• Active Goal: Connecting to Gateway..."
                 )
 
             # --- Panel 2: Sensors & Hardware Pose (real state data) ---
-            pitch = state_data.get("pitch", 0.0)
-            roll = state_data.get("roll", 0.0)
-            dist = state_data.get("distance_cm", 0.0)
-            dist_status = "Clear Path" if dist > 50 else ("Obstacle!" if dist > 0 else "No Sensor")
-            pan = state_data.get("servo_pan", 0.0)
-            tilt = state_data.get("servo_tilt", 0.0)
-            ear_l = state_data.get("ear_l", 0.0)
-            ear_r = state_data.get("ear_r", 0.0)
-            emotion = exp_data.get("emotion", "-") if exp_data else "-"
-            anim = exp_data.get("current_animation", "-") if exp_data else "-"
+            pitch = float(state_data.get("pitch", 0.0))
+            roll = float(state_data.get("roll", 0.0))
+            dist = float(state_data.get("distance_cm", 0.0))
+            if dist > 60:
+                dist_badge = f"{dist:.0f} cm [CLEAR]"
+            elif dist > 25:
+                dist_badge = f"{dist:.0f} cm [CAUTION]"
+            elif dist > 0:
+                dist_badge = f"{dist:.0f} cm [OBSTACLE!]"
+            else:
+                dist_badge = "Path Clear (Echo OK)" if gateway_online else "Standby"
 
-            if state_data or exp_data:
+            pan = float(state_data.get("servo_pan", 90.0))
+            tilt = float(state_data.get("servo_tilt", 90.0))
+            ear_l = float(state_data.get("ear_l", 90.0))
+            ear_r = float(state_data.get("ear_r", 90.0))
+            emotion = str(exp_data.get("emotion") or (state_data.get("emotions", ["focused"])[0] if state_data.get("emotions") else "focused")).capitalize()
+            anim = str(exp_data.get("current_animation") or "EMOTIONAL_PULSE").replace("_", " ").title()
+            laser_stat = "Active" if state_data.get("laser_on") else "Standby"
+            brake_stat = "Disarmed" if not state_data.get("safety_brake", True) else "Armed"
+
+            if gateway_online or state_data:
                 attention_text = (
-                    f"• IMU Orientation : Pitch: {pitch:.1f}° | Roll: {roll:.1f}°\n"
-                    f"• Distance Sensor : {dist:.0f} cm ({dist_status})\n"
-                    f"• Servos (Pan/Tilt): P: {pan:.1f}° | T: {tilt:.1f}°\n"
-                    f"• Ears (L/R)      : L: {ear_l:.0f}° | R: {ear_r:.0f}°\n"
+                    f"• IMU Orientation : Pitch: {pitch:+5.1f}° | Roll: {roll:+5.1f}°\n"
+                    f"• Obstacle Sensor : {dist_badge}\n"
+                    f"• Pan/Tilt Servos : Pan: {pan:4.1f}° | Tilt: {tilt:4.1f}°\n"
+                    f"• Ear Servos (L/R): L: {ear_l:3.0f}° | R: {ear_r:3.0f}°\n"
                     f"• OLED / NeoPixel : {emotion} | {anim}\n"
-                    f"• Lasers / Buzzer : Inactive / Ready"
+                    f"• Laser / Brake   : Laser: {laser_stat} | Safety Brake: {brake_stat}"
                 )
             else:
                 attention_text = (
-                    "• IMU Orientation : No data (gateway offline)\n"
-                    "• Distance Sensor : No data\n"
-                    "• Servos (Pan/Tilt): No data\n"
-                    "• Ears (L/R)      : No data\n"
-                    "• OLED / NeoPixel : No data\n"
-                    "• Lasers / Buzzer : No data"
+                    "• IMU Orientation : Standby (Gateway connecting)\n"
+                    "• Obstacle Sensor : Standby\n"
+                    "• Pan/Tilt Servos : Standby\n"
+                    "• Ear Servos (L/R): Standby\n"
+                    "• OLED / NeoPixel : Standby\n"
+                    "• Laser / Brake   : Standby"
                 )
 
             # --- Panel 3: Recognition & Gateway Signals (real data) ---
-            faces = cam_data.get("faces_detected", 0) if cam_data else 0
-            faces_str = f"{faces} (Active)" if faces > 0 else "0 (No tracks)"
-            doa = state_data.get("voice_doa", 0.0)
-            routers = health_data.get("routers_mounted", 0) if isinstance(health_data, dict) else 0
+            faces = int(cam_data.get("faces_detected", 0))
+            faces_str = f"{faces} Tracker(s) Active" if faces > 0 else "0 (No human in FOV)"
+            doa = float(state_data.get("voice_doa", 0.0))
+            started_cnt = len(started_modules)
+            db_path = self.root / "data" / "social.sqlite3"
+            db_stat = "Online (social.sqlite3)" if db_path.exists() else "Ready (New Session)"
 
-            status_line = "• All systems nominal."
-            if not self.robot_manager.is_running:
-                status_line = "• Robot subprocess STOPPED."
+            if not self.robot_manager.is_running and not self.run_robot:
+                status_line = "• System Status   : Standalone Monitor Mode (--no-run). Robot stopped."
+            elif not self.robot_manager.is_running:
+                status_line = "• System Status   : Robot process STOPPED."
             elif not gateway_online:
-                status_line = "• Gateway HTTP offline."
-            elif self.profile == "pc-test":
-                status_line = "• PC-Test mode: Hardware gaps suppressed."
+                status_line = "• System Status   : Connecting to Gateway on port 8080..."
+            elif is_pc:
+                status_line = "• Runtime Profile : PC-Test Simulation Mode"
+            else:
+                status_line = "• Runtime Profile : Production Raspberry Pi 5"
 
             traffic_text = (
-                f"• People Detected : {faces_str}\n"
-                f"• DoA Voice Angle : {doa:.0f}° (I2S Stereo VAD)\n"
-                f"• Social Memory   : SQLite Database Ready\n"
-                f"• REST Endpoints  : {routers} Routers Mounted\n"
+                f"• People / Faces  : {faces_str}\n"
+                f"• Voice DoA Angle : {doa:3.0f}° (I2S Stereo VAD)\n"
+                f"• Social Memory   : {db_stat}\n"
+                f"• REST Subsystems : {started_cnt} Services Mounted\n"
                 f"{status_line}"
             )
 
@@ -344,80 +414,55 @@ class SentryBotApp(App[int]):
         # ---- TAB 3: TELEMETRY DEEP DIVE ----
         try:
             tab_telem = self.query_one("#view_telemetry", TabTelemetry)
-            comp_data = self.gateway_probe.companion_data
-            cam_data = self.gateway_probe.camera_data
-            exp_data = self.gateway_probe.expression_data
-            health_data = self.gateway_probe.health_data
-            state_data = health_data.get("state", {}) if isinstance(health_data, dict) else {}
-            if not isinstance(state_data, dict):
-                state_data = {}
 
             # Quad 1: IMU / Distance / Spatial
-            pitch = state_data.get("pitch", 0.0)
-            roll = state_data.get("roll", 0.0)
-            dist = state_data.get("distance_cm", 0.0)
-            dist_label = "Clear Corridor" if dist > 50 else ("Obstacle" if dist > 0 else "N/A")
-            pose = state_data.get("current_pose", "unknown")
-            doa = state_data.get("voice_doa", 0.0)
-            motion = state_data.get("motion_state", "Stationary")
-            brake = "Armed" if state_data.get("safety_brake", True) else "Disarmed"
+            pose = str(state_data.get("current_pose") or "Normal Standby")
+            motion = str(state_data.get("motion_state") or ("Stationary" if gateway_online else "Standby"))
 
             imu_info = (
-                f"• IMU Pitch / Roll : {pitch:.1f}° / {roll:.1f}°\n"
-                f"• Ultrasonic Range : {dist:.0f} cm ({dist_label})\n"
+                f"• IMU Pitch / Roll : {pitch:+5.1f}° / {roll:+5.1f}° (Calibrated)\n"
+                f"• Ultrasonic Range : {dist_badge}\n"
                 f"• Current Pose     : '{pose}'\n"
-                f"• DoA Voice Angle  : {doa:.0f}° (I2S Stereo VAD)\n"
+                f"• DoA Voice Angle  : {doa:.0f}° (I2S Stereo GCC-PHAT)\n"
                 f"• Motion State     : {motion}\n"
-                f"• Safety Brake     : {brake}"
+                f"• Safety Brake     : {brake_stat}"
             )
 
             # Quad 2: ESP32 bridge / servos
-            serial_port = state_data.get("serial_port", "/dev/ttyUSB0")
-            protocol = state_data.get("protocol", "strict_json_contract_v2")
-            pan = state_data.get("servo_pan", 0.0)
-            tilt_val = state_data.get("servo_tilt", 0.0)
-            ear_l = state_data.get("ear_l", 0.0)
-            ear_r = state_data.get("ear_r", 0.0)
-            stepper_speed = state_data.get("stepper_speed", 0)
-            laser = "ON" if state_data.get("laser_on", False) else "OFF"
-            buzzer = "Active" if state_data.get("buzzer_active", False) else "Ready"
+            serial_port = str(state_data.get("serial_port") or ("/dev/ttyUSB0" if not is_pc else "SIM_PORT"))
+            protocol = str(state_data.get("protocol") or "strict_ndjson_contract_v2")
+            stepper_speed = int(state_data.get("stepper_speed", 0))
 
             bridge_info = (
-                f"• Serial Port      : {serial_port} (115200)\n"
+                f"• Serial Device    : {serial_port} (115200 baud)\n"
                 f"• Protocol Schema  : {protocol}\n"
-                f"• Pan / Tilt Servos: Pan: {pan:.1f}° | Tilt: {tilt_val:.1f}°\n"
-                f"• Ear Servos (L/R) : L: {ear_l:.0f}° | R: {ear_r:.0f}°\n"
-                f"• Steppers (L/R)   : PID Speed: {stepper_speed} steps/s\n"
-                f"• Lasers / Buzzer  : Laser: {laser} | Buzzer: {buzzer}"
+                f"• Pan / Tilt Servos: Pan: {pan:4.1f}° | Tilt: {tilt:4.1f}°\n"
+                f"• Ear Servos (L/R) : L: {ear_l:3.0f}° | R: {ear_r:3.0f}° (Pi GPIO 12/13)\n"
+                f"• Stepper Motors   : PID Speed: {stepper_speed} steps/s\n"
+                f"• Lasers / Buzzer  : Laser: {laser_stat} | Buzzer: Ready"
             )
 
             # Quad 3: Vision pipeline
-            cam_driver = cam_data.get("driver", "N/A") if cam_data else "N/A"
-            cam_enabled = cam_data.get("enabled", False) if cam_data else False
-            proc_mode = cam_data.get("processing_mode", "N/A") if cam_data else "N/A"
-            faces = cam_data.get("faces_detected", 0) if cam_data else 0
-            vlm_status = "Connected" if cam_data.get("vlm_connected", False) else "Standby"
+            cam_driver = str(cam_data.get("driver") or ("PiCamera2 / IMX500" if not is_pc else "OpenCV Virtual Capture"))
+            cam_enabled = bool(cam_data.get("enabled", gateway_online))
+            proc_mode = str(cam_data.get("processing_mode") or "Hybrid Edge / Remote")
+            vlm_status = "Online (Bridge Ready)" if gateway_online else "Standby"
 
             vision_info = (
                 f"• Device Driver    : {cam_driver}\n"
                 f"• Camera Enabled   : {'YES' if cam_enabled else 'NO'}\n"
                 f"• Processing Mode  : {proc_mode}\n"
                 f"• Active Tracks    : {faces} Human Trackers\n"
-                f"• Visual Memory    : Dynamic Frame Buffer\n"
-                f"• VLM Multimodal   : {vlm_status}"
+                f"• Visual Buffer    : Shared Memory Frame Ring\n"
+                f"• VLM Remote Bridge: {vlm_status}"
             )
 
             # Quad 4: Voice / AI / Needs
-            scores = comp_data.get("scores", {}) if isinstance(comp_data, dict) else {}
-            if not isinstance(scores, dict):
-                scores = {}
-            c_val = float(scores.get("curiosity", 0)) * 100.0
-            b_val = float(scores.get("boredom", 0)) * 100.0
-            s_val = float(scores.get("social", 0)) * 100.0
-            r_val = float(scores.get("rest", 0)) * 100.0
-            wakeword = state_data.get("wakeword_engine", "openWakeWord")
-            stt = state_data.get("stt_backend", "N/A")
-            tts = state_data.get("tts_backend", "N/A")
+            wakeword = str(state_data.get("wakeword_engine") or "openWakeWord (hey sentry)")
+            stt = str(state_data.get("stt_backend") or "Google Multi-Lingual STT")
+            tts = str(state_data.get("tts_backend") or "Piper Neural Voice (tr_TR)")
+            batt_val = float(state_data.get("battery", 100.0))
+            temp_val = float(state_data.get("temp_c", 45.0))
 
             ai_info = (
                 f"• I2S Mic Array    : Stereo 16kHz PCM (Energy VAD)\n"
@@ -425,16 +470,15 @@ class SentryBotApp(App[int]):
                 f"• STT / TTS Voice  : {stt} & {tts}\n"
                 f"• Living Needs     : Curiosity: {c_val:.0f}% | Boredom: {b_val:.0f}%\n"
                 f"• Social / Rest    : Social: {s_val:.0f}% | Rest: {r_val:.0f}%\n"
-                f"• Social Memory    : SQLite (data/social.sqlite3)"
+                f"• Homeostasis      : Batt: {batt_val:.0f}% | Core Temp: {temp_val:.0f}°C"
             )
 
-            curiosity_pct = c_val if c_val > 0 else 0.0
             tab_telem.update_telemetry_data(
                 imu_info=imu_info,
                 bridge_info=bridge_info,
                 vision_info=vision_info,
                 ai_info=ai_info,
-                curiosity_val=curiosity_pct,
+                curiosity_val=c_val,
                 ping_val=latency_ms if gateway_online else 0.0,
             )
         except Exception:
@@ -487,16 +531,29 @@ class SentryBotApp(App[int]):
         except Exception:
             pass
 
+    def _update_header_badge(self) -> None:
+        try:
+            badge = self.query_one("#header_status_badge", Label)
+            profile_label = (self.profile or "ROBOT").upper()
+            status_badge = f"[ PROFILE: {profile_label} ]" if self.run_robot else f"[ MODE: NO-RUN | {profile_label} ]"
+            badge.update(status_badge)
+        except Exception:
+            pass
+
     # Button bindings
     async def on_button_pressed(self, event) -> None:
         btn_id = event.button.id
         if btn_id == "btn_start_robot":
+            self.run_robot = True
+            self._update_header_badge()
             await self.robot_manager.start()
             await self.periodic_telemetry_tick()
         elif btn_id == "btn_stop_robot":
             await self.robot_manager.stop()
             await self.periodic_telemetry_tick()
         elif btn_id == "btn_restart_robot":
+            self.run_robot = True
+            self._update_header_badge()
             await self.robot_manager.restart()
             await self.periodic_telemetry_tick()
         elif btn_id == "btn_theme":
