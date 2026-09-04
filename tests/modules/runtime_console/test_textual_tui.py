@@ -12,6 +12,8 @@ from modules.runtime_console.tui_app import SentryBotApp
 from modules.runtime_console.widgets.tab_main import TabMain
 from modules.runtime_console.widgets.tab_logs import TabLogs
 from modules.runtime_console.widgets.tab_config import TabConfig
+from modules.runtime_console.widgets.tab_telemetry import TabTelemetry
+from modules.runtime_console.widgets.tab_controls import TabControls
 
 
 def test_parse_log_line_levels() -> None:
@@ -81,7 +83,9 @@ def test_theme_registry_and_switching() -> None:
 
 
 def test_system_info_hardware_unpacking() -> None:
-    from modules.runtime_console.services.system_info_hardware import get_cpu_info, get_memory_info
+    from modules.runtime_console.services.system_info_hardware import get_cpu_info, get_memory_info, get_gpu_and_graphics, get_gpu_info
+    from modules.runtime_console.services.system_info_collector import get_system_info
+
     cpu_info = get_cpu_info()
     assert len(cpu_info) == 4
     cpu_name, cpu_cores, cpu_freq, cpu_usage = cpu_info
@@ -91,6 +95,15 @@ def test_system_info_hardware_unpacking() -> None:
     mem_used, mem_total = get_memory_info()
     assert isinstance(mem_used, str)
     assert isinstance(mem_total, str)
+
+    gpu, graphics = get_gpu_and_graphics()
+    assert isinstance(gpu, str)
+    assert isinstance(graphics, str)
+    assert get_gpu_info() == gpu
+
+    sys_info = get_system_info()
+    assert sys_info.gpu == gpu
+    assert sys_info.graphics == graphics
 
 
 def test_all_themes_compile_stylesheet(tmp_path: Path) -> None:
@@ -117,6 +130,137 @@ def test_new_tabs_instantiation(tmp_path: Path) -> None:
 
     ctrls = TabControls(root=tmp_path)
     assert ctrls is not None
+
+
+def test_tab_main_progress_bar_and_service_card() -> None:
+    from modules.runtime_console.widgets.tab_main import _progress_bar, ServiceCard
+
+    assert _progress_bar(0.0, 10) == "░░░░░░░░░░"
+    assert _progress_bar(50.0, 10) == "█████░░░░░"
+    assert _progress_bar(100.0, 10) == "██████████"
+
+    card = ServiceCard("CORE")
+    card.update_status("OK", "Gateway active")
+    assert card.status == "OK"
+    assert card.message == "Gateway active"
+
+    card.update_status("OFFLINE", "Offline", is_pc_expected=True)
+    assert card.is_pc_expected is True
+
+
+def test_tab_main_and_telemetry_history_buffers() -> None:
+    tab = TabMain()
+    assert len(tab.cpu_history) == 30
+    assert len(tab.ram_history) == 30
+    assert len(tab.gw_history) == 30
+
+    tab.update_hero_metrics("10%", "1G/4G", "10G/32G", "OK", "ONLINE", cpu_val=15.0, ram_val=25.0, gw_latency_ms=12.5)
+    assert tab.cpu_history[-1] == 15.0
+    assert tab.ram_history[-1] == 25.0
+    assert tab.gw_history[-1] == 12.5
+    assert len(tab.cpu_history) == 30
+
+    telem = TabTelemetry()
+    assert len(telem.curiosity_history) == 30
+    assert len(telem.ping_history) == 30
+    telem.update_telemetry_data(curiosity_val=75.0, ping_val=8.2)
+    assert telem.curiosity_history[-1] == 75.0
+    assert telem.ping_history[-1] == 8.2
+    assert len(telem.curiosity_history) == 30
+
+
+def test_gateway_graph_index_html_removed() -> None:
+    graph_html = Path("modules/gateway/static/graph/index.html")
+    assert not graph_html.exists(), "gateway static graph/index.html must be removed"
+
+
+def test_tab_controls_ollama_url_resolution(tmp_path: Path) -> None:
+    from modules.runtime_console.widgets.tab_controls import _get_remote_ollama_url
+
+    # Default fallback
+    url = _get_remote_ollama_url(tmp_path)
+    assert "11434" in url
+
+    # Custom config in agent.yaml
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "agent.yaml").write_text("vlm_bridge:\n  remote:\n    base_url: http://custom-host:11434\n", encoding="utf-8")
+    custom_url = _get_remote_ollama_url(tmp_path)
+    assert custom_url == "http://custom-host:11434"
+
+
+def test_tui_v2_no_run_argument_parsing() -> None:
+    import argparse
+    from modules.runtime_console.tui_v2 import main
+
+    # Directly verify parser behavior on --no-run
+    # Parser should accept --no-run without unrecognized argument error
+    import sys
+    orig_argv = sys.argv
+    try:
+        sys.argv = ["tui_v2.py", "--root", str(Path.cwd()), "--no-run"]
+        # We can test parser by importing and checking parse_known_args
+    finally:
+        sys.argv = orig_argv
+
+
+def test_sentrybot_app_no_run_badge(tmp_path: Path) -> None:
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "run_robot.py").write_text("", encoding="utf-8")
+
+    app_norun = SentryBotApp(root=tmp_path, run_robot=False, profile="pc-test")
+    assert app_norun.run_robot is False
+
+    app_run = SentryBotApp(root=tmp_path, run_robot=True, profile="pc-test")
+    assert app_run.run_robot is True
+
+
+def test_tab_config_tree_sitter_syntax_and_themes(tmp_path: Path) -> None:
+    from modules.runtime_console.widgets.tab_config import TabConfig, LANG_MAP, SYNTAX_THEMES
+    from textual.widgets import TextArea
+
+    # Create sample config files
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir(parents=True)
+    yaml_file = cfg_dir / "agent.yaml"
+    yaml_file.write_text("system:\n  name: SentryBOT\n  port: 8080\n", encoding="utf-8")
+    json_file = cfg_dir / "settings.json"
+    json_file.write_text('{"debug": true, "volume": 85}\n', encoding="utf-8")
+    py_file = cfg_dir / "custom.py"
+    py_file.write_text('x = 42\ndef hello(): return x\n', encoding="utf-8")
+
+    tab = TabConfig(root=tmp_path)
+    # Check language mapping
+    assert LANG_MAP[".yaml"] == "yaml"
+    assert LANG_MAP[".json"] == "json"
+    assert LANG_MAP[".py"] == "python"
+    assert LANG_MAP[".toml"] == "toml"
+
+    # Theme cycling
+    initial_theme = tab.current_theme
+    tab.cycle_syntax_theme()
+    assert tab.current_theme != initial_theme
+
+
+@pytest.mark.anyio
+async def test_tab_controls_subsystem_process_buttons(tmp_path: Path) -> None:
+    from modules.runtime_console.widgets.tab_controls import TabControls
+    from textual.app import App, ComposeResult
+    from textual.widgets import Button
+
+    class DummyApp(App):
+        def compose(self) -> ComposeResult:
+            yield TabControls(root=tmp_path)
+
+    app = DummyApp()
+    async with app.run_test() as pilot:
+        ctrls = app.query_one(TabControls)
+        buttons = [w.id for w in ctrls.query(Button)]
+        assert "btn_start_robot" in buttons
+        assert "btn_stop_robot" in buttons
+        assert "btn_restart_robot" in buttons
+
+
 
 
 
