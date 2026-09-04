@@ -680,6 +680,19 @@ ServiceCard:hover, .service_card:hover {
     text-style: bold;
 }
 
+#config_theme_btn {
+    min-width: 18;
+    margin-right: 1;
+    background: $secondary;
+    color: #ffffff;
+    text-style: bold;
+}
+
+#config_theme_btn:hover {
+    background: $primary;
+    color: #000000;
+}
+
 #config_save_btn {
     min-width: 16;
     background: $primary;
@@ -689,7 +702,6 @@ ServiceCard:hover, .service_card:hover {
 
 #config_text_area {
     height: 1fr;
-    background: $background;
     border: solid $secondary;
 }
 
@@ -708,7 +720,7 @@ SysInfoModal, ThemeSelectorModal {
 
 #sysinfo_dialog {
     width: 82;
-    height: 30;
+    height: 32;
     background: $panel;
     border: heavy $primary;
     padding: 1 2;
