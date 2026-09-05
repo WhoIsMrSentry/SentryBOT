@@ -48,11 +48,16 @@ class SysInfoModal(ModalScreen[None]):
                 ("Memory", f"{info.memory} / {info.memory_total}"),
                 ("Disk", f"{info.disk} / {info.disk_total}"),
                 ("GPU", info.gpu),
+            ]
+            if info.graphics and info.graphics != "Unknown":
+                fields.append(("Graphics", info.graphics))
+
+            fields.extend([
                 ("Local IP", info.local_ip),
                 ("Shell", info.shell),
                 ("Python", info.python_version),
                 ("SentryBOT", info.sentrybot_version),
-            ]
+            ])
             
             for label, val in fields:
                 rich_text.append(f"{label:<14}: ", style="bold #FA1E4E")

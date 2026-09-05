@@ -17,6 +17,7 @@ from .system_info_hardware import (
     get_cpu_info,
     get_memory_info,
     get_disk_info,
+    get_gpu_and_graphics,
     get_gpu_info,
     get_resolution,
     get_battery,
@@ -38,6 +39,7 @@ class SystemInfo:
     disk: str = ""
     disk_total: str = ""
     gpu: str = ""
+    graphics: str = ""
     resolution: str = ""
     battery: str = ""
     local_ip: str = ""
@@ -226,20 +228,11 @@ def get_python_version() -> str:
 
 def get_sentrybot_version() -> str:
     try:
-        root = Path(__file__).resolve().parents[3]
-        version_file = root / "VERSION"
-        if version_file.exists():
-            return version_file.read_text().strip()
-        pyproject = root / "pyproject.toml"
-        if pyproject.exists():
-            import re
-            content = pyproject.read_text()
-            match = re.search(r'version\s*=\s*"([^"]+)"', content)
-            if match:
-                return match.group(1)
+        from .console_constants import VERSION
+
+        return f"v5.0.0-autonomy ({VERSION})"
     except Exception:
-        pass
-    return "dev"
+        return "v5.0.0-autonomy"
 
 
 def get_system_info() -> SystemInfo:
@@ -251,7 +244,7 @@ def get_system_info() -> SystemInfo:
     info.cpu, info.cpu_cores, info.cpu_freq, info.cpu_usage = get_cpu_info()
     info.memory, info.memory_total = get_memory_info()
     info.disk, info.disk_total = get_disk_info()
-    info.gpu = get_gpu_info()
+    info.gpu, info.graphics = get_gpu_and_graphics()
     info.resolution = get_resolution()
     info.battery = get_battery()
     info.local_ip = get_local_ip()
