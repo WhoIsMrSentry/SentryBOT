@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from typing import Dict, List, Optional
+try:
+    import tomllib  # Python 3.11+
+except ImportError:
+    tomllib = None  # type: ignore
+
 import yaml
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
 from textual.widget import Widget
-from textual.widgets import Button, Input, Label, OptionList, Select, TextArea
+from textual.widgets import Button, Input, Label, OptionList, TextArea
 from textual.widgets.option_list import Option
 
 
@@ -19,16 +25,26 @@ LANG_MAP: Dict[str, str] = {
     ".toml": "toml",
     ".md": "markdown",
     ".sh": "bash",
+    ".bash": "bash",
     ".sql": "sql",
+    ".css": "css",
+    ".html": "html",
+    ".htm": "html",
+    ".xml": "xml",
+    ".js": "javascript",
+    ".ts": "javascript",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
     ".ini": "toml",
     ".cfg": "toml",
 }
 
-THEME_CHOICES = [
-    ("Dracula Crimson", "dracula"),
-    ("Monokai High-Contrast", "monokai"),
+SYNTAX_THEMES: List[tuple[str, str]] = [
+    ("Dracula", "dracula"),
+    ("Monokai", "monokai"),
     ("VSCode Dark", "vscode_dark"),
-    ("GitHub Dark", "github_light"),
+    ("GitHub Light", "github_light"),
 ]
 
 
@@ -41,14 +57,15 @@ class TabConfig(Widget):
         self.config_files: List[Path] = []
         self.filtered_files: List[Path] = []
         self.active_file: Optional[Path] = None
-        self.current_theme = "dracula"
+        self.theme_index: int = 0
+        self.current_theme: str = SYNTAX_THEMES[0][1]
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="config_container"):
             # Left side: File List & Search
             with Vertical(id="config_file_tree_container"):
-                yield Label("[ CONFIG FILES ]", id="config_tree_title", markup=False)
-                yield Input(placeholder="Search config file...", id="config_search_input")
+                yield Label("■ CONFIG & CODE REPOSITORY", id="config_tree_title", markup=False)
+                yield Input(placeholder="Filter files (yaml, json, py, toml)...", id="config_search_input")
                 yield OptionList(id="config_file_list")
 
             # Right side: Rich Syntax Editor & Tooling
@@ -56,7 +73,8 @@ class TabConfig(Widget):
                 with Horizontal(id="config_editor_header"):
                     yield Label("No file selected", id="config_file_path_label", markup=False)
                     yield Label("LANG: YAML", id="config_lang_badge", markup=False)
-                    yield Button("Save Changes", id="config_save_btn", variant="primary")
+                    yield Button(f"🎨 {SYNTAX_THEMES[self.theme_index][0]}", id="config_theme_btn", variant="default")
+                    yield Button("💾 Save Changes", id="config_save_btn", variant="primary")
 
                 yield TextArea(
                     "",
@@ -78,6 +96,7 @@ class TabConfig(Widget):
             files.extend(sorted(cfg_dir.glob("*.yaml")))
             files.extend(sorted(cfg_dir.glob("*.yml")))
             files.extend(sorted(cfg_dir.glob("*.json")))
+            files.extend(sorted(cfg_dir.glob("*.toml")))
 
         # Module config directories
         mod_dir = self.root / "modules"
@@ -85,7 +104,9 @@ class TabConfig(Widget):
             files.extend(sorted(mod_dir.glob("*/config/*.yaml")))
             files.extend(sorted(mod_dir.glob("*/config/*.yml")))
             files.extend(sorted(mod_dir.glob("*/config/*.json")))
+            files.extend(sorted(mod_dir.glob("*/config/*.toml")))
             files.extend(sorted(mod_dir.glob("*/*.yaml")))
+            files.extend(sorted(mod_dir.glob("*/*.yml")))
 
         self.config_files = sorted(list(set(files)))
         self.filtered_files = list(self.config_files)
@@ -140,7 +161,7 @@ class TabConfig(Widget):
             text_area = self.query_one("#config_text_area", TextArea)
             text_area.language = detected_lang
             text_area.theme = self.current_theme
-            text_area.text = content
+            text_area.load_text(content)
         except Exception as exc:
             self.query_one("#config_file_path_label", Label).update(f"Error reading: {exc}")
 
@@ -150,9 +171,24 @@ class TabConfig(Widget):
             if path.exists():
                 self.load_file(path)
 
+    def cycle_syntax_theme(self) -> None:
+        self.theme_index = (self.theme_index + 1) % len(SYNTAX_THEMES)
+        theme_name, theme_id = SYNTAX_THEMES[self.theme_index]
+        self.current_theme = theme_id
+        try:
+            btn = self.query_one("#config_theme_btn", Button)
+            btn.label = f"🎨 {theme_name}"
+            text_area = self.query_one("#config_text_area", TextArea)
+            text_area.theme = self.current_theme
+            self.notify(f"Syntax Theme: {theme_name}", severity="information", timeout=2.0)
+        except Exception:
+            pass
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "config_save_btn":
             self.save_current_file()
+        elif event.button.id == "config_theme_btn":
+            self.cycle_syntax_theme()
 
     def save_current_file(self) -> None:
         if not self.active_file or not self.active_file.exists():
@@ -175,6 +211,18 @@ class TabConfig(Widget):
                 json.loads(raw_text)
             except Exception as exc:
                 self.notify(f"JSON Syntax Error:\n{exc}", severity="error", timeout=6.0)
+                return
+        elif ext == ".py":
+            try:
+                ast.parse(raw_text)
+            except Exception as exc:
+                self.notify(f"Python Syntax Error:\n{exc}", severity="error", timeout=6.0)
+                return
+        elif ext == ".toml" and tomllib is not None:
+            try:
+                tomllib.loads(raw_text)
+            except Exception as exc:
+                self.notify(f"TOML Syntax Error:\n{exc}", severity="error", timeout=6.0)
                 return
 
         try:
