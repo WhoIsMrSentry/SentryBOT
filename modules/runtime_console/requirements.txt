@@ -1,0 +1,2 @@
+textual[syntax]>=0.80.0
+PyYAML>=6.0
