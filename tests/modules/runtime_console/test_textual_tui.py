@@ -242,8 +242,8 @@ def test_tab_config_tree_sitter_syntax_and_themes(tmp_path: Path) -> None:
     assert tab.current_theme != initial_theme
 
 
-@pytest.mark.anyio
-async def test_tab_controls_subsystem_process_buttons(tmp_path: Path) -> None:
+def test_tab_controls_subsystem_process_buttons(tmp_path: Path) -> None:
+    import asyncio
     from modules.runtime_console.widgets.tab_controls import TabControls
     from textual.app import App, ComposeResult
     from textual.widgets import Button
@@ -252,13 +252,16 @@ async def test_tab_controls_subsystem_process_buttons(tmp_path: Path) -> None:
         def compose(self) -> ComposeResult:
             yield TabControls(root=tmp_path)
 
-    app = DummyApp()
-    async with app.run_test() as pilot:
-        ctrls = app.query_one(TabControls)
-        buttons = [w.id for w in ctrls.query(Button)]
-        assert "btn_start_robot" in buttons
-        assert "btn_stop_robot" in buttons
-        assert "btn_restart_robot" in buttons
+    async def _async_runner():
+        app = DummyApp()
+        async with app.run_test():
+            ctrls = app.query_one(TabControls)
+            buttons = [w.id for w in ctrls.query(Button)]
+            assert "btn_start_robot" in buttons
+            assert "btn_stop_robot" in buttons
+            assert "btn_restart_robot" in buttons
+
+    asyncio.run(_async_runner())
 
 
 
