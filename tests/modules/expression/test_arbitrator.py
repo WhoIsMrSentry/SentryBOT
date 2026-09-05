@@ -6,7 +6,7 @@ import asyncio
 import time
 
 from modules.common.emotion_vocab import Emotion
-from modules.expression.services.arbitrator import ExpressionArbiter, ModalityClients
+from modules.expression.semantic.services.arbitrator import ExpressionArbiter, ModalityClients
 import pytest
 
 def test_express_emotion_returns_ok():

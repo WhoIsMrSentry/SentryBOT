@@ -3,7 +3,7 @@ from __future__ import annotations
 # --- SentryBOT speech/audio boundary contract ---
 SPEECH_AUDIO_COMPATIBILITY = True
 SPEECH_AUDIO_BOUNDARY_ROLE = "agent_core_compat_speech_arbiter"
-SPEECH_AUDIO_RUNTIME_OWNER = "modules.speech / modules.speak"
+SPEECH_AUDIO_RUNTIME_OWNER = "modules.voice.speech / modules.voice.speak"
 SPEECH_AUDIO_BOUNDARY_REASON = "SpeechArbiter remains the agent_core queue/priority compatibility surface until speech ownership fully moves to speech/speak modules."
 # --- End SentryBOT speech/audio boundary contract ---
 
@@ -311,6 +311,8 @@ class SpeechArbiter:
 
         self._set_tts_active(True)
         try:
+            logger.info("SpeechArbiter dispatching speech: '%s' (lang=%s)", item.text, item.language or "auto")
+            print(f"\n🗣️ [SentryBOT Speak]: {item.text}\n", flush=True)
             kwargs: Dict[str, Any] = {"text": item.text}
             if item.tone:
                 kwargs["tone"] = item.tone

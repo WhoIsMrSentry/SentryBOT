@@ -25,3 +25,16 @@ def test_classify_and_background_filter():
 def test_handler_instantiates():
     handler = RuntimeConsoleLogHandler(level=logging.INFO, colors=False, mode="compact", max_message_width=60)
     assert handler is not None
+
+
+def test_http_router_healthz():
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from modules.runtime_console.api.router import router
+
+    app = FastAPI()
+    app.include_router(router)
+    resp = TestClient(app).get("/runtime_console/healthz")
+    assert resp.status_code == 200
+    assert resp.json().get("ok") is True

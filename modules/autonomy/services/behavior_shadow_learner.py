@@ -86,3 +86,40 @@ class BehaviorShadowLearner:
                 self._save_macros()
                 
         self._current_episode.clear()
+
+    def get_learned_macros(self) -> Dict[str, Any]:
+        """Return dict of all learned macros."""
+        return dict(self._learned_macros)
+
+    def replay_macro(self, macro_name: str, client: Any) -> bool:
+        """Replay the actions belonging to a learned macro."""
+        macro = self._learned_macros.get(macro_name)
+        if not macro or not client:
+            return False
+
+        actions = macro.get("actions", [])
+        logger.info(f"SHADOW MODE: Replaying macro {macro_name} with {len(actions)} actions")
+        for action in actions:
+            act_type = action.get("type")
+            payload = action.get("payload", {})
+            try:
+                if act_type == "head_move" and hasattr(client, "move_head"):
+                    client.move_head(payload.get("pan", 90), payload.get("tilt", 90))
+                elif act_type == "neopixel" and hasattr(client, "set_neopixel"):
+                    client.set_neopixel(
+                        mode=payload.get("mode", "solid"),
+                        emotions=payload.get("emotions", ["neutral"]),
+                    )
+                elif act_type == "express_emotion" and hasattr(client, "express_emotion"):
+                    client.express_emotion(
+                        emotion=payload.get("emotion", "neutral"),
+                        intensity=payload.get("intensity", 0.8),
+                    )
+                elif act_type == "speak" and hasattr(client, "speak"):
+                    client.speak(payload.get("text", ""))
+                elif hasattr(client, "queue_action"):
+                    client.queue_action(act_type, priority=60, payload=payload)
+            except Exception as exc:
+                logger.warning(f"Failed replaying macro action {act_type}: {exc}")
+        return True
+

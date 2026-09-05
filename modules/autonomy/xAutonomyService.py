@@ -24,6 +24,9 @@ class xAutonomyService:
     def stop(self):
         self.brain.stop()
 
+    def __getattr__(self, name: str):
+        return getattr(self.brain, name)
+
 if __name__ == "__main__":
     import uvicorn
     cfg = load_config()

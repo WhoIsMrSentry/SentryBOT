@@ -3,8 +3,8 @@ server:
   port: 8080
 include:
   social_db: true
-  esp_link: true
-  arduino: true
+  esp_link: false
+  arduino: false
   vlm_bridge: true
   neopixel: true
   interactions: true
@@ -19,18 +19,14 @@ include:
   piservo: true
   autonomy: true
   agent_core: true
-  ota: true
-  mutagen: true
-  hardware: true
   telemetry: true
   diagnostics: true
   state_manager: true
   oled_faces: true
   scheduler: true
-  notifier: true
-  calibration: true
+  notifier: false
+  runtime_console: true
   config_center: true
-  admin_ui: true
 speech:
   listening: false
 

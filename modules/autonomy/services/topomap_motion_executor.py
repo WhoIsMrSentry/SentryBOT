@@ -1,10 +1,13 @@
 
 from __future__ import annotations
+
 import json
 import random
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from modules.arduino_serial.contract import build_drive_cmd
 
 def _float(v: Any, default: float = 0.0) -> float:
     try:
@@ -122,7 +125,10 @@ class TopomapMotionExecutor:
         try:
             if kind in {"drive", "move"}:
                 maxv = int(self.cfg.get("max_drive_value", 120)); value = max(-maxv, min(maxv, int(_float(step.get("value"), 0))))
-                resp = self.client._arduino_request({"cmd": "drive", "value": value}, timeout=min(_float(step.get("duration_s"), 0.2), _float(self.cfg.get("max_step_duration_s"), 2.0)) + 0.5)
+                resp = self.client._arduino_request(
+                    build_drive_cmd(value),
+                    timeout=min(_float(step.get("duration_s"), 0.2), _float(self.cfg.get("max_step_duration_s"), 2.0)) + 0.5,
+                )
                 return {"ok": bool(isinstance(resp, dict) and resp.get("ok")), "type": kind, "value": value, "response": resp}
             if kind in {"stepper", "turn"}:
                 resp = self.client.set_stepper(int(step.get("id", 0)), str(step.get("mode") or "rel"), int(_float(step.get("value"), 0)), drive=int(step.get("drive", 160)))

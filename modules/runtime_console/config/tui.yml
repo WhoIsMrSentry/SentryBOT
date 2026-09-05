@@ -14,5 +14,4 @@ pc_test_mode:
   expected_missing:
     - ESP bridge
     - Piper model
-    - Vosk model
     - Raspberry Pi camera

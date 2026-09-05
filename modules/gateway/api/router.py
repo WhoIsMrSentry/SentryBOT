@@ -38,7 +38,7 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
                     path = "/notify/healthz"
                 elif name == "state_manager":
                     path = "/state/healthz"
-                elif name in ("arduino", "esp_link", "neopixel", "piservo", "telemetry", "diagnostics", "scheduler", "calibration", "config_center", "hardware"):
+                elif name in ("arduino", "esp_link", "neopixel", "piservo", "telemetry", "diagnostics", "scheduler", "calibration", "config_center"):
                     path = f"/{name}/healthz"
                 elif name == "camera":
                     path = "/camera/healthz"

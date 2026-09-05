@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Dict
 
-from modules.config_center.agent_yaml_loader import load_agent_config, require_dict_section
-from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
+import yaml
 
+from modules.common.config_loader import load_agent_config, require_dict_section
+from modules.common.model_policy import get_model_policy, set_required_model
+from modules.common.ollama_url import (
+    default_ollama_base_url,
+    is_bad_ollama_url,
+    normalize_ollama_url,
+)
+
+
+# Set required model globally (enforced by model_policy when strict mode enabled)
 _REQUIRED_OLLAMA_MODEL = "qwen3.5:9b"
-_GOOGLE_PROVIDERS = frozenset({"google", "google_ai_studio", "gemini"})
+set_required_model(_REQUIRED_OLLAMA_MODEL)
 
 
 def _to_float(raw: Any, fallback: float) -> float:
@@ -17,121 +27,98 @@ def _to_float(raw: Any, fallback: float) -> float:
         return fallback
 
 
-def _pick_model(agent_cfg: Dict[str, Any], llm_cfg: Dict[str, Any], ollama_cfg: Dict[str, Any]) -> str:
-    candidates = (
-        agent_cfg.get("model"),
-        llm_cfg.get("model"),
-        llm_cfg.get("primary_model"),
-        ollama_cfg.get("model"),
+def _required_model() -> str:
+    return _REQUIRED_OLLAMA_MODEL
+
+
+def _read_declared_models_from_file(path_value: Any) -> list[tuple[str, str]]:
+    """Read agent.model / llm.model straight from a config file on disk.
+
+    Strict qwen3.5:9b policy applies only to Ollama configs; Google AI Studio
+    configs may use their own model names.
+    """
+    if not path_value:
+        return []
+    try:
+        path = Path(path_value)
+        if not path.exists():
+            return []
+        data = yaml.safe_load(path.read_text(encoding="utf-8", errors="replace")) or {}
+        if not isinstance(data, dict):
+            return []
+
+        agent_cfg = data.get("agent")
+        llm_cfg = data.get("llm")
+
+        provider = "ollama"
+        if isinstance(llm_cfg, dict) and llm_cfg.get("provider"):
+            provider = str(llm_cfg.get("provider")).strip().lower()
+        if provider and provider != "ollama":
+            return []
+
+        found: list[tuple[str, str]] = []
+        if isinstance(agent_cfg, dict) and agent_cfg.get("model"):
+            found.append(("agent.model", str(agent_cfg.get("model")).strip()))
+        if isinstance(llm_cfg, dict) and llm_cfg.get("model"):
+            found.append(("llm.model", str(llm_cfg.get("model")).strip()))
+        return found
+    except Exception:
+        return []
+
+
+def _raise_if_bad_model(model: Any, source: str) -> None:
+    required = _required_model()
+    model = str(model or "").strip()
+    if model and model != required:
+        raise ValueError(f"{source} must be {required}, got {model}")
+
+
+def _enforce_strict_models(cfg: Dict[str, Any]) -> None:
+    llm_cfg = cfg.get("llm") if isinstance(cfg.get("llm"), dict) else {}
+    provider = "ollama"
+    if isinstance(llm_cfg, dict) and llm_cfg.get("provider"):
+        provider = str(llm_cfg.get("provider")).strip().lower()
+    if provider not in {"", "ollama"}:
+        return
+    agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+    if isinstance(agent_cfg, dict):
+        _raise_if_bad_model(agent_cfg.get("model"), "agent.model")
+    if isinstance(llm_cfg, dict):
+        _raise_if_bad_model(llm_cfg.get("model"), "llm.model")
+
+
+def _apply_ollama_url_guard(cfg: Dict[str, Any]) -> None:
+    """Single-pass URL guard: pick the first usable Ollama URL among the
+    known config locations and write it back to both canonical spots."""
+    agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+    ollama_cfg = cfg.get("ollama") if isinstance(cfg.get("ollama"), dict) else {}
+
+    candidates = [
+        ollama_cfg.get("base_url"),
+        ollama_cfg.get("url"),
+        agent_cfg.get("ollama_base_url"),
+        agent_cfg.get("base_url"),
+        agent_cfg.get("ollama_url"),
+    ]
+
+    selected = next(
+        (c for c in candidates if c and not is_bad_ollama_url(c)),
+        default_ollama_base_url(),
     )
-    for candidate in candidates:
-        text = str(candidate or "").strip()
-        if text:
-            return text
-    return ""
+    normalized = normalize_ollama_url(selected)
 
-
-def _normalize_base_url(raw: Any) -> str:
-    return str(raw or "").strip().rstrip("/")
-
-
-def _enforce_google_policy(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    agent_cfg = require_dict_section(cfg, "agent")
-    llm_cfg = require_dict_section(cfg, "llm")
-    google_cfg = cfg.get("google_ai_studio", {}) if isinstance(cfg.get("google_ai_studio", {}), dict) else {}
-
-    model = (
-        str(google_cfg.get("model", "")).strip()
-        or _pick_model(agent_cfg, llm_cfg, {})
-        or DEFAULT_GEMINI_MODEL
-    )
-    request_timeout = _to_float(
-        google_cfg.get("request_timeout", agent_cfg.get("request_timeout", 45.0)),
-        45.0,
-    )
-
-    agent_cfg["model"] = model
-    agent_cfg["request_timeout"] = request_timeout
-
-    llm_cfg["provider"] = "google_ai_studio"
-    llm_cfg["model"] = model
-    llm_cfg["primary_model"] = model
-    llm_cfg["single_model_mode"] = True
-    llm_cfg["clm_fallback_enabled"] = False
-    llm_cfg["clm_fallback_model"] = ""
-    llm_cfg["fallback_on_missing_model"] = False
-    llm_cfg["fallback_on_error"] = False
-
-    cfg["google_ai_studio"] = {
-        **google_cfg,
-        "model": model,
-        "request_timeout": request_timeout,
-    }
-    cfg["agent"] = agent_cfg
-    cfg["llm"] = llm_cfg
-    return cfg
-
-
-def _enforce_ollama_policy(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    agent_cfg = require_dict_section(cfg, "agent")
-    llm_cfg = require_dict_section(cfg, "llm")
-    ollama_cfg = cfg.get("ollama", {}) if isinstance(cfg.get("ollama", {}), dict) else {}
-
-    model = _pick_model(agent_cfg, llm_cfg, ollama_cfg) or _REQUIRED_OLLAMA_MODEL
-    if model != _REQUIRED_OLLAMA_MODEL:
-        raise ValueError(
-            f"Ollama profile requires model '{_REQUIRED_OLLAMA_MODEL}', got '{model}'"
-        )
-
-    base_url = _normalize_base_url(
-        agent_cfg.get("ollama_base_url")
-        or llm_cfg.get("base_url")
-        or ollama_cfg.get("base_url")
-        or os.getenv("AGENT_OLLAMA_BASE_URL")
-        or "http://127.0.0.1:11434"
-    )
-    if not base_url:
-        raise ValueError("agent.ollama_base_url is required for ollama profile")
-
-    request_timeout = _to_float(
-        agent_cfg.get("request_timeout", ollama_cfg.get("request_timeout", 60.0)),
-        60.0,
-    )
-
-    agent_cfg["model"] = model
-    agent_cfg["ollama_base_url"] = base_url
-    agent_cfg["request_timeout"] = request_timeout
-
-    llm_cfg["provider"] = "ollama"
-    llm_cfg["single_model_mode"] = True
-    llm_cfg["model"] = model
-    llm_cfg["primary_model"] = model
-    llm_cfg["base_url"] = base_url
-    llm_cfg["clm_fallback_enabled"] = False
-    llm_cfg["clm_fallback_model"] = ""
-    llm_cfg["fallback_on_missing_model"] = False
-    llm_cfg["fallback_on_error"] = False
-
-    cfg["ollama"] = {
-        **ollama_cfg,
-        "base_url": base_url,
-        "model": model,
-        "request_timeout": request_timeout,
-    }
-    cfg["agent"] = agent_cfg
-    cfg["llm"] = llm_cfg
-    return cfg
-
-
-def _enforce_policy(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    llm_cfg = require_dict_section(cfg, "llm")
-    provider = str(llm_cfg.get("provider", "ollama")).strip().lower() or "ollama"
-    if provider in _GOOGLE_PROVIDERS:
-        return _enforce_google_policy(cfg)
-    return _enforce_ollama_policy(cfg)
+    ollama_cfg["base_url"] = normalized
+    cfg["ollama"] = ollama_cfg
+    if isinstance(agent_cfg, dict):
+        agent_cfg["ollama_base_url"] = normalized
+        cfg["agent"] = agent_cfg
 
 
 def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
+    """Load agent_core config using centralized model policy."""
+    for source, model in _read_declared_models_from_file(path):
+        _raise_if_bad_model(model, source)
+
     cfg = load_agent_config(path)
 
     if not isinstance(cfg.get("tri_layer", {}), dict):
@@ -139,4 +126,50 @@ def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
     if not isinstance(cfg.get("safety", {}), dict):
         cfg["safety"] = {}
 
-    return _enforce_policy(cfg)
+    # Use centralized model policy for provider/model resolution
+    policy = get_model_policy()
+    provider_config = policy.get_provider_config(cfg)
+
+    # Merge provider config into main config
+    for key, value in provider_config.items():
+        if key not in cfg:
+            cfg[key] = value
+
+    # Ensure single_model_mode and other llm settings are present (for backward compatibility)
+    llm_cfg = cfg.get("llm", {})
+    if not isinstance(llm_cfg, dict):
+        llm_cfg = {}
+    llm_cfg.setdefault("single_model_mode", True)
+    llm_cfg.setdefault("clm_fallback_enabled", False)
+    llm_cfg.setdefault("fallback_on_missing_model", False)
+    llm_cfg.setdefault("fallback_on_error", False)
+    cfg["llm"] = llm_cfg
+
+    # Ensure agent section has model and request_timeout
+    agent_cfg = cfg.get("agent", {})
+    if not isinstance(agent_cfg, dict):
+        agent_cfg = {}
+    agent_cfg.setdefault("model", provider_config.get("model", "qwen3.5:9b"))
+    agent_cfg.setdefault("request_timeout", provider_config.get("request_timeout", 60.0))
+    cfg["agent"] = agent_cfg
+
+    # Ensure ollama section has base_url (for backward compatibility)
+    ollama_cfg = cfg.get("ollama", {})
+    if not isinstance(ollama_cfg, dict):
+        ollama_cfg = {}
+    ollama_cfg.setdefault("base_url", provider_config.get("ollama", {}).get("base_url", "http:"))
+    ollama_cfg.setdefault("model", provider_config.get("model", "qwen3.5:9b"))
+    ollama_cfg.setdefault("request_timeout", provider_config.get("request_timeout", 60.0))
+    cfg["ollama"] = ollama_cfg
+
+    # Former batch06d/e guards, consolidated as direct passes:
+    _apply_ollama_url_guard(cfg)
+    _enforce_strict_models(cfg)
+
+    # Ensure tri_layer and safety sections exist
+    if not isinstance(cfg.get("tri_layer", {}), dict):
+        cfg["tri_layer"] = {}
+    if not isinstance(cfg.get("safety", {}), dict):
+        cfg["safety"] = {}
+
+    return cfg

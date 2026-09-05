@@ -1,124 +1,138 @@
-# Autonomy Module
- 
- Bu modül, robotun "Live Mode" (Canlı Mod) davranışlarını yönetir. Robotun kendi kendine kararlar almasını, çevresine tepki vermesini ve bir "kişilik" sergilemesini sağlar.
- 
- ## Özellikler
- - **Davranış Döngüsü (Behavior Loop):** Sürekli çalışan ve ne yapılması gerektiğine karar veren ana döngü.
- - **İç Durum (Internal State):** Mutluluk, Enerji, Merak, Korku gibi değişkenleri yöneten `MoodManager`.
- - **Algı Birleştirme (Perception Aggregation):** Mikrofon (yön ve metin) verilerini sürekli tarar (`_sense`).
- - **Görsel Farkındalık:** VLM Bridge sonuçlarını periyodik olarak çekerek ortamda bir kişi/nesne belirdiğinde merak ve mutluluğu günceller, gerekiyorsa kişi ile sohbet başlatır.
- - **Canlılık Belirtileri:**
-  - **Mikro-hareketler:** Duyguya göre değişen küçük servo hareketleri (joy daha enerjik, tired daha sakin).
-   - **Ses Takibi:** Ses gelen yöne otomatik kafa çevirme.
-   - **Sıkılma:** Boşta kaldığında etrafı izleme, iç çekme veya monolog yapma.
-  - **Idle Behavior Tree:** Boşta kalınca ağırlıklı davranış ağacı ile `look_around/blink/stretch/sigh/monologue` seçimi.
-  - **Scene Orchestration:** Konuşma + ışık + hareket tek sahne akışında senkron yürütülür (özellikle VLM selamlamaları).
- - **Duygu Yayını:** `MoodManager` (HAPPINESS, ENERGY, CURIOSITY, FEAR) dominant duyguyu `state_manager` ve `interactions` modüllerine aktararak LED/palet ve diğer istemcilerle paylaşıyor.
-- **Duygusal Işık Senkronizasyonu:** NeoPixel animasyonları artık robotun dominant duygusuna göre (`joy`, `sadness`, `fear` vb.) otomatik renk seçimi yapabiliyor.
-- **Sistem-Genel Modül Kontrolü:** Ollama üzerinden gelen `system` aksiyonları ile `notifier`, `camera` gibi modüller çalışma esnasında durdurulup başlatılabilir.
-- **Ses Tonu Çeşitliliği:** Mutluluk, yorgunluk, merak gibi duygulara göre TTS hız/volüm parametreleri otomatik ayarlanır.
-- **Gece Konuşma Kısma:** Quiet-hours sırasında konuşma tonu otomatik olarak sakin moda alınır ve çok uzun cümleler kısaltılır.
- - **Zaman Çizgisi Hafızası:** Gün boyunca kişi ve sohbet sayılarını, ilginç soruları kaydeder; uykuya geçmeden önce kısa bir sözlü özet paylaşır.
- - **Dinamik Odak:** VLM Bridge yeni bir hareket/yüz gördüğünde kısa “focus” animasyonu ve LED olayı tetikler; animasyon servisi yoksa servo tabanlı küçük jest yapılır.
- - **Sahip Koruması:** `owner` konfigürasyonu aktifken robot esnek hitap biçimleriyle (Baba / Emir / WhoIsMrSentry) konuşur, sahibi görüşte değilse istekleri reddeder, RFID veya sözlü izin gelirse kısıtlamaları kaldırır, ısrarcı kişileri rapor eder, gerekirse geçici sahip atar ve Baba’yı aramak için kafasını sağ/sol tarar.
- - **LLM Karar Mekanizması:** Karmaşık durumlar için Ollama kullanarak karar verir.
- - **Animasyon Entegrasyonu:** Uygun olduğunda `animate` servisine hazır sekanslar gönderir, servis yoksa servo tabanlı fallback çalışır.
-- **LLM Eylem İşleme:** Ollama'dan gelen yapılandırılmış JSON aksiyonları veya `[cmd:*]` etiketleri `ResponseTagMixin` ile çözümlenip donanım/sistem katmanına yönlendirilir.
- 
- ## Yapı
- - `xAutonomyService.py`: Servis başlatıcı.
- - `services/brain.py`: Ana karar mekanizması, duyular ve davranışlar.
- - `services/mood.py`: Duygu durum yönetimi (decay ve update mantığı).
-  - `services/client.py`: Diğer modüllerle (Speech, VLM, Arduino, Interactions, State Manager) iletişim.
-  - `services/palette_store.py`: LED paletlerini `config.yml` üzerinde atomik biçimde güncelleyen yardımcı.
+# Autonomy
+
+SentryBOT'un sürekli çalışan davranış beynidir. `AutonomyBrain`, duyulardan ve diğer modüllerden gelen sinyalleri birleştirir; ihtiyaç, duygu, hedef ve güvenli eylem kararları üretir; ardından konuşma, ifade, hareket ve hafıza katmanlarını koordine eder.
+
+## Ana Yetenekler
+
+- Sense-think-act beyin döngüsü (event-driven, ~100ms cycle)
+- Duygu (MoodManager), ihtiyaç (NeedsEngine) ve Companion hedef seçimi
+- Dünya hafızası (WorldMemory), RAG, ihtiyaç yanlı bellek ve karar gölgesi
+- Ses, görüntü ve olay girdilerinden proaktif tepki üretimi
+- Sahip tanıma, geçici yetki ve owner-guard davranışları
+- Güvenli navigasyon, topomap ve dinlenme noktası akışları
+- LED palet yönetimi ve ifade orkestrasyonu (ExpressionArbiter üzerinden)
+- Dry-run destekli otomatik hedef yürütme
+
+## Mimari (Güncel: 2026-08-20)
+
+- Giriş noktası: `xAutonomyService.py`
+- Router: `api/router.py` (+ `api/companion_routes.py`, `api/memory_routes.py`)
+- **Ana Beyin (Parçalanmış)**: `services/brain.py` (facade) → `services/brain_parts/`:
+  - `decision.py` - Eylem kararı, tool calling koordinasyonu
+  - `emotion_sync.py` - MoodManager, duygu durumu senkronizasyonu
+  - `scenario_rituals.py` - Companion ritüeller, sahne yönetimi
+  - `speech_react.py` - Ses tepkileri, prosody
+  - `vocal_prosody.py` - Ses tonu, hız, vurgu profilleri
+- **Client Katmanı**: `services/client.py` → `services/client_parts/` (modüler)
+- **Hedef Yürütme**: `services/companion_goal_executor.py`, `companion_goal_selector.py`, `companion_goal_policies.py`, `companion_goal_plans.py`, `companion_goal_translator.py`
+- **Diğer**: `behavior_planner.py`, `interaction_feedback.py`, `mood.py`, `topomap_motion_executor.py`, `hardware_policy.py`, `brain_init.py`
+
+## Bağımlılıklar (Güncel Modül Adları)
+
+- `agent_core`: Üst seviye ajan çağrıları ve olay tabanlı reaksiyonlar (brain.agent provider)
+- `voice/speech`: Final konuşma metni ve ses kesme entegrasyonu
+- `voice/speak`: Yanıtların seslendirilmesi
+- `expression/interactions`: Olay, efekt ve temel LED durumları
+- `system_control/state_manager`: Dominant duygu ve operasyonel durum paylaşımı
+- `expression/animate`: Jest, servo ve hareket yürütme
+- `arduino_serial`: Donanım hareket komutları (track, pose, estop)
+- `cognitive_memory` (eski `social_db`): Kişi/ilişki hafızası (repository pattern)
+- `gateway`: Servis URL çözümleme
+- `vlm_bridge`: Görsel bağlam (vision context bridge)
+- `expression`: ExpressionArbiter (LED/servo/OLED lease arbitrajı)
+
+## API
+
+Gateway altında `/autonomy/*` olarak sunulur.
+
+### Temel Durum
+
+- `GET /autonomy/state`
+- `POST /autonomy/interaction`
+- `POST /autonomy/speech`
+- `POST /autonomy/apply_actions`
+- `POST /autonomy/start`
+- `POST /autonomy/stop`
+
+### Companion Routes (`api/companion_routes.py`)
+
+Not: `companion_routes.py` route'ları `/companion/` prefix'siz ana `/autonomy` router'ına eklenir.
+
+- `GET /autonomy/needs`
+- `GET /autonomy/goal`
+- `POST /autonomy/goal/auto/tick`
+- `POST /autonomy/sound-interrupt`
+
+### Memory Routes (YENİ: `api/memory_routes.py`)
+
+- `GET /autonomy/memory/context`
+- `POST /autonomy/memory/observe`
+- `GET /autonomy/memory/search`
+- `GET /autonomy/memory/recent`
+- `POST /autonomy/memory/autowrite`
+- `GET /autonomy/memory/rag`
+
+### Navigation, Owner, Runtime
+
+- `GET /autonomy/navigation/status`
+- `GET /autonomy/navigation/places`
+- `POST /autonomy/navigation/places/learn`
+- `GET /autonomy/navigation/topomap`
+- `POST /autonomy/navigation/topomap/learn`
+- `GET /autonomy/owner/status`
+- `POST /autonomy/owner/learn`
+- `POST /autonomy/owner/identify`
+- `GET /autonomy/runtime/profile`, `POST /autonomy/runtime/profile/switch` — **planlanan** (API yüzü henüz yok)
+
+### Lighting (ExpressionArbiter üzerinden)
+
+- `GET /autonomy/lights/palettes`
+- `POST /autonomy/lights/palettes/{name}`
+- `DELETE /autonomy/lights/palettes/{name}`
+
+### Diğer Uçlar
+
+- `/autonomy/mood`
+- `/autonomy/express/{emotion}`
+- `/autonomy/audio-event` (+ `/observe`)
+- `/autonomy/vision-context` (+ `/observe`)
+- `/autonomy/navigation/rest-corner`
+- `/autonomy/navigation/goal`
+- `/autonomy/assets/status`
+- `/autonomy/pi-runtime/status`
+- `/autonomy/memory/needs-bias` (+ `/evaluate`)
+- `/autonomy/memory/decision-shadow` (+ `/evaluate`)
+- `/autonomy/memory/schema` | `history` | `clear`
+- `/autonomy/goal/execute` | `simulate` | `execution`
+- `/autonomy/living-needs` (+ `/tick`)
+- `/autonomy/scenario/replay` | `e2e`
 
 ## Konfigürasyon
-- `config/config.yml > endpoints`: Gateway üzerindeki servis URL’leri. Yeni varsayılanlar Speech, Interactions, State Manager ve Animate’i de içerir.
-- `vision_hooks`: VLM Bridge entegrasyonu için periyot, kişi cooldown ve metin üretim ayarları.
-  - `poll_interval_s`: Son sonuçların ne kadar sıklıkla okunacağı.
-  - `person_cooldown_s`: Aynı kişi için tekrar selamlama gecikmesi.
-  - `prefer_llm_greetings`: Tanınan kişilere kısa selamlama üretirken Ollama kullanılacak mı.
-  - `speak_on_unknown`: `Unknown` kişilere de sözlü tepki ver.
-- `owner`: Sahip kimliği ve güvenlik davranışları.
-  - `addressing.affectionate|formal|handle` farklı bağlamlarda kullanılacak hitapları belirler.
-  - `require_presence` true ise sahibi görülmeyince dış istekler reddedilir, `permission_grace_s` ile sözlü izin verilirse belirli süre boyunca uzak mod serbest bırakılır.
-  - `restricted_keywords` hassas komutları listeler; Baba ortada yoksa veya yalnızca geçici sahip aktifse bu isteklere cevap verilmez.
-  - `temporary` bloğu “`<isim> geçici sahip`” komutunu işler, süre (`duration_s`), tetiklenecek animasyon ve kapalı tutulacak özellikleri tanımlar. Sahip geri döndüğünde veya RFID onaylandığında geçici yetkiler sıfırlanır.
-  - `rfid.endpoint` yetkilendirme API’sini gösterir; Gateway varsayılanı `http://localhost:8080/arduino/rfid/authorize` olup Arduino seri servisi son kart UID’sini kontrol eder ve `{"authorized": true}` dönerse `grace_s` kadar süreyle tüm kısıtlamalar açılır.
-- `speech_quiet_hours`: Gece konuşma davranışı.
-  - `enabled`: true ise etkin.
-  - `start` / `end`: `HH:MM` formatında saat aralığı.
-  - `tone`: konuşma isteğine tone verilmemişse varsayılan ton.
-  - `max_chars`: konuşma metni üst sınırı (uzun metinler kısaltılır).
-  - `prefix`: istenirse metin başına eklenecek kısa önek.
-- `behaviors.idle_tree`: Boşta davranış planlayıcısı.
-  - `enabled`: etkin/pasif.
-  - `interval_s`: iki idle aksiyon arasındaki minimum aralık.
-  - `fallback_to_llm`: planner uygun aksiyon bulamazsa LLM kararına düş.
-  - `path`: idle davranış YAML dosyası yolu.
-- `defaults.body_language.profiles`: dominant emotion -> mikro hareket profili (`pan_delta`, `tilt_delta`, `event`).
-- `scenes`: Çok adımlı sahne tanımları (`event/effect/base/anim/head/speak/sleep`).
-  - Varsayılan: `vision_greeting_known`, `vision_greeting_unknown`.
-  - Segment adımları: `segment_fill` ve `segment_anim` ile göz/gövde ayrık tepkiler.
-- `offline_mode`: LLM servisi geçici erişilemezse yerel fallback yanıtları.
-  - `enabled`: etkin/pasif.
-  - `availability_ttl_s`: servis erişilebilirlik sonucu kaç saniye cache edilecek.
-  - `fallback_replies`: çevrimdışı durumda konuşulacak kısa cümleler.
-  - `persona_replies`: dominant duyguya göre çevrimdışı cümle havuzu.
 
-- `vision_hooks.focus`: vision odak jitter azaltma.
-  - `jitter_min` / `jitter_max`: rastgele pan sapma aralığı.
-  - `deadband_deg`: çok küçük hareketleri atla.
-  - `smoothing`: hedef pan geçişini yumuşatma katsayısı.
-- `vision_hooks.dynamic_cooldown`: mesafeye göre kişi tekrar selamlama cooldown'u.
-  - Yakın kişilerde daha hızlı, uzak kişilerde daha yavaş tekrar selamlama.
+Bu modül modül-içi `config/config.yml` + merkezi `config/agent.yaml` (autonomy section) kullanır.
 
-- Cinematic scene seçimi:
-  - owner -> `vision_greeting_owner`
-  - known & close -> `vision_greeting_known_close`
-  - known -> `vision_greeting_known`
-  - unknown & close -> `vision_greeting_unknown_close`
-  - unknown -> `vision_greeting_unknown`
+Önemli alanlar:
+- `endpoints.*`: `speech`, `interactions`, `state_manager`, `animate`, `agent_core`, `arduino`, `speak` (gateway URL'leri)
+- `vision_hooks.*`
+- `owner.*`
+- `speech_quiet_hours.*`
+- `behaviors.idle_tree.*`
+- `defaults.body_language.*`
+- `scenes.*`
+- `offline_mode.*`
+- `realtime_profile.*` (hız/kalite profilleri)
 
-### Idle Behavior Dosyası
-`modules/autonomy/config/idle_behaviors.yml` içinde her aksiyon için ağırlık ve cooldown tanımlanır:
+## Otonomluk Açısından Önemi
 
-```yaml
-actions:
-  - name: LOOK_AROUND
-    weight: 5
-    min_interval_s: 6
-  - name: MONOLOGUE
-    weight: 1
-    min_interval_s: 28
-```
+Bu modül, projedeki otonomluğun merkezidir. Pasif API cevaplayıcısı değildir; kendi döngüsünü çalıştırır (`Brain.run_cycle`), yeni bağlamlardan hafıza yazar (`WorldMemory`), ihtiyaç ve hedef üretir (`NeedsEngine`, `CompanionGoalSelector`), bazı akışları dry-run güvenlik kapılarıyla otomatik değerlendirebilir ve diğer modülleri davranış planının bir parçası olarak tetikler.
 
-### Scene Örneği
-`config.yml` içinde:
+**Davranış Otoritesi:** `autonomy` planlar → `agent_core` bir LLM turunu yürütür → `expression` yüz/ışık/kulak render eder. Ayrıntı: `.sentrybot/context/behavior-authority.md`.
 
-```yaml
-scenes:
-  vision_greeting_known:
-    steps:
-      - { type: effect, name: "COMET", duration_ms: 700 }
-      - { type: anim, name: "vision_focus" }
-      - { type: speak, text: "{greeting}", emotion: "joy" }
-      - { type: base, name: "BREATHE", color: "#1E90FF" }
-```
+Raspberry Pi'de `companion_goal_executor.follow_runtime_profile` gerçek donanımı `config/robot_execution_profiles.json` üzerinden açar; PC'de dry-run kalır.
 
-### LED Palet Yönetimi
-- **Config bloğu:** `defaults.lights.palettes` altında RGB listeleri tutulur. `lights.default_mode` ile LED animasyon fallback’i belirlenir.
-- **REST API:**
-  - `GET  /autonomy/lights/palettes` → Tüm paletler.
-  - `POST /autonomy/lights/palettes/{name}` body `{ "rgb": [r,g,b] }` → Ekle/güncelle.
-  - `DELETE /autonomy/lights/palettes/{name}` → Paleti sil.
-  İstek sonrası `brain.update_palettes()` çağrısı sayesinde servis yeniden başlatmadan yeni renkler kullanılabilir.
-- **CLI:** `python -m modules.autonomy.tools.palette_cli list|set|remove` ile aynı işlemler komut satırından yapılabilir. Örnek: `python -m modules.autonomy.tools.palette_cli set sunset --hex ff9933`.
+## Bilinen Çakışma Riskleri (Bkz: `../otonomi_ve_cakisma_analizi.md`)
 
-### LLM Eylem Webhook’u
-`/autonomy/apply_actions` endpoint’i `{ text, actions, raw, speak }` gövdesini kabul eder. `actions` içinde `commands` veya `blocks` alanları varsa `ResponseTagMixin` bu veriyi servo/palet/event katmanına yönlendirir, `speak=true` ise temizlenmiş metin aynı akışta TTS’ye gönderilir. Ollama ve VLM Bridge konfiglerinde `actions.default_apply: true` ayarı aktifleştirildiğinde yanıtlar otomatik olarak bu endpoint’e post edilir.
-
-### Sahip Komutları (Örnek)
-- **Geçici sahip ata:** “`Ali adlı kişi geçici sahip`” → Ali’ye sınırlı yetki verilir.
-- **Geçici yetki iptal:** “`Geçici yetki iptal`” → aktif geçici sahip temizlenir.
-- **Uzak izin:** “`Sana izin veriyorum, cevap verebilirsin`” → `permission_grace_s` süresince Baba görünmese de sorulara yanıt verir.
+1. **Head Control** - `vlm_bridge`, `expression/animate`, `voice/speech` doğrudan `arduino.track()` çağırıyor, `HeadControlArbiter` bypass ediliyor
+2. **NeoPixel** - `autonomy.mood` → `interactions` → `neopixel` yolu `ExpressionArbiter` lease'ını tanımıyor
+3. **Memory Yazma** - `autonomy`, `agent_core/tools`, `vlm_bridge` eşzamanlı `cognitive_memory` DB'sine yazıyor (SQLite WAL + busy_timeout var ama transaction isolation yok)
+4. **Event Fan-out** - Tek event (örn. `wakeword.detected`) 5-6 modülü tetikliyor, sıralama garantisi yok

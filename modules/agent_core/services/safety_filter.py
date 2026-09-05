@@ -23,6 +23,7 @@ class ActionSafetyFilter:
         self.min_servo = safety.get("min_servo_angle", 0)
         self.max_stepper = safety.get("max_stepper_speed", 100)
         self.max_laser = safety.get("laser_max_duration_s", 2.0)
+        self.quiet_hours_enabled = bool(config.get("quiet_hours", {}).get("enabled", False))
 
     def clamp_servo(self, angle: int) -> int:
         return max(self.min_servo, min(int(angle), self.max_servo))
@@ -42,24 +43,24 @@ class ActionSafetyFilter:
         Evaluate if an action is safe to execute in the current context.
         Returns: {"safe": bool, "reason": str, "message": str}
         """
-        # 1. Check Quiet Hours (Sleep mode / Time)
-        hour = datetime.now().hour
-        is_quiet_hours = (hour >= 23 or hour < 8)
-        
-        if is_quiet_hours:
-            if action_type in ["speak", "sound", "play_sound", "express_emotion"]:
-                # Ensure the robot doesn't make loud noises during sleep hours
-                # Allow exceptions if priority/safety flags exist in payload, but block by default
-                if not payload.get("override_quiet_hours", False):
-                    logger.warning(f"SafetyFilter blocked {action_type} due to quiet hours (23:00 - 08:00).")
-                    return {
-                        "safe": False,
-                        "reason": "quiet_hours",
-                        "message": "Cannot play sounds or speak during sleep hours."
-                    }
+        # 1. Check Quiet Hours (Sleep mode / Time) - only if enabled in config
+        if self.quiet_hours_enabled:
+            hour = datetime.now().hour
+            is_quiet_hours = (hour >= 23 or hour < 8)
+            
+            if is_quiet_hours:
+                if action_type in ["speak", "sound", "play_sound", "express_emotion"]:
+                    # Allow exceptions if override flag exists in payload
+                    if not payload.get("override_quiet_hours", False):
+                        logger.warning(f"SafetyFilter blocked {action_type} due to quiet hours (23:00 - 08:00).")
+                        return {
+                            "safe": False,
+                            "reason": "quiet_hours",
+                            "message": "Cannot play sounds or speak during sleep hours."
+                        }
                     
         # 2. Check Hardware Limits Contextually (e.g., fast move with low battery)
-        if action_type in ["move_direct", "stepper", "pathfind"]:
+        if action_type in ["stepper", "pathfind"]:
             # If world_state has battery, we could check it here.
             # Example placeholder:
             # if getattr(self, "world_state", None) and self.world_state.get_battery() < 10:

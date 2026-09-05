@@ -121,7 +121,7 @@ setup_venv_and_pip() {
 
     # Audio / Speech
     pip install --no-cache-dir \
-        vosk==0.3.45 \
+        SpeechRecognition \
         pyaudio==0.2.14 \
         webrtcvad==2.0.10 \
         soundfile==0.12.1 \
@@ -152,24 +152,6 @@ setup_venv_and_pip() {
         click==8.1.7
 
     echo "✓ Python dependencies done"
-}
-
-# -------------------------------------------------------------------
-# 3. VOSK MODELS
-# -------------------------------------------------------------------
-install_vosk_models() {
-    if [[ "$SKIP_MODELS" == "--skip-models" ]]; then
-        echo "[SKIP] Vosk models (--skip-models)"
-        return
-    fi
-
-    echo "[3/6] Installing Vosk models..."
-
-    source .venv/bin/activate
-    python scripts/setup/install_vosk_tr.py ${INSECURE:+"--insecure"}
-    python scripts/setup/install_vosk_en.py ${INSECURE:+"--insecure"} 2>/dev/null || true
-
-    echo "✓ Vosk models done"
 }
 
 # -------------------------------------------------------------------
@@ -278,7 +260,6 @@ main() {
 
     install_system_packages
     setup_venv_and_pip
-    install_vosk_models
     install_piper_models
     install_camera_firmware
     setup_audio_permissions

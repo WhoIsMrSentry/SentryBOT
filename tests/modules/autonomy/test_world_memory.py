@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.autonomy.services.world_memory import WorldMemory
+from modules.cognitive_memory.services.world_memory import WorldMemory
 
 
 def test_schema_lists_core_kinds():

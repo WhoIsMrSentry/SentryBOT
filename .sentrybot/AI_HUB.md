@@ -37,6 +37,7 @@ Bu dosyayı oku → ilgili agent veya skill'i bul → uygula.
 │   ├── module-registry.md       # 30 modülün listesi (kaynak of truth)
 │   ├── api-surface.md           # Tüm HTTP endpoint'ler
 │   ├── architecture-summary.md  # Mimari özet
+│   ├── behavior-authority.md    # autonomy vs agent_core vs expression
 │   ├── conventions.md           # Kod kuralları
 │   └── roadmap-companion-vision.md
 ├── tools/

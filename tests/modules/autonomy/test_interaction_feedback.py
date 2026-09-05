@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from modules.autonomy.services.interaction_feedback import InteractionFeedbackLearner
-from modules.social_db.db import SocialDB
+from modules.cognitive_memory.db import SocialDB
 
 
 def test_praise_raises_trust(tmp_path):

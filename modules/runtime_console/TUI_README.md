@@ -1,37 +1,44 @@
 # SentryBOT TUI Control Center
 
-Hedef: robotu htop/opencode benzeri tek ekranda izlemek ve temel ayarlarÄ± terminalden yÃ¶netmek.
+Robotu tek terminal ekranında izlemek ve temel ayarları yönetmek için TUI v2 kullanılır.
 
-## BaÅŸlatma
+## Başlatma
 
-Robotu TUI iÃ§inde baÅŸlatmak:
+Robotu TUI içinde başlatmak:
 
 ```cmd
 .\.venv\Scripts\python.exe apps\run_robot_tui.py
 ```
 
-Sadece Ã§alÄ±ÅŸan robota/loglara baÄŸlanmak:
+Çalışan robota/loglara bağlanmak:
 
 ```cmd
 .\.venv\Scripts\python.exe apps\sentrybot_tui.py
 ```
 
+Birleşik giriş: kök `sentrybot.py`.
+
 ## Sekmeler
 
-- `1 Overview`: servis saÄŸlÄ±k durumu ve ana engeller
-- `2 Logs`: filtrelenebilir log kuyruÄŸu
-- `3 Config`: YAML dosyalarÄ±nÄ± gÃ¶rÃ¼ntÃ¼leme ve nokta yoluyla dÃ¼zenleme
-- `4 Search`: proje genelinde metin arama
-- `5 Help`: kÄ±sayollar
+`modules/runtime_console/services/models.py` `TABS` ile aynı sıra:
 
-## TuÅŸlar
+1. Overview
+2. Logs
+3. Signals
+4. Config
+5. Search
+6. Companion
+7. Expression
+8. Camera
+9. Help
 
-- `1..5`: sekme deÄŸiÅŸtir
-- `/`: arama filtresi gir
-- `c`: aramayÄ± temizle
+## Tuşlar
+
+- `1..9`: sekme değiştir
+- `/`: arama filtresi
+- `c`: aramayı temizle
 - `r`: yenile
-- `Up/Down`: log kaydÄ±r veya config dosyasÄ± seÃ§
-- `e`: seÃ§ili YAML dosyasÄ±nda dotted key dÃ¼zenle
-- `q`: Ã§Ä±k
+- `Up/Down`: kaydırma
+- `q`: çık
 
-Config dÃ¼zenlemede dosya Ã¶nce `.sentrybot_backups` altÄ±na yedeklenir.
+HTTP kuyruğu gateway `include.runtime_console=true` iken `/runtime_console/healthz` ve `/events` altındadır.

@@ -70,10 +70,10 @@ ROBOT_CRITICAL_MODULES = [
     "modules.vlm_bridge.api.router",
     "modules.vlm_bridge.services.processor",
     "modules.vlm_bridge.services.llm_client",
-    "modules.expression.services.output_bridge",
-    "modules.speech.xSpeechService",
-    "modules.speak.xSpeakService",
-    "modules.wakeword.xWakewordService",
+    "modules.expression.semantic.services.output_bridge",
+    "modules.voice.speech.xSpeechService",
+    "modules.voice.speak.xSpeakService",
+    "modules.voice.wakeword.xWakewordService",
 ]
 
 CONFIG_FILES = [

@@ -16,14 +16,14 @@ class BehaviorPlanner:
         llm_cfg = config.get("llm", {})
         agent_cfg = config.get("agent", {})
         self.model = llm_cfg.get("model") or config.get("planner_model") or "llama3.2"
-        self.ollama_host = agent_cfg.get("ollama_base_url", "http://127.0.0.1:11434")
+        self.ollama_host = agent_cfg.get("ollama_base_url", "http:")
         self.enabled = config.get("llm_planning_enabled", True)
         self.goal_queue: List[Dict[str, Any]] = []
         self._last_plan_time = 0.0
         self.cooldown_s = 30.0 # Don't plan too often if queue is empty
         
         try:
-            from modules.autonomy.services.world_memory_rag import WorldMemoryRAG
+            from modules.cognitive_memory.services.world_memory_rag import WorldMemoryRAG
             self.rag = WorldMemoryRAG(config)
         except Exception:
             self.rag = None
@@ -85,7 +85,9 @@ class BehaviorPlanner:
                 "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
-                ]
+                ],
+                "think": False,
+                "options": {"temperature": 0.15, "num_predict": 160, "num_ctx": 4096}
             }
             if tool_schemas:
                 kwargs["tools"] = tool_schemas

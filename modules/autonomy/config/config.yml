@@ -1,3 +1,7 @@
+runtime:
+  auto_start: true
+  start_on_gateway_boot: true
+
 defaults:
   loop_interval_ms: 500
   boredom_threshold_s: 20
@@ -101,6 +105,15 @@ endpoints:
   notifier: '@gateway/notify'
   autonomy: '@gateway/autonomy'
   agent_core: '@gateway/agent'
+owner:
+  name: "Emir"
+  aliases:
+    - "emir"
+    - "sahip"
+    - "patron"
+    - "reis"
+  presence_timeout_s: 25
+  greeting: "Hoş geldin {name}! Seni gördüğüme çok sevindim."
 behaviors:
   idle:
     enabled: true
@@ -121,8 +134,8 @@ behaviors:
     sound_reaction: true
   sleep:
     enabled: true
-    start_hour: 2
-    end_hour: 7
+    start_hour: 3
+    end_hour: 6
     wake_up_action: stretch
 llm:
   enabled: true
@@ -207,8 +220,8 @@ offline_mode:
 request_timeouts:
   default_post_s: 1.0
   default_get_s: 0.8
-  ollama_chat_s: 18.0
-  ollama_warmup_s: 2.5
+  ollama_chat_s: 45.0
+  ollama_warmup_s: 3.5
   speech_min_interval_s: 0.35
 agentic:
   enabled: true
@@ -812,22 +825,23 @@ scenes:
       name: scene.emotion_neutral.end
 owner:
   enabled: true
-  name: WhoIsMrSentry
+  name: Emir
   aliases:
   - Emir
+  - WhoIsMrSentry
   addressing:
-    affectionate: Baba
+    affectionate: Emir
     formal: Emir
-    handle: WhoIsMrSentry
-  presence_timeout_s: 45
+    handle: Emir
+  presence_timeout_s: 30
   require_presence: false
   max_requests_without_owner: 3
-  cooldown_s: 20
+  cooldown_s: 15
   speaker_window_s: 10
   polite_message: Sahip yokken de isteğini yerine getirebilirim.
-  angry_message: Baba yokken beni zorlamanı istemiyorum.
-  cooldown_message: Baba gelene kadar konuşmak istemiyorum.
-  greeting: Baba! Geldiğine çok sevindim.
+  angry_message: Emir yokken beni zorlamanı istemiyorum.
+  cooldown_message: Emir gelene kadar konuşmak istemiyorum.
+  greeting: Hoş geldin Emir! Seni gördüğüme çok sevindim.
   restricted_keywords:
   - format
   - kendini kapat
@@ -1055,7 +1069,9 @@ outcome_learning:
 
 companion_goal_executor:
   enabled: true
+  follow_runtime_profile: true
   dry_run_default: true
+  dry_run_on_pi: false
   allow_real_hardware: false
   stop_on_failure: true
   require_capability_guard: true
@@ -1071,3 +1087,15 @@ companion_goal_executor:
     states: [wait, resense, alternate_safe_goal, safe_observation]
     max_attempts: 2
     terminal_semantic: quiet_observation
+
+companion_auto_execute:
+  enabled: true
+  follow_runtime_profile: true
+  require_auto_execute_flag: true
+  min_interval_s: 8.0
+  dry_run_default: true
+  dry_run_on_pi: false
+  allow_real_hardware: false
+  allowed_risks: [none, low, semantic]
+  blocked_components: []
+  allowed_priorities: [low, normal, critical]

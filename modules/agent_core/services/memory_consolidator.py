@@ -15,7 +15,7 @@ from __future__ import annotations
 # --- SentryBOT memory/world boundary contract ---
 MEMORY_WORLD_COMPATIBILITY = True
 MEMORY_WORLD_BOUNDARY_ROLE = 'agent_core_memory_consolidator'
-MEMORY_WORLD_RUNTIME_OWNER = 'modules.autonomy.services.world_memory'
+MEMORY_WORLD_RUNTIME_OWNER = 'modules.cognitive_memory.services.world_memory'
 MEMORY_WORLD_BOUNDARY_REASON = 'MemoryConsolidator now uses LLM extraction and writes to WorldMemory for RAG recall.'
 # --- End SentryBOT memory/world boundary contract ---
 
@@ -89,10 +89,10 @@ class MemoryConsolidator:
         self._stop_event = threading.Event()
 
     def _get_learner(self):
-        if self._learner is not None:
+        if self._learner is not None and hasattr(self._learner, "extract_facts"):
             return self._learner
         try:
-            from modules.autonomy.services.preference_learner import PreferenceLearner
+            from modules.cognitive_memory.services.preference_learner import PreferenceLearner
 
             self._learner = PreferenceLearner()
         except Exception:
@@ -103,8 +103,11 @@ class MemoryConsolidator:
         """Extract facts using regex patterns (fast path)."""
         learner = self._get_learner()
         facts: List[str] = []
-        if learner is not None:
-            facts.extend(learner.extract_facts(text))
+        if learner is not None and hasattr(learner, "extract_facts"):
+            try:
+                facts.extend(learner.extract_facts(text))
+            except Exception:
+                pass
         # Fallback simple patterns
         low = text.lower()
         for pattern, kind, template in _SIMPLE_FACT_PATTERNS:

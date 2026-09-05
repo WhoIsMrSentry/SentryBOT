@@ -78,7 +78,7 @@ class PersonIdentityManager:
 
     Thread-safe. Wraps existing FaceManager/PeopleMemory without breaking them.
 
-    When a :class:`modules.social_db.SocialDB` instance is supplied (or registered
+    When a :class:`modules.cognitive_memory.SocialDB` instance is supplied (or registered
     as the process default), writes are persisted to the shared SQLite store
     instead of the compatibility JSON file. The in-memory cache mirrors the database
     rows for fast reads.
@@ -96,7 +96,7 @@ class PersonIdentityManager:
         self._people_memory = people_memory
         if social_db is None:
             try:
-                from modules.social_db import get_default as _social_default  # type: ignore
+                from modules.cognitive_memory import get_default as _social_default  # type: ignore
 
                 social_db = _social_default()
             except Exception:
@@ -357,4 +357,8 @@ class PersonIdentityManager:
         with self._lock:
             self._save_unlocked()
 
-__all__ = ["PersonIdentityManager", "PersonMemoryRecord", "RECOGNITION_LABELS"]
+
+# Alias for backward-compatible imports
+PersonIdentity = PersonIdentityManager
+
+__all__ = ["PersonIdentityManager", "PersonIdentity", "PersonMemoryRecord", "RECOGNITION_LABELS"]

@@ -14,7 +14,7 @@ class ReflectionPlanner:
         llm_cfg = config.get("llm", {})
         agent_cfg = config.get("agent", {})
         self.model = llm_cfg.get("model") or config.get("planner_model") or "llama3.2"
-        self.ollama_host = agent_cfg.get("ollama_base_url", "http://127.0.0.1:11434")
+        self.ollama_host = agent_cfg.get("ollama_base_url", "http:")
         self.enabled = config.get("llm_planning_enabled", True)
         
     def reflect(self, plan: Dict[str, Any], execution_result: Dict[str, Any], needs_snapshot: Dict[str, Any], vision_context: str) -> Optional[Dict[str, Any]]:
@@ -61,7 +61,9 @@ class ReflectionPlanner:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                format="json"
+                format="json",
+                think=False,
+                options={"temperature": 0.1, "num_predict": 180, "num_ctx": 4096}
             )
             
             content = response.get("message", {}).get("content", "{}")

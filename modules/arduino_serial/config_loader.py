@@ -52,7 +52,7 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
         cfg.update({k: v for k, v in overrides.items() if v is not None})
 
     try:
-        from modules.config_center.agent_yaml_loader import load_agent_config
+        from modules.common.config_loader import load_agent_config
 
         root = load_agent_config()
         serial_cfg = root.get("arduino_serial")

@@ -1,6 +1,6 @@
 """Central action arbitration for SentryBOT.
 
-Every physical or behavioural action (head move, speak, lights, VLM call, …)
+Every physical or behavioural action (head move, speak, lights, VLM call, â€¦)
 is submitted here as an ``ActionRequest``.  The arbiter enforces:
 
 * strict priority ordering
@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger("agent.action_arbiter")
 
 
-# ── Priority constants ────────────────────────────────────────────────
+# â”€â”€ Priority constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class ActionPriority(IntEnum):
     IDLE = 20
     AUTONOMY_IDLE = 30
@@ -47,14 +47,14 @@ class ActionPriority(IntEnum):
     MANUAL = 100
 
 
-# ── Source labels ─────────────────────────────────────────────────────
+# â”€â”€ Source labels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 VALID_SOURCES = frozenset({
     "manual", "safety", "agent_core", "vlm_bridge",
     "autonomy", "speech", "wakeword", "scheduler",
     "owner_follow", "active_speaker",
 })
 
-# ── Action types ──────────────────────────────────────────────────────
+# â”€â”€ Action types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 VALID_ACTION_TYPES = frozenset({
     "head_move", "speak", "listen", "vision_capture",
     "vision_vlm_call", "vision_query", "lights", "oled_face", "animation",
@@ -62,7 +62,7 @@ VALID_ACTION_TYPES = frozenset({
     "face_register", "face_focus", "idle_behavior", "tool_call", "notification",
 })
 
-# Exclusive resource groups – at most one active action per group.
+# Exclusive resource groups â€“ at most one active action per group.
 _EXCLUSIVE_GROUPS: Dict[str, str] = {
     "speak": "tts",
     "vision_vlm_call": "vlm",
@@ -127,17 +127,53 @@ class ActionArbiter:
         # cancelled action IDs
         self._cancelled: set = set()
 
-    # ── Registration ──────────────────────────────────────────────────
+    # â”€â”€ Registration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def register_handler(
         self, action_type: str, handler: Callable[[ActionRequest], Any]
     ) -> None:
         self._dispatch_handlers[action_type] = handler
 
-    # ── Submit ────────────────────────────────────────────────────────
+    # â”€â”€ Submit â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def submit(self, request: ActionRequest) -> Dict[str, Any]:
-        """Submit an action request.  Returns status dict."""
+        """Submit an action request. Returns status dict.
+
+        Arbitration, cooldown, dedup, safety checks, and exclusive resource
+        reservation are done under the lock. The actual dispatch handler runs
+        outside the lock so slow HTTP/tool calls cannot block unrelated action
+        submissions.
+        """
         with self._lock:
-            return self._evaluate(request)
+            decision = self._evaluate(request)
+
+        if not decision.get("_dispatch"):
+            return decision
+
+        handler = decision.pop("_handler", None)
+        decision.pop("_dispatch", None)
+
+        dispatch_result = None
+        if handler:
+            try:
+                dispatch_result = handler(request)
+                decision["result"] = dispatch_result
+            except Exception as exc:
+                logger.warning("Action handler for '%s' failed: %s", request.type, exc)
+                # Release the exclusive lock this request acquired so a failed
+                # handler cannot hold the resource until TTL expiry (R5).
+                fail_group = _EXCLUSIVE_GROUPS.get(request.type)
+                if fail_group:
+                    with self._lock:
+                        held = self._exclusive_locks.get(fail_group)
+                        if held and held[0] == request.source:
+                            del self._exclusive_locks[fail_group]
+                return {"ok": False, "reason": "handler_error", "error": str(exc)}
+
+        logger.debug(
+            "Action dispatched: type=%s source=%s pri=%d id=%s",
+            request.type, request.source, request.priority, request.action_id,
+        )
+        decision["result"] = dispatch_result
+        return decision
 
     def cancel(self, action_id: str) -> bool:
         with self._lock:
@@ -155,7 +191,7 @@ class ActionArbiter:
                     count += 1
         return count
 
-    # ── Query ─────────────────────────────────────────────────────────
+    # â”€â”€ Query â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def get_exclusive_status(self) -> Dict[str, Any]:
         with self._lock:
             now = time.time()
@@ -168,7 +204,7 @@ class ActionArbiter:
                 }
             return result
 
-    # ── Internal ──────────────────────────────────────────────────────
+    # â”€â”€ Internal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     def _evaluate(self, req: ActionRequest) -> Dict[str, Any]:
         now = time.time()
 
@@ -210,9 +246,9 @@ class ActionArbiter:
             if locked:
                 locked_source, locked_exp = locked
                 if locked_exp > now:
-                    # Compare priority – higher wins
+                    # Compare priority â€“ higher wins
                     locked_priority = self._source_base_priority(locked_source)
-                    if req.priority < locked_priority:
+                    if locked_source != req.source and req.priority <= locked_priority:
                         return {
                             "ok": False,
                             "reason": "resource_locked",
@@ -238,19 +274,13 @@ class ActionArbiter:
             self._gc(now)
 
         handler = self._dispatch_handlers.get(req.type)
-        dispatch_result = None
-        if handler:
-            try:
-                dispatch_result = handler(req)
-            except Exception as exc:
-                logger.warning("Action handler for '%s' failed: %s", req.type, exc)
-                return {"ok": False, "reason": "handler_error", "error": str(exc)}
-
-        logger.debug(
-            "Action dispatched: type=%s source=%s pri=%d id=%s",
-            req.type, req.source, req.priority, req.action_id,
-        )
-        return {"ok": True, "action_id": req.action_id, "result": dispatch_result}
+        return {
+            "ok": True,
+            "action_id": req.action_id,
+            "result": None,
+            "_dispatch": True,
+            "_handler": handler,
+        }
 
     def release_exclusive(self, group: str) -> None:
         """Manually release an exclusive resource lock."""
@@ -289,3 +319,4 @@ class ActionArbiter:
 
 
 __all__ = ["ActionArbiter", "ActionRequest", "ActionPriority"]
+

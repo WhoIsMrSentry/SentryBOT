@@ -1,0 +1,53 @@
+server:
+  host: 0.0.0.0
+  port: 8083
+audio_out:
+  device: null
+  samplerate: 22050
+  channels: 1
+  dtype: float32
+tts:
+  engine: piper
+  allow_dummy_fallback: false
+  language: tr
+  voice: source
+  rate: 170
+  volume: 1.0
+  samplerate: 22050
+  stream_max_chunk_chars: 180
+  piper:
+    voice: tr
+    auto_language: true
+    prefer_text_language: true
+    lock_session_language: false
+    fallback_engine: ''
+    preload_voices:
+    - tr
+    - glados
+  language_voices:
+    tr: tr
+    en: glados
+  model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
+  config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
+  speaker: null
+  length_scale: null
+  noise_scale: null
+  noise_w: null
+  voices:
+    tr:
+      model_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx
+      config_path: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json
+    glados:
+      model_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx
+      config_path: data/piper_models/en-glados-medium/glados_piper_medium.onnx.json
+  xtts:
+    endpoint: http://192.168.1.100:5000/tts/synthesize
+    timeout: 120
+    language: tr
+    speaker_wav: null
+liveliness:
+  enabled: true
+  expression_base_url: '@gateway/expression'
+  event_timeout_s: 0.35
+naturalness:
+  enabled: false

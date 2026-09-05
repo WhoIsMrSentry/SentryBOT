@@ -29,11 +29,12 @@ class TrackingSelection(BaseModel):
 
 def get_router(
     capture: CameraCapture,
-    fps: int,
+    fps: int = 15,
     *,
     enabled: bool = True,
     imx500_runner: Optional[Any] = None,
     onsensor_bus: Optional[Any] = None,
+    live_profile_probe_fn: Optional[Any] = None,
 ) -> APIRouter:
     router = APIRouter()
 

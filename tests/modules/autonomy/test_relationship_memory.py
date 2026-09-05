@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from modules.autonomy.services.relationship_memory import RelationshipMemory
-from modules.social_db.db import SocialDB
+from modules.cognitive_memory.services.relationship_memory import RelationshipMemory
+from modules.cognitive_memory.db import SocialDB
 
 
 def _rm_with_db(tmp_path: Path):

@@ -72,7 +72,7 @@ class InteractionFeedbackLearner:
         if self._social_db is not None:
             return self._social_db
         try:
-            from modules.social_db import get_default as _social_default
+            from modules.cognitive_memory import get_default as _social_default
 
             self._social_db = _social_default()
         except Exception:

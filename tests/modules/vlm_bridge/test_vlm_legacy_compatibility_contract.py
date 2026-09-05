@@ -9,7 +9,7 @@ from modules.vlm_bridge.services.llm_client import (
     _derive_chat_endpoint_from_base_url,
     _is_legacy_generate_endpoint,
 )
-from modules.vlm_bridge.services.people_memory import (
+from modules.cognitive_memory.services.people_memory import (
     PeopleMemory,
     VLM_PEOPLE_MEMORY_COMPATIBILITY_CONTRACT,
     VLM_PEOPLE_MEMORY_ROLE,

@@ -25,7 +25,7 @@ def _as_mapping(value: Any) -> dict[str, Any]:
 
 
 def _load_startup_config() -> dict[str, Any]:
-    from modules.config_center.agent_yaml_loader import load_agent_config
+    from modules.common.config_loader import load_agent_config
 
     return _as_mapping(load_agent_config())
 
@@ -42,7 +42,7 @@ def _command(command: list[str], timeout_s: float) -> subprocess.CompletedProces
 
 def _configure_logging() -> None:
     try:
-        from modules.logwrapper import init_logging
+        from modules.runtime_console.logwrapper import init_logging
 
         init_logging()
     except Exception as exc:
@@ -192,16 +192,21 @@ def main(argv: list[str] | None = None) -> int:
         sysinfo_main(["--once"])
     except Exception as exc:
         LOGGER.warning("system information display failed: %s", exc)
-        print(f"Error displaying system info: {exc}")
-    print("\n\x1b[2mLoading Control Center...\x1b[0m")
-    time.sleep(2.5)
+    try:
+        print("\n\x1b[2mLoading Control Center...\x1b[0m")
+        time.sleep(1.0)
 
-    tui_args = ["--alt"]
-    if not args.no_run:
-        tui_args.append("--run")
-    tui_args.extend(unknown)
-    return tui_main(tui_args)
+        tui_args = ["--alt"]
+        if not args.no_run:
+            tui_args.append("--run")
+        tui_args.extend(unknown)
+        return tui_main(tui_args)
+    except (KeyboardInterrupt, SystemExit):
+        return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (KeyboardInterrupt, SystemExit):
+        sys.exit(0)

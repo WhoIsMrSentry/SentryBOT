@@ -42,7 +42,7 @@ def test_no_facts_is_noop():
 
 
 def test_consolidate_mirrors_fact_to_social_db(tmp_path):
-    from modules.social_db.db import SocialDB
+    from modules.cognitive_memory.db import SocialDB
 
     db = SocialDB(path=tmp_path / "social.sqlite3", wal=False)
     mem = _FakeMemory()

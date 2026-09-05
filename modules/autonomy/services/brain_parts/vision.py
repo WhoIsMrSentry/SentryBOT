@@ -54,7 +54,9 @@ class VisionMixin:
         if not results:
             return
         ignored = {label.lower() for label in self._vision_cfg.get("ignore_labels", [])}
-        for res in results:
+        # Sort vision results by priority: owner > family > friend > familiar > known > unknown
+        sorted_results = sorted(results, key=self._person_priority_rank, reverse=True)
+        for res in sorted_results:
             label = (res.get("label") or "").lower()
             if label in ignored:
                 continue
@@ -63,6 +65,29 @@ class VisionMixin:
         self._current_people = {
             name: ts for name, ts in self._current_people.items() if now - ts <= decay_window
         }
+
+    def _person_priority_rank(self, result: Dict[str, Any]) -> int:
+        name = str(result.get("name") or result.get("label") or "")
+        if self._is_owner_name(name):
+            return 100
+        rec_level = result.get("recognition_level")
+        if isinstance(rec_level, (int, float)):
+            return int(rec_level) * 15
+        rel = str(result.get("relationship") or "").lower()
+        rel_scores = {
+            "owner": 90,
+            "family": 75,
+            "friend": 60,
+            "familiar": 45,
+            "known": 30,
+            "stranger": 10,
+            "unknown": 5,
+        }
+        if rel in rel_scores:
+            return rel_scores[rel]
+        if name and name.lower() not in {"unknown", "person"}:
+            return 25
+        return 0
 
     _sense_visual_tracking = _sense_vision
 

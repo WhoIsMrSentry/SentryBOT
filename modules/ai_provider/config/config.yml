@@ -1,0 +1,29 @@
+server:
+  host: 0.0.0.0
+  port: 8099
+llm:
+  provider: ollama   # ollama | google_ai_studio
+  single_model_mode: true      # Keep one base model; do not create persona-derived models
+  use_persona_models: false    # Disable legacy persona model injection
+ollama:
+  base_url: http://whoismrsentry.local:11434
+  model: qwen3.5:9b
+  request_timeout: 45
+  num_predict: 60          # Fast mode default — kısa cevaplar
+google_ai_studio:
+  api_key: ''
+  model: qwen3.5:9b
+  base_url: http://whoismrsentry.local:11434
+  request_timeout: 20
+persona:
+  default: sentry
+  dir: modules/ollama/config/personalities
+actions:
+  endpoint: http://localhost:8080/autonomy/apply_actions
+  default_apply: true
+  timeout: 1.5
+translation:
+  enabled: false
+  default_source_lang: tr
+  model: qwen3.5:9b
+  cache_size: 128

@@ -1,5 +1,5 @@
-from modules.autonomy.services.world_memory import WorldMemory
-from modules.autonomy.services.world_memory_autowriter import WorldMemoryAutoWriter
+from modules.cognitive_memory.services.world_memory import WorldMemory
+from modules.cognitive_memory.services.world_memory_autowriter import WorldMemoryAutoWriter
 
 
 def test_vision_new_object_builds_object_memory_payload():

@@ -1,0 +1,168 @@
+server:
+  host: 0.0.0.0
+  port: 8092
+
+hardware:
+  # backend: auto | pi | arduino | sim
+  backend: pi
+  device: "/dev/spidev0.0"
+  num_leds: 23
+  segments:
+    - { name: jewel, start: 0, count: 7 }
+    - { name: stick_left, start: 7, count: 8 }
+    - { name: stick_right, start: 15, count: 8 }
+  speed_khz: 800
+  ws2812_spi_khz: 2400
+  order: "GRB"
+
+companion:
+  enabled: true
+  tick_ms: 25
+  layout:
+    jewel_start: 0
+    jewel_count: 7
+    jewel_center_index: 6
+    sticks:
+      - { name: left_brow, start: 7, count: 8, channel: 0, reverse: false }
+      - { name: right_brow, start: 15, count: 8, channel: 1, reverse: true }
+  face:
+    default_duration_ms: 1400
+    pose_profiles:
+      neutral: { intensity: 0.52, slope: 0.00, arch: 0.22, phase: 0.00 }
+      curious: { intensity: 0.78, slope: 0.28, arch: 0.46, phase: 0.12 }
+      pleased: { intensity: 0.76, slope: -0.14, arch: 0.58, phase: 0.20 }
+      concerned: { intensity: 0.70, slope: -0.30, arch: 0.18, phase: 0.32 }
+      frustrated: { intensity: 0.82, slope: -0.42, arch: 0.12, phase: 0.48 }
+      sleepy: { intensity: 0.30, slope: 0.00, arch: 0.10, phase: 0.66 }
+
+    semantics:
+      ambient_idle:
+        description: "Sakin, uyanik ve cevreyi dinliyor"
+        animation: BREATHE
+        duration_ms: 1400
+        frame: { eye: { color: "#30E3CA", brightness: 0.42, pulse_hz: 0.35 }, left_brow: { pose: neutral }, right_brow: { pose: neutral } }
+      quiet_observation:
+        description: "Sessizce cevreyi gozlemliyor"
+        animation: EYE_EYEBROW
+        duration_ms: 1200
+        frame: { eye: { color: "#5FA8FF", brightness: 0.55 }, left_brow: { pose: neutral }, right_brow: { pose: neutral } }
+      curious_scan:
+        description: "Yeni bir nesne veya sesi merakla inceliyor"
+        animation: WAVE
+        duration_ms: 1050
+        frame: { eye: { color: "#7DE3FF", brightness: 0.82, pulse_hz: 0.65 }, left_brow: { pose: curious }, right_brow: { pose: curious } }
+      social_greeting:
+        description: "Tanidik bir kisiyle olumlu sosyal temas kuruyor"
+        animation: PULSE
+        duration_ms: 900
+        frame: { eye: { color: "#FF9FCB", brightness: 0.88, pulse_hz: 1.10 }, left_brow: { pose: pleased }, right_brow: { pose: pleased } }
+      focused_attention:
+        description: "Konusani veya takip ettigi hedefi dikkatle dinliyor"
+        animation: STACK
+        duration_ms: 1100
+        frame: { eye: { color: "#FFD166", brightness: 0.72, pulse_hz: 0.20 }, left_brow: { pose: concerned }, right_brow: { pose: concerned } }
+      frustrated_cooldown:
+        description: "Basarisiz denemeden sonra sakinlesmek icin kisa mola veriyor"
+        animation: GRADIENT
+        duration_ms: 1300
+        frame: { eye: { color: "#FF8F70", brightness: 0.50, pulse_hz: 0.15 }, left_brow: { pose: frustrated }, right_brow: { pose: frustrated } }
+      sleep_transition:
+        description: "Enerji tasarrufu icin uyku veya dinlenme moduna geciyor"
+        animation: SNOW
+        duration_ms: 1800
+        frame: { eye: { color: "#5A6B7A", brightness: 0.20, pulse_hz: 0.08 }, left_brow: { pose: sleepy }, right_brow: { pose: sleepy } }
+
+  colors:
+    thinking: "#0066CC"
+    eye_default: "#30E3CA"
+    wake_spin: "#FFD700"
+  thinking:
+    step_ms: 120
+  eye:
+    breathe_ms: 800
+  wake_spin:
+    duration_ms: 1200
+    wait_ms: 45
+    next_mode: eye
+
+# Pi5-specific driver hint
+pi5neo:
+  enabled: true
+  spi_device: "/dev/spidev0.0"
+  spi_khz: 2400
+  speed_khz: 800
+
+defaults:
+  rainbow:
+    wait: 0.02
+    cycles: 3
+  theater_chase:
+    r: 255
+    g: 0
+    b: 0
+    wait: 0.05
+    cycles: 10
+
+presets:
+  owner_welcome:
+    jewel: { effect: "PULSE", color: "#00AAFF" }
+    stick: { color: "#104070" }
+  calm_idle:
+    jewel: { color: "#2A6A8A" }
+    stick: { color: "#102030" }
+  curious_scan:
+    jewel: { effect: "TWINKLE", color: "#30E3CA" }
+    stick: { color: "#103838" }
+  # Emotion presets — used by Autonomy _sync_emotion and scenes
+  emotion_joy:
+    jewel: { effect: "RAINBOW_CYCLE", color: "#FFD700" }
+    stick: { effect: "COMET", color: "#FFAA00" }
+  emotion_curiosity:
+    jewel: { effect: "TWINKLE", color: "#30E3CA" }
+    stick: { color: "#103838" }
+  emotion_fear:
+    jewel: { effect: "PULSE", color: "#FF3300" }
+    stick: { color: "#200000" }
+  emotion_tired:
+    jewel: { effect: "BREATHE", color: "#1F4B66" }
+    stick: { color: "#0A0F14" }
+  emotion_sad:
+    jewel: { effect: "PULSE", color: "#6666FF" }
+    stick: { color: "#102030" }
+  emotion_sadness:
+    jewel: { effect: "PULSE", color: "#2850A0" }
+    stick: { color: "#102030" }
+  emotion_angry:
+    jewel: { effect: "PULSE", color: "#DC2800" }
+    stick: { effect: "METEOR", color: "#400000" }
+  emotion_furious:
+    jewel: { effect: "METEOR", color: "#FF0000" }
+    stick: { effect: "PULSE", color: "#600000" }
+  emotion_love:
+    jewel: { effect: "PULSE", color: "#FF2864" }
+    stick: { color: "#401020" }
+  emotion_surprise:
+    jewel: { effect: "TWINKLE", color: "#FFC800" }
+    stick: { color: "#302000" }
+  emotion_bored:
+    jewel: { effect: "BREATHE", color: "#3C3C3C" }
+    stick: { color: "#101010" }
+  emotion_excitement:
+    jewel: { effect: "RAINBOW_CYCLE", color: "#FF7800" }
+    stick: { effect: "COMET", color: "#FF4400" }
+  emotion_worried:
+    jewel: { effect: "BREATHE", color: "#B46400" }
+    stick: { color: "#201408" }
+  emotion_confusion:
+    jewel: { effect: "TWINKLE", color: "#A000C8" }
+    stick: { color: "#180820" }
+  emotion_neutral:
+    jewel: { effect: "BREATHE", color: "#283C50" }
+    stick: { color: "#101820" }
+  # Temporary owner visual preset
+  temp_owner:
+    jewel: { effect: "TWINKLE", color: "#FFE07A" }
+    stick: { color: "#90EE90" }
+
+presets_meta:
+  version: 1

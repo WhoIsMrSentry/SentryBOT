@@ -23,7 +23,7 @@ def _order_from_init(path: Path) -> list[str]:
 
 def _local_catalog() -> dict[str, set[str]]:
     sys.path.insert(0, str(ROOT))
-    from modules.oled_faces.services.catalog_registry import (  # noqa: WPS433
+    from modules.visual_output.oled_faces.services.catalog_registry import (  # noqa: WPS433
         MOTOR_ACTIVITIES,
         MOTOR_GESTURES,
         MOTOR_MOODS,

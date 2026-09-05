@@ -1,87 +1,131 @@
-# Arduino Serial Module (NDJSON Contract + ESP Transport)
+# Arduino Serial
 
-Arduino komut kontratını (`contract.py`) tek kaynak olarak tutar ve üretimde komutları ESP bridge üzerinden Mega'ya iletir.
+Arduino/ESP donanımına giden komutların tek kontrat kaynağı ve taşıma katmanıdır. Tüm Pi tarafı komutları `contract.py` içindeki `build_*` fonksiyonları üzerinden üretilmelidir; elle `{"cmd": ...}` payload yazımı **yasaktır**.
 
-## Özellikler
-- ESP HTTP transport (üretim): Pi -> ESP -> Mega
-- Opsiyonel legacy serial fallback (`transport: serial`)
-- Otomatik heartbeat ve request retry
-- Basit FastAPI router (opsiyonel) ve sürücü sınıfı
-- DryCode: modüler yapı, ayrı config.yml
-- Firmware komut kapsamı: hello/hb, set_servo, set_pose(duration), stepper(pos/vel), stepper_cfg,
-  home/zero_now/zero_set, pid_enable/pid_set/pid_status, stand/sit, imu_read/imu_cal, eeprom_save/load, tune, policy, track,
-  telemetry_start/stop, get_state, estop
-    - Sit modunda stepper dengeleme + "drive" (kullanıcı hızı) karışımı desteklenir.
+## Sorumluluklar
 
-## Kurulum
-- Python bağımlılıkları: `requests`, `pyserial` (legacy fallback), FastAPI kullanacaksanız `fastapi` ve `uvicorn`.
+- NDJSON komut kontratı (`contract.py`) - **Tek kaynak**
+- **Transport Abstraction** (YENİ): `transports/` - `SerialTransport`, `ESPHTTPTransport`
+- ESP HTTP transport (varsayılan üretim yolu)
+- Opsiyonel legacy serial fallback
+- ACK bekleyen `/arduino/request` akışı
+- Heartbeat, retry ve eşzamanlılık koruması
+- FastAPI router ve servis sınıfı
+- **Command Validators** (YENİ): `command_validators.py`, `contract_validators.py` - payload doğrulama
 
-## Kullanım (kütüphane)
-```python
-from modules.arduino_serial.services.driver import ArduinoDriver
+## Mimari (Güncel: 2026-08-20)
 
-ardu = ArduinoDriver()
-ardu.start()
-print(ardu.hello())
-ardu.set_head(90, 90)
-# örnek: oturma + denge + ileri sürüş
-ardu.svc.sit()
-ardu.svc.drive(200)        # ileri gitme isteği (steps/s)
-ardu.stop()
+- Giriş noktası: `xArduinoSerialService.py`
+- **Kontrat**: `contract.py` → `build_*_cmd` fonksiyonları (builder pattern)
+- **Transport Layer**: `transports/` (ortak bir base dosya/sınıf yoktur; transport arayüzü doğrudan her transport dosyası içinde tanımlıdır):
+  - `serial_transport.py` → `SerialTransport` (pyserial, NDJSON line reader)
+  - `esp_transport.py` → `ESPHTTPTransport` (HTTP + `/send`, `/request` endpoints)
+- **Services**:
+  - `services/serial_loops.py` → `SerialLoops` (read loop, heartbeat, event dispatch)
+  - `services/port_detector.py` → `PortDetector` (auto port detection)
+  - `services/rfid_handler.py` → `RFIDHandler` (UID allowlist, authorize window)
+  - `services/cute_catalog.py` → `CuteCatalog` (predefined animation sequences)
+- **Validators**:
+  - `command_validators.py` - Outgoing command schema validation
+  - `contract_validators.py` - Contract builder output validation
+- **Router**: `api/router.py`
+- **Konfigürasyon**: `config_loader.py` → `config/config.yml` + `config/agent.yaml`
+
+## Kontrat Ailesi (Builder'lar - `contract.py`)
+
+| Builder | Açıklama | Transport |
+|---------|----------|-----------|
+| `build_set_servo_cmd` | Tek servo pozisyonu | All |
+| `build_set_pose_cmd` | Çoklu servo pose + duration | All |
+| `build_stepper_cmd` | Stepper pos/vel/cfg | All |
+| `build_stepper_cfg_cmd` | Stepper config | All |
+| `build_track_cmd` | Head pan/tilt track (+drive) | All |
+| `build_drive_cmd` | Differential drive | All |
+| `build_liveliness_cmd` | Heartbeat/led pattern | All |
+| `build_laser_cmd` | Laser on/off (single/both) | All |
+| `build_buzzer_cmd` | Buzzer tone/pattern | All |
+| `build_lcd_cmd` | LCD 16x1 write (8+8 chunk) | All |
+| `build_tune_cmd` | PID/servo tune | All |
+| `build_policy_cmd` | Safety policy (estop, cliff, etc) | All |
+| `build_cute_cmd` | Predefined animation | All |
+| `build_rfid_cmd` | RFID authorize/scan | All |
+
+Bu builder'lar komutu üretir; gönderim `request`/`send` katmanında `transport.send(builder.build())` ile yapılır.
+
+## API (Gateway altında `/arduino/*`)
+
+- `GET /arduino/healthz`
+- `POST /arduino/send` — Fire-and-forget (telemetry, non-critical)
+- `POST /arduino/request` — **ACK bekleyen kritik komutlar** (pose, track, estop, stepper)
+- `POST /arduino/telemetry/start|stop` — Telemetry stream kontrol
+- `GET /arduino/rfid/last`, `GET /arduino/rfid/authorize`
+- `POST /arduino/cute/{name}` — Cute catalog animasyonu
+- `POST /arduino/cute/emotion/{emotion}` — Emotion → cute sequence
+- `POST /arduino/sound/out/{mode}` — Audio output routing
+- `POST /arduino/buzzer` — Buzzer tone
+- `POST /arduino/sound/play/{name}` — Sound file playback
+- `POST /arduino/laser/one/{which}`, `POST /arduino/laser/both`, `POST /arduino/laser/off` — Laser kontrolü
+- `GET /arduino/cute/catalog` — Cute animasyon kataloğu
+- `GET /arduino/metrics` — Servis metrikleri (rx/tx/ack sayaçları)
+
+**Kritik hareket komutlarında** (`set_pose`, `track`, `stepper`, `estop`) **`/arduino/request` tercih edilmelidir** (timeout 0.8–1.5s, retry 2x).
+
+## Transport Seçimi
+
+`config/config.yml` → `transport`:
+```yaml
+transport: esp_http  # veya serial
+esp_base_url: "http://192.168.4.1"  # ESP AP mode default
+esp_request_path: "/request"
+esp_send_path: "/send"
+heartbeat_ms: 250
 ```
 
-## Builder Mantigi (Basit Anlatim)
-- `contract.py` icindeki `build_*` fonksiyonlari, Arduino komutunu tek tip formatta uretir.
-- Amaç: Her modulde elle `{"cmd": ...}` yazip farkli format gonderme riskini azaltmak.
-- Ornek:
-    - Eski: Kod icinde dogrudan `{"cmd":"stepper","id":0,...}` yaziliyordu.
-    - Yeni: `build_stepper_cmd(...)` kullaniliyor ve her yerde ayni JSON cikiyor.
-- Sonuc: Hata ayiklama kolaylasir, alan isimleri (`index/deg`, `head_pan`, vb.) karismaz.
-- Not: Builder, komutu sadece uretir; gonderme islemini yine servis (`send/request`) yapar.
+Serial fallback:
+```yaml
+transport: serial
+port: "/dev/ttyACM0"  # veya ARDUINO_PORT env
+baudrate: 115200
+```
 
-## API (opsiyonel)
-Router oluşturmak için:
+Env override: `ARDUINO_PORT`, `ARDUINO_BAUD`, `ARDUINO_TRANSPORT`
+
+## İlişkiler (Güncel Modül Yolları)
+
+**Consumer'lar (bu katman üzerinden donanıma erişir):**
+- `autonomy/services/brain_parts/animations.py` → `arduino.track()`, `set_pose()`
+- `expression/animate` → `arduino.set_pose()` (animasyon sekansları)
+- `vlm_bridge/services/processor.py` → `arduino.track()` (face follow)
+- `voice/speech/services/pan_tilt.py` → `arduino.track()` (DoA pan/tilt)
+- `agent_core/services/tools/hardware_tools.py` → Tool'lar aracılığıyla
+- `visual_output/neopixel` → Arduino NeoPixel bridge (event handler)
+
+**Gateway Bootstrap Kablolaması:**
+- `_wire_arduino_neopixel()` → Arduino event `neopixel_request` → NeoRunner
+- `_wire_arduino_autonomy()` → Arduino hardware events (cliff, bump, estop) → Autonomy brain
+- `_wire_arduino_autonomy()` → Arduino telemetry → Autonomy battery/imu
+
+## Kullanım
+
 ```python
-from modules.arduino_serial.api.router import get_router
+from modules.arduino_serial.contract import build_set_servo_cmd, SERVO_INDEX_PAN
 from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService
 
-svc = xArduinoSerialService()
-svc.start()
-router = get_router(svc)
+# Servis üzerinden (gateway mount edilmişse)
+arduino = xArduinoSerialService()
+payload = build_set_servo_cmd(SERVO_INDEX_PAN, 90)
+await arduino.request(payload)  # ACK bekler
+
+# Veya doğrudan transport (testlerde)
+from modules.arduino_serial.transports.serial_transport import SerialTransport
+transport = SerialTransport(port="/dev/ttyACM0")
+transport.connect()
+transport.send(payload)
 ```
 
-### Gateway Üzerinden Erişim
-Gateway çalışırken Arduino uçları tek portta sunulur:
-- GET  `/arduino/healthz`
-- POST `/arduino/send`
-- POST `/arduino/request`
-- POST `/arduino/telemetry/start`
-- POST `/arduino/telemetry/stop`
-- GET  `/arduino/rfid/last` → Son görülen kart UID'sini ve kaç saniye önce okunduğunu döner.
-- GET  `/arduino/rfid/authorize` → `config.yml` içindeki `rfid.allowed_uids` listesine göre kartı doğrular; `authorized: true` ise Autonomy içindeki RFID koruması açılır.
-- POST `/arduino/cute/{name}` → CuteBuzzer sesi çal (`connection`, `disconnection`, `button_pushed`, `mode1`, `mode2`, `mode3`, `surprise`, `ohooh`, `ohooh2`, `cuddly`, `sleeping`, `happy`, `super_happy`, `happy_short`, `sad`, `confused`, `fart1`, `fart2`, `fart3`, `jump`).
-- GET  `/arduino/cute/catalog` → Ses→NeoPixel animasyon/renk eşleşme tablosunu ve emotion map'i döner (Swagger'da görünür).
-- POST `/arduino/cute/emotion/{emotion}` → Emotion adına göre uygun Cute sesi çalar (`happy`, `super_happy`, `sad`, `surprise`, `confused`, `sleeping`, `connected`, `disconnected`).
-- POST `/arduino/sound/out/{mode}` → Varsayılan buzzer çıkışını değiştir (`loud|quiet`).
-- POST `/arduino/buzzer?freq=2200&ms=60&out=loud` → Tek beep komutu.
-- POST `/arduino/sound/play/{name}?out=quiet` → Firmware şarkı isimlerini çal.
+## Bilinen Sorunlar (Güncel 2026-08-21, Tam Tarama)
 
-Not:
-- Kritik hareket komutlarında `POST /arduino/request` tercih edilmelidir (ACK/error döner).
-- `POST /arduino/send` fire-and-forget içindir.
-- Gateway, desteklenen Arduino komut aileleri için payload doğrulaması yapar; şekli/alanı hatalı isteklerde `400` döner.
-
-## Konfig
-`modules/arduino_serial/config/config.yml` içinde varsayılanlar:
-- transport: `esp_http`
-- esp_base_url: `http://sentrybot.local`
-- esp_request_path: `/request`
-- esp_send_path: `/send`
-- heartbeat_ms: 100
-- rfid.allowed_uids: Yetki verilecek kart UID'leri (HEX, büyük/küçük fark etmez)
-- rfid.authorize_window_s: Son kart okumasının geçerli sayılacağı zaman penceresi (s)
-
-Env override: `ARDUINO_PORT`, `ARDUINO_BAUD`.
-
-## Test
-Basit smoke test `tests/test_smoke.py` fake transport ile çalışır.
+1. **xArduinoSerialService 298 satır (745 değil)** - Gerçek `xArduinoSerialService.py:46 298 satır`, KB→satır düzeltildi. Hala `RfidHandlerMixin+SerialLoopsMixin+EspTransportMixin+FirmwareHelpersMixin` 4 mixin, `TransportManager` ayrıştırılabilir ama öncelik düşük.
+2. **HeadControlArbiter Bypass ✅ KISMEN DÜZELTİLDİ** - `head_arbiter_integration.py:70 extract_pan_tilt` + `xArduinoSerialService.py:46 head_arbiter_wrapper` + `bootstrap_hardware:_include_arduino:18` inject eklendi (2026-08-20). `trace_path HeadControlArbiter callers_total=4` artık `arduino_serial` de dahil. Kalan: `build_track_cmd:141` `head_tilt/head_pan` vs `tilt/pan` duplicate key temizliği.
+3. **Duplicate Validators** - `command_validators.py` + `contract_validators.py` + `contract.py` builder inline -> `contract_validators.py:266 validate_arduino_payload` tek yer zaten, `command_validators` re-export, birleştirme gerekmez.
+4. **ESP Transport Error Handling** - `esp_transport` timeout `esp_timeout 1.2s` `esp_connect_timeout 0.4s` `pause_after 5` `pause_sec 120` dağınık, `common/http_client.py` retry ile birleştirilebilir.

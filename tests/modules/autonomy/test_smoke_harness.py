@@ -42,9 +42,16 @@ class FakeServiceClient:
     def update_emotions(self, emotions):
         self.calls.append(("update_emotions", tuple(emotions)))
 
-    # stub other methods used by AutonomyBrain
-    def select_persona(self, name):
-        self.calls.append(("select_persona", name))
+    def queue_action(self, action_type, priority=50, ttl_ms=5000, payload=None):
+        self.calls.append((action_type, payload.get("text") if payload else ""))
+        return {"ok": True}
+
+    def speak_preferred(self, text, tone=None, engine=None, language=None, trace_id=None):
+        self.calls.append(("speak", text))
+        return {"ok": True}
+
+    def is_service_available(self, name):
+        return True
 
 
 def test_autonomy_smoke_harness_reacts_to_speech_and_direction():

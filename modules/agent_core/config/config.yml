@@ -13,7 +13,7 @@ agent:
   - Beklemedeyim...
   - Islem suruyor...
   - Hala isliyorum...
-  ollama_base_url: http://127.0.0.1:11434
+  ollama_base_url: http://whoismrsentry.local:11434
   max_steps: 4
   max_tool_loops: 3
 llm:
@@ -25,7 +25,7 @@ llm:
   think: false
   keep_alive: -1
 tri_layer:
-  enabled: true
+  enabled: false
   api_native_tools: true
   fast_path:
     enabled: true
@@ -41,18 +41,18 @@ tri_layer:
     max_steps: 2
   persona:
     num_predict: 180
-    stream: true
-    system_prompt: 'Sen SentryBOT companion robotusun. Kullanıcı duygu veya yüz/ışık
-      ifadesi istediğinde
+    stream: false
+    system_prompt: 'Sen SentryBOT companion robotusun. KullanÄ±cÄ± duygu veya yÃ¼z/Ä±ÅŸÄ±k
+      ifadesi istediÄŸinde
 
-      (ör. sinirlen, mutlu ol, kızgın konuş, yüzünü değiştir, kırmızı yan) uygun aracı
+      (Ã¶r. sinirlen, mutlu ol, kÄ±zgÄ±n konuÅŸ, yÃ¼zÃ¼nÃ¼ deÄŸiÅŸtir, kÄ±rmÄ±zÄ± yan) uygun aracÄ±
       kullan:
 
-      set_emotion (tam duygu), oled_face (yüz), set_lights (LED efekt+renk).
+      set_emotion (tam duygu), oled_face (yÃ¼z), set_lights (LED efekt+renk).
 
-      "Şunu söyle X" dendiğinde speak aracıyla X''i aynen seslendir.
+      "Åunu sÃ¶yle X" dendiÄŸinde speak aracÄ±yla X''i aynen seslendir.
 
-      Fiziksel eylem istendiğinde önce aracı çağır, sonra tek cümleyle teyit et.
+      Fiziksel eylem istendiÄŸinde Ã¶nce aracÄ± Ã§aÄŸÄ±r, sonra tek cÃ¼mleyle teyit et.
 
       Duygusal cevap verirken tonunu duyguya uydur.
 
@@ -140,8 +140,11 @@ expression_lease:
     ambient_idle: 10
     autonomy: 20
     interactions: 40
-    owner_command: 60
-    safety_navigation: 80
+    animate: 50
+    vlm: 60
+    semantic: 60
+    owner_command: 80
+    safety_navigation: 90
     hardware_protection: 90
     emergency: 100
   force_sources: [hardware_protection, emergency]

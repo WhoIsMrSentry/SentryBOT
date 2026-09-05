@@ -1,0 +1,65 @@
+# logwrapper varsayılan ayarları
+
+# Konsola yazılsın mı?
+enable_console: true
+# Konsol seviyesi (DEBUG, INFO, WARNING, ERROR)
+console_level: INFO
+
+# Kullanıcı dostu terminal görünümü.
+# mode: dashboard | compact | off
+console:
+  mode: dashboard
+  colors: true
+  show_background_requests: false
+  aggregate_repeated_messages: true
+  repeat_summary_interval_s: 30
+  event_history: 8
+  max_message_width: 92
+  border: rounded
+  hidden_paths:
+    - /camera/healthz
+    - /vlm/context/latest
+    - /vlm/results/latest
+    - /telemetry/metrics
+    - /speech/last
+    - /speech/direction
+    - /arduino/healthz
+    - /state/set/emotions
+    - /interactions/event
+    - /interactions/effect
+    - /neopixel/animate
+    - /oled_faces/manual
+
+# Dosyaya yazılsın mı?
+enable_file: true
+# Dönen dosya yolu
+file_path: logs/sentry.log
+# Maks dosya boyutu (bayt)
+rotate_bytes: 2097152  # 2MB
+# Yedek dosya sayısı
+backup_count: 5
+
+# Son 5 çalıştırmanın ayrı log klasörlerinde arşivlenmesi
+enable_run_rotation: true
+max_archive_runs: 5
+
+# JSON formatta çıktı
+json_format: false
+
+# Bellek içi halka buffer boyutu
+buffer_size: 1000
+
+# Python warnings -> logging
+capture_warnings: true
+
+# Modül bazlı seviye override
+module_levels:
+  uvicorn.access: WARNING
+  httpx: WARNING
+  comtypes.client._code_cache: WARNING
+
+separate_files:
+  enabled: true
+  warnings_path: logs/warnings.log
+  errors_path: logs/errors.log
+  tui_path: logs/tui.log

@@ -1,122 +1,116 @@
-# Agent Core — Robotic AI Agent Module
+# Agent Core
 
-**SentryBOT'un otonom ajan zekâ modülü.**
+SentryBOT'un konuşma odaklı ana ajan orkestratörüdür. `AgentOrchestrator`, kullanıcı isteğini veya olay tetiklerini alır; route eder, uygun araçları çalıştırır, bellek ve dünya durumunu kullanır ve son cevabı üretir.
 
-Sense -> Think -> Act dongusunu, tek Ollama modeli ile calisan **3 katmanli agent yapisiyla** yonetir:
-1) Router/Planner
-2) Modul bazli Sub-Agent'lar
-3) Main Persona (son cevaplayici)
+## Sorumluluklar
 
-Her katman ayni modeli kullanir, ancak farkli sorumluluk ve prompt profiline sahiptir.
+- Tri-layer ajan akışı: Router/Planner, görev odaklı Sub-Agent'lar ve son Persona cevabı
+- Tool-calling ve donanım güvenlik süzgeci (ExpressionArbiter lease sistemi)
+- Epizodik bellek arama ve semantik sıralama (CognitiveMemory entegrasyonu)
+- Dünya durumu ve SLAM konumu yüzeyi
+- Eylem arbitrajı, ilerleme olayları ve gerçek zamanlı profil değiştirme
 
-Varsayilan politika:
-- Tek model: qwen3.5:9b
-- Fallback kapali
-- Provider yalnizca ollama
+## Mimari (Güncel: 2026-08-20)
 
-## Modül Yapısı
+- Giriş noktası: `xAgentCoreService.py`
+- Konfigürasyon: `config_loader.py` → merkezi `config/agent.yaml` (agent section)
+- Ana orkestratör: `services/agent.py` → `AgentOrchestrator`
+- **Yeni Tool Registry**: `services/tools/` (10 dosya: action_schemas, hardware_schemas, hardware_tools, http_client, motion_tools, perception_schemas, social_tools, tool_registry, tool_schemas, vision_tools)
+- **Yeni Agent Parçaları**: `services/agent_context.py`, `agent_handlers.py`, `agent_memory_sync.py`, `agent_provider_parser.py`, `agent_streaming.py`, `agent_subagents.py`, `agent_turn.py`
+- Yardımcı servisler: `memory.py`, `memory_consolidator.py`, `world_state.py`, `expression_arbiter.py`, `idle_behavior.py`, `tri_layer.py`
+- **Arbiter'lar**: `action_arbiter.py` (aksiyon exclusive-lock hakemi), `speech_arbiter.py` (öncelikli TTS kuyruğu), `tool_execution_arbiter.py` (tool kaynak kilidi), `vision_arbiter.py` (VLM çağrı serileştirici)
+- **Diğer**: `sensor_loop.py` (donanım sensör döngüsü), `semantic_index.py` (TF-IDF semantik router), `safety_filter.py` (girdi güvenlik filtresi), `slam.py`
 
-```
-modules/agent_core/
-├── xAgentCoreService.py      # Servis başlatıcı (FastAPI + class)
-├── config_loader.py          # config/agent.yaml okuyucu
-├── services/
-│   ├── __init__.py           # Re-export proxy
-│   ├── agent.py              # Ana orkestratör (Native ReAct Loop)
-│   ├── safety_filter.py      # Donanım güvenlik sınırlayıcı (servolar vb.)
-│   ├── memory.py             # SQLite epizodik bellek
-│   ├── slam.py               # Topolojik harita + BFS yol bulma
-│   ├── tools.py              # LLM araç tanımları (Ollama JSON Schema)
-│   ├── world_state.py        # Sensör durumu
-│   ├── sensor_loop.py        # Arka plan sensör okuyucu
-│   ├── idle_behavior.py      # Boşta kalma efektleri
-│   └── tri_layer.py          # Router + sub-agent profil tanimlari
-├── architecture_agent_core.md# Mimari dokümantasyon
-└── README.md                 # Bu dosya
-```
+Modül hem import edilebilir kütüphane hem de bağımsız FastAPI servisi olarak çalışır.
 
-## Özellikler
+## Bağımlılıklar (Güncel)
 
-- **3-Layer Agent Pipeline:** Katman-1 istegi modul sub-agent'lara yonlendirir, Katman-2 uzman sub-agent'lar araci calistirir, Katman-3 main persona tek ve tutarli cevap uretir.
-- **Tek Model Politikasi:** Router, sub-agent ve persona katmanlari ayni Ollama modeli uzerinden calisir.
-- **Low-Latency Router:** Varsayilan keyword tabanli yonlendirme ek gecikme olmadan calisir.
-- **Semantic Router:** Router artık token benzerliğini de hesaba katar; tam eşleşmeyen ama yakın isteklerde daha doğru modül seçimi sağlar.
-- **Physical Safety First:** `ActionSafetyFilter` doğrudan donanım aletlerinin içine gömülüdür (Kafa çevirmeden önce direkt açı kontrolü yapılır).
-- **Episodic Memory:** Robot konuştuğu her şeyi SQLite'a kaydeder ve `search_memory` tool'u ile geri çağırabilir.
-- **Semantic Memory Ranking:** Arama sonuçları yalnızca eşleşme değil, alaka puanına göre sıralanır.
-- **Runtime SLAM Learning:** Ajan yeni konum, bağlantı ve takma adları çalışma anında haritaya ekleyebilir.
+- `autonomy`: Olay ve ajan koordinasyonu (brain.agent provider)
+- `ai_provider` (eski `ollama`): LLM sağlayıcısı
+- `system_control/config_center`: Merkezi config yükleme
+- `runtime_console/logwrapper`: Merkezi log altyapısı
+- `gateway`: URL çözümleme ve tek-port entegrasyon
+- `common`: Ortak sözlükler (emotion_vocab), yardımcı fonksiyonlar
+- `cognitive_memory` (eski `social_db`): Hafıza ve araç/kontrat yardımları
+- `arduino_serial`: Donanım araçları için kontrat builder'lar
+- `expression`: ExpressionArbiter (LED/servo/OLED lease)
+- `vlm_bridge`: Vision tools için görüntü bağlamı
 
-## Bu Modül Ne Yapar?
-- Gelen isteği planlar, uygun sub-agent'lara yönlendirir ve son cevabı üretir.
-- Kısa süreli ve uzun süreli hafızayı yönetir.
-- Topolojik harita üzerinden konum bulur ve yol planlar.
-- Yeni araçları ve güvenlik sınırlarını LLM kullanımına sunar.
+## API
+
+Gateway altında `/agent/*` olarak yayınlanır.
+
+### Core
+
+- `GET /agent/healthz`
+- `GET /agent/latency/latest`
+- `GET /agent/latency/{trace_id}`
+- `POST /agent/speech/interrupt`
+- `POST /agent/step`
+- `POST /agent/step_event`
+- `POST /agent/step_stream`
+- `POST /agent/route_preview`
+
+### State and Memory
+
+- `GET /agent/world_state`
+- `GET /agent/memory/search`
+- `GET /agent/slam/location`
+- `GET /agent/slam/pathfind`
+
+### Action Arbitration and Progress
+
+- `GET /agent/actions/status`
+- `GET /agent/arbiters/status`
+- `GET /agent/arbiters/stream`
+- `POST /agent/actions/queue`
+- `POST /agent/actions/cancel`
+- `POST /agent/progress`
+- `POST /agent/events`
+- `GET /agent/progress/latest`
+
+### Runtime Profiles
+
+- `GET /agent/profile`
+- `POST /agent/profile/switch`
+
+## Tool Registry (YENİ)
+
+`services/tools/tool_registry.py` merkezi tool kayıt sistemi:
+- **Hardware Tools**: servo, stepper, IMU, lazer, pose, IK, track, estop
+- **Motion Tools**: animate sequences, piservo gestures
+- **Perception Tools**: VLM track, face detect, scene analysis
+- **Social Tools**: person upsert, chat episodes, preferences, relationships
+- **Vision Tools**: capture frame, IMX500 status
+- **Action Schemas**: JSON Schema tabanlı tool tanımları
+
+Her tool: `schema` (JSON Schema), `handler` (async fn), `permissions` (hardware lease gerektirir mi?)
+
+## Konfigürasyon
+
+Bu modül merkezi `config/agent.yaml` içindeki `agent` bölümünü okur.
+
+- `llm.provider`: `ollama` veya `google_ai_studio` (→ `ai_provider` modülü)
+- `agent.model`, `agent.request_timeout`
+- `tri_layer.*` (router, subagents, persona)
+- `realtime_profile.*` (hız/kalite profilleri)
+- `tools.hardware_lease_required`: donanım araçları için ExpressionArbiter lease
+
+`ai_provider` profili aktifse model `qwen3.5:9b` olmalıdır.
 
 ## Kullanım
 
-### AutonomyBrain ile (Entegre mod — üretim)
 ```python
-# brain.py içinde otomatik başlatılır:
-self.agent = AgentOrchestrator(agent_cfg, autonomy_client=self.client)
-self.agent.start()
-```
+from modules.agent_core.services.agent import AgentOrchestrator
 
-### Kütüphane olarak (ReAct Loop)
-```python
-from modules.agent_core import AgentOrchestrator
 agent = AgentOrchestrator(config, autonomy_client=client)
-
-# Ajan tri-layer akista sub-agent'lari calistirir ve final personadan tek cevap dondurur.
-result = agent.step("Ortamı tara ve bana kimlerin olduğunu söyle.")
+agent.start()
+result = agent.step("Ortamı tara ve bana kimlerin burada olduğunu söyle.")
 print(result["text"])
 ```
 
-## API Endpoint'leri
+## İlgili Belgeler
 
-*(Executor ve router kaldırıldığı için API yapısı basitleştirildi)*
-
-| Endpoint | Metod | Açıklama |
-|---|---|---|
-| `/healthz` | GET | Servis durumu (BUSY / IDLE) |
-| `/step` | POST | Tek agent adımı (Native Tool Loop) |
-| `/step_stream` | POST | SSE ile canlı durum + final cevap |
-| `/route_preview` | POST | Tri-layer router secimini onizleme |
-| `/world_state` | GET | Anlık dünya durumu (pil vb.) |
-| `/memory/search` | GET | Epizodik hafıza arama |
-| `/slam/location` | GET | Topolojik konum |
-| `/slam/pathfind` | GET | BFS yol bulma |
-
-`/memory/search` sonuçları artık önem puanına göre sıralanır. SLAM tarafı ise yeni düğüm, bağlantı ve alias öğrenmeyi destekler.
-
-## Konfigürasyon (config/agent.yaml)
-
-| Ayar | Açıklama |
-|---|---|
-| `agent.model` | Kullanılacak model (zorunlu: qwen3.5:9b) |
-| `agent.request_timeout` | Ollama istemci timeout degeri (sn) |
-| `agent.max_steps` | Legacy native loop maksimum adım sayısı |
-| `tri_layer.enabled` | 3 katmanli mimari acik/kapali |
-| `tri_layer.router.max_subagents` | Bir istek icin secilecek sub-agent sayisi |
-| `tri_layer.subagent.max_steps` | Her sub-agent icin maksimum tool loop |
-| `tri_layer.persona.num_predict` | Final persona katmaninda token hedefi |
-| `llm.provider` | Zorunlu: ollama |
-| `llm.single_model_mode` | Zorunlu: true |
-
-### Konfigürasyon Yolu Override
-
-- Varsayilan dosya: config/agent.yaml
-- Ozel yol icin: AGENT_CFG ortam degiskeni
-
-## Testler
-
-```bash
-# Proje ana dizininden:
-$env:PYTHONPATH="."
-pytest modules/agent_core/tests/ -v
-```
-
-## Migration
-
-Tri-layer gecisi ve remote Ollama kurulumu icin:
-
-- `modules/agent_core/MIGRATION_TRI_LAYER.md`
+- `architecture_agent_core.md`
+- `MIGRATION_TRI_LAYER.md`
+- `services/tools/__init__.py` docstring (tool registry detayları)

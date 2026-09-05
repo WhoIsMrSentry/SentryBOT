@@ -31,7 +31,7 @@ Ana hedefler:
 - **Social DB:** Eski JSON tabanlı izole hafızalar tek bir birleşik SQLite veritabanında toplandı. Kişiler, yüzler, ilişkiler, anılar ve ritüeller tek merkezden yönetiliyor.
 - **OLED Faces:** SSD1306 I2C OLED için Pip tarzı prosedürel animasyonlu göz ve yüz ifadeleri eklendi. Duygusal ifadeler robotun durumuyla senkronize edilir.
 - **Gelişmiş Otonomi ve Duygu Motoru (autonomy):** Robotun iç durumu (Mutluluk, Enerji, Merak, Korku) davranışlarını ve NeoPixel ışıklarını otomatik etkiler. Ses geldiğinde kafa çevirme, boşta kalınca iç çekme/etrafı izleme özellikleri aktiftir.
-- **Wakeword Modülü:** OpenWakeWord ve Vosk destekli arka plan dinleyicisi eklendi.
+- **Wakeword Modülü:** OpenWakeWord destekli düşük güçlü arka plan dinleyicisi eklendi.
 - **Semantik Router:** İstekler LLM tabanlı vektör/benzerlik ile en doğru sub-agent'a yönlendirilir.
 - **Common Emotion Vocab:** Tüm modüller ortak bir duygu (emotion) sözlüğünü kullanır; gözler, ışıklar ve ses tonu birbiriyle uyumlu çalışır.
 - Servo sürüşü I2C’ye taşındı (PCA9685, 50 Hz). Açı→mikrosaniye darbe haritalaması konfigüre edilebilir (min/max us).
@@ -41,7 +41,7 @@ Ana hedefler:
 - **Durum Kalıcılığı**: State Manager, global state'i sqlite/json backend ile restart sonrasında da saklar.
 - **Gateway Güvenliği**: Gateway'e isteğe bağlı API anahtarı ve rol kontrolü eklendi; yazma uçları korunabilir.
 - **VLM Mode Yönetimi**: Görüntü işleme yetenekleri ayrı ayrı açılıp kapatılabilir; pahalı işlemler ihtiyaca göre sınırlandırılır.
-- **OTA Güvenlik Sertleştirmesi**: Firmware yükleme sırasında opsiyonel allowlist ve HMAC imza doğrulaması kullanılabilir.
+- **Multimodal Animasyon Senkronizasyonu**: Tek YAML akışında servolar, OLED göz ifadeleri ve NeoPixel ışık efektleri zaman uyumlu (time-coded) çalışır.
 
 
 ## Mimari Genel Bakış
@@ -69,16 +69,6 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- Kapsam: sol/sağ servo ile duygu jestleri ve basit jestler (wakeword/sound).
 		- API: `/piservo/set?left=90&right=90`, `/piservo/emotion?name=joy`
 		- Sınırlar: Donanım yoksa simülatör modunda çalışır; PWM/angle sınırları config ile belirlenir.
-	- OTA (modules/ota)
-		- Kapsam: avrdude ile Arduino firmware uzaktan yükleme; değişmeyen hash’ler yeniden yüklenmez.
-		- API: `/ota/scan_once`, `/ota/upload`, `/ota/versions`
-		- Sınırlar: avrdude ve doğru board/port ayarları gerekir.
-	- Hardware (modules/hardware)
-		- Kapsam: RPi5 sistem bilgisi, I2C tarama, GPIO özet uyarıları.
-		- API: `/hardware/healthz`, `/hardware/system`, `/hardware/i2c/scan`
-	- Mutagen (modules/mutagen)
-		- Kapsam: Geliştirici cihaz ↔ robot dosya senkronu; OTA ile birlikte firmware dağıtımını kolaylaştırır.
-		- API: `/mutagen/status`, `/mutagen/start`, `/mutagen/stop`
 	- Teşhis & Zamanlama (modules/diagnostics, modules/scheduler)
 		- Diagnostics API: `/diagnostics/run`, `/diagnostics/report` — modül sağlıklarını zincir hâlinde kontrol eder; gecikme ve tekrar eden hataları da değerlendirir.
 		- Scheduler API: `/scheduler/jobs` — basit async periyodik görevler, HTTP ping işleri; runtime görev ekleme/silme de desteklenir.
@@ -94,10 +84,10 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- Not: `POST /vlm/mode` ile objects/people/ocr/depth gibi yetenekler tek tek açılıp kapatılabilir.
 		- Sınırlar: Ağ gecikmesi; kontrol döngüsünde stabilite için sınırlamalar (slew/ölü bant) önerilir.
 	- Konuşma Tanıma (modules/speech)
-		- Kapsam: Vosk ile tamamen offline ASR; I2S mikrofon; opsiyonel WebRTC VAD; stereo’da DoA hesaplar.
+		- Kapsam: SpeechRecognition ile çok dilli Google STT; I2S mikrofon; stereo’da DoA hesaplar.
 		- API: `/speech/start`, `/speech/stop`, `/speech/last`, `/speech/direction`, `/speech/track/*`
-		- Veri akışı: ALSA → çerçeveler → (opsiyonel VAD) → Vosk → metin; stereo ise GCC-PHAT → açı.
-		- Sınırlar: DoA için stereo şart; model klasörlerinin doğru konfig edilmesi gerekir.
+		- Veri akışı: ALSA → çerçeveler → SpeechRecognition / Google STT → metin; stereo ise GCC-PHAT → açı.
+		- Sınırlar: DoA için stereo şart.
 	- Telemetri & Durum (modules/telemetry, modules/state_manager)
 		- Telemetry: `/telemetry/metrics` Prometheus; `/telemetry/events` ham olay yayımı.
 		- State Manager: `/state/get`, `/state/set/emotions`, `/state/set/<key>` — global durum ve duygular için kalıcı anahtar/değer desteği.
@@ -149,8 +139,8 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 	 - Örnek sağlık kontrolleri: `/neopixel/healthz`, `/speech/healthz`, `/arduino/healthz`
 
 3) Tek modül olarak çalıştırma (geliştirme/test):
-	 - Örnek: NeoPixel Servis → `uvicorn modules.neopixel.xNeopixelService:create_app --factory --host 0.0.0.0 --port 8092`
-	 - Örnek: Speech API → `python -m modules.speech.xSpeechService --api`
+	 - Örnek: NeoPixel Servis → `uvicorn modules.visual_output.neopixel.xNeopixelService:create_app --factory --host 0.0.0.0 --port 8092`
+	 - Örnek: Speech API → `python -m modules.voice.speech.xSpeechService --api`
 
 Notlar:
 - RPi5 üzerinde ALSA ses cihazları ve I2S mikrofon kart(lar)ı için sistem düzeyinde ayarlar gerekebilir (modül README’lerine bakın).
@@ -214,9 +204,6 @@ Gateway açıkken tüm modül uçları tek porttadır. Genel sağlık uçları: 
 - Speech (ASR/DoA): `/speech/*` – tanıma başlat/durdur, yön, takip
 - Ollama: `/ollama/*` – chat, persona yönetimi
 - PiServo: `/piservo/*` – kulak jestleri
-- OTA: `/ota/*` – tarama, upload, versiyonlar
-- Mutagen: `/mutagen/*` – senkron yönetimi
-- Hardware: `/hardware/*` – sistem/I2C/GPIO
 - Telemetry: `/telemetry/*` – Prometheus `/metrics`, event
 - Diagnostics: `/diagnostics/*` – self-check ve rapor
 - State Manager: `/state/*` – global durum/emotions
@@ -280,38 +267,26 @@ Gateway çalışıyorsa tüm uçlar tek porttadır. Aşağıdaki istekler örnek
 	- TTS: `/speak/say` body: `{ "text": "Merhaba!" }`
 	## Modüller (Tek Tek)
 
-	- **admin_ui**: LAN-only tek yönetim paneli. Modüllerin durum anlık görüntülerini birleştiren kontrol arayüzü.
 	- **agent_core**: 3-katmanlı LLM tabanlı otonom zekâ (Router, Sub-agents, Persona) ve epizodik bellek yönetimi.
-	- **animate**: YAML tabanlı servo animasyon sekansları; isimle tetiklenir.
-	- **arduino_serial**: Arduino Mega ile NDJSON seri köprü. Servo, stepper, imu, telemetry ve lazer kontrolü.
+	- **ai_provider**: (eski adıyla ollama) LLM sohbet ve persona yönetimi; LLM endpointleri.
+	- **arduino_serial**: Arduino Mega ile NDJSON seri köprü. Servo, stepper, imu, telemetry ve lazer kontrolü (esp_link'i içerir).
 	- **autonomy**: Live Mode. Duygu durum yönetimi (MoodManager), davranış döngüsü, VLM algı birleştirme ve otonom tepki/sahne yöneticisi.
 	- **calibration**: Servo, Kamera ve Ses kalibrasyon yardımcıları.
 	- **camera**: PiCamera2/OpenCV backend ile görüntü yakalama ve yayın.
+	- **cognitive_memory**: (eski adıyla social_db) Kişiler, ilişkiler, görülme kayıtları, sohbet geçmişi ve anıları tek merkezde toplayan birleşik SQLite bellek.
 	- **common**: Ortak yardımcılar, paylaşılan duygu/ifade (emotion) sözlüğü (`emotion_vocab.py`).
-	- **config_center**: Modül `config.yml` dosyalarını listele/düzenle; minimal UI.
-	- **diagnostics**: Boot self-check ve akıllı modül sağlık taraması.
-	- **esp_link**: Pi tarafında ESP32 bridge cihazına HTTP üzerinden proxy ve iletişim sağlar.
-	- **expression**: Semantik ifade motoru. Sistem olaylarını senkronize animasyon, renk ve oled yüz ifadelerine dönüştürür.
+	- **expression**: Semantik ifade motoru. Sistem olaylarını senkronize animasyon, renk ve oled yüz ifadelerine dönüştürür (interactions'ı içerir).
 	- **gateway**: Ana giriş noktası. Tüm modül router'larını tek bir FastAPI uygulamasında toplar.
 	- **hardware**: RPi5 sağlık/sistem, I2C tarama, GPIO özet uyarıları.
-	- **interactions**: Kural motoru. Sensör, olay ve metrik ölçümlerine göre NeoPixel/OLED efektleri tetikler.
-	- **logwrapper**: Merkezi loglama. Console + dönen dosya + bellek içi halka buffer.
+	- **motion**: (eski animate ve piservo) YAML tabanlı servo sekansları ve kulak jestleri (I2C ve PWM).
 	- **mutagen**: Mutagen CLI üzerinden dosya senkron yönetimi (cihaz ↔ robot).
-	- **neopixel**: WS2812 LED animasyonları; donanım/simülatör otomatik; duygusal renk paletleri.
-	- **notifier**: Telegram/Discord köprüleri ve bildirim iletimi.
-	- **oled_faces**: SSD1306 I2C OLED ekranlar için Pip tarzı prosedürel animasyonlu göz ve olay senkronize yüz ifadeleri.
-	- **ollama**: LLM sohbet ve persona yönetimi; LLM endpointleri.
 	- **ota**: Over-the-air güncelleme altyapısı (örn: uzaktan Arduino firmware dağıtımı).
-	- **piservo**: Raspberry Pi üzerinde doğrudan kontrol edilen ikincil servolar (kulaklar).
-	- **runtime_console**: Logosuz, panel tabanlı sade terminal arayüzü / TUI görünümü.
+	- **runtime_console**: Logosuz, panel tabanlı sade terminal arayüzü / TUI görünümü (logwrapper'ı içerir).
 	- **scheduler**: Dinamik zamanlanmış periyodik görevler ve HTTP ping işleri.
-	- **social_db**: Kişiler, ilişkiler, görülme kayıtları, sohbet geçmişi ve anıları tek merkezde toplayan birleşik SQLite bellek.
-	- **speak**: TTS (pyttsx3 veya Piper) ile offline seslendirme, base64 WAV oynatma, ALSA çıkış yönetimi.
-	- **speech**: Vosk ile tamamen offline ASR (ses tanıma) ve I2S üzerinden stereo/DoA ile ses yönü bulma.
-	- **state_manager**: Global durum ve duygular için kalıcı anahtar/değer deposu.
-	- **telemetry**: Prometheus metrikleri (`/metrics`) ve olay yayımı.
+	- **system_control**: (eski state_manager, diagnostics, telemetry, config_center, notifier) Global sistem durumu, donanım/yazılım sağlık kontrolü, telemetri verileri ve yapılandırma yönetimi.
+	- **visual_output**: (eski neopixel ve oled_faces) WS2812 LED animasyonları, renk paletleri ve SSD1306 prosedürel göz ifadeleri.
 	- **vlm_bridge**: Yüz algılama/tanıma (OpenCV) ve Vision Language Model isteklerini işleyip donanım komutlarına dönüştürme.
-	- **wakeword**: OpenWakeWord veya Vosk tabanlı uyandırma kelimesi dinleyicisi; asıl speech modülünü tetikler.
+	- **voice**: (eski speech, speak, wakeword) SpeechRecognition ASR, ses yönü, TTS ve OpenWakeWord dinleyicisi.
 
 
 	## Tipik Senaryolar

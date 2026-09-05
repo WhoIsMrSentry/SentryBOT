@@ -1,0 +1,13 @@
+name: look_around
+loop: false
+steps:
+  - pose: [60, 92, 70, 100]
+    duration_ms: 300
+  - pose: [120, 88, 100, 70]
+    duration_ms: 320
+  - pose: [80, 92, 75, 95]
+    duration_ms: 280
+  - pose: [100, 90, 95, 75]
+    duration_ms: 260
+  - pose: [90, 90, 90, 90]
+    duration_ms: 220

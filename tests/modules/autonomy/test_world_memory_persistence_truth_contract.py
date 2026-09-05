@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from modules.autonomy.services.world_memory import (
+from modules.cognitive_memory.services.world_memory import (
     WORLD_MEMORY_PERSISTENCE_TRUTH_CONTRACT,
     WORLD_MEMORY_PERSISTENCE_ROLE,
     WorldMemory,

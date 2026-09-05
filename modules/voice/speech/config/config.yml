@@ -1,0 +1,54 @@
+# Speech module configuration
+
+server:
+  host: 0.0.0.0
+  port: 8082
+
+audio:
+  device: plughw:0,0     # ALSA device (from `arecord -l`) - set to card 0, device 0
+  samplerate: 16000
+  channels: 2            # two I2S mics for direction estimation
+  dtype: int16
+  frame_ms: 30
+  vu:
+    window_ms: 90
+    noise_floor: 120
+    speech_ceiling: 6000
+    left_gain: 1.0
+    right_gain: 1.0
+
+recognition:
+  source_language: tr
+  language: tr
+  default_language: tr
+  auto_language: true
+  dual_decode_languages: [tr, en]
+  utterance_buffer_sec: 20
+  samplerate: 16000
+  input_gain: 3.0
+
+  vad:
+    enabled: false             # enable WebRTC VAD pre-filter
+    aggressiveness: 2          # 0-3 (3 = most aggressive)
+    hangover_ms: 300           # keep audio after speech end (ms)
+
+direction:
+  enabled: true
+  mic_distance_m: 0.06
+  control:
+    invert_direction: false   # reverse sign if L/R wiring swapped
+    deadband_deg: 3.0         # ignore small changes
+    smoothing_alpha: 0.3      # 0..1 low-pass for angle
+    slew_deg_per_s: 120.0     # max change per second
+    energy_threshold: 1000    # min RMS energy to update angle
+
+pan_tilt:
+  enabled: false
+  use_head_arbiter: true
+  arbiter_priority: 60
+  center_deg: 90.0
+  center_tilt_deg: 90.0
+  min_deg: 35.0
+  max_deg: 145.0
+  slew_deg_per_s: 120.0
+  update_hz: 20.0

@@ -29,7 +29,7 @@ class GoogleVLMClient:
     """Gemini multimodal client with the same surface as :class:`OllamaVLMClient`."""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        from modules.ollama.services.clients import GoogleAIStudioClient, _sanitize_google_api_key
+        from modules.ai_provider.services.clients import GoogleAIStudioClient, _sanitize_google_api_key
 
         cfg = config or {}
         google_cfg = cfg.get("google_ai_studio", {}) if isinstance(cfg.get("google_ai_studio"), dict) else cfg
@@ -42,7 +42,7 @@ class GoogleVLMClient:
         if not api_key:
             raise RuntimeError("Google AI Studio vision selected but api_key is missing")
 
-        from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
+        from modules.system_control.config_center.gemini_model import DEFAULT_GEMINI_MODEL
 
         model = str(google_cfg.get("model", cfg.get("model", DEFAULT_GEMINI_MODEL))).strip() or DEFAULT_GEMINI_MODEL
         base_url = str(

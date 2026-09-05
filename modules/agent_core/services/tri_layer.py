@@ -1,4 +1,25 @@
 from __future__ import annotations
+import os as _sentrybot_env_os
+
+def _sentrybot_agent_ollama_host() -> str:
+    return (
+        _sentrybot_env_os.environ.get("OLLAMA_HOST")
+        or _sentrybot_env_os.environ.get("SENTRYBOT_OLLAMA_BASE_URL")
+        or _sentrybot_env_os.environ.get("SENTRYBOT_REMOTE_OLLAMA_URL")
+        or _sentrybot_env_os.environ.get("SENTRYBOT_OLLAMA_URL")
+        or "http://whoismrsentry.local:11434"
+    ).rstrip("/")
+
+def _sentrybot_force_agent_ollama_env() -> None:
+    host = _sentrybot_agent_ollama_host()
+    _sentrybot_env_os.environ["OLLAMA_HOST"] = host
+    _sentrybot_env_os.environ["OLLAMA_BASE_URL"] = host
+    _sentrybot_env_os.environ.setdefault("SENTRYBOT_OLLAMA_BASE_URL", host)
+    _sentrybot_env_os.environ.setdefault("SENTRYBOT_REMOTE_OLLAMA_URL", host)
+    _sentrybot_env_os.environ.setdefault("SENTRYBOT_OLLAMA_URL", host)
+
+_sentrybot_force_agent_ollama_env()
+
 
 from dataclasses import dataclass
 from typing import Dict, List, Sequence
@@ -12,6 +33,34 @@ class SubAgentProfile:
     goal: str
     allowed_tools: Sequence[str]
     keywords: Sequence[str]
+
+# Compatibility fallback: older profiles may not define system_prompt.
+def _subagent_profile_system_prompt(self):
+    for attr in ("prompt", "instructions", "description", "role", "module"):
+        value = getattr(self, attr, None)
+        if value:
+            return str(value)
+    name = getattr(self, "name", self.__class__.__name__)
+    return f"You are {name}, a SentryBOT sub-agent. Use available tools safely and briefly."
+
+if not hasattr(SubAgentProfile, "system_prompt"):
+    SubAgentProfile.system_prompt = property(_subagent_profile_system_prompt)
+
+
+# Compatibility fallback: older profiles may not define name.
+def _subagent_profile_name(self):
+    for attr in ("id", "profile_id", "module", "role"):
+        value = getattr(self, attr, None)
+        if value:
+            return str(value)
+    return self.__class__.__name__
+
+if not hasattr(SubAgentProfile, "name"):
+    SubAgentProfile.name = property(_subagent_profile_name)
+
+
+# Compatibility fallback: older profiles may not define enabled.
+SubAgentProfile.enabled = True
 
 
 def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[str, SubAgentProfile]:
@@ -43,7 +92,7 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             module="arduino_serial",
             role="Serial hardware specialist",
             goal="Handle safe low-level hardware interactions.",
-            allowed_tools=("move_head", "set_laser", "get_sensor_data"),
+            allowed_tools=("move_head", "get_sensor_data"),
             keywords=("arduino", "serial", "servo", "motor", "laser"),
         ),
         "autonomy": SubAgentProfile(
@@ -96,7 +145,7 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             module="hardware",
             role="Hardware specialist",
             goal="Execute safe physical hardware actions.",
-            allowed_tools=("move_head", "set_laser", "get_sensor_data"),
+            allowed_tools=("move_head", "get_sensor_data"),
             keywords=("hardware", "head", "servo", "turn", "pan", "tilt"),
         ),
         "interactions": SubAgentProfile(
@@ -112,13 +161,6 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             goal="Summarize observability and logging concerns.",
             allowed_tools=("search_memory",),
             keywords=("log", "logging", "trace", "debug"),
-        ),
-        "mutagen": SubAgentProfile(
-            module="mutagen",
-            role="Audio metadata specialist",
-            goal="Reason about sound metadata and playback context.",
-            allowed_tools=("play_sound",),
-            keywords=("audio", "music", "metadata", "mutagen", "sound"),
         ),
         "neopixel": SubAgentProfile(
             module="neopixel",
@@ -150,13 +192,6 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             goal="Keep response quality and prompt consistency.",
             allowed_tools=("search_memory",),
             keywords=("ollama", "llm", "model", "persona", "prompt"),
-        ),
-        "ota": SubAgentProfile(
-            module="ota",
-            role="Update specialist",
-            goal="Assess update and rollout safety.",
-            allowed_tools=("search_memory",),
-            keywords=("ota", "update", "upgrade", "deploy"),
         ),
         "piservo": SubAgentProfile(
             module="piservo",
@@ -370,3 +405,70 @@ class TriLayerRouter:
             return list(self.default_modules[: self.max_subagents])
         ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
         return [name for name, _ in ranked[: self.max_subagents]]
+
+
+# SENTRYBOT compatibility fallback fields for older/newer SubAgentProfile callers.
+def _sentrybot_subagent_model(self):
+    return (
+        _sentrybot_env_os.environ.get("SENTRYBOT_OLLAMA_MODEL")
+        or _sentrybot_env_os.environ.get("SENTRYBOT_MODEL")
+        or _sentrybot_env_os.environ.get("SENTRYBOT_LLM_MODEL")
+        or "qwen3.5:9b"
+    )
+
+def _sentrybot_subagent_tools(self):
+    return []
+
+if "SubAgentProfile" in globals():
+    if not hasattr(SubAgentProfile, "temperature"):
+        SubAgentProfile.temperature = property(lambda self: 0.2)
+    if not hasattr(SubAgentProfile, "top_p"):
+        SubAgentProfile.top_p = property(lambda self: 0.9)
+    if not hasattr(SubAgentProfile, "max_tokens"):
+        SubAgentProfile.max_tokens = property(lambda self: 512)
+    if not hasattr(SubAgentProfile, "max_output_tokens"):
+        SubAgentProfile.max_output_tokens = property(lambda self: 512)
+    if not hasattr(SubAgentProfile, "timeout"):
+        SubAgentProfile.timeout = property(lambda self: 60)
+    if not hasattr(SubAgentProfile, "model"):
+        SubAgentProfile.model = property(_sentrybot_subagent_model)
+    if not hasattr(SubAgentProfile, "tools"):
+        SubAgentProfile.tools = property(_sentrybot_subagent_tools)
+
+
+# SENTRYBOT extra SubAgentProfile Ollama option fallbacks.
+def _sentrybot_profile_copy_default(value):
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, list):
+        return list(value)
+    return value
+
+def _sentrybot_profile_default_property(value):
+    return property(lambda self, v=value: _sentrybot_profile_copy_default(v))
+
+if "SubAgentProfile" in globals():
+    _sentrybot_profile_defaults = {
+        "num_predict": 512,
+        "num_ctx": 8192,
+        "context_window": 8192,
+        "top_k": 20,
+        "top_p": 0.9,
+        "temperature": 0.2,
+        "repeat_penalty": 1.05,
+        "presence_penalty": 0.0,
+        "frequency_penalty": 0.0,
+        "mirostat": 0,
+        "seed": 0,
+        "timeout": 60,
+        "stream": False,
+        "thinking": False,
+        "format": None,
+        "stop": [],
+        "keep_alive": "5m",
+        "options": {},
+    }
+    for _sentrybot_attr, _sentrybot_value in _sentrybot_profile_defaults.items():
+        if not hasattr(SubAgentProfile, _sentrybot_attr):
+            setattr(SubAgentProfile, _sentrybot_attr, _sentrybot_profile_default_property(_sentrybot_value))
+

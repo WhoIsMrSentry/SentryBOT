@@ -37,11 +37,7 @@ def collect() -> dict:
             "piper_tr_config": check_file(str(r / "data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json")),
             "imx500_model": check_file("/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"),
         },
-        "directories": {
-            "vosk_tr": check_dir(str(r / "modules/speech/models/vosk-tr")),
-            "vosk_en": check_dir(str(r / "modules/speech/models/vosk-en")),
-        },
-        "python_modules": {m: check_module(m) for m in ["picamera2", "numpy", "cv2", "vosk", "openwakeword", "piper", "fastapi", "uvicorn"]},
+        "python_modules": {m: check_module(m) for m in ["picamera2", "numpy", "cv2", "speech_recognition", "openwakeword", "piper", "fastapi", "uvicorn"]},
         "commands": {c: check_command(c) for c in ["rpicam-hello", "rpicam-vid", "aplay", "arecord", "ollama"]},
     }
     required = []
@@ -49,8 +45,7 @@ def collect() -> dict:
     if not checks["system"]["is_raspberry_pi"]: required.append("raspberry_pi")
     for k in ["piper_tr_model", "piper_tr_config", "imx500_model"]:
         if not checks["files"][k]["ok"]: required.append(k)
-    if not checks["directories"]["vosk_tr"]["ok"]: required.append("vosk_tr")
-    for k in ["picamera2", "numpy", "cv2", "vosk", "fastapi", "uvicorn"]:
+    for k in ["picamera2", "numpy", "cv2", "speech_recognition", "openwakeword", "fastapi", "uvicorn"]:
         if not checks["python_modules"][k]["ok"]: required.append("python_module:" + k)
     for k in ["rpicam-hello", "aplay", "arecord"]:
         if not checks["commands"][k]["ok"]: required.append("command:" + k)

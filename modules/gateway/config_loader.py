@@ -20,8 +20,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "logs": True,
     "animate": True,
     "piservo": True,
-    "ota": True,
-    "mutagen": True,
     },
 }
 

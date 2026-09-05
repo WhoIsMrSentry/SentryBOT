@@ -57,7 +57,7 @@ def resolve_gateway_base_url(
         return gateway_base_from_agent_cfg(cfg, port=port)
 
     try:
-        from modules.config_center.agent_yaml_loader import load_agent_config  # type: ignore
+        from modules.common.config_loader import load_agent_config  # type: ignore
 
         return gateway_base_from_agent_cfg(load_agent_config())
     except Exception:
@@ -83,6 +83,11 @@ def resolve_config_url(value: str, gateway_base: Optional[str] = None) -> str:
 
     for prefix in _LOOPBACK_PREFIXES:
         if raw.lower().startswith(prefix):
+            port_match = re.match(r"^https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d+)", raw.lower())
+            if port_match:
+                port_num = int(port_match.group(1))
+                if port_num not in (8080, 8000):
+                    return raw
             suffix = raw.split(":", 2)[-1]
             if "/" in suffix:
                 path = "/" + suffix.split("/", 1)[1]
@@ -126,6 +131,7 @@ def patch_service_endpoints(endpoints: Dict[str, Any], gateway_base: str) -> Dic
         "notifier": "/notify",
         "autonomy": "/autonomy",
         "agent_core": "/agent",
+        "expression": "/expression",
     }
 
     out = dict(endpoints or {})

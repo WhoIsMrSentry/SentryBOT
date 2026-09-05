@@ -1,0 +1,247 @@
+server:
+  host: 0.0.0.0
+  port: 8095
+
+adapter:
+  mode: http
+  http_base_url: http://localhost:8092/neopixel
+
+monitor:
+  arduino:
+    url: "@gateway/arduino/healthz"
+    interval_s: 5
+    timeout_s: 0.4
+
+hardware:
+  num_leds: 23
+  segments:
+    - { name: jewel, start: 0, count: 7, reverse: false }
+    - { name: stick_left, start: 7, count: 8, reverse: false }
+    - { name: stick_right, start: 15, count: 8, reverse: false }
+
+tick_interval_ms: 800
+
+output:
+  via_expression: true
+
+quiet_hours:
+  enabled: true
+  start: "23:00"
+  end: "07:00"
+  suppress_effects: true
+  allow_events: ["error", "warning", "owner.locked"]
+
+thresholds:
+  cpu_temp: { warm: 65, hot: 75, hysteresis: 3 }
+  cpu_load: { high: 0.9, window_s: 60 }
+  net: { burst_mbps: 20, min_duration_ms: 200 }
+
+defaults:
+  brightness: 0.6
+  idle:
+    base: { name: BREATHE, color: "#30E3CA", speed: slow }
+
+rules:
+  - id: quiet_hours_idle
+    when: { quiet_hours_active: true }
+    action: { base: { name: BREATHE, color: "#08131A", speed: slow } }
+    priority: high
+
+  - id: cpu_hot
+    when: { cpu_temp_gte: 75 }
+    action: { base: { name: BREATHE, color: "#FF0000", speed: slow } }
+    priority: high
+
+  - id: cpu_warm
+    when: { cpu_temp_gte: 65, cpu_temp_lt: 75 }
+    action: { base: { name: PULSE, color: "#FF7F00", speed: slow } }
+    priority: medium
+
+  - id: cpu_load_high
+    when: { cpu_load_gte: 0.9 }
+    action: { base: { name: PULSE, color: "#FFD000", speed: slow } }
+    priority: medium
+
+  - id: net_burst
+    when: { net_burst: true }
+    action: { effect: { name: COMET, duration_ms: 800 } }
+    priority: medium
+    cooldown_ms: 3000
+
+  - id: wakeword_detected
+    when: { event: wakeword.detected }
+    action:
+      companion: { mode: wake_spin, eye_color: "#30E3CA" }
+    priority: critical
+    cooldown_ms: 800
+
+  - id: speech_listen_start
+    when: { event: speech.listen.start }
+    action: {}
+    priority: low
+    cooldown_ms: 400
+
+  - id: agent_processing_start
+    when: { event: agent.processing.start }
+    action:
+      companion: { mode: thinking, eye_color: "#30E3CA" }
+    priority: high
+    cooldown_ms: 300
+
+  - id: agent_processing_end
+    when: { event: agent.processing.end }
+    action:
+      companion: { mode: eye }
+    priority: high
+    cooldown_ms: 200
+
+  - id: speech_end_companion
+    when: { event: speech.end }
+    action:
+      companion: { mode: eye }
+    priority: high
+    cooldown_ms: 300
+
+  - id: speech_listen_end_companion
+    when: { event: speech.listen.end }
+    action:
+      companion: { mode: eye }
+    priority: high
+    cooldown_ms: 200
+
+  - id: speech_start
+    when: { event: speech.start }
+    action: {}
+    priority: low
+    cooldown_ms: 600
+  - id: speech_end
+    when: { event: speech.end }
+    action: {}
+    priority: low
+    cooldown_ms: 1000
+
+  - id: arduino_disconnected
+    when: { arduino_connected: false }
+    action: {}
+    priority: low
+
+  - id: error_ping
+    when: { event: error }
+    action: { effect: { name: METEOR, duration_ms: 500 } }
+    priority: critical
+    cooldown_ms: 10000
+
+  - id: warning_ping
+    when: { event: warning }
+    action: { effect: { name: PULSE, duration_ms: 400 } }
+    priority: high
+    cooldown_ms: 3000
+
+  - id: owner_scan
+    when: { event: owner.scan }
+    action: { effect: { name: COMET, duration_ms: 1200 } }
+    priority: high
+    cooldown_ms: 5000
+
+  - id: owner_rfid
+    when: { event: owner.rfid }
+    action: { effect: { name: RAINBOW_CYCLE, duration_ms: 1500 } }
+    priority: high
+    cooldown_ms: 8000
+
+  - id: owner_temp_granted
+    when: { event: owner.temp_granted }
+    action: { effect: { name: THEATER_CHASE, duration_ms: 1200 } }
+    priority: medium
+    cooldown_ms: 6000
+
+  - id: owner_temp_revoked
+    when: { event: owner.temp_revoked }
+    action: { effect: { name: PULSE, duration_ms: 800 } }
+    priority: medium
+    cooldown_ms: 4000
+
+  - id: owner_locked
+    when: { event: owner.locked }
+    action: { effect: { name: METEOR, duration_ms: 900 } }
+    priority: medium
+    cooldown_ms: 5000
+
+  - id: autonomy_excited
+    when: { event: autonomy.excited }
+    action: { effect: { name: RAINBOW_CYCLE, duration_ms: 700 } }
+    priority: medium
+    cooldown_ms: 1500
+
+  - id: autonomy_blink
+    when: { event: autonomy.blink }
+    action: { effect: { name: RANDOM_BLINK, duration_ms: 450 } }
+    priority: medium
+    cooldown_ms: 600
+
+  - id: autonomy_look_around
+    when: { event: autonomy.look_around }
+    action: { effect: { name: COMET, duration_ms: 700 } }
+    priority: medium
+    cooldown_ms: 1200
+
+  - id: autonomy_stretch
+    when: { event: autonomy.stretch }
+    action: { effect: { name: WAVE, duration_ms: 900 } }
+    priority: medium
+    cooldown_ms: 1600
+
+  - id: autonomy_bored
+    when: { event: autonomy.bored }
+    action: { effect: { name: PULSE, duration_ms: 1000 } }
+    priority: medium
+    cooldown_ms: 2200
+
+  - id: autonomy_monologue
+    when: { event: autonomy.monologue }
+    action: { effect: { name: TWINKLE, duration_ms: 900 } }
+    priority: low
+    cooldown_ms: 2500
+
+  - id: autonomy_sleep
+    when: { event: autonomy.sleep }
+    action: { base: { name: BREATHE, color: "#04070A", speed: slow } }
+    priority: high
+
+  - id: autonomy_wake
+    when: { event: autonomy.wake }
+    action: { effect: { name: COMET, duration_ms: 900 } }
+    priority: medium
+    cooldown_ms: 1800
+
+  - id: autonomy_offline
+    when: { event: autonomy.offline }
+    action: { effect: { name: PULSE, duration_ms: 850 } }
+    priority: medium
+    cooldown_ms: 2500
+
+  - id: vision_focus
+    when: { event: vision.focus }
+    action: { effect: { name: COMET, duration_ms: 500 } }
+    priority: low
+    cooldown_ms: 900
+
+  - id: autonomy_angry
+    when: { event: autonomy.angry }
+    action: { base: { name: BREATHE, color: "#FF3300", speed: slow } }
+    priority: high
+
+  - id: vision_person
+    when: { event: vision.person }
+    action: { effect: { name: COMET, duration_ms: 600 } }
+    priority: low
+    cooldown_ms: 1200
+
+  - id: environment_scene_changed
+    when: { event: environment.scene_changed }
+    action: { effect: { name: COMET, duration_ms: 700 } }
+    priority: low
+    cooldown_ms: 4000
+
+  # emotion:* and vision.person_emotion_* events drive piservo ears via gateway bridge.
+  # NeoPixel colors are set directly by autonomy express() / set_neopixel — no LED rules here.

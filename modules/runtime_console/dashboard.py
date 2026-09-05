@@ -67,7 +67,7 @@ _INFO_KEEP_SUBSTRINGS = (
     "provider mode",
     "remote mode:",
     "piper",
-    "vosk",
+    "openwakeword",
 )
 
 

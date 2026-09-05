@@ -9,20 +9,6 @@
       "source_config_url": "https://huggingface.co/rhasspy/piper-voices/resolve/main/tr/tr_TR/dfki/medium/tr_TR-dfki-medium.onnx.json",
       "purpose": "Turkish Piper TTS voice"
     },
-    "vosk_tr": {
-      "kind": "directory",
-      "required": true,
-      "path": "modules/speech/models/vosk-tr",
-      "source_url": "https://alphacephei.com/vosk/models/vosk-model-small-tr-0.3.zip",
-      "purpose": "Primary Turkish STT model"
-    },
-    "vosk_en": {
-      "kind": "directory",
-      "required": false,
-      "path": "modules/speech/models/vosk-en",
-      "source_url": "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip",
-      "purpose": "Optional English STT model"
-    },
     "imx500_object_model": {
       "kind": "file",
       "required": true,
@@ -34,8 +20,8 @@
     "picamera2": {"required": true, "purpose": "Raspberry Pi camera pipeline"},
     "numpy": {"required": true, "purpose": "Audio and vision processing"},
     "cv2": {"required": true, "purpose": "OpenCV processing"},
-    "vosk": {"required": true, "purpose": "Speech recognition"},
-    "openwakeword": {"required": false, "purpose": "Wakeword engine"},
+    "speech_recognition": {"required": true, "purpose": "Speech recognition"},
+    "openwakeword": {"required": true, "purpose": "Wakeword engine"},
     "piper": {"required": false, "purpose": "Piper runtime"},
     "fastapi": {"required": true, "purpose": "Gateway API"},
     "uvicorn": {"required": true, "purpose": "Gateway server"}

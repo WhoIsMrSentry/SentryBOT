@@ -4,13 +4,13 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from modules.config_center.agent_yaml_loader import deep_merge, load_agent_config, require_dict_section
-from modules.config_center.gemini_model import DEFAULT_GEMINI_MODEL
+from modules.common.config_loader import deep_merge, load_agent_config, require_dict_section, DEFAULT_GEMINI_MODEL
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8101},
     "vision": {
-        "processing_mode": "remote",
+        "processing_mode": "local",
+        "hybrid_local_capture": True,
         "camera_source": "http://127.0.0.1:8080/camera/video",
         "blind_mode": {"enabled": False, "interval_seconds": 5.0},
         "confidence_threshold": 0.5,
@@ -205,7 +205,7 @@ def _enforce_ollama_policy(cfg: Dict[str, Any], root_cfg: Dict[str, Any]) -> Dic
         or root_llm.get("base_url")
         or root_ollama.get("base_url")
         or os.getenv("AGENT_OLLAMA_BASE_URL")
-        or "http://127.0.0.1:11434"
+        or "http:"
     )
     if not base_url:
         raise ValueError("agent.ollama_base_url is required")
@@ -270,4 +270,43 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
     cfg = _enforce_policy(cfg, root_cfg)
     from modules.gateway.url import gateway_base_from_agent_cfg, rewrite_loopback_urls
 
-    return rewrite_loopback_urls(cfg, gateway_base_from_agent_cfg(root_cfg))
+    cfg = rewrite_loopback_urls(cfg, gateway_base_from_agent_cfg(root_cfg))
+    _apply_ollama_url_guard(cfg)
+    return cfg
+
+
+def _apply_ollama_url_guard(cfg: Dict[str, Any]) -> None:
+    """Single-pass Ollama URL guard (former batch06d wrapper, inlined).
+
+    Picks the first usable URL among the known config locations and writes it
+    back to both ``ollama.base_url`` and ``agent.ollama_base_url``.
+    """
+    from modules.common.ollama_url import (
+        default_ollama_base_url,
+        is_bad_ollama_url,
+        normalize_ollama_url,
+    )
+
+    agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+    ollama_cfg = cfg.get("ollama") if isinstance(cfg.get("ollama"), dict) else {}
+
+    candidates = [
+        ollama_cfg.get("base_url"),
+        ollama_cfg.get("url"),
+        agent_cfg.get("ollama_base_url"),
+        agent_cfg.get("base_url"),
+        agent_cfg.get("ollama_url"),
+    ]
+
+    selected = next(
+        (c for c in candidates if c and not is_bad_ollama_url(c)),
+        default_ollama_base_url(),
+    )
+    normalized = normalize_ollama_url(selected)
+
+    ollama_cfg["base_url"] = normalized
+    cfg["ollama"] = ollama_cfg
+    if isinstance(agent_cfg, dict):
+        agent_cfg["ollama_base_url"] = normalized
+        cfg["agent"] = agent_cfg
+

@@ -56,19 +56,25 @@ class IdleBehaviorSystem:
         last_breathe = time.time()
 
         while self.running:
-            now = time.time()
+            try:
+                now = time.time()
 
-            # Only trigger if agent is truly idle and client is available
-            if (
-                self.client
-                and not self.agent.is_busy
-            ):
-                # Gentle breathing lights every 15s (non-intrusive life sign)
-                if now - last_breathe > 15.0:
-                    try:
-                        self.client.set_neopixel("BREATHE", emotions=["neutral"], duration=3.0)
-                    except Exception:
-                        pass
-                    last_breathe = now
-
+                # Only trigger if agent is truly idle and client is available
+                if (
+                    self.client
+                    and not self.agent.is_busy
+                ):
+                    # Gentle breathing lights every 15s via expression / lease manager
+                    if now - last_breathe > 15.0:
+                        try:
+                            if hasattr(self.client, "express_emotion"):
+                                self.client.express_emotion("neutral", modalities=["leds"], duration_s=3.0)
+                            elif hasattr(self.client, "set_neopixel"):
+                                self.client.set_neopixel("BREATHE", emotions=["neutral"], duration=3.0)
+                        except Exception:
+                            pass
+                        last_breathe = now
+            except Exception as exc:
+                # The heartbeat must never die on an unexpected error (R9).
+                logger.debug("idle heartbeat iteration failed: %s", exc)
             time.sleep(2.0)  # Check every 2s (very low CPU)

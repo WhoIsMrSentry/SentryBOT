@@ -52,6 +52,7 @@ class QwenVlmClient:
         payload = {
             "model": model,
             "stream": False,
+            "think": False,
             "format": "json",
             "options": {
                 "temperature": self.temperature,

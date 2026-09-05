@@ -8,9 +8,9 @@ def test_memory_world_boundary_contract_markers_present():
     assert memory_consolidator.MEMORY_WORLD_COMPATIBILITY is True
     assert world_state.MEMORY_WORLD_COMPATIBILITY is True
 
-    assert memory.MEMORY_WORLD_RUNTIME_OWNER == "modules.autonomy.services.world_memory"
-    assert memory_consolidator.MEMORY_WORLD_RUNTIME_OWNER == "modules.autonomy.services.world_memory"
-    assert world_state.MEMORY_WORLD_RUNTIME_OWNER == "modules.autonomy.services.world_memory"
+    assert memory.MEMORY_WORLD_RUNTIME_OWNER == "modules.cognitive_memory.services.world_memory"
+    assert memory_consolidator.MEMORY_WORLD_RUNTIME_OWNER == "modules.cognitive_memory.services.world_memory"
+    assert world_state.MEMORY_WORLD_RUNTIME_OWNER == "modules.cognitive_memory.services.world_memory"
 
 
 def test_memory_world_public_classes_remain_exported():

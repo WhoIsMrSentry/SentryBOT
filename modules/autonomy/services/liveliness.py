@@ -97,5 +97,9 @@ class LivelinessScheduler:
         self._last_sent_ts = now
         self._last_params = dict(params)
 
+    def record_interaction(self) -> None:
+        """Mark an active interaction event."""
+        self._last_sent_ts = 0.0
+
 
 __all__ = ["LivelinessScheduler"]
