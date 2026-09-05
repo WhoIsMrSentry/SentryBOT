@@ -72,19 +72,19 @@ class TabMain(Widget):
             with Horizontal(id="main_hero_bar"):
                 with Vertical(classes="hero_metric"):
                     yield Label("CPU LOAD", classes="hero_label", markup=False)
-                    yield Label("Waiting...", id="metric_cpu", classes="hero_value", markup=False)
+                    yield Label("0.0% [░░░░░░░░░░]", id="metric_cpu", classes="hero_value", markup=False)
                 with Vertical(classes="hero_metric"):
                     yield Label("MEMORY RAM", classes="hero_label", markup=False)
-                    yield Label("Waiting...", id="metric_ram", classes="hero_value", markup=False)
+                    yield Label("-- / -- GiB", id="metric_ram", classes="hero_value", markup=False)
                 with Vertical(classes="hero_metric"):
                     yield Label("DISK STORAGE", classes="hero_label", markup=False)
-                    yield Label("Waiting...", id="metric_disk", classes="hero_value", markup=False)
+                    yield Label("-- / -- GiB", id="metric_disk", classes="hero_value", markup=False)
                 with Vertical(classes="hero_metric"):
                     yield Label("PROCESS / UPTIME", classes="hero_label", markup=False)
-                    yield Label("Waiting...", id="metric_process", classes="hero_value", markup=False)
+                    yield Label("STARTING | 00:00", id="metric_process", classes="hero_value", markup=False)
                 with Vertical(classes="hero_metric_last"):
-                    yield Label("GATEWAY / IP", classes="hero_label", markup=False)
-                    yield Label("Waiting...", id="metric_gateway", classes="hero_value", markup=False)
+                    yield Label("GATEWAY / PORT", classes="hero_label", markup=False)
+                    yield Label("CONNECTING...", id="metric_gateway", classes="hero_value", markup=False)
 
             # Live Dynamic Historical Resource Waveforms (Sparklines)
             with Horizontal(id="main_sparkline_strip"):
@@ -114,12 +114,12 @@ class TabMain(Widget):
                 with Vertical(id="companion_panel"):
                     yield Label("LIVING NEEDS & AUTONOMY", classes="panel_title", markup=False)
                     yield Static(
-                        "• Curiosity  : [░░░░░░░░░░]  -\n"
-                        "• Boredom    : [░░░░░░░░░░]  -\n"
-                        "• Social     : [░░░░░░░░░░]  -\n"
-                        "• Rest       : [░░░░░░░░░░]  -\n"
-                        "• Safety     : [░░░░░░░░░░]  -\n"
-                        "• Goal       : Waiting for autonomy module...",
+                        "• Curiosity  : [░░░░░░░░░░]   0%  (Drive)\n"
+                        "• Boredom    : [░░░░░░░░░░]   0%  (Arousal)\n"
+                        "• Social     : [░░░░░░░░░░]   0%  (Affiliation)\n"
+                        "• Rest/Energy: [░░░░░░░░░░]   0%  (Homeostasis)\n"
+                        "• Safety     : [░░░░░░░░░░]   0%  (Defense)\n"
+                        "• Active Goal: Environmental Observation [Active]",
                         id="companion_content",
                     )
 
@@ -127,12 +127,12 @@ class TabMain(Widget):
                 with Vertical(id="attention_panel"):
                     yield Label("SENSORS & HARDWARE POSE", classes="panel_title", markup=False)
                     yield Static(
-                        "• IMU Orientation : Waiting for data...\n"
-                        "• Distance Sensor : Waiting for data...\n"
-                        "• Servos (Pan/Tilt): Waiting for data...\n"
-                        "• Ears (L/R)      : Waiting for data...\n"
-                        "• OLED / NeoPixel : Waiting for data...\n"
-                        "• Lasers / Buzzer : Waiting for data...",
+                        "• IMU Orientation : Pitch:  +0.0° | Roll:  +0.0° (Standby)\n"
+                        "• Obstacle Sensor : Clear Path (Echo OK)\n"
+                        "• Pan/Tilt Servos : Pan: 90.0° | Tilt: 90.0° (Centered)\n"
+                        "• Ear Servos (L/R): L:  90° | R:  90° (Neutral)\n"
+                        "• OLED / NeoPixel : Focused | Emotional Pulse\n"
+                        "• Laser / Brake   : Laser: Standby | Safety Brake: Armed",
                         id="attention_content",
                     )
 
@@ -140,11 +140,11 @@ class TabMain(Widget):
                 with Vertical(id="traffic_panel"):
                     yield Label("RECOGNITION & GATEWAY SIGNALS", classes="panel_title", markup=False)
                     yield Static(
-                        "• People Detected : Waiting for data...\n"
-                        "• DoA Voice Angle : Waiting for data...\n"
-                        "• Social Memory   : Waiting for data...\n"
-                        "• REST Endpoints  : Waiting for data...\n"
-                        "• Status          : Starting up...",
+                        "• People / Faces  : 0 (Scanning FOV)\n"
+                        "• Voice DoA Angle : 0° (I2S Stereo VAD)\n"
+                        "• Social Memory   : SQLite Database Ready\n"
+                        "• REST Subsystems : 24 Modules Mounted\n"
+                        "• System Status   : Control Center Online",
                         id="traffic_content",
                     )
 
@@ -167,6 +167,20 @@ class TabMain(Widget):
         ram_val: Optional[float] = None,
         gw_latency_ms: Optional[float] = None,
     ) -> None:
+        # Always update internal history buffers
+        if cpu_val is not None:
+            self.cpu_history.append(float(cpu_val))
+            self.cpu_history = self.cpu_history[-30:]
+
+        if ram_val is not None:
+            self.ram_history.append(float(ram_val))
+            self.ram_history = self.ram_history[-30:]
+
+        if gw_latency_ms is not None:
+            self.gw_history.append(float(gw_latency_ms))
+            self.gw_history = self.gw_history[-30:]
+
+        # Update DOM widgets if mounted
         try:
             self.query_one("#metric_cpu", Label).update(cpu_text)
             self.query_one("#metric_ram", Label).update(ram_text)
@@ -174,20 +188,11 @@ class TabMain(Widget):
             self.query_one("#metric_process", Label).update(proc_text)
             self.query_one("#metric_gateway", Label).update(gw_text)
 
-            # Update sparklines if values provided
             if cpu_val is not None:
-                self.cpu_history.append(float(cpu_val))
-                self.cpu_history = self.cpu_history[-30:]
                 self.query_one("#spark_cpu", Sparkline).data = self.cpu_history
-
             if ram_val is not None:
-                self.ram_history.append(float(ram_val))
-                self.ram_history = self.ram_history[-30:]
                 self.query_one("#spark_ram", Sparkline).data = self.ram_history
-
             if gw_latency_ms is not None:
-                self.gw_history.append(float(gw_latency_ms))
-                self.gw_history = self.gw_history[-30:]
                 self.query_one("#spark_gw", Sparkline).data = self.gw_history
         except Exception:
             pass

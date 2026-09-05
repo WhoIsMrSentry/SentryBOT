@@ -30,6 +30,11 @@ def get_router(runner: EarRunner) -> APIRouter:
         runner.gesture(name)
         return {"ok": True}
 
+    @r.post("/reflex", tags=["piservo"], summary="Acoustic Reflex")
+    def reflex(angle: float, energy: float = 1.0):
+        left, right = runner.reflex(angle, energy)
+        return {"ok": True, "left": left, "right": right}
+
     @r.post("/event", tags=["piservo"], summary="Event")
     def event(kind: str):
         runner.event(kind)

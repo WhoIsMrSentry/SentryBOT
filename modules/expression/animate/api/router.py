@@ -26,6 +26,8 @@ def get_router(anim: xAnimateService) -> APIRouter:
 
         t = threading.Thread(target=_worker, daemon=True, name=f"animate-{name}")
         t.start()
+        if loop:
+            return {"ok": True, "loop": True, "status": "running", "name": name}
         t.join(timeout=max(1.0, float(anim.cfg.get("run_timeout_s", 30.0))))
         if t.is_alive():
             anim.stop_run()

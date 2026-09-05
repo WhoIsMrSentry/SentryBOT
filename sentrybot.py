@@ -199,6 +199,8 @@ def main(argv: list[str] | None = None) -> int:
         tui_args = ["--alt"]
         if not args.no_run:
             tui_args.append("--run")
+        else:
+            tui_args.append("--no-run")
         tui_args.extend(unknown)
         return tui_main(tui_args)
     except (KeyboardInterrupt, SystemExit):

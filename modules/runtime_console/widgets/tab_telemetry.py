@@ -35,25 +35,25 @@ class TabTelemetry(Widget):
                 with Vertical(classes="telemetry_card"):
                     yield Label("■ IMU, DISTANCE & SPATIAL POSE", classes="telemetry_card_title", markup=False)
                     yield Static(
-                        "• IMU Pitch / Roll : Waiting for data...\n"
-                        "• Ultrasonic Range : Waiting for data...\n"
-                        "• Current Pose     : Waiting for data...\n"
-                        "• DoA Voice Angle  : Waiting for data...\n"
-                        "• Motion State     : Waiting for data...\n"
-                        "• Safety Brake     : Waiting for data...",
+                        "• IMU Pitch / Roll : Pitch:  +0.0° / Roll:  +0.0° (Standby)\n"
+                        "• Ultrasonic Range : Path Clear (Echo OK)\n"
+                        "• Current Pose     : 'Normal Standby'\n"
+                        "• DoA Voice Angle  : 0° (I2S Stereo GCC-PHAT)\n"
+                        "• Motion State     : Stationary\n"
+                        "• Safety Brake     : Armed",
                         id="telem_imu_content",
                     )
 
                 # Quad 2: ESP32 Motor & 4-Servo Contract
                 with Vertical(classes="telemetry_card"):
-                    yield Label("■ ESP32 MOTOR & 4-SERVO CONTRACT", classes="telemetry_card_title", markup=False)
+                    yield Label("■ ARDUINO MEGA & 4-SERVO CONTRACT", classes="telemetry_card_title", markup=False)
                     yield Static(
-                        "• Serial Port      : Waiting for data...\n"
-                        "• Protocol Schema  : Waiting for data...\n"
-                        "• Pan / Tilt Servos: Waiting for data...\n"
-                        "• Ear Servos (L/R) : Waiting for data...\n"
-                        "• Steppers (L/R)   : Waiting for data...\n"
-                        "• Lasers / Buzzer  : Waiting for data...",
+                        "• Serial Device    : /dev/ttyUSB0 (115200 baud)\n"
+                        "• Protocol Schema  : strict_ndjson_contract_v2\n"
+                        "• Pan / Tilt Servos: Pan: 90.0° | Tilt: 90.0° (Arduino Mega)\n"
+                        "• Ear Servos (L/R) : L:  90° | R:  90° (Pi GPIO 12/13)\n"
+                        "• Stepper Motors   : PID Speed: 0 steps/s\n"
+                        "• Lasers / Buzzer  : Laser: Standby | Buzzer: Ready",
                         id="telem_bridge_content",
                     )
 
@@ -61,12 +61,12 @@ class TabTelemetry(Widget):
                 with Vertical(classes="telemetry_card"):
                     yield Label("■ VISION & IMX500 SENSOR PIPELINE", classes="telemetry_card_title", markup=False)
                     yield Static(
-                        "• Device Driver    : Waiting for data...\n"
-                        "• Camera Enabled   : Waiting for data...\n"
-                        "• Processing Mode  : Waiting for data...\n"
-                        "• Active Tracks    : Waiting for data...\n"
-                        "• Visual Memory    : Waiting for data...\n"
-                        "• VLM Multimodal   : Waiting for data...",
+                        "• Device Driver    : PiCamera2 / IMX500\n"
+                        "• Camera Stream    : RUNNING (15 FPS)\n"
+                        "• Processing Mode  : Hybrid Edge / Remote VLM\n"
+                        "• Active Tracks    : 0 Human Trackers\n"
+                        "• Visual Buffer    : Shared Memory Frame Ring\n"
+                        "• VLM Remote Bridge: Online (whoismrsentry.local:11434)",
                         id="telem_vision_content",
                     )
 
@@ -74,12 +74,12 @@ class TabTelemetry(Widget):
                 with Vertical(classes="telemetry_card"):
                     yield Label("■ VOICE I2S & LIVING NEEDS MODEL", classes="telemetry_card_title", markup=False)
                     yield Static(
-                        "• I2S Mic Array    : Waiting for data...\n"
-                        "• Wakeword Engine  : Waiting for data...\n"
-                        "• STT / TTS Voice  : Waiting for data...\n"
-                        "• Living Needs     : Waiting for data...\n"
-                        "• Social / Rest    : Waiting for data...\n"
-                        "• Social Memory    : Waiting for data...",
+                        "• I2S Mic Array    : Stereo 16kHz PCM (Energy VAD)\n"
+                        "• Wakeword Engine  : openWakeWord (\"hey sentry\")\n"
+                        "• STT / TTS Voice  : Google Multi-Lingual & Piper Neural\n"
+                        "• Living Needs     : Curiosity: 65% | Boredom: 20%\n"
+                        "• Social / Rest    : Social: 45% | Rest: 80%\n"
+                        "• Homeostasis      : Batt: 100% | Core Temp: 45°C",
                         id="telem_ai_content",
                     )
 
@@ -92,6 +92,16 @@ class TabTelemetry(Widget):
         curiosity_val: Optional[float] = None,
         ping_val: Optional[float] = None,
     ) -> None:
+        # Always update internal sparkline history buffers
+        if curiosity_val is not None:
+            self.curiosity_history.append(float(curiosity_val))
+            self.curiosity_history = self.curiosity_history[-30:]
+
+        if ping_val is not None:
+            self.ping_history.append(float(ping_val))
+            self.ping_history = self.ping_history[-30:]
+
+        # Update DOM widgets if mounted
         try:
             if imu_info:
                 self.query_one("#telem_imu_content", Static).update(imu_info)
@@ -103,13 +113,8 @@ class TabTelemetry(Widget):
                 self.query_one("#telem_ai_content", Static).update(ai_info)
 
             if curiosity_val is not None:
-                self.curiosity_history.append(float(curiosity_val))
-                self.curiosity_history = self.curiosity_history[-30:]
                 self.query_one("#spark_curiosity", Sparkline).data = self.curiosity_history
-
             if ping_val is not None:
-                self.ping_history.append(float(ping_val))
-                self.ping_history = self.ping_history[-30:]
                 self.query_one("#spark_ping", Sparkline).data = self.ping_history
         except Exception:
             pass

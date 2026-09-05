@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import platform
@@ -175,39 +176,158 @@ def get_disk_info() -> tuple[str, str]:
     return "N/A", "N/A"
 
 
-def get_gpu_info() -> str:
+def _format_vram(bytes_val: int | float | None) -> str:
+    if not bytes_val or bytes_val <= 0:
+        return ""
+    gib = bytes_val / (1024**3)
+    rounded = round(gib)
+    if abs(gib - rounded) < 0.15:
+        return f"{rounded}.0 GiB"
+    return f"{gib:.1f} GiB"
+
+
+def _get_windows_gpu_devices() -> list[tuple[str, str]]:
+    """Query accurate 64-bit QWORD VRAM from Windows Registry to bypass WMI 32-bit (4GB) cap."""
+    devices: list[tuple[str, int | None]] = []
+    try:
+        import winreg
+        reg_path = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as base_key:
+            subkeys, _, _ = winreg.QueryInfoKey(base_key)
+            for i in range(subkeys):
+                sub_name = winreg.EnumKey(base_key, i)
+                if not sub_name.isdigit():
+                    continue
+                try:
+                    with winreg.OpenKey(base_key, sub_name) as k:
+                        name, _ = winreg.QueryValueEx(k, "DriverDesc")
+                        name = str(name).strip()
+                        if not name:
+                            continue
+                        vram: int | None = None
+                        try:
+                            qw, _ = winreg.QueryValueEx(k, "HardwareInformation.qwMemorySize")
+                            if isinstance(qw, int) and qw > 0:
+                                vram = qw
+                        except OSError:
+                            pass
+                        if vram is None:
+                            try:
+                                mem, _ = winreg.QueryValueEx(k, "HardwareInformation.MemorySize")
+                                if isinstance(mem, int) and mem > 0:
+                                    vram = mem
+                            except OSError:
+                                pass
+                        devices.append((name, vram))
+                except OSError:
+                    pass
+    except Exception:
+        pass
+
+    # Verify / refine with nvidia-smi if available for discrete NVIDIA cards
+    try:
+        import subprocess
+        res = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=2
+        )
+        if res.returncode == 0:
+            for line in res.stdout.strip().splitlines():
+                if "," in line:
+                    n, m = line.split(",", 1)
+                    mb = float(m.strip())
+                    nv_bytes = int(mb * 1024 * 1024)
+                    for idx, (dname, dvram) in enumerate(devices):
+                        if "nvidia" in dname.lower():
+                            devices[idx] = (dname, nv_bytes)
+    except Exception:
+        pass
+
+    if devices:
+        formatted_list: list[tuple[str, str]] = []
+        for name, vram in devices:
+            vram_str = _format_vram(vram)
+            if vram_str:
+                formatted_list.append((name, f"{name} ({vram_str})"))
+            else:
+                formatted_list.append((name, name))
+        return formatted_list
+
+    # Fallback to WMI/CIM if registry did not return entries
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["powershell", "-Command", "Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | ConvertTo-Json"],
+            capture_output=True, text=True, timeout=5
+        )
+        raw = (result.stdout or "").strip()
+        if not raw:
+            return []
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data = [data]
+        entries: list[tuple[str, str]] = []
+        for item in data:
+            name = str(item.get("Name") or "").strip()
+            if not name:
+                continue
+            ram = item.get("AdapterRAM")
+            vram_str = _format_vram(ram) if (ram and isinstance(ram, int) and ram > 0) else ""
+            entries.append((name, f"{name} ({vram_str})" if vram_str else name))
+        return entries
+    except Exception:
+        return []
+
+
+def get_gpu_and_graphics() -> tuple[str, str]:
+    """Retrieve primary GPU and secondary/integrated graphics cleanly without merging or line-wrapping."""
     if os.name == "nt":
-        try:
-            import subprocess
-            result = subprocess.run(
-                ["powershell", "-Command", "Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | Format-Table -AutoSize"],
-                capture_output=True, text=True, timeout=5
-            )
-            gpus = []
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if line and not line.startswith("Name") and not line.startswith("----"):
-                    parts = line.rsplit(" ", 1)
-                    if len(parts) == 2 and parts[1].isdigit():
-                        ram_gb = int(parts[1]) / (1024**3)
-                        gpus.append(f"{parts[0]} ({ram_gb:.1f} GiB)")
-                    else:
-                        gpus.append(parts[0])
-            if gpus:
-                return ", ".join(gpus[:2])
-        except Exception:
-            pass
+        entries = _get_windows_gpu_devices()
+        if not entries:
+            return "Unknown", ""
+
+        if len(entries) == 1:
+            return entries[0][1], ""
+
+        # Classify into discrete GPU vs integrated graphics
+        dgpu: str | None = None
+        igpu: str | None = None
+
+        for raw_name, formatted in entries:
+            lower = raw_name.lower()
+            is_dgpu_candidate = any(k in lower for k in ("nvidia", "geforce", "rtx", "gtx", "quadro", "radeon rx", "discrete"))
+            is_igpu_candidate = any(k in lower for k in ("intel", "uhd", "iris", "integrated", "graphics", "apu"))
+
+            if is_dgpu_candidate and dgpu is None:
+                dgpu = formatted
+            elif is_igpu_candidate and igpu is None:
+                igpu = formatted
+
+        # Fallback if classification was incomplete
+        if dgpu is None and igpu is not None:
+            remaining = [f for _, f in entries if f != igpu]
+            dgpu = remaining[0] if remaining else igpu
+            if dgpu == igpu:
+                igpu = ""
+        elif dgpu is not None and igpu is None:
+            remaining = [f for _, f in entries if f != dgpu]
+            igpu = remaining[0] if remaining else ""
+        elif dgpu is None and igpu is None:
+            dgpu = entries[0][1]
+            igpu = entries[1][1] if len(entries) > 1 else ""
+
+        return dgpu or "Unknown", igpu or ""
     else:
         try:
             dt_path = Path("/proc/device-tree/model")
             if dt_path.exists():
                 dt_text = dt_path.read_text(encoding="utf-8", errors="ignore").lower()
                 if "raspberry pi 5" in dt_text:
-                    return "Broadcom VideoCore VII"
+                    return "Broadcom VideoCore VII", ""
                 if "raspberry pi 4" in dt_text:
-                    return "Broadcom VideoCore VI"
+                    return "Broadcom VideoCore VI", ""
                 if "raspberry pi" in dt_text:
-                    return "Broadcom VideoCore IV"
+                    return "Broadcom VideoCore IV", ""
         except Exception:
             pass
         try:
@@ -215,12 +335,22 @@ def get_gpu_info() -> str:
             result = subprocess.run(
                 ["lspci", "-nn"], capture_output=True, text=True, timeout=5
             )
+            vga_lines = []
             for line in result.stdout.splitlines():
                 if "VGA" in line or "3D" in line or "Display" in line:
-                    return line.split(":", 2)[-1].strip()[:80]
+                    vga_lines.append(line.split(":", 2)[-1].strip()[:80])
+            if vga_lines:
+                if len(vga_lines) == 1:
+                    return vga_lines[0], ""
+                return vga_lines[0], vga_lines[1]
         except Exception:
             pass
-    return "Unknown"
+    return "Unknown", ""
+
+
+def get_gpu_info() -> str:
+    gpu, _ = get_gpu_and_graphics()
+    return gpu
 
 
 def get_resolution() -> str:

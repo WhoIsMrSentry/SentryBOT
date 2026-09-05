@@ -127,6 +127,11 @@ class VocalProsodyMixin:
             return
         self.state["last_sound_reaction_time"] = now
         logger.info("Sound detected at %s", angle)
+        # Anlık İşitsel Kulak Refleksi (Pi GPIO 12 & 13)
+        try:
+            self.client.queue_action("piservo_reflex", priority=90, payload={"angle": float(angle)})
+        except Exception:
+            pass
         offset = max(-70, min(70, angle))
         target_pan = max(0, min(180, 90 + offset))
         self.state["current_pan"] = target_pan

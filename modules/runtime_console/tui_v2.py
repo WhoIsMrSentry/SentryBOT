@@ -121,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="SentryBOT Modern Control Center TUI")
     parser.add_argument("--root", default=os.getcwd(), help="SentryBOT project root")
     parser.add_argument("--run", action="store_true", help="start run_robot.py as a subprocess")
+    parser.add_argument("--no-run", action="store_true", help="show the TUI without starting robot services")
     parser.add_argument("--no-color", action="store_true")
     parser.add_argument("--ascii", action="store_true", help="use ASCII borders")
     parser.add_argument(
@@ -143,9 +144,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     profile = "pc-test" if args.profile == "pc" else args.profile
+    should_run_robot = bool(args.run) and not bool(args.no_run)
     return run_tui(
         root=root,
-        run_robot=args.run,
+        run_robot=should_run_robot,
         profile=profile,
     )
 

@@ -79,6 +79,8 @@ def format_info_lines(info: SystemInfo, pal: Palette, label_width: int = 18) -> 
     lines.append(fmt("Memory:", f"{info.memory} / {info.memory_total}"))
     lines.append(fmt("Disk:", f"{info.disk} / {info.disk_total}"))
     lines.append(fmt("GPU:", info.gpu))
+    if info.graphics and info.graphics != "Unknown":
+        lines.append(fmt("Graphics:", info.graphics))
     
     if info.resolution and info.resolution != "Unknown":
         lines.append(fmt("Resolution:", info.resolution))
@@ -90,10 +92,11 @@ def format_info_lines(info: SystemInfo, pal: Palette, label_width: int = 18) -> 
         lines.append(fmt("Local IP:", info.local_ip))
         
     lines.append(fmt("Shell:", info.shell))
-    lines.append(fmt("Terminal:", info.terminal))
-    lines.append(fmt("Font:", info.terminal_font))
+    if info.terminal_font and info.terminal_font != "unknown":
+        lines.append(fmt("Font:", info.terminal_font))
     lines.append(fmt("Packages:", info.packages))
     lines.append(fmt("Python:", info.python_version))
+    lines.append(fmt("Gateway:", f"http://{info.local_ip if info.local_ip != 'Unknown' else '127.0.0.1'}:8080"))
     lines.append(fmt("SentryBOT:", info.sentrybot_version))
 
     if pal.enabled:

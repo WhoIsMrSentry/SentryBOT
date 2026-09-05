@@ -84,3 +84,19 @@ def test_quoted_drafts_filtered():
     cleaned = service._clean_text_for_speech(raw)
     assert "Enerjim tavan ama canım sıkkın" in cleaned
     assert "ilgi istiyorum" in cleaned
+
+
+def test_turkish_thoughts_filtered():
+    service = _svc()
+    raw = (
+        "Düşünce: Kullanıcı odanın ışıklarını kapatmamı istedi.\n"
+        "İç Ses: NeoPixel servisine istek göndermeliyim.\n"
+        "[Gerekçe: Gece modu aktif]\n"
+        "Işıkları hemen kapatıyorum."
+    )
+    cleaned = service._clean_text_for_speech(raw)
+    assert "Düşünce:" not in cleaned
+    assert "İç Ses:" not in cleaned
+    assert "Gerekçe" not in cleaned
+    assert cleaned == "Işıkları hemen kapatıyorum."
+

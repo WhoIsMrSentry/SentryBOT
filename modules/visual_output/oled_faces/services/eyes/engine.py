@@ -63,6 +63,14 @@ class EyeEngine:
         with self._lock:
             self._subtitle_text = str(text).strip()
             self._subtitle_expiry = time.monotonic() + max(1.0, float(duration_s))
+
+    def set_gaze(self, x: float, y: float, hold_s: float = 3.0) -> None:
+        """Direct eye pupils towards target coordinate (gaze/face tracking)."""
+        with self._lock:
+            self.look_x = max(-16.0, min(16.0, float(x)))
+            self.look_y = max(-7.0, min(7.0, float(y)))
+            self._next_idle = time.monotonic() + max(1.0, float(hold_s))
+
     def start(self):
         if not (self._thread and self._thread.is_alive()):
             self._stop.clear()
@@ -152,7 +160,13 @@ class EyeEngine:
                 self._begin_blink(now, _MASK)
             elif free and now >= self._next_blink:           # spontaneous blink
                 self._begin_blink(now, _AUTO)
-                self._next_blink = now + random.uniform(2, 6)
+                if self.mood in {"excited", "scared", "curious", "focused"}:
+                    gap = random.uniform(1.0, 2.5)  # Hızlı/uyanık kırpma
+                elif self.mood in {"sleepy", "sad", "relaxed", "bored"}:
+                    gap = random.uniform(4.5, 8.5)  # Yavaş/süzülen kırpma
+                else:
+                    gap = random.uniform(2.5, 5.5)  # Doğal aralık
+                self._next_blink = now + gap
             elif free and self._activity is None and now >= self._next_idle:  # idle glance
                 self.look_x, self.look_y = (0.0, 0.0) if random.random() < 0.3 else \
                     (random.uniform(-16, 16), random.uniform(-7, 7))
@@ -162,7 +176,7 @@ class EyeEngine:
                     self._activity = None
             mood, act, look = self.mood, self._activity, (self.look_x, self.look_y)
 
-        spec = MOODS[mood]
+        spec = MOODS.get(mood, MOODS.get("neutral", {}))
         target = min(spec.get("bright", self._bright), self._bright)  # emote may dim, capped at the general max
         if self._set_brightness and target != self._cur_bright:
             try:

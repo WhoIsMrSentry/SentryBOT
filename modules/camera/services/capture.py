@@ -78,25 +78,51 @@ class FramePublisher:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._frame_bytes: Optional[bytes] = None
+        self._raw_frame: Optional[Any] = None
+        self._jpeg_quality: int = 80
         self._frame_ts = 0.0
         self._frame_count = 0
+
+    def set_raw_frame(self, raw_frame: Any, quality: int = 80) -> None:
+        """Store raw numpy array and lazily encode JPEG only when requested."""
+        with self._lock:
+            self._raw_frame = raw_frame
+            self._frame_bytes = None
+            self._jpeg_quality = quality
+            self._frame_ts = time.time()
+            self._frame_count += 1
 
     def set_jpeg(self, jpeg_bytes: bytes) -> None:
         with self._lock:
             self._frame_bytes = jpeg_bytes
-            self._frame_ts = 0.0
+            self._raw_frame = None
+            self._frame_ts = time.time()
             self._frame_count += 1
 
     def get_jpeg(self) -> Optional[bytes]:
         with self._lock:
-            return self._frame_bytes
+            if self._frame_bytes is not None:
+                return self._frame_bytes
+            if self._raw_frame is not None and cv2 is not None:
+                try:
+                    ok, encoded = cv2.imencode(
+                        ".jpg",
+                        self._raw_frame,
+                        [int(cv2.IMWRITE_JPEG_QUALITY), int(max(1, min(100, self._jpeg_quality)))],
+                    )
+                    if ok:
+                        self._frame_bytes = encoded.tobytes()
+                        return self._frame_bytes
+                except Exception:
+                    pass
+            return None
 
     def status(self) -> Dict[str, Any]:
         with self._lock:
             return {
                 "has_frame": self._frame_bytes is not None,
                 "frame_count": self._frame_count,
-                "last_frame_age_s": max(0.0, 0.0 - self._frame_ts) if self._frame_ts else None,
+                "last_frame_age_s": max(0.0, time.time() - self._frame_ts) if self._frame_ts else None,
             }
 
 
