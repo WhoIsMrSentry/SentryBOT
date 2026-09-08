@@ -232,6 +232,36 @@ class AgentContextMixin(AgentMemorySyncMixin):
             vlm_ask_timeout_s=float((config.get("tool_execution", {}) or {}).get("timeout_s", 22.0)),
             gateway_base_url=self._gateway_base_url,
         )
+        runtime_cfg = config.get("agent_runtime", {}) if isinstance(config.get("agent_runtime"), dict) else {}
+        from .runtime import CapabilityIndex, DecisionTraceStore, FailureClassifier, ProgressTracker, RecoveryManager
+        from .runtime.native_tool_recovery import NativeToolRecovery
+
+        self.decision_traces = DecisionTraceStore(
+            maxlen=int(runtime_cfg.get("decision_trace_maxlen", 64))
+        )
+        self.capability_index = CapabilityIndex.from_robot_registry()
+        self.failure_classifier = FailureClassifier()
+        self.recovery_manager = RecoveryManager()
+        self.native_progress = ProgressTracker(
+            max_identical=int(runtime_cfg.get("max_identical_actions", 3)),
+            max_zero_progress=int(runtime_cfg.get("max_zero_progress", 3)),
+        )
+        self._native_tool_recovery_factory = lambda goal_id="native_turn": NativeToolRecovery(
+            classifier=self.failure_classifier,
+            recovery=self.recovery_manager,
+            capabilities=self.capability_index,
+            progress=ProgressTracker(
+                max_identical=int(runtime_cfg.get("max_identical_actions", 3)),
+                max_zero_progress=int(runtime_cfg.get("max_zero_progress", 3)),
+            ),
+            traces=self.decision_traces,
+            max_retries=int(
+                (config.get("tool_execution", {}) or {}).get(
+                    "max_retries", runtime_cfg.get("max_retries", 1)
+                )
+            ),
+            goal_id=goal_id,
+        )
 
     def _init_background_threads(self) -> None:
         sensor_cfg = self.config.get("sensor_loop", {}) if isinstance(self.config.get("sensor_loop", {}), dict) else {}
@@ -378,3 +408,39 @@ class AgentContextMixin(AgentMemorySyncMixin):
     def _check_provider_availability(self) -> None:
         if self.llm_provider != "ollama" and self.provider_client is None:
             raise RuntimeError(f"Provider {self.llm_provider} is not available")
+
+    def create_agent_runtime(self, **budget_overrides: Any):
+        """Build a typed AgentRuntime bound to this orchestrator's ToolRegistry.
+
+        Additive helper — does not change the speech turn path. Callers that need
+        multi-step goal solving with recovery/traces should use this instead of
+        inventing a parallel loop.
+        """
+        from .runtime import AgentRuntime, Budget, CapabilityIndex, ProgressTracker
+
+        cfg = self.config.get("agent_runtime", {}) if isinstance(self.config.get("agent_runtime"), dict) else {}
+        if not bool(cfg.get("enabled", True)):
+            raise RuntimeError("agent_runtime disabled in config")
+
+        budget = Budget(
+            max_iterations=int(budget_overrides.get("max_iterations", cfg.get("max_iterations", 6))),
+            max_tool_calls=int(budget_overrides.get("max_tool_calls", cfg.get("max_tool_calls", 8))),
+            max_retries=int(budget_overrides.get("max_retries", cfg.get("max_retries", 2))),
+            max_replans=int(budget_overrides.get("max_replans", cfg.get("max_replans", 2))),
+            max_execution_time_s=float(
+                budget_overrides.get("max_execution_time_s", cfg.get("max_execution_time_s", 60.0))
+            ),
+        )
+        runtime = AgentRuntime(
+            tool_executor=self.tool_registry.execute,
+            capability_index=getattr(self, "capability_index", None) or CapabilityIndex.from_robot_registry(),
+            budget=budget,
+            available_tools=self.tool_registry.get_tool_names(),
+        )
+        runtime.progress = ProgressTracker(
+            max_identical=int(cfg.get("max_identical_actions", 3)),
+            max_zero_progress=int(cfg.get("max_zero_progress", 3)),
+        )
+        if getattr(self, "decision_traces", None) is not None:
+            runtime.traces = self.decision_traces
+        return runtime
