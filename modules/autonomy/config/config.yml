@@ -913,6 +913,22 @@ owner_learning:
 companion_goals:
   enabled: true
   event_cooldown_s: 12.0
+  goal_formation:
+    enabled: true
+    strategy: rules
+    model_assist: false
+    max_candidates: 6
+    min_activation_score: 0.30
+    continuity_bonus: 0.20
+    repetition_window_s: 900
+    max_same_goal_repeats: 2
+    allow_supersede: true
+    allow_soft_interrupt: true
+    soft_interrupt_social_min: 0.55
+    outcome_window_s: 900
+    outcome_failure_penalty: 0.35
+    outcome_success_bonus: 0.15
+    risk_ceiling: medium
   autonomy_policy:
     uncertainty:
       enabled: true
@@ -1075,6 +1091,32 @@ companion_goal_executor:
   allow_real_hardware: false
   stop_on_failure: true
   require_capability_guard: true
+  cognitive_loop:
+    enabled: true
+    max_iterations: 12
+    max_retries: 2
+    max_replans: 2
+    max_identical_actions: 3
+    max_zero_progress: 3
+    decision_trace_maxlen: 64
+    simulate_on_dry_run: true
+    contextual_replan:
+      enabled: true
+      llm_assist: false
+      max_candidate_steps: 4
+      fallback_observe_wait: true
+      risk_ceiling: medium
+      blocked_risks: [critical]
+    goal_persistence:
+      enabled: true
+      backend: memory
+      ttl_s: 600
+      resume_on_tick: true
+  goal_persistence:
+    enabled: true
+    backend: memory
+    ttl_s: 600
+    resume_on_tick: true
   lifecycle:
     enabled: true
     dry_run_state: simulated
@@ -1090,6 +1132,8 @@ companion_goal_executor:
 
 companion_auto_execute:
   enabled: true
+  life_loop_enabled: true
+  resume_bypass_cooldown: true
   follow_runtime_profile: true
   require_auto_execute_flag: true
   min_interval_s: 8.0
