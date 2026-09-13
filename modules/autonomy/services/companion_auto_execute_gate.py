@@ -7,6 +7,8 @@ from typing import Any, Dict, Optional, Tuple
 class CompanionAutoExecuteGate:
     DEFAULTS: Dict[str, Any] = {
         "enabled": True,
+        "life_loop_enabled": True,
+        "resume_bypass_cooldown": True,
         "require_auto_execute_flag": True,
         "min_interval_s": 8.0,
         "dry_run_default": True,
@@ -40,6 +42,7 @@ class CompanionAutoExecuteGate:
         dry_run: Optional[bool] = None,
         pc_test: bool = False,
         now: Optional[float] = None,
+        bypass_cooldown: bool = False,
         **_: Any,
     ) -> Dict[str, Any]:
         ts = float(now if now is not None else time.time())
@@ -73,7 +76,9 @@ class CompanionAutoExecuteGate:
             return self._remember(base, reason)
         plan_id = str(plan.get("plan_id") or "")
         interval = max(0.0, float(self.cfg.get("min_interval_s", 8.0)))
-        if not force and plan_id == self._last_plan_id and ts - self._last_execute_ts < interval:
+        # Batch 6b: resumed ACTIVE/WAITING goals must progress across ticks without cooldown stall.
+        resume_bypass = bool(bypass_cooldown) and bool(self.cfg.get("resume_bypass_cooldown", True))
+        if not force and not resume_bypass and plan_id == self._last_plan_id and ts - self._last_execute_ts < interval:
             base["cooldown_remaining_s"] = round(interval - (ts - self._last_execute_ts), 2)
             return self._remember(base, "cooldown")
 
