@@ -83,10 +83,27 @@ class BrainInitMixin:
         )
         self.needs_engine = CompanionNeedsEngine(needs_cfg)
         goal_cfg = (
-            self.config.get("companion_goals", {})
+            dict(self.config.get("companion_goals", {}))
             if isinstance(self.config.get("companion_goals", {}), dict)
             else {}
         )
+        # Wire root sibling policies into selector/formation cfg (audit gap fix).
+        if isinstance(self.config.get("outcome_learning"), dict):
+            goal_cfg.setdefault("outcome_learning", dict(self.config.get("outcome_learning")))
+        if isinstance(self.config.get("social_policy"), dict):
+            goal_cfg.setdefault("social_policy", dict(self.config.get("social_policy")))
+        if "goal_formation" not in goal_cfg:
+            goal_cfg["goal_formation"] = {
+                "enabled": True,
+                "strategy": "rules",
+                "model_assist": False,
+                "max_candidates": 6,
+                "min_activation_score": 0.35,
+                "continuity_bonus": 0.20,
+                "repetition_window_s": 900,
+                "max_same_goal_repeats": 2,
+                "allow_supersede": True,
+            }
         self.goal_selector = CompanionGoalSelector(goal_cfg)
         executor_cfg = (
             self.config.get("companion_goal_executor", {})
@@ -97,6 +114,39 @@ class BrainInitMixin:
             apply_runtime_hardware_policy(executor_cfg),
             client=self.client,
         )
+        persistence_cfg = (
+            executor_cfg.get("goal_persistence", {})
+            if isinstance(executor_cfg.get("goal_persistence"), dict)
+            else {}
+        )
+        try:
+            from modules.agent_core.services.runtime.goal_store import GoalStore
+
+            self.goal_store = GoalStore(
+                enabled=bool(persistence_cfg.get("enabled", True)),
+                ttl_s=float(persistence_cfg.get("ttl_s", 600)),
+            )
+            if hasattr(self.goal_executor, "set_goal_store"):
+                self.goal_executor.set_goal_store(self.goal_store)
+            try:
+                from modules.agent_core.services.runtime.goal_formation import GoalFormationService
+
+                formation_cfg = (
+                    goal_cfg.get("goal_formation", {})
+                    if isinstance(goal_cfg.get("goal_formation"), dict)
+                    else {}
+                )
+                self.goal_formation = GoalFormationService(
+                    cfg=formation_cfg,
+                    goal_store=self.goal_store,
+                )
+                if hasattr(self.goal_selector, "set_goal_formation"):
+                    self.goal_selector.set_goal_formation(self.goal_formation)
+            except Exception:
+                self.goal_formation = None
+        except Exception:
+            self.goal_store = None
+            self.goal_formation = None
         auto_exec_cfg = (
             self.config.get("companion_auto_execute", {})
             if isinstance(self.config.get("companion_auto_execute", {}), dict)
@@ -196,6 +246,15 @@ class BrainInitMixin:
 
             agent_cfg = load_agent_core_config()
             self.agent = AgentOrchestrator(agent_cfg, autonomy_client=self.client)
+            if hasattr(self, "goal_executor") and hasattr(self.goal_executor, "set_decision_traces"):
+                traces = getattr(self.agent, "decision_traces", None)
+                if traces is not None:
+                    self.goal_executor.set_decision_traces(traces)
+                    formation = getattr(self, "goal_formation", None)
+                    if formation is not None:
+                        formation.traces = traces
+                    if hasattr(self, "goal_selector") and getattr(self.goal_selector, "goal_formation", None) is not None:
+                        self.goal_selector.goal_formation.traces = traces
             llm_cfg = agent_cfg.get("llm", {}) if isinstance(agent_cfg.get("llm", {}), dict) else {}
             provider = str(llm_cfg.get("provider", "ollama"))
             model = str(agent_cfg.get("agent", {}).get("model", ""))

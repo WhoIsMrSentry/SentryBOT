@@ -83,6 +83,7 @@ class DecisionMixin:
         self._liveliness_tick(now)
 
         self._update_companion_needs(now)
+        self._maybe_tick_companion_life_loop(now)
 
         if random.random() < 0.4:
             self._perform_micro_movement()

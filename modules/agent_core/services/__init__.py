@@ -11,6 +11,7 @@ from typing import Any
 
 __all__ = [
     "AgentOrchestrator",
+    "AgentRuntime",
     "EpisodicMemory",
     "TopologicalMap",
     "ToolRegistry",
@@ -25,6 +26,7 @@ __all__ = [
 
 _LAZY_EXPORTS = {
     "AgentOrchestrator": ".agent:AgentOrchestrator",
+    "AgentRuntime": ".runtime:AgentRuntime",
     "EpisodicMemory": ".memory:EpisodicMemory",
     "TopologicalMap": ".slam:TopologicalMap",
     "ToolRegistry": ".tools:ToolRegistry",

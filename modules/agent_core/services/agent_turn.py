@@ -259,6 +259,17 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
         executed = actions_out if actions_out is not None else []
         step_count = 0
         final_content = ""
+        recovery_handler = None
+        if hasattr(self, "_native_tool_recovery_factory"):
+            try:
+                recovery_handler = self._native_tool_recovery_factory(
+                    goal_id=str(trace_id or "native_turn")
+                )
+            except Exception:
+                recovery_handler = None
+        available_tool_names = (
+            self.tool_registry.get_tool_names() if hasattr(self.tool_registry, "get_tool_names") else []
+        )
 
         while step_count < max_steps:
             step_count += 1
@@ -285,6 +296,7 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
                 final_content = content
                 break
 
+            stop_loop = False
             for call in tool_calls:
                 fn = call.get("function", {})
                 name = str(fn.get("name", "") or "").strip()
@@ -293,13 +305,45 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
                     continue
 
                 out = self.tool_registry.execute(name, args)
-                executed.append({"tool": name, "args": args, "result": out})
+                recovery_meta = None
+                if recovery_handler is not None:
+                    try:
+                        out, recovery_meta, stop_loop = recovery_handler.handle(
+                            name,
+                            args,
+                            out,
+                            execute_fn=self.tool_registry.execute,
+                            available_tools=available_tool_names,
+                            iteration=step_count,
+                        )
+                    except Exception as exc:
+                        logger.debug("native tool recovery skipped: %s", exc)
+                        recovery_meta = None
+                        stop_loop = False
+
+                executed.append(
+                    {
+                        "tool": name,
+                        "args": args,
+                        "result": out,
+                        "recovery": (recovery_meta or {}).get("recovery") if recovery_meta else None,
+                        "failure": (recovery_meta or {}).get("failure") if recovery_meta else None,
+                    }
+                )
 
                 messages.append({
                     "role": "tool",
                     "name": name,
                     "content": json.dumps(out, ensure_ascii=False) if isinstance(out, (dict, list)) else str(out),
                 })
+                if stop_loop:
+                    break
+
+            if stop_loop:
+                # Do not issue another LLM turn after progress/abort stop.
+                if not final_content:
+                    final_content = content or "İşlemi güvenli şekilde durdurdum."
+                break
 
         return final_content, step_count
 
