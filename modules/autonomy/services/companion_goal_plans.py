@@ -33,7 +33,11 @@ class CompanionGoalPlansMixin:
         if not bool(policy.get("enabled", False)):
             return {}
         reflection = _as_dict(snapshot.get("reflection_policy") or snapshot.get("reflection"))
-        outcome = _as_dict(snapshot.get("outcome_learning") or snapshot.get("last_outcome"))
+        outcome = _as_dict(
+            snapshot.get("outcome_learning")
+            or snapshot.get("companion_outcome")
+            or snapshot.get("last_outcome")
+        )
         raw_adjustments = _as_dict(reflection.get("candidate_weight_adjustments") or outcome.get("candidate_weight_adjustments"))
         limit = _as_float(policy.get("max_weight_adjustment"), 0.0)
         adjustments = {}
@@ -122,115 +126,43 @@ class CompanionGoalPlansMixin:
                 new_plan = self.behavior_planner.generate_plan(snapshot or {}, "Robot is currently idle.", recent_reflections=recent_ref, tool_schemas=tool_schemas)
                 if new_plan:
                     next_action = self.behavior_planner.get_next_action()
-            
+
             if next_action:
                 return {
                     "behavior": "llm_generated_action",
                     "priority": "normal",
                     "expression_event": f"needs.{dominant}",
                     "safe_to_execute": True,
-                    "actions": [next_action]
+                    "actions": [next_action],
                 }
-                
-        if dominant == "safety":
+
+        # Legacy path: need→template. Batch 5 preferred path is build_for_intent
+        # after GoalFormationService approves an intent.
+        try:
+            from modules.agent_core.services.runtime import CompanionPlanAdapter
+
+            adapter = getattr(self, "_companion_plan_adapter", None)
+            if adapter is None:
+                adapter = CompanionPlanAdapter()
+                self._companion_plan_adapter = adapter
+            return adapter.build(
+                dominant,
+                recommended,
+                owner_present=owner_present,
+                scores=scores,
+            )
+        except Exception as exc:
+            logger.warning("CompanionPlanAdapter failed (%s); using calm_idle fallback", exc)
             return {
-                "behavior": "pause_and_observe",
-                "priority": "critical",
-                "expression_event": "needs.safety",
-                "safe_to_execute": True,
-                "actions": [
-                    {"type": "expression", "event": "needs.safety"},
-                    {"type": "motion", "name": "freeze", "risk": "low"},
-                    {"type": "vision", "mode": "cheap", "reason": "safety"},
-                ],
-            }
-        if recommended == "rest_in_safe_place" or dominant == "rest":
-            return {
-                "behavior": "rest_in_safe_place",
+                "behavior": "calm_idle",
                 "priority": "low",
-                "expression_event": "needs.rest",
+                "expression_event": "needs.balance",
                 "safe_to_execute": True,
                 "actions": [
-                    {"type": "expression", "event": "needs.rest"},
-                    {"type": "navigation", "name": "rest_corner", "risk": "low"},
-                    {"type": "pose", "name": "sleepy_idle", "risk": "low"},
-                    {"type": "speech", "mode": "silent"},
+                    {"type": "expression", "event": "needs.balance"},
+                    {"type": "wait", "label": "calm_idle", "risk": "none"},
                 ],
             }
-        if dominant == "social":
-            return {
-                "behavior": "seek_owner_or_invite_interaction" if not owner_present else "engage_owner",
-                "priority": "normal",
-                "expression_event": "needs.social",
-                "safe_to_execute": True,
-                "actions": [
-                    {"type": "expression", "event": "needs.social"},
-                    {"type": "perception", "name": "owner_scan", "risk": "low"},
-                    {"type": "speech", "mode": "short_prompt", "template": "social_invite"},
-                ],
-            }
-        if dominant == "exploration":
-            return {
-                "behavior": "look_around_and_learn",
-                "priority": "normal",
-                "expression_event": "needs.exploration",
-                "safe_to_execute": True,
-                "actions": [
-                    {"type": "expression", "event": "needs.exploration"},
-                    {"type": "vision", "mode": "cheap", "reason": "exploration"},
-                    {"type": "motion", "name": "look_around", "risk": "low"},
-                ],
-            }
-        if recommended == "look_for_company_or_rest" or dominant == "boredom":
-            return {
-                "behavior": "scan_for_company_then_rest",
-                "priority": "normal",
-                "expression_event": "needs.boredom",
-                "safe_to_execute": True,
-                "actions": [
-                    {"type": "expression", "event": "needs.boredom"},
-                    {"type": "motion", "name": "stretch_or_scan", "risk": "low"},
-                    {"type": "vision", "mode": "cheap", "reason": "boredom"},
-                    {"type": "perception", "name": "track_person", "label": "person", "strategy": "center", "risk": "low"},
-                    {"type": "memory", "name": "observe", "kind": "episode", "summary": "Robot was bored and scanned for company.", "risk": "none"},
-                ],
-            }
-        if recommended == "inspect_sound_source":
-            return {
-                "behavior": "inspect_sound_source",
-                "priority": "high",
-                "expression_event": "needs.sound_attention",
-                "safe_to_execute": True,
-                "actions": [
-                    {"type": "expression", "event": "needs.sound_attention"},
-                    {"type": "motion", "name": "attend", "risk": "low"},
-                    {"type": "perception", "name": "track_person", "label": "person", "strategy": "center", "risk": "low"},
-                    {"type": "vision", "mode": "cheap", "reason": "sound_interrupt"},
-                ],
-            }
-        if dominant == "curiosity":
-            return {
-                "behavior": "inspect_environment_and_learn",
-                "priority": "normal",
-                "expression_event": "needs.curiosity",
-                "safe_to_execute": True,
-                "actions": [
-                    {"type": "expression", "event": "needs.curiosity"},
-                    {"type": "vision", "mode": "cheap", "reason": "curiosity"},
-                    {"type": "vision", "mode": "semantic", "reason": "curiosity_unknown"},
-                    {"type": "motion", "name": "attend", "risk": "low"},
-                ],
-            }
-        return {
-            "behavior": "calm_idle",
-            "priority": "low",
-            "expression_event": "needs.balance",
-            "safe_to_execute": True,
-            "actions": [
-                {"type": "expression", "event": "needs.balance"},
-                {"type": "wait", "label": "calm_idle", "risk": "none"},
-            ],
-        }
 
     def _event_for(self, plan_key: str, dominant: str, now_ts: float) -> str:
         if not self.enabled:

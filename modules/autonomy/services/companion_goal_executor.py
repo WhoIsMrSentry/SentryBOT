@@ -22,12 +22,35 @@ class CompanionGoalExecutor(CompanionGoalTranslatorMixin):
         self.allow_real_hardware = bool(self.cfg.get("allow_real_hardware", False))
         self.stop_on_failure = bool(self.cfg.get("stop_on_failure", True))
         self.capabilities = CapabilityExecutor(client) if client is not None else None
+        self.decision_traces = None
+        self.goal_store = None
         self._last_execution: Dict[str, Any] = {
             "ok": True,
             "available": False,
             "applied": False,
             "reason": "never_executed",
         }
+
+    def set_decision_traces(self, store: Any) -> None:
+        """Share AgentOrchestrator decision trace store for unified observability."""
+        self.decision_traces = store
+
+    def set_goal_store(self, store: Any) -> None:
+        """Share in-process GoalStore for cross-tick companion continuity."""
+        self.goal_store = store
+
+    def _cognitive_loop_enabled(self) -> bool:
+        loop_cfg = self.cfg.get("cognitive_loop", {}) if isinstance(self.cfg.get("cognitive_loop"), dict) else {}
+        return bool(loop_cfg.get("enabled", True))
+
+    def _loop_cfg(self) -> Dict[str, Any]:
+        loop_cfg = self.cfg.get("cognitive_loop", {}) if isinstance(self.cfg.get("cognitive_loop"), dict) else {}
+        out = dict(loop_cfg)
+        # Allow nested Batch 4 blocks at executor root or under cognitive_loop
+        for key in ("contextual_replan", "goal_persistence"):
+            if key not in out and isinstance(self.cfg.get(key), dict):
+                out[key] = dict(self.cfg.get(key))
+        return out
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -36,12 +59,38 @@ class CompanionGoalExecutor(CompanionGoalTranslatorMixin):
             "dry_run_default": self.dry_run_default,
             "allow_real_hardware": self.allow_real_hardware,
             "stop_on_failure": self.stop_on_failure,
+            "cognitive_loop_enabled": self._cognitive_loop_enabled(),
+            "goal_store_enabled": self.goal_store is not None,
             "capability_executor": (
                 self.capabilities.status()
                 if self.capabilities is not None
                 else {"ok": False, "reason": "client_missing"}
             ),
             "last_execution": dict(self._last_execution),
+        }
+
+    def _simulate_on_dry_run(self) -> bool:
+        loop_cfg = self._loop_cfg()
+        return bool(loop_cfg.get("simulate_on_dry_run", True))
+
+    def _can_simulate_cognitive(self, *, effective_dry_run: bool) -> bool:
+        """Batch 6b: dry-run / no-hardware may still advance GoalStore via simulated loop."""
+        if not self._cognitive_loop_enabled():
+            return False
+        if self.goal_store is None:
+            return False
+        if not self._simulate_on_dry_run():
+            return False
+        return bool(effective_dry_run or self.capabilities is None or not self.allow_real_hardware)
+
+    @staticmethod
+    def _simulated_capability_execute(capability: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return {
+            "ok": True,
+            "capability": str(capability or ""),
+            "params": dict(params or {}),
+            "reason": "dry_run_simulated",
+            "dry_run": True,
         }
 
     def execute(
@@ -109,28 +158,47 @@ class CompanionGoalExecutor(CompanionGoalTranslatorMixin):
 
         steps = self._build_steps(plan.get("actions") or [])
 
+        # PC / no-hardware: prefer GoalStore simulation when available; else legacy dry-run reasons.
+        forced_reason = None
         if not effective_dry_run and pc_test:
+            effective_dry_run = True
+            forced_reason = "pc_real_execution_blocked"
+        elif not effective_dry_run and not self.allow_real_hardware:
+            effective_dry_run = True
+            forced_reason = "real_hardware_not_allowed"
+
+        if self._cognitive_loop_enabled() and not effective_dry_run and self.capabilities is not None:
+            return self._execute_cognitive_loop(
+                plan,
+                steps,
+                started,
+                timestamp=ts,
+                execute_capability=self.capabilities.execute,
+                dry_run=False,
+            )
+
+        if self._can_simulate_cognitive(effective_dry_run=effective_dry_run):
+            return self._execute_cognitive_loop(
+                plan,
+                steps,
+                started,
+                timestamp=ts,
+                execute_capability=self._simulated_capability_execute,
+                dry_run=True,
+            )
+
+        if forced_reason is not None:
             return self._finish(
                 True,
                 False,
-                "pc_real_execution_blocked",
+                forced_reason,
                 plan,
                 steps,
                 started,
                 dry_run=True,
                 timestamp=ts,
             )
-        if not effective_dry_run and not self.allow_real_hardware:
-            return self._finish(
-                True,
-                False,
-                "real_hardware_not_allowed",
-                plan,
-                steps,
-                started,
-                dry_run=True,
-                timestamp=ts,
-            )
+
         if effective_dry_run or self.capabilities is None:
             return self._finish(
                 True,
@@ -143,6 +211,75 @@ class CompanionGoalExecutor(CompanionGoalTranslatorMixin):
                 timestamp=ts,
             )
 
+        return self._execute_linear(plan, steps, started, timestamp=ts)
+
+    def _execute_cognitive_loop(
+        self,
+        plan: Dict[str, Any],
+        steps: List[Dict[str, Any]],
+        started: float,
+        *,
+        timestamp: float,
+        execute_capability: Any = None,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        from modules.agent_core.services.runtime.companion_execution_loop import CompanionExecutionLoop
+
+        loop_cfg = self._loop_cfg()
+        loop = CompanionExecutionLoop(
+            traces=self.decision_traces,
+            cfg=loop_cfg,
+            goal_store=self.goal_store,
+        )
+        cap_fn = execute_capability
+        if cap_fn is None:
+            if self.capabilities is None:
+                cap_fn = self._simulated_capability_execute
+            else:
+                cap_fn = self.capabilities.execute
+        loop_result = loop.run(
+            plan,
+            steps,
+            execute_capability=cap_fn,
+            goal_id=str((plan.get("typed_goal") or {}).get("id") or plan.get("plan_id") or ""),
+        )
+        applied = bool(loop_result.get("applied"))
+        reason = str(loop_result.get("reason") or ("executed" if applied else "execution_failed"))
+        if dry_run and applied:
+            reason = "dry_run_simulated"
+        out = self._finish(
+            True,
+            applied,
+            reason,
+            plan,
+            steps,
+            started,
+            dry_run=bool(dry_run),
+            timestamp=timestamp,
+        )
+        out["results"] = list(loop_result.get("results") or [])
+        out["result_count"] = len(out["results"])
+        out["cognitive_loop"] = {
+            "state": loop_result.get("state"),
+            "stop_reason": loop_result.get("stop_reason"),
+            "observations": loop_result.get("observations"),
+            "usage": loop_result.get("usage"),
+            "typed_plan": loop_result.get("plan"),
+            "goal": loop_result.get("goal"),
+            "goal_snapshot": loop_result.get("goal_snapshot"),
+            "simulated": bool(dry_run),
+        }
+        self._last_execution = dict(out)
+        return out
+
+    def _execute_linear(
+        self,
+        plan: Dict[str, Any],
+        steps: List[Dict[str, Any]],
+        started: float,
+        *,
+        timestamp: float,
+    ) -> Dict[str, Any]:
         results: List[Dict[str, Any]] = []
         for index, step in enumerate(steps, start=1):
             capability = str(step.get("capability") or "")
@@ -154,7 +291,10 @@ class CompanionGoalExecutor(CompanionGoalTranslatorMixin):
                     "reason": "semantic_noop",
                 }
             else:
-                result = self.capabilities.execute(capability, step.get("params") if isinstance(step.get("params"), dict) else {})
+                result = self.capabilities.execute(
+                    capability,
+                    step.get("params") if isinstance(step.get("params"), dict) else {},
+                )
                 result["index"] = index
             results.append(result)
             if self.stop_on_failure and not result.get("ok"):
@@ -169,7 +309,7 @@ class CompanionGoalExecutor(CompanionGoalTranslatorMixin):
             steps,
             started,
             dry_run=False,
-            timestamp=ts,
+            timestamp=timestamp,
         )
         out["results"] = results
         out["result_count"] = len(results)
