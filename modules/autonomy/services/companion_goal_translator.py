@@ -184,7 +184,7 @@ class CompanionGoalTranslatorMixin:
                 "payload": dict(action),
             }
         if action_type == "navigation":
-            policy = str(action.get("policy") or "").strip()
+            policy = str(action.get("policy") or action.get("name") or "").strip()
             if not policy:
                 return {
                     "component": "navigation",
@@ -224,6 +224,33 @@ class CompanionGoalTranslatorMixin:
                 "url": "noop:wait",
                 "risk": "none",
                 "capability": "scheduler.wait",
+                "params": dict(action),
+                "payload": dict(action),
+            }
+        if action_type == "perception":
+            name = str(action.get("name") or "").strip().lower()
+            if name == "owner_scan":
+                capability = "perception.owner_scan"
+            elif name in {"track_person", "track_object"}:
+                capability = "perception.track_object"
+            else:
+                capability = str(action.get("capability") or "perception.track_object")
+            return {
+                "component": "vlm_bridge",
+                "method": "POST",
+                "url": "/vlm/track",
+                "risk": str(action.get("risk") or "low"),
+                "capability": capability,
+                "params": dict(action),
+                "payload": dict(action),
+            }
+        if action_type == "memory":
+            return {
+                "component": "cognitive_memory",
+                "method": "NOOP",
+                "url": "noop:memory_observe",
+                "risk": str(action.get("risk") or "none"),
+                "capability": str(action.get("capability") or "memory.observe"),
                 "params": dict(action),
                 "payload": dict(action),
             }

@@ -444,6 +444,7 @@ def test_goal_selector_exposes_yaml_config_sources():
 
     assert result["config_source"]["root"] == "companion_goals"
     assert result["config_source"]["policies"] == {
+        "goal_formation": "companion_goals.goal_formation",
         "uncertainty": "companion_goals.autonomy_policy.uncertainty",
         "personalization": "companion_goals.autonomy_policy.personalization",
         "privacy": "companion_goals.autonomy_policy.privacy",
