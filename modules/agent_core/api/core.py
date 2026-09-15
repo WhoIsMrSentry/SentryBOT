@@ -30,6 +30,35 @@ def get_core_router(agent) -> APIRouter:
         trace = latency_trace.get(trace_id)
         return {"ok": trace is not None, "trace": trace}
 
+    @router.get("/decision-traces")
+    def decision_traces(
+        limit: int = 20,
+        goal_id: Optional[str] = None,
+        since: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Safe decision summaries (no chain-of-thought / prompts / secrets)."""
+        store = getattr(agent, "decision_traces", None)
+        if store is None or not hasattr(store, "query"):
+            return {"ok": False, "available": False, "traces": [], "reason": "decision_traces_unavailable"}
+        capped = max(1, min(int(limit or 20), 100))
+        traces = store.query(limit=capped, goal_id=goal_id, since=since)
+        return {
+            "ok": True,
+            "available": True,
+            "count": len(traces),
+            "maxlen": int(getattr(store, "maxlen", 0) or 0),
+            "traces": traces,
+        }
+
+    @router.get("/decision-traces/latest")
+    def decision_traces_latest(limit: int = 5) -> Dict[str, Any]:
+        store = getattr(agent, "decision_traces", None)
+        if store is None or not hasattr(store, "query"):
+            return {"ok": False, "available": False, "traces": [], "reason": "decision_traces_unavailable"}
+        capped = max(1, min(int(limit or 5), 20))
+        traces = store.query(limit=capped)
+        return {"ok": True, "available": True, "count": len(traces), "traces": traces}
+
     @router.post("/speech/interrupt")
     def speech_interrupt() -> Dict[str, Any]:
         return {"ok": True, "cleared": agent.speech_arbiter.interrupt_all()}

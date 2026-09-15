@@ -40,11 +40,22 @@ class ScenarioRitualsMixin:
         delta = float(
             cfg.get("success_weight_adjustment", 0.0) if succeeded else cfg.get("failure_weight_adjustment", 0.0)
         )
+        intent = str(
+            action_plan.get("intent")
+            or (action_plan.get("goal_formation") or {}).get("selected_intent")
+            or action_plan.get("behavior")
+            or ""
+        ).strip()
         dominant = str(action_plan.get("dominant_need") or "").strip()
-        adjustments = {dominant: delta} if dominant else {}
+        adjustments = {}
+        if intent:
+            adjustments[intent] = delta
+        if dominant and dominant != intent:
+            adjustments[dominant] = delta
         outcome = {
             "timestamp": timestamp,
             "plan_id": action_plan.get("plan_id"),
+            "intent": intent or None,
             "behavior": action_plan.get("behavior"),
             "succeeded": succeeded,
             "lifecycle_state": state,
@@ -53,6 +64,14 @@ class ScenarioRitualsMixin:
             "temporary_avoid_tags": list(cfg.get("failure_avoid_tags", [])) if not succeeded else [],
         }
         self.state["companion_outcome"] = outcome
+        # Feed intent-keyed outcome into formation evaluator when available.
+        formation = getattr(self, "goal_formation", None) or getattr(getattr(self, "goal_selector", None), "goal_formation", None)
+        if formation is not None and intent and hasattr(formation, "evaluator"):
+            try:
+                formation.evaluator.record_outcome(intent, succeeded=succeeded, now=timestamp)
+                formation._last_ingested_outcome_ts = timestamp
+            except Exception:
+                pass
         return {"ok": True, "available": True, "outcome": outcome}
 
     def run_companion_e2e_scenario(self, payload: Optional[dict] = None) -> dict:
@@ -135,15 +154,90 @@ class ScenarioRitualsMixin:
     def tick_companion_auto_execute(self, payload: Optional[dict] = None, force: bool = False, **_: object) -> dict:
         try:
             body = payload if isinstance(payload, dict) else {}
+            resumed = False
+            previous_status = None
             plan = body.get("goal_plan") if isinstance(body.get("goal_plan"), dict) else None
+
+            # Batch 4: always resume a valid ACTIVE/WAITING goal before new need selection.
+            persist_cfg = {}
+            executor_cfg = self.config.get("companion_goal_executor", {}) if isinstance(self.config, dict) else {}
+            if isinstance(executor_cfg, dict) and isinstance(executor_cfg.get("goal_persistence"), dict):
+                persist_cfg = executor_cfg.get("goal_persistence") or {}
+            resume_on_tick = bool(persist_cfg.get("resume_on_tick", True))
+            store = getattr(self, "goal_store", None)
+            if resume_on_tick and store is not None and not isinstance(plan, dict):
+                store.expire_due_goals()
+                snap = store.active_or_waiting()
+                if snap is not None and isinstance(snap.goal_plan, dict):
+                    plan = dict(snap.goal_plan)
+                    previous_status = snap.status.value if hasattr(snap.status, "value") else str(snap.status)
+                    resumed = True
+                    traces = getattr(getattr(self, "agent", None), "decision_traces", None)
+                    if traces is None and hasattr(self, "goal_executor"):
+                        traces = getattr(self.goal_executor, "decision_traces", None)
+                    if traces is not None and hasattr(traces, "record"):
+                        traces.record(
+                            goal_id=snap.goal_id,
+                            decision="goal_resume",
+                            reason="resume_active_or_waiting_before_need_select",
+                            next_action="execute",
+                            metadata={
+                                "previous_status": previous_status,
+                                "new_status": "active",
+                                "goal_id": snap.goal_id,
+                            },
+                        )
+                    try:
+                        from modules.agent_core.services.runtime.schemas import GoalStatus
+
+                        store.mark_status(snap.goal_id, GoalStatus.ACTIVE)
+                    except Exception:
+                        pass
+
             if not isinstance(plan, dict):
                 plan = self.get_companion_goal_snapshot() if hasattr(self, "get_companion_goal_snapshot") else {}
-            decision = self.goal_auto_execute_gate.decide(plan, force=force)
+
+            # Batch 5: deferred formation decisions must not execute.
+            if isinstance(plan, dict) and (plan.get("deferred") or plan.get("formation_disposition") == "defer"):
+                result = {
+                    "ok": True,
+                    "should_execute": False,
+                    "executed": False,
+                    "deferred": True,
+                    "reason": str(plan.get("reason") or "goal_deferred"),
+                    "resumed_goal": resumed,
+                }
+                self.state["companion_auto_execute"] = result
+                return result
+
+            decision = self.goal_auto_execute_gate.decide(
+                plan,
+                force=force,
+                bypass_cooldown=bool(resumed),
+            )
             if not decision.get("should_execute"):
+                decision = dict(decision)
+                decision["resumed_goal"] = resumed
+                if resumed:
+                    decision["resumed_goal_id"] = str((plan.get("typed_goal") or {}).get("id") or plan.get("plan_id") or "")
                 self.state["companion_auto_execute"] = decision
                 return decision
-            execution = self.execute_companion_goal({"goal_plan": plan})
+            execution = self.execute_companion_goal(
+                {
+                    "goal_plan": plan,
+                    "dry_run": decision.get("dry_run"),
+                }
+            )
             result = self.goal_auto_execute_gate.mark_execution(decision, execution)
+            result = dict(result) if isinstance(result, dict) else {"ok": False}
+            result["resumed_goal"] = resumed
+            if resumed:
+                result["resumed_goal_id"] = str(
+                    ((execution.get("cognitive_loop") or {}).get("goal") or {}).get("id")
+                    or (plan.get("typed_goal") or {}).get("id")
+                    or ""
+                )
+                result["previous_status"] = previous_status
             self.state["companion_auto_execute"] = result
 
             if plan.get("behavior") == "llm_generated_action" and hasattr(self, "reflection_planner"):
@@ -167,8 +261,6 @@ class ScenarioRitualsMixin:
                                 self.observe_world_memory(reflection_mem, source="reflection_planner")
                     except Exception as e:
                         logger.error(f"Reflection failed: {e}")
-
-                threading.Thread(target=_reflect_and_store, daemon=True).start()
 
                 threading.Thread(target=_reflect_and_store, daemon=True).start()
 

@@ -82,6 +82,28 @@ tool_execution:
   timeout_s: 22.0
   retry_on_timeout: true
   max_retries: 1
+agent_runtime:
+  enabled: true
+  max_iterations: 6
+  max_tool_calls: 8
+  max_retries: 2
+  max_replans: 2
+  max_execution_time_s: 60.0
+  max_identical_actions: 3
+  max_zero_progress: 3
+  decision_trace_maxlen: 64
+  contextual_replan:
+    enabled: true
+    llm_assist: false
+    max_candidate_steps: 4
+    fallback_observe_wait: true
+    risk_ceiling: medium
+    blocked_risks: [critical]
+  goal_persistence:
+    enabled: true
+    backend: memory
+    ttl_s: 600
+    resume_on_tick: true
 idle:
   enabled: true
   breathe_interval_s: 15.0

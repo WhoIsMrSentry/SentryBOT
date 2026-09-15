@@ -57,6 +57,17 @@ def test_slam_pathfind():
     assert path == ["a", "b", "c"]
 
 
+def test_agent_runtime_import():
+    from modules.agent_core.services.runtime import AgentRuntime, Goal, CapabilityIndex
+    from modules.agent_core.services import AgentRuntime as LazyRuntime
+
+    assert AgentRuntime is LazyRuntime
+    rt = AgentRuntime(capability_index=CapabilityIndex(tool_capabilities={}))
+    assert rt.state.value == "idle"
+    goal = Goal(objective="noop")
+    assert goal.objective == "noop"
+
+
 def test_tool_registry_schemas():
     from modules.agent_core.services.tools import ToolRegistry
     from modules.agent_core.services.world_state import WorldState

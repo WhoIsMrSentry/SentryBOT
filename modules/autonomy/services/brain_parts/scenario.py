@@ -133,6 +133,10 @@ class CompanionScenarioMixin(ScenarioRitualsMixin):
 
             snapshot["perception"] = self.get_canonical_perception_context(snapshot.get("perception", {}))
             snapshot["capability_health"] = self.get_capability_health_snapshot()
+            outcome = self.state.get("companion_outcome")
+            if isinstance(outcome, dict):
+                snapshot["companion_outcome"] = dict(outcome)
+                snapshot["last_outcome"] = dict(outcome)
             self.state["companion_needs"] = snapshot
             social_people = (
                 snapshot.get("perception", {}).get("people", [])
@@ -219,7 +223,8 @@ class CompanionScenarioMixin(ScenarioRitualsMixin):
                             logger.error(f"Failed to execute native tool {tool_name}: {e}")
 
             if hasattr(self, "goal_executor"):
-                result = self.goal_executor.execute(plan)
+                dry_run = body.get("dry_run") if "dry_run" in body else None
+                result = self.goal_executor.execute(plan, dry_run=dry_run)
                 self.state["companion_goal_execution"] = result
                 self._record_companion_outcome(plan, result)
                 return result
@@ -228,6 +233,23 @@ class CompanionScenarioMixin(ScenarioRitualsMixin):
             self.state["companion_goal_execution"] = result
             return result
         return {"ok": False, "available": False, "reason": "goal_executor_missing"}
+
+    def _maybe_tick_companion_life_loop(self, now: float) -> None:
+        """Batch 6b: after formation, advance the single foreground goal via existing gate/executor."""
+        cfg = self.config.get("companion_auto_execute") if isinstance(getattr(self, "config", None), dict) else {}
+        cfg = cfg if isinstance(cfg, dict) else {}
+        if not bool(cfg.get("enabled", True)):
+            return
+        if not bool(cfg.get("life_loop_enabled", True)):
+            return
+        if not hasattr(self, "tick_companion_auto_execute"):
+            return
+        if getattr(self, "goal_auto_execute_gate", None) is None:
+            return
+        try:
+            self.tick_companion_auto_execute({}, force=False)
+        except Exception as exc:
+            logger.debug("Companion life-loop tick failed: %s", exc)
 
     def _apply_memory_bias_to_needs(self, snapshot: dict, now: float | None = None) -> dict:
         try:
