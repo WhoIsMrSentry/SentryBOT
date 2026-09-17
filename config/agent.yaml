@@ -396,6 +396,44 @@ actions:
 tri_layer:
   enabled: false
   api_native_tools: true
+  laya:
+    enabled: true
+    confidence_threshold: 0.60
+    model_path: null                      # null = auto-detect HF cache
+    device: cpu
+    fast_path:
+      enabled: true                       # Direct command → skip LLM
+      emergency_bypass_safety: false      # Legacy setting; no tool/action safety gate is bypassed
+    action_proposals:
+      enabled: false                      # Proposal only; never authorizes tool dispatch
+      confidence_threshold: 0.85
+      allowed_actions:
+        - set_lights
+      default_light_effect: BREATHE
+    filler:
+      enabled: true
+      cooldown_s: 12.0
+      mood_aware: true                    # Mood'a göre filler seçimi
+    affective:
+      mood_impact_scale: 1.0             # Laya → MoodManager etki katsayısı
+      vision_events: true                 # VLM → Laya affective pipeline
+      face_emotion_events: true           # Yüz duygusu → Laya
+      vision_event_min_confidence: 0.80
+      vision_event_min_affect_confidence: 0.80
+      vision_event_cooldown_s: 8.0
+    telemetry:
+      log_decisions: true
+      histogram_enabled: false
+      max_decision_log: 20
+    urgency:
+      emergency_threshold: 2.0           # Bu üstü → SpinalCord tetikle
+      high_threshold: 1.5                # Bu üstü → fast-path
+      high_confidence_threshold: 0.60
+      emergency_target_confidence_threshold: 0.90
+      emergency_direct_confidence_threshold: 0.80
+      emergency_urgency_confidence_threshold: 0.80
+      sensor_boost_hz: 5.0               # Urgency high → sensor poll rate
+      sensor_boost_hold_s: 8.0            # High urgency polling window after the decision
   fast_path:
     enabled: true
     max_chars: 180
