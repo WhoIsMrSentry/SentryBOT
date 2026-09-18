@@ -315,11 +315,15 @@ class AgentContextMixin(AgentMemorySyncMixin):
         if not self._vision_input_available():
             default_modules = [m for m in default_modules if str(m).strip().lower() != "vlm_bridge"]
         profile_overrides = tri_cfg.get("profiles") if isinstance(tri_cfg.get("profiles"), dict) else None
-        self.subagent_profiles = build_subagent_profiles(profile_overrides)
+        from .laya_engine import LayaEngine
+
+        self.laya_engine = LayaEngine.get_instance(config)
+        self.sensor_loop.laya_engine = self.laya_engine
         self.router = TriLayerRouter(
             profiles=self.subagent_profiles,
             max_subagents=self._safe_int(router_cfg.get("max_subagents", 2), fallback=2, minimum=1),
             default_modules=default_modules,
+            laya_engine=self.laya_engine,
         )
         self.tri_layer_enabled = bool(tri_cfg.get("enabled", True))
         self.api_native_tools = bool(tri_cfg.get("api_native_tools", False))
