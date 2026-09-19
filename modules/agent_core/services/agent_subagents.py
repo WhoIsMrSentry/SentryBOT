@@ -28,20 +28,18 @@ class AgentSubagentsMixin:
     _stream_turn_sentence_by_sentence: Callable[..., Any]
 
     def _route_subagents(self, prompt: str) -> List[SubAgentProfile]:
-        low = prompt.lower()
+        module_names = self.router.route(prompt) if getattr(self, "router", None) else []
         selected: List[SubAgentProfile] = []
-
-        for name, profile in self.subagent_profiles.items():
-            if not profile.enabled:
-                continue
-            matches = any(k in low for k in profile.keywords)
-            if matches:
+        for name in module_names:
+            profile = self.subagent_profiles.get(name)
+            if profile and getattr(profile, "enabled", True):
                 selected.append(profile)
 
-        if not selected and "fast_reflex" in self.subagent_profiles:
-            reflex = self.subagent_profiles["fast_reflex"]
-            if reflex.enabled:
-                selected.append(reflex)
+        self.last_routed_subagents = [profile.name for profile in selected]
+        if not selected:
+            fallback = self.subagent_profiles.get("fast_reflex") or self.subagent_profiles.get("agent_core")
+            if fallback and getattr(fallback, "enabled", True):
+                selected.append(fallback)
 
         return selected
 
