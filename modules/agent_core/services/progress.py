@@ -226,6 +226,12 @@ class ProgressManager:
         self._emit_interaction("agent.processing.start", {"stage": "ack"})
         if not speak:
             return
+        if custom_text and self._speech_arbiter is not None and hasattr(self._speech_arbiter, "enqueue_laya_filler"):
+            self._speech_arbiter.enqueue_laya_filler(
+                custom_text,
+                language=self._lang_for(token),
+            )
+            return
         text = custom_text or _msg_choice(self._lang_for(token), "ack")
         self._speak_progress(token, text, event_type="ack")
 
