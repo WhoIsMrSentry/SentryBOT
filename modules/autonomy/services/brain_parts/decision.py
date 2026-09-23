@@ -82,6 +82,9 @@ class DecisionMixin:
         self._sync_emotion()
         self._liveliness_tick(now)
 
+        # ── Laya System 1 reflexes ──────────────────────────────────────
+        self._think_laya_reflexes()
+
         self._update_companion_needs(now)
         self._maybe_tick_companion_life_loop(now)
 
@@ -120,6 +123,174 @@ class DecisionMixin:
 
         self._run_companion_rituals(now)
         self._run_companion_proactive(now)
+
+    def _think_laya_reflexes(self) -> None:
+        """Process the latest speech/input through Laya System 1 for reflexive actions."""
+        laya = getattr(self, "laya_engine", None)
+        if laya is None or not getattr(laya, "enabled", False) or not getattr(laya, "_is_available", False):
+            return
+
+        last_speech = self.state.get("last_speech_text", "")
+        if not last_speech:
+            return
+
+        # Prevent re-processing the same utterance
+        processed_marker = self.state.get("_laya_last_processed", "")
+        if processed_marker == last_speech:
+            return
+        self.state["_laya_last_processed"] = last_speech
+
+        try:
+            # Get visual context if available
+            visual_ctx = None
+            if hasattr(self, "scene_register") and self.scene_register is not None:
+                try:
+                    visual_ctx = self.scene_register.get_scene_summary()
+                except Exception:
+                    pass
+
+            decision = laya.decide_with_context(last_speech, visual_context=visual_ctx)
+            if decision is None:
+                return
+
+            # 1. Emergency → SpinalCord reflex
+            if laya.is_emergency_decision(decision):
+                spinal = getattr(self, "spinal_cord", None)
+                if spinal and hasattr(spinal, "observe_voice_emergency"):
+                    spinal.observe_voice_emergency(decision)
+                else:
+                    # Fallback: direct emergency stop via client
+                    try:
+                        self.client.push_interaction_event("motor.stop", {"priority": "emergency", "source": "laya"})
+                    except Exception:
+                        pass
+
+            # 2. Affective event → mood deltas (config-scaled)
+            deltas = laya.get_mood_deltas(decision)
+            for axis, delta in deltas.items():
+                if axis.endswith("_satisfy"):
+                    real_axis = axis.replace("_satisfy", "")
+                    if hasattr(self.mood, "satisfy_need"):
+                        self.mood.satisfy_need(real_axis, abs(delta))
+                else:
+                    self.mood.modify(axis, delta)
+
+            # 3. Camera target → curiosity boost
+            if decision.target_module == "camera":
+                self.mood.modify("curiosity", 15)
+                self.memory.add_event("Laya detected a camera-related request, boosting curiosity.")
+
+            # 4. Mark urgency in state for other components
+            self.state["laya_last_urgency"] = decision.urgency_score
+            is_urgent = getattr(laya, "is_urgent", None)
+            if callable(is_urgent):
+                high_urgency = bool(is_urgent(decision))
+            else:
+                laya_cfg = self.config.get("tri_layer", {}).get("laya", {})
+                urgency_cfg = laya_cfg.get("urgency", {}) if isinstance(laya_cfg, dict) else {}
+                threshold = float(urgency_cfg.get("high_threshold", 1.5))
+                high_urgency = float(decision.urgency_score) >= threshold
+            self.state["laya_last_high_urgency"] = high_urgency
+            self.state["laya_last_decision_ts"] = time.time()
+            self.state["laya_last_target"] = decision.target_module
+            self.state["laya_last_affect"] = decision.affective_event
+
+        except Exception as exc:
+            logger.debug("Laya reflex processing failed: %s", exc)
+
+    def handle_laya_vision_event(self, event_type: str, payload: Dict[str, Any]) -> bool:
+        """Use confident face-emotion events as bounded Laya affect inputs."""
+        laya = getattr(self, "laya_engine", None)
+        if laya is None or not getattr(laya, "enabled", False) or not getattr(laya, "_is_available", False):
+            return False
+        tri_cfg = self.config.get("tri_layer", {}) if isinstance(self.config.get("tri_layer"), dict) else {}
+        laya_cfg = tri_cfg.get("laya", {}) if isinstance(tri_cfg.get("laya"), dict) else {}
+        affect_cfg = laya_cfg.get("affective", {}) if isinstance(laya_cfg.get("affective"), dict) else {}
+        if not affect_cfg.get("vision_events", True) or not affect_cfg.get("face_emotion_events", True):
+            return False
+        event_name = str(event_type or "").strip().lower()
+        if event_name not in {"face_emotion", "owner_seen", "new_person", "hazard_detected", "scene_changed"}:
+            return False
+        if not isinstance(payload, dict):
+            return False
+
+        min_confidence = float(affect_cfg.get("vision_event_min_confidence", 0.80))
+        is_face_event = event_name == "face_emotion"
+        try:
+            confidence = float(payload.get("confidence", 0.0 if is_face_event else 1.0))
+        except (TypeError, ValueError):
+            return False
+        emotion = str(payload.get("emotion", "")).strip().lower()
+        if confidence < min_confidence or (is_face_event and emotion in {"", "neutral"}):
+            return False
+        person = str(payload.get("name", "unknown") or "unknown").strip().lower()
+        cooldown_s = max(0.0, float(affect_cfg.get("vision_event_cooldown_s", 8.0)))
+        now = time.time()
+        marker = f"{event_name}:{person}:{emotion}"
+        event_lock = getattr(self, "_laya_vision_event_lock", None)
+        if event_lock is None:
+            event_lock = threading.Lock()
+            self._laya_vision_event_lock = event_lock
+        with event_lock:
+            recent = self.state.get("_laya_vision_event_times", {})
+            last_seen = float(recent.get(marker, 0.0)) if isinstance(recent, dict) else 0.0
+            if now - last_seen < cooldown_s:
+                return False
+            recent = dict(recent) if isinstance(recent, dict) else {}
+            recent[marker] = now
+            self.state["_laya_vision_event_times"] = recent
+
+        text = self._laya_vision_event_text(event_name, payload, emotion)
+        try:
+            visual_context = payload.get("context")
+            if isinstance(visual_context, dict):
+                visual_context = visual_context.get("summary", "")
+            if not visual_context:
+                visual_context = f"yüz ifadesi: {emotion}" if is_face_event else text
+            decision = laya.decide_with_context(text, visual_context=str(visual_context))
+            if decision is None:
+                return False
+            self.state["laya_last_vision_decision"] = {
+                "event_type": event_name,
+                "target": decision.target_module,
+                "target_confidence": decision.module_confidence,
+                "urgency": decision.urgency_score,
+                "affect": decision.affective_event,
+                "affect_confidence": decision.affect_confidence,
+                "timestamp": now,
+            }
+            if is_face_event:
+                affect_threshold = float(affect_cfg.get("vision_event_min_affect_confidence", min_confidence))
+                if decision.affective_event not in {"user_praise", "user_rude"}:
+                    return False
+                if float(decision.affect_confidence) < affect_threshold:
+                    return False
+                self.mood.apply_affective_event(decision.affective_event)
+                self.state["laya_last_vision_affect"] = {
+                    "emotion": emotion,
+                    "event": decision.affective_event,
+                    "confidence": decision.affect_confidence,
+                    "timestamp": now,
+                }
+            return True
+        except Exception as exc:
+            logger.debug("Laya vision affect processing failed: %s", exc)
+            return False
+
+    @staticmethod
+    def _laya_vision_event_text(event_type: str, payload: Dict[str, Any], emotion: str = "") -> str:
+        if event_type == "face_emotion":
+            return f"Kullanıcının yüz ifadesinde {emotion} duygusu algılandı."
+        if event_type == "owner_seen":
+            return f"Kamera sahibimin göründüğünü algıladı: {str(payload.get('name', '') or '')[:40]}"
+        if event_type == "new_person":
+            return f"Kamerada yeni bir kişi algılandı: {str(payload.get('name', '') or '')[:40]}"
+        if event_type == "hazard_detected":
+            hazards = payload.get("hazards", [])
+            return f"Görüntüde olası tehlike algılandı: {str(hazards)[:120]}"
+        context = payload.get("context", {})
+        summary = context.get("summary", "") if isinstance(context, dict) else str(context or "")
+        return f"Görüntüde sahne değişti: {str(summary or payload.get('reason', ''))[:120]}"
 
     def _check_darkness_appraisal(self, now: float) -> None:
         sleep_cfg = self.config.get("behaviors", {}).get("sleep", {})
