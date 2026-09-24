@@ -104,9 +104,11 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
             name, conf = self._identify_face_in_roi(face_roi)
             distance = self._estimate_face_distance_m(y2 - y1)
             emotion = ""
+            emotion_confidence = 0.0
             if self._face_emotion is not None and face_roi is not None and getattr(face_roi, "size", 1):
                 fer = self._face_emotion.estimate(face_roi)
                 emotion = str(fer.get("emotion", "") or "")
+                emotion_confidence = float(fer.get("confidence", 0.0) or 0.0)
             tracked = bool(tracked_box is not None and idx == 0)
             parsed.append(
                 {
@@ -116,6 +118,7 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
                     "distance_m": distance,
                     "name": name,
                     "emotion": emotion,
+                    "emotion_confidence": round(emotion_confidence, 3),
                     "tracked": tracked,
                 }
             )
@@ -123,12 +126,40 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
             current_keys.add(person_key)
             if self.event_bus is not None and person_key not in self._visible_persons:
                 self.event_bus.publish(EVENT_PERSON_SEEN, {"name": name, "emotion": emotion})
+            self._publish_face_emotion_event(person_key, name, emotion, emotion_confidence)
             self._annotate_face(annotated, x1, y1, x2, y2, name, conf, distance, tracked)
         if self.event_bus is not None:
             for key in self._visible_persons - current_keys:
                 self.event_bus.publish(EVENT_PERSON_LOST, {"name": key})
             self._visible_persons = current_keys
         return parsed, annotated
+
+    def _publish_face_emotion_event(self, person_key: str, name: str, emotion: str, confidence: float) -> None:
+        if self.event_bus is None or not emotion or emotion.lower() == "neutral":
+            return
+        if confidence < getattr(self, "_face_emotion_event_min_confidence", 1.0):
+            return
+        now = time.time()
+        cooldown = float(getattr(self, "_face_emotion_event_cooldown_s", 8.0))
+        event_lock = getattr(self, "_face_emotion_event_lock", None)
+        if event_lock is None:
+            event_lock = threading.Lock()
+            self._face_emotion_event_lock = event_lock
+        with event_lock:
+            previous_emotion, previous_ts = self._last_face_emotion_event.get(person_key, ("", 0.0))
+            if previous_emotion == emotion and now - previous_ts < cooldown:
+                return
+            self._last_face_emotion_event[person_key] = (emotion, now)
+        try:
+            from .vision_event_bus import EVENT_FACE_EMOTION
+            self.event_bus.publish(EVENT_FACE_EMOTION, {
+                "name": name,
+                "emotion": emotion,
+                "confidence": round(confidence, 3),
+                "source": "face_emotion",
+            })
+        except Exception as exc:
+            logger.debug("face emotion event publish failed: %s", exc)
 
     def _analyze_frame(self, frame: Any, enable_follow: bool) -> Tuple[List[Dict[str, Any]], Any]:
         tracked_box = None
