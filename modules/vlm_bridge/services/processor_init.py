@@ -155,9 +155,15 @@ class ProcessorInitMixin:
         self.last_alert_announcement = 0.0
         self._last_person_greet: Dict[str, float] = {}
         self._visible_persons: set[str] = set()
+        self._last_face_emotion_event: Dict[str, tuple[str, float]] = {}
+        self._face_emotion_event_lock = threading.Lock()
 
         fer_cfg = dict(vision_cfg.get("face_emotion", {}) if isinstance(vision_cfg.get("face_emotion"), dict) else {})
         fer_cfg.setdefault("gateway_base_url", self._gateway_base)
+        self._face_emotion_event_cooldown_s = max(0.0, float(fer_cfg.get("event_cooldown_s", 8.0)))
+        self._face_emotion_event_min_confidence = min(
+            1.0, max(0.0, float(fer_cfg.get("event_min_confidence", fer_cfg.get("min_confidence", 0.35))))
+        )
         self._face_emotion = FaceEmotionEstimator(fer_cfg) if FaceEmotionEstimator is not None else None
 
         follow_cfg = vision_cfg.get("follow", {}) if isinstance(vision_cfg.get("follow"), dict) else {}
