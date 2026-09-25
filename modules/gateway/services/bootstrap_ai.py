@@ -426,11 +426,20 @@ def _wire_vlm_autonomy(started: Dict[str, object]) -> None:
         ):
 
             def _forward_vlm_event(event_type: str, data: Dict[str, Any]) -> None:
+                if event_type in {"face_emotion", "owner_seen", "new_person", "hazard_detected", "scene_changed"} and hasattr(brain, "handle_laya_vision_event"):
+                    try:
+                        executor = getattr(brain, "_worker_executor", None)
+                        if executor is not None:
+                            executor.submit(brain.handle_laya_vision_event, event_type, dict(data))
+                        else:
+                            brain.handle_laya_vision_event(event_type, data)
+                    except Exception:
+                        logger.debug("Laya vision event dispatch failed", exc_info=True)
                 try:
                     if hasattr(brain, "client") and hasattr(brain.client, "emit_agent_event"):
                         brain.client.emit_agent_event(event_type, data)
                 except Exception:
-                    pass
+                    logger.debug("VLM agent event forwarding failed", exc_info=True)
 
             vlm_bridge.event_bus.subscribe_all(_forward_vlm_event)
             logger.info("vlm event bus -> agent event bridge mounted")
