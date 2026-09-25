@@ -30,6 +30,7 @@ class BargeInController:
         robot_speaking: bool,
         user_text: str,
         has_wakeword: bool = False,
+        urgent: bool = False,
         now: Optional[float] = None,
     ) -> bool:
         if not self.enabled:
@@ -40,7 +41,7 @@ class BargeInController:
         if (now - self._last_interrupt_ts) < self.cooldown_s:
             return False
         words = len(str(user_text or "").split())
-        if has_wakeword or words >= self.min_words:
+        if has_wakeword or urgent or words >= self.min_words:
             self._last_interrupt_ts = now
             return True
         return False
