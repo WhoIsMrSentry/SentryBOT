@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from modules.vlm_bridge.services.processor import VisionProcessor
-from modules.vlm_bridge.services.visual_context import VisualContextCache
+from modules.vlm_bridge.services.visual_context import (
+    PersonContext,
+    VisionFrameContext,
+    VisualContextCache,
+)
 
 
 def _proc_with_cache():
@@ -48,3 +52,16 @@ def test_caller_high_importance_is_not_downgraded():
         is_user_question=True,
     )
     assert proc.visual_context_cache.get_latest().importance_score >= 0.9
+
+
+def test_visual_context_cache_builds_compact_laya_scene_hint():
+    cache = VisualContextCache()
+    cache.update(VisionFrameContext(
+        summary="at a desk",
+        people=[PersonContext(name="Emir")],
+        objects=[{"label": "laptop"}, {"label": "cup"}],
+        hazards=[{"label": "knife"}],
+    ))
+
+    assert cache.get_laya_context() == "1 kişi, laptop, cup, tehlike: knife"
+    assert len(cache.get_laya_context(max_chars=12)) <= 12
