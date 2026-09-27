@@ -133,6 +133,7 @@ class CompanionScenarioMixin(ScenarioRitualsMixin):
 
             snapshot["perception"] = self.get_canonical_perception_context(snapshot.get("perception", {}))
             snapshot["capability_health"] = self.get_capability_health_snapshot()
+            self._attach_laya_urgency_context(snapshot)
             outcome = self.state.get("companion_outcome")
             if isinstance(outcome, dict):
                 snapshot["companion_outcome"] = dict(outcome)
@@ -166,6 +167,20 @@ class CompanionScenarioMixin(ScenarioRitualsMixin):
                 logger.debug("Companion goal selection failed: %s", exc)
         except Exception as exc:
             logger.debug("Companion needs update failed: %s", exc)
+
+    def _attach_laya_urgency_context(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(snapshot, dict):
+            return snapshot
+        companion_cfg = self.config.get("companion_goals", {})
+        laya_cfg = companion_cfg.get("laya_urgency", {}) if isinstance(companion_cfg, dict) else {}
+        if not isinstance(laya_cfg, dict) or not bool(laya_cfg.get("enabled", True)):
+            return snapshot
+        snapshot["laya_urgency"] = {
+            "high": bool(self.state.get("laya_last_high_urgency", False)),
+            "score": float(self.state.get("laya_last_urgency", 0.0) or 0.0),
+            "timestamp": float(self.state.get("laya_last_decision_ts", 0.0) or 0.0),
+        }
+        return snapshot
 
     def _sync_companion_plan_event(self, plan: dict) -> None:
         if not isinstance(plan, dict):
@@ -325,11 +340,11 @@ class CompanionScenarioMixin(ScenarioRitualsMixin):
                     data["available"] = True
                     data["recent_reflections"] = recent_reflections
                     data["tool_schemas"] = tool_schemas
-                    return data
+                    return self._attach_laya_urgency_context(data)
                 data = self.tick_living_needs()
                 data["recent_reflections"] = recent_reflections
                 data["tool_schemas"] = tool_schemas
-                return data
+                return self._attach_laya_urgency_context(data)
             if hasattr(self, "needs_engine"):
                 current = self.state.get("companion_needs")
                 if isinstance(current, dict) and current:
@@ -337,11 +352,11 @@ class CompanionScenarioMixin(ScenarioRitualsMixin):
                     data["available"] = True
                     data["recent_reflections"] = recent_reflections
                     data["tool_schemas"] = tool_schemas
-                    return data
+                    return self._attach_laya_urgency_context(data)
                 data = self.needs_engine.snapshot()
                 data["recent_reflections"] = recent_reflections
                 data["tool_schemas"] = tool_schemas
-                return data
+                return self._attach_laya_urgency_context(data)
         except Exception as exc:
             return {"ok": False, "available": False, "error": str(exc)}
         return {"ok": False, "available": False, "reason": "needs_engine_missing"}

@@ -42,6 +42,27 @@ def test_vision_arbiter_blocks_concurrent_vlm_tools():
     assert "vision arbiter busy" in result
 
 
+def test_laya_tool_hint_is_observability_only():
+    registry = _build_registry(VisionArbiter())
+    events = []
+    registry.tools["probe"] = lambda: {"ok": True}
+    registry.status_hook = events.append
+
+    result = registry.execute("probe", {}, laya_hint="move_head")
+
+    assert '"ok": true' in result
+    assert events[-1]["laya_hint"] == "move_head"
+    assert events[-1]["laya_hint_matches"] is False
+
+
+def test_laya_tool_hint_cannot_select_an_unregistered_tool():
+    registry = _build_registry(VisionArbiter())
+
+    result = registry.execute("missing", {}, laya_hint="probe")
+
+    assert "not found" in result
+
+
 def test_action_arbiter_handles_new_vision_types():
     arbiter = ActionArbiter()
     captured: Dict[str, Any] = {}

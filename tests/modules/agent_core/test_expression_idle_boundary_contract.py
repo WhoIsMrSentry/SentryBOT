@@ -16,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[3]
 class _Agent:
     def __init__(self) -> None:
         self.is_busy = False
+        self.semantic_calls = []
+
+    def step(self, *args, **kwargs):
+        self.semantic_calls.append((args, kwargs))
 
 
 class _Client:
@@ -110,3 +114,24 @@ def test_idle_behavior_system_contract_start_stop_without_semantic_idle_decision
     # The heartbeat loop is time-gated at about 15s. Contract test must not force a semantic idle action.
     time.sleep(0.02)
     assert isinstance(client.neopixel_calls, list)
+
+
+def test_idle_heartbeat_does_not_run_laya_or_semantic_actions(monkeypatch):
+    import modules.agent_core.services.idle_behavior as idle_module
+
+    agent = _Agent()
+    agent.laya_engine = type("Laya", (), {"get_telemetry": lambda _self: (_ for _ in ()).throw(AssertionError("must not query Laya"))})()
+    client = _Client()
+    idle = IdleBehaviorSystem(agent, client=client)
+    idle.running = True
+    ticks = iter([100.0, 120.0])
+    monkeypatch.setattr(idle_module.time, "time", lambda: next(ticks))
+    monkeypatch.setattr(idle_module.time, "sleep", lambda _seconds: setattr(idle, "running", False))
+
+    idle._idle_loop()
+
+    assert len(client.neopixel_calls) == 1
+    args, kwargs = client.neopixel_calls[0]
+    assert args == ("BREATHE",)
+    assert kwargs["emotions"] == ["neutral"]
+    assert agent.semantic_calls == []

@@ -75,3 +75,50 @@ class SpinalCordReflexEngine:
             logger.error(f"Error executing spinal cord reflex: {exc}")
 
         return False
+
+    def observe_voice_emergency(self, laya_decision) -> bool:
+        """Trigger spinal cord reflex from a Laya emergency voice decision.
+
+        This bridges voice-based emergency detection (e.g. "Dur!") to the same
+        hardware reflex system used for cliff/impact events.
+
+        Args:
+            laya_decision: LayaDecision instance from laya_engine.py
+        Returns:
+            True if emergency reflex was triggered
+        """
+        if not self.enabled:
+            return False
+        if not hasattr(laya_decision, 'is_emergency') or not getattr(laya_decision, 'is_emergency', False):
+            return False
+
+        import time
+        now = time.time()
+        if now - self._last_reflex_ts < self.reflex_cooldown_s:
+            return False
+
+        urgency = getattr(laya_decision, 'urgency_score', 0.0)
+        target = getattr(laya_decision, 'target_module', 'unknown')
+        logger.warning(
+            "SPINAL CORD REFLEX: Voice emergency detected via Laya! target=%s urgency=%.1f",
+            target, urgency,
+        )
+
+        try:
+            self.client.push_interaction_event("motor.stop", {"priority": "emergency", "source": "laya_voice"})
+        except Exception as exc:
+            logger.error("Failed to send emergency stop from voice: %s", exc)
+
+        self._last_reflex_ts = now
+
+        try:
+            self.memory.add_event(
+                f"Voice emergency detected: urgency={urgency:.1f}, target={target}. "
+                "Motor stopped via spinal cord reflex."
+            )
+            self.client.update_emotions(["surprise"])
+            self.client.push_interaction_event("appraisal:shocked")
+        except Exception as exc:
+            logger.error("Failed to notify higher brain of voice emergency: %s", exc)
+
+        return True

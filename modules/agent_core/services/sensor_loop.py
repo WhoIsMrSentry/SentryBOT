@@ -51,6 +51,7 @@ class SensorFeedbackLoop:
         vision_results_interval_s: float = 5.0,
         visual_context_interval_s: float = 10.0,
         skip_hardware_on_pc: bool = True,
+        laya_engine=None,
     ):
         self.world_state = world_state
         self.client = client
@@ -60,6 +61,7 @@ class SensorFeedbackLoop:
         self.vision_results_interval_s = _safe_float(vision_results_interval_s, 5.0, 0.5)
         self.visual_context_interval_s = _safe_float(visual_context_interval_s, 10.0, 1.0)
         self.skip_hardware_on_pc = bool(skip_hardware_on_pc)
+        self.laya_engine = laya_engine
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self._last: dict[str, float] = {}
@@ -98,6 +100,26 @@ class SensorFeedbackLoop:
             return False
         self._last[key] = now
         return True
+
+    def _current_loop_interval(self) -> float:
+        """Increase the loop tick rate briefly after a high urgency decision."""
+        engine = self.laya_engine
+        if engine is None or not getattr(engine, "enabled", False):
+            return self.loop_interval
+        try:
+            telemetry = engine.get_telemetry()
+            decisions = telemetry.get("last_decisions", [])
+            latest = decisions[-1] if decisions else {}
+            urgency = float(latest.get("urgency", 0.0))
+            threshold = float(getattr(engine, "high_urgency_threshold", 1.5))
+            boost_hz = float(getattr(engine, "sensor_boost_hz", 5.0))
+            hold_s = float(getattr(engine, "sensor_boost_hold_s", 8.0))
+            decision_age = time.time() - float(latest.get("timestamp", 0.0))
+            if urgency >= threshold and decision_age <= hold_s and boost_hz > 0:
+                return min(self.loop_interval, 1.0 / boost_hz)
+        except (AttributeError, TypeError, ValueError, IndexError):
+            logger.debug("Unable to read Laya urgency for sensor scheduling", exc_info=True)
+        return self.loop_interval
 
     def _read_hardware(self) -> dict:
         updates = {}
@@ -168,4 +190,4 @@ class SensorFeedbackLoop:
             except Exception as exc:
                 logger.error("Sensor poll error: %s", exc)
 
-            time.sleep(self.loop_interval)
+            time.sleep(self._current_loop_interval())

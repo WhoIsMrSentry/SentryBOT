@@ -49,11 +49,19 @@ class BrainInitMixin:
         self.thread: Optional[threading.Thread] = None
         self._agentic_decision_in_progress: bool = False
         self._agentic_decision_lock = threading.Lock()
+        self._laya_vision_event_lock = threading.Lock()
         self._worker_executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="autonomy_worker"
         )
 
         self.mood = MoodManager(config)
+        self.laya_engine = None
+        try:
+            from modules.agent_core.services.laya_engine import LayaEngine
+            self.laya_engine = LayaEngine.get_instance(config)
+            logger.info("AutonomyBrain: LayaEngine singleton attached (enabled=%s)", self.laya_engine.enabled)
+        except Exception as exc:
+            logger.info("AutonomyBrain: LayaEngine not available: %s", exc)
         self.appraisal = AffectiveAppraisal(config)
         self.client = ServiceClient(config.get("endpoints", {}), config=config)
         self.expression = ExpressionDirector(self.client)
@@ -246,6 +254,8 @@ class BrainInitMixin:
 
             agent_cfg = load_agent_core_config()
             self.agent = AgentOrchestrator(agent_cfg, autonomy_client=self.client)
+            # Agent streaming shares the local mood snapshot without an HTTP round trip.
+            self.agent.mood_manager = self.mood
             if hasattr(self, "goal_executor") and hasattr(self.goal_executor, "set_decision_traces"):
                 traces = getattr(self.agent, "decision_traces", None)
                 if traces is not None:
