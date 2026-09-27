@@ -119,10 +119,12 @@ class ToolRegistry(MotionToolsMixin, VisionToolsMixin, SocialToolsMixin, Hardwar
                 func = getattr(self, name)
                 self._register(func, schema)
 
-    def execute(self, tool_name: str, kwargs: Dict[str, Any]) -> str:
-        """Executes the mapped tool and returns the string result."""
+    def execute(self, tool_name: str, kwargs: Dict[str, Any], laya_hint: Optional[str] = None) -> str:
+        """Executes the LLM-selected tool; Laya hint is diagnostic only, never authority."""
         if tool_name not in self.tools:
             return f"Error: Tool '{tool_name}' not found."
+
+        hint = str(laya_hint or "").strip()[:64]
 
         acquired = False
         vision_held = False
@@ -167,6 +169,7 @@ class ToolRegistry(MotionToolsMixin, VisionToolsMixin, SocialToolsMixin, Hardwar
                     "type": "tool_done",
                     "tool": tool_name,
                     "result": result_str,
+                    **({"laya_hint": hint, "laya_hint_matches": hint == tool_name} if hint else {}),
                 }
             )
             return result_str

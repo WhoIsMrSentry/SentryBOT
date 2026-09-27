@@ -45,3 +45,39 @@ def test_inject_world_state_omits_environment_when_idle():
     ws = WorldState()
     injected = ws.inject_world_state("hello")
     assert "environment" not in injected
+
+
+def test_update_laya_state_publishes_compact_decision():
+    from types import SimpleNamespace
+
+    ws = WorldState()
+    ws.update_laya_state(SimpleNamespace(
+        target_module="neopixel",
+        urgency_score=1.25,
+        affective_event="user_praise",
+        is_direct_command=True,
+        inference_ms=24.5,
+    ))
+
+    state = ws.get_state()
+    assert state["laya_last_target"] == "neopixel"
+    assert state["laya_last_urgency"] == 1.25
+    assert state["laya_last_affect"] == "user_praise"
+    assert state["laya_last_direct"] is True
+    assert state["laya_last_ms"] == 24.5
+
+
+def test_laya_scene_summary_includes_bounded_environment_details():
+    ws = WorldState()
+    ws.update_scene({
+        "summary": "çalışma masası",
+        "people": [{"name": "Emir"}],
+        "objects": [{"label": "laptop"}],
+        "hazards": [{"label": "kablo"}],
+    })
+
+    summary = ws.get_laya_scene_summary()
+    assert "çalışma masası" in summary
+    assert "laptop" in summary
+    assert "kablo" in summary
+    assert len(ws.get_laya_scene_summary(max_chars=12)) <= 12

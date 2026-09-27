@@ -913,6 +913,10 @@ owner_learning:
 companion_goals:
   enabled: true
   event_cooldown_s: 12.0
+  laya_urgency:
+    enabled: true
+    freshness_s: 8.0
+    safety_score_floor: 0.75
   goal_formation:
     enabled: true
     strategy: rules

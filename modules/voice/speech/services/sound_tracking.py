@@ -16,6 +16,19 @@ class SpeechSoundTrackingMixin:
     _head_arbiter: Any
 
     def track_start(self) -> None:
+        if getattr(self, "_direction", None) is None:
+            try:
+                from modules.voice.speech.services.direction import ArrayGeometry, DirectionEstimator
+                dir_cfg = self.cfg.get("direction", {}) if isinstance(self.cfg.get("direction"), dict) else {}
+                geom = ArrayGeometry(
+                    mic_distance_m=float(dir_cfg.get("mic_distance_m", 0.06)),
+                    sound_speed=float(dir_cfg.get("sound_speed", 343.0)),
+                )
+                samplerate = int(self.cfg.get("audio", {}).get("samplerate", 16000))
+                self._direction = DirectionEstimator(sample_rate=samplerate, geometry=geom)
+                self.direction_enabled = True
+            except Exception as exc:
+                logger.warning("Failed to initialize DirectionEstimator on track_start: %s", exc)
         self._tracking = True
         self._pan.start()
 

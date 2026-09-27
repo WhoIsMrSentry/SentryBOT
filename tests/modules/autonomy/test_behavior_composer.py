@@ -4,6 +4,7 @@ import time
 import pytest
 from unittest.mock import MagicMock
 from modules.autonomy.services.behavior_composer import BehaviorComposer
+from modules.autonomy.services.brain_parts.vocal_prosody import VocalProsodyMixin
 
 
 def test_behavior_composer_plan_execution():
@@ -80,3 +81,25 @@ def test_behavior_composer_macro_replay():
     assert res["components"]["replay_macro"] == "greeting_sequence"
     mock_shadow.replay_macro.assert_called_once_with("greeting_sequence", mock_client)
 
+
+def test_behavior_composer_speech_uses_current_laya_updated_mood_tone():
+    brain = VocalProsodyMixin.__new__(VocalProsodyMixin)
+    brain.client = MagicMock()
+    brain.state = {}
+    brain.mood = MagicMock()
+    brain.mood.get_dominant_emotion.return_value = "joy"
+    composer = BehaviorComposer(brain=brain)
+
+    result = composer.execute_plan({"say": {"text": "Güzel haber!", "language": "tr"}})
+
+    assert result["components"]["say"] == {"text": "Güzel haber!", "tone": None}
+    brain.client.queue_action.assert_called_once_with(
+        "speak",
+        priority=50,
+        ttl_ms=10000,
+        payload={
+            "text": "Güzel haber!",
+            "tone": {"rate": 190, "volume": 1.0},
+            "language": "tr",
+        },
+    )

@@ -43,6 +43,7 @@ def split_sentences(text: str, max_chars: int = 160, max_chunks: int = 8) -> Lis
 
 class SpeechPriority:
     SAFETY = 95
+    LAYA_FILLER = 75
     FINAL_RESPONSE = 60
     PROGRESS = 30
     IDLE = 15
@@ -221,6 +222,22 @@ class SpeechArbiter:
             priority=SpeechPriority.SAFETY,
             category="safety",
             max_age_s=20.0,
+            trace_id=trace_id,
+        )
+
+    def enqueue_laya_filler(
+        self,
+        text: str,
+        language: str = "",
+        trace_id: str = "",
+    ) -> Optional[str]:
+        """Queue a short-lived Laya acknowledgment above routine progress."""
+        return self.enqueue(
+            text,
+            priority=SpeechPriority.LAYA_FILLER,
+            category="laya_filler",
+            language=language,
+            max_age_s=4.0,
             trace_id=trace_id,
         )
 

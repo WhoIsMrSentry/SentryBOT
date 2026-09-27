@@ -27,6 +27,7 @@ _DEFAULT_RULES: Dict[str, Dict[str, float]] = {
     "command_ok": {"happiness": 6, "anger": -4},
     "command_failed": {"anger": 12, "fear": 6},
     "loud_noise": {"fear": 22, "anger": 5},
+    "visual_hazard": {"fear": 20, "energy": 5, "curiosity": 3},
     "new_person": {"curiosity": 12},
     "petted": {"happiness": 16, "anger": -16},
 }

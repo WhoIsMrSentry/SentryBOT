@@ -69,9 +69,18 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self._stt_input_gain = float(rec_cfg.get("input_gain", 1.0))
 
         # Audio router will provide the stream
-        # Direction estimator - will be initialized when stream starts
-        self.direction_enabled = False
-        self._direction = None
+        dir_cfg = self.cfg.get("direction", {}) if isinstance(self.cfg.get("direction"), dict) else {}
+        self.direction_enabled = bool(dir_cfg.get("enabled", False))
+        if self.direction_enabled:
+            from modules.voice.speech.services.direction import ArrayGeometry, DirectionEstimator
+            geom = ArrayGeometry(
+                mic_distance_m=float(dir_cfg.get("mic_distance_m", 0.06)),
+                sound_speed=float(dir_cfg.get("sound_speed", 343.0)),
+            )
+            samplerate = int(self.cfg.get("audio", {}).get("samplerate", 16000))
+            self._direction = DirectionEstimator(sample_rate=samplerate, geometry=geom)
+        else:
+            self._direction = None
         self._last_angle = None
 
         pt_cfg = self.cfg.get("pan_tilt", {})
