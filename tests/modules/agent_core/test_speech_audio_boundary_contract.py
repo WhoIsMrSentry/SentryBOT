@@ -12,6 +12,7 @@ from modules.agent_core.services.speech_arbiter import (
     SpeechPriority,
     split_sentences,
 )
+from modules.agent_core.services.progress import ProgressManager
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -93,6 +94,44 @@ def test_speech_arbiter_queue_cancel_and_status_contract():
     assert arbiter.queue_size() == 1
     assert arbiter.clear_queue() == 1
     assert arbiter.queue_size() == 0
+
+
+def test_laya_filler_priority_is_between_progress_and_final():
+    arbiter = SpeechArbiter(max_queue_size=3)
+    item_id = arbiter.enqueue_laya_filler("Hemen bakıyorum", language="tr")
+
+    assert item_id
+    queued = arbiter._queue[0]
+    assert queued.category == "laya_filler"
+    assert queued.priority > SpeechPriority.PROGRESS
+    assert queued.priority > SpeechPriority.FINAL_RESPONSE
+    assert queued.max_age_s == 4.0
+
+
+def test_progress_routes_laya_ack_through_priority_queue():
+    arbiter = SpeechArbiter(max_queue_size=3)
+    progress = ProgressManager(speech_arbiter=arbiter)
+    token = progress.new_request(language="tr")
+
+    progress.emit_ack(token, custom_text="Hemen bakıyorum.")
+
+    assert arbiter.queue_size() == 1
+    queued = arbiter._queue[0]
+    assert queued.text == "Hemen bakıyorum."
+    assert queued.language == "tr"
+    assert queued.category == "laya_filler"
+
+
+def test_laya_filler_is_selected_before_final_response():
+    arbiter = SpeechArbiter(max_queue_size=4)
+    arbiter.enqueue_progress("İşlem sürüyor", cancel_token="turn")
+    arbiter.enqueue_final("İşte yanıt", language="tr")
+    arbiter.enqueue_laya_filler("Hemen bakıyorum", language="tr")
+
+    selected = arbiter._pop_next()
+
+    assert selected is not None
+    assert selected.category == "laya_filler"
 
 
 
