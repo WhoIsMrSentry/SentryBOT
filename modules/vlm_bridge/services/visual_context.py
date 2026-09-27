@@ -207,6 +207,27 @@ class VisualContextCache:
                 "update_count": self._update_count,
             }
 
+    def get_laya_context(self, max_chars: int = 100) -> str:
+        """Return a compact Turkish scene hint suitable for System 1 input."""
+        latest = self.get_latest()
+        if latest is None:
+            return ""
+        parts: List[str] = []
+        if latest.people:
+            parts.append(f"{len(latest.people)} kişi")
+        parts.extend(
+            str(obj.get("label", "")).strip()
+            for obj in latest.objects[:5]
+            if isinstance(obj, dict) and str(obj.get("label", "")).strip()
+        )
+        parts.extend(
+            f"tehlike: {hazard.get('label', '')}".strip()
+            for hazard in latest.hazards[:2]
+            if isinstance(hazard, dict) and str(hazard.get("label", "")).strip()
+        )
+        summary = ", ".join(parts) or latest.summary
+        return str(summary or "")[:max(1, int(max_chars))]
+
     def get_history(self, limit: int = 3) -> List[Dict[str, Any]]:
         with self._lock:
             items = list(self._history[-limit:])

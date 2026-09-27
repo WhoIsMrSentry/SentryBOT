@@ -16,3 +16,16 @@ def test_service_init():
     from modules.voice.speech.xSpeechService import SpeechService
     svc = SpeechService()
     assert svc is not None
+
+
+def test_direction_and_sound_tracking():
+    from modules.voice.speech.xSpeechService import SpeechService
+    svc = SpeechService()
+    assert svc._tracking is False
+    svc.track_start()
+    assert svc._tracking is True
+    assert svc._direction is not None
+    st = svc.track_status()
+    assert st["tracking"] is True
+    svc.track_stop()
+    assert svc._tracking is False

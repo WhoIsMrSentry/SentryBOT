@@ -17,6 +17,8 @@ vision:
     backend: heuristic   # none | heuristic | onnx | remote
     model_path: models/emotion-ferplus.onnx
     min_confidence: 0.35
+    event_min_confidence: 0.80
+    event_cooldown_s: 8.0
     remote_url: "@gateway/vlm/fer/analyze"
     remote_timeout_s: 2.5
     remote_fallback: heuristic

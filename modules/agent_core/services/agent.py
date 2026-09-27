@@ -3,12 +3,14 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import uuid
 from typing import Any, Callable, Dict, List, Optional
 
 from .agent_context import AgentContextMixin
 from .agent_turn import AgentTurnMixin
 from modules.common.latency_trace import latency_trace
 from modules.common.model_policy import get_model_policy  # type: ignore
+from .laya_action_contract import bind_laya_action_proposal
 
 logger = logging.getLogger("agent.orchestrator")
 
@@ -77,6 +79,45 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         except RuntimeError:
             logger.debug("agent turn lock release requested while unlocked", exc_info=True)
 
+    def _current_speech_tone(self) -> Optional[Dict[str, Any]]:
+        """Take one safe mood snapshot for every spoken chunk in this turn."""
+        mood_manager = getattr(self, "mood_manager", None)
+        get_tone = getattr(mood_manager, "get_speech_tone", None)
+        if not callable(get_tone):
+            return None
+        try:
+            tone = get_tone()
+            return dict(tone) if isinstance(tone, dict) and tone else None
+        except Exception:
+            logger.debug("Could not resolve mood-aware speech tone", exc_info=True)
+            return None
+
+    def _record_laya_latency(self, trace_id: str) -> None:
+        """Keep System 1 time separate from model TTFT in the turn trace."""
+        decision = getattr(self, "_last_laya_fast_path_decision", None)
+        if decision is None:
+            return
+        try:
+            latency_trace.mark(
+                trace_id,
+                "laya.inference",
+                {
+                    "inference_ms": max(0.0, float(getattr(decision, "inference_ms", 0.0) or 0.0)),
+                    "target_module": str(getattr(decision, "target_module", "") or ""),
+                    "urgency": float(getattr(decision, "urgency_score", 0.0) or 0.0),
+                },
+            )
+        except Exception:
+            logger.debug("Could not record Laya inference latency", exc_info=True)
+
+    @staticmethod
+    def _bind_laya_action_request(decision: Any, request_id: str) -> None:
+        """Attach the current internal request ID to an inert Laya proposal."""
+        proposal = getattr(decision, "suggested_action", None)
+        if proposal is None:
+            return
+        decision.suggested_action = bind_laya_action_proposal(proposal, request_id)
+
     def check_survival_drives(self) -> Optional[str]:
         """Overrides logic if critical limits are reached."""
         bat = self.world_state.get_state().get("battery_percent", 100)
@@ -143,12 +184,43 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         session_language = self._normalize_session_language(language)
         progress_token = self.progress_manager.new_request(language=session_language)
         self._active_progress_token = progress_token
+        request_id = uuid.uuid4().hex
+        self._active_laya_request_id = request_id
         callback = self._build_progress_callback(progress_token, progress_cb)
         self.tool_registry.status_hook = callback
 
         try:
             use_fast_path = self._should_fast_path(user_prompt, native_tools=native_tools)
-            self.progress_manager.emit_ack(progress_token, speak=not use_fast_path)
+            self._record_laya_latency(trace_id)
+            custom_ack = ""
+            laya_eng = getattr(self, "laya_engine", None)
+            if laya_eng and getattr(laya_eng, "enabled", True):
+                try:
+                    if not use_fast_path:
+                        custom_ack = laya_eng.get_instant_filler(language=session_language)
+                    # Trigger immediate affective body language if praise/rudeness detected
+                    laya_dec = getattr(self, "_last_laya_fast_path_decision", None)
+                    if laya_dec is None:
+                        try:
+                            laya_dec = laya_eng.decide_with_context(
+                                user_prompt,
+                                world_state=self.world_state.get_state(),
+                                visual_context=self.world_state.get_laya_scene_summary(),
+                            )
+                        except (AttributeError, TypeError):
+                            laya_dec = laya_eng.decide(user_prompt)
+                    if laya_dec is not None:
+                        self._bind_laya_action_request(laya_dec, request_id)
+                    if laya_dec and hasattr(self.world_state, "update_laya_state"):
+                        self.world_state.update_laya_state(laya_dec)
+                    if laya_dec and laya_dec.affective_event in {"user_praise", "user_rude"}:
+                        reaction = laya_eng.get_affective_reaction(laya_dec.affective_event)
+                        if autonomy_client and hasattr(autonomy_client, "set_expression_event"):
+                            autonomy_client.set_expression_event("agent.affect", reaction)
+                except Exception:
+                    pass
+
+            self.progress_manager.emit_ack(progress_token, custom_text=custom_ack, speak=not use_fast_path)
             latency_trace.mark(trace_id, "agent.context_start")
             survival_override = self.check_survival_drives()
             world_context = self.world_state.inject_world_state("")
@@ -173,6 +245,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             subagent_reports: List[Dict[str, Any]] = []
             executed_actions: List[Dict[str, Any]] = []
             stream_state = {"spoken": 0}
+            speech_tone = self._current_speech_tone()
             on_sentence: Optional[Callable[[str, int], None]] = None
             if self.speech_arbiter._speak_fn is not None:
                 def speak_sentence(sentence: str, index: int) -> None:
@@ -186,6 +259,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                         sentence,
                         index=index,
                         language=chunk_lang,
+                        tone=speech_tone,
                         trace_id=trace_id,
                     )
                     if item_id:
@@ -255,6 +329,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             self.progress_manager.emit_final(progress_token)
             self.tool_registry.status_hook = previous_hook
             self._active_progress_token = ""
+            self._active_laya_request_id = ""
             self._exit_turn()
 
     def step_event(
@@ -288,6 +363,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     pass
 
             use_fast_path = self._should_fast_path(event_prompt, native_tools=True)
+            self._record_laya_latency(trace_id)
             self.progress_manager.emit_ack(progress_token, speak=not use_fast_path)
             latency_trace.mark(trace_id, "agent.context_start")
             survival_override = self.check_survival_drives()
@@ -313,6 +389,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             subagent_reports: List[Dict[str, Any]] = []
             executed_actions: List[Dict[str, Any]] = []
             stream_state = {"spoken": 0}
+            speech_tone = self._current_speech_tone()
             on_sentence: Optional[Callable[[str, int], None]] = None
             if self.speech_arbiter._speak_fn is not None:
                 def speak_sentence(sentence: str, index: int) -> None:
@@ -320,6 +397,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                         sentence,
                         index=index,
                         language=session_language,
+                        tone=speech_tone,
                         trace_id=trace_id,
                     )
                     if item_id:
@@ -473,4 +551,3 @@ except NameError:
     pass
 except AttributeError:
     pass
-

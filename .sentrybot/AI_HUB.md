@@ -59,6 +59,7 @@ Bu dosyayı oku → ilgili agent veya skill'i bul → uygula.
 | Kod incele | `agents/code-reviewer.md` |
 | Arduino komutu ekle | `skills/arduino-contract.md` |
 | Hata ayıkla | `skills/debug-module.md` |
+| Laya System 1 entegrasyonunu sürdür | `laya_integration_completed.md` → `laya_integration_todo.md` → `context/laya-action-contract.md` |
 
 ---
 

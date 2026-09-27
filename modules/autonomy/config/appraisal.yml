@@ -19,6 +19,7 @@ rules:
   owner_lockout:    { anger: 20, fear: 15, happiness: -10 }
   petted:           { happiness: 16, anger: -16, fear: -8 }
   loud_noise:       { fear: 22, anger: 5, energy: 6 }
+  visual_hazard:   { fear: 20, energy: 5, curiosity: 3 }
   new_person:       { curiosity: 12, energy: 4 }
   scene_change:     { curiosity: 8 }
   darkness:         { fear: 8, energy: -6 }

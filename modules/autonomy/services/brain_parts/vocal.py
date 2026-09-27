@@ -24,8 +24,21 @@ class VocalMixin(VocalProsodyMixin):
     def _handle_barge_in_and_wakeword(self, text: str, low: str, has_wake: bool, request_id: str) -> bool:
         from modules.voice.speech.services.wake_phrase import contains_wakeword, strip_wakewords
 
+        robot_speaking = self._robot_is_speaking()
+        urgent = False
+        laya = getattr(self, "laya_engine", None)
+        if robot_speaking and laya is not None and getattr(laya, "_is_available", False):
+            try:
+                decision = laya.decide(text)
+                urgent = bool(decision and laya.is_emergency_decision(decision))
+            except Exception as exc:
+                logger.debug("Laya urgency check for barge-in failed: %s", exc)
+
         if self.barge_in.should_interrupt(
-            robot_speaking=self._robot_is_speaking(), user_text=text, has_wakeword=has_wake
+            robot_speaking=robot_speaking,
+            user_text=text,
+            has_wakeword=has_wake,
+            urgent=urgent,
         ):
             self._barge_in_stop_speaking()
         elif has_wake:

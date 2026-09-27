@@ -125,6 +125,58 @@ class MoodManager:
             if mood in self.state:
                 self.state[mood] = max(0, min(100, self.state[mood] + delta))
                 self._maybe_snapshot()
+
+    def apply_affective_event(self, event_name: str) -> str:
+        """Apply a System 1 Laya affective event directly to internal mood state."""
+        event = str(event_name or "").strip().lower()
+        with self._lock:
+            if event == "user_praise":
+                self.modify("happiness", 25)
+                self.modify("anger", -15)
+                self.modify("social", 20)
+            elif event == "user_rude":
+                self.modify("anger", 30)
+                self.modify("happiness", -25)
+                self.modify("fear", 10)
+        return self.get_dominant_emotion()
+
+    def apply_laya_decision(self, decision) -> str:
+        """Apply a full LayaDecision object to mood state.
+
+        Processes affective event, urgency impact, direct command stimulation,
+        and social chat satisfaction in one atomic operation.
+
+        Args:
+            decision: LayaDecision instance from laya_engine.py
+        Returns:
+            Dominant emotion string after update
+        """
+        with self._lock:
+            # 1. Affective event
+            affect = getattr(decision, "affective_event", "neutral")
+            if affect and affect != "neutral":
+                self.apply_affective_event(affect)
+
+            # 2. Urgency → fear/energy impact
+            urgency = float(getattr(decision, "urgency_score", 0.0))
+            if urgency >= 2.0:
+                self.modify("fear", min(40, urgency * 15))
+                self.modify("energy", -10)
+            elif urgency >= 1.0:
+                self.modify("curiosity", 10)
+
+            # 3. Direct command → stimulation satisfaction
+            if getattr(decision, "is_direct_command", False):
+                self.satisfy_need("stimulation", 15)
+
+            # 4. Conversational target → social satisfaction
+            target = getattr(decision, "target_module", "")
+            if target == "system2_chat":
+                self.satisfy_need("social", 20)
+
+            self._maybe_snapshot()
+
+        return self.get_dominant_emotion()
             
     def get_dominant_emotion(self):
         # Determine the dominant emotion for LEDs / eyes / body language.

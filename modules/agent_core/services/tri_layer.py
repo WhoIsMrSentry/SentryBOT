@@ -283,15 +283,17 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
 
 
 class TriLayerRouter:
-    """Low-latency keyword router for module-level sub-agents."""
+    """Low-latency keyword and neural router for module-level sub-agents."""
 
     def __init__(
         self,
         profiles: Dict[str, SubAgentProfile],
         max_subagents: int = 2,
         default_modules: Sequence[str] | None = None,
+        laya_engine: Any = None,
     ):
         self.profiles = profiles
+        self.laya_engine = laya_engine
         self._absolute_max = 8
         self.max_subagents = self._coerce_max(max_subagents)
         fallback = tuple(default_modules or ("vlm_bridge", "autonomy", "agent_core"))
@@ -397,11 +399,29 @@ class TriLayerRouter:
         text = str(user_prompt or "").strip().lower()
         if not text:
             return list(self.default_modules[: self.max_subagents])
+
+        laya_modules: List[str] = []
+        if self.laya_engine is not None and getattr(self.laya_engine, "enabled", True):
+            try:
+                laya_modules = self.laya_engine.route(user_prompt, list(self.profiles.keys()))
+            except Exception:
+                laya_modules = []
+
         q_tokens = self._tokenize(text)
         scores = self._score_keyword_matches(text, q_tokens)
         self._apply_semantic_priors(q_tokens, scores)
         self._apply_emotion_priors(text, q_tokens, scores)
+
+        for mod in laya_modules:
+            if mod in self.profiles:
+                decision = getattr(self.laya_engine, "_last_decision", None)
+                confidence = getattr(decision, "module_confidence", None)
+                boost = 5.0 + (max(0.0, min(1.0, float(confidence))) * 10.0) if confidence is not None else 10.0
+                scores[mod] = scores.get(mod, 0.0) + boost
+
         if not scores:
+            if laya_modules:
+                return laya_modules[: self.max_subagents]
             return list(self.default_modules[: self.max_subagents])
         ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
         return [name for name, _ in ranked[: self.max_subagents]]
@@ -471,4 +491,3 @@ if "SubAgentProfile" in globals():
     for _sentrybot_attr, _sentrybot_value in _sentrybot_profile_defaults.items():
         if not hasattr(SubAgentProfile, _sentrybot_attr):
             setattr(SubAgentProfile, _sentrybot_attr, _sentrybot_profile_default_property(_sentrybot_value))
-
