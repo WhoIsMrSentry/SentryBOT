@@ -159,9 +159,13 @@ class BehaviorComposer:
             if say and self.brain:
                 text = say.get("text") if isinstance(say, dict) else str(say)
                 tone = say.get("tone_hint") if isinstance(say, dict) else None
+                language = say.get("language") if isinstance(say, dict) else None
                 if text and hasattr(self.brain, "_speak_with_mood"):
                     try:
-                        self.brain._speak_with_mood(text, emotion=tone)
+                        speech_kwargs = {"emotion": tone}
+                        if language:
+                            speech_kwargs["language"] = str(language)
+                        self.brain._speak_with_mood(text, **speech_kwargs)
                         results["components"]["say"] = {"text": text, "tone": tone}
                     except Exception as exc:
                         logger.warning("BehaviorComposer speech dispatch failed: %s", exc)
