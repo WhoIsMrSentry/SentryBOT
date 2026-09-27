@@ -99,7 +99,7 @@ class PerceptionContextMixin:
                 composer.check_wake_condition("person_entered", {"count": len(people)})
             if hazards:
                 self.client.emit_agent_event("hazard_detected", {"count": len(hazards)})
-                self.appraise_event("loud_noise", intensity=min(1.0, len(hazards) / 3.0))
+                self.appraise_event("visual_hazard", intensity=min(1.0, len(hazards) / 3.0))
                 if getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
                     try:
                         prompt = (

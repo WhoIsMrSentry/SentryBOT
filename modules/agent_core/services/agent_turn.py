@@ -304,7 +304,9 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
                 if not name:
                     continue
 
-                out = self.tool_registry.execute(name, args)
+                laya_decision = getattr(self, "_last_laya_fast_path_decision", None)
+                laya_hint = getattr(laya_decision, "suggested_tool", None)
+                out = self.tool_registry.execute(name, args, laya_hint=laya_hint)
                 recovery_meta = None
                 if recovery_handler is not None:
                     try:

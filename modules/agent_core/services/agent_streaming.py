@@ -30,6 +30,7 @@ class AgentStreamingMixin:
     _cached_model_names_ts: float
 
     _SENTENCE_END_RE: Optional[re.Pattern] = None
+    _FIRST_CLAUSE_SPLIT_RE: Optional[re.Pattern] = None
 
     def _build_provider_tool_instruction(self, tools: List[Dict[str, Any]]) -> str:
         return build_provider_tool_instruction(tools)
@@ -78,11 +79,29 @@ class AgentStreamingMixin:
             return fallback
         return model
 
-    def _extract_ready_sentences(self, buffer: str) -> Tuple[List[str], str]:
+    def _extract_ready_sentences(
+        self,
+        buffer: str,
+        *,
+        is_first_chunk: bool = False,
+    ) -> Tuple[List[str], str]:
         if not buffer:
             return [], ""
         if AgentStreamingMixin._SENTENCE_END_RE is None:
-            AgentStreamingMixin._SENTENCE_END_RE = re.compile(r"([.!?â€¦\n]+)")
+            AgentStreamingMixin._SENTENCE_END_RE = re.compile(r"([.!?…\n]+)")
+        if AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE is None:
+            AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE = re.compile(r"([,;:—–\n]+|[.!?…]+)")
+
+        # Ultra low-latency first clause break (sub-350ms first speech audio)
+        if is_first_chunk:
+            words = buffer.split()
+            if len(words) >= 2 or len(buffer) >= 12:
+                parts = AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE.split(buffer)
+                if len(parts) > 1:
+                    first_clause = (parts[0] + parts[1]).strip()
+                    if len(first_clause.split()) >= 1 and len(first_clause) >= 4:
+                        remainder = "".join(parts[2:]).lstrip()
+                        return [first_clause], remainder
 
         parts = AgentStreamingMixin._SENTENCE_END_RE.split(buffer)
         if len(parts) <= 1:
@@ -111,7 +130,10 @@ class AgentStreamingMixin:
         if tools:
             # Native tool-calling must use the normal chat path so Ollama can return tool_calls.
             return self._chat_turn(model, messages, tools, options)
-        if not on_sentence or not getattr(self, "persona_stream_enabled", False):
+        if not on_sentence:
+            return self._chat_turn(model, messages, tools, options)
+        # Enable streaming when on_sentence callback is provided unless explicitly forced off
+        if getattr(self, "persona_stream_enabled", None) is False:
             return self._chat_turn(model, messages, tools, options)
         return self._stream_turn_sentence_by_sentence(model, messages, tools, options, on_sentence=on_sentence)
 
@@ -132,9 +154,10 @@ class AgentStreamingMixin:
         first_token_ts: Optional[float] = None
         t0 = time.time()
         sentence_idx = 0
+        is_first_chunk = True
 
         def _emit(s: str) -> None:
-            nonlocal sentence_idx
+            nonlocal sentence_idx, is_first_chunk
             try:
                 import inspect
                 sig = inspect.signature(on_sentence)
@@ -151,6 +174,7 @@ class AgentStreamingMixin:
                     except Exception:
                         pass
             sentence_idx += 1
+            is_first_chunk = False
 
         try:
             stream_kwargs: Dict[str, Any] = {
@@ -176,7 +200,7 @@ class AgentStreamingMixin:
                     continue
                 full_text.append(content)
                 buffer += content
-                sentences, buffer = self._extract_ready_sentences(buffer)
+                sentences, buffer = self._extract_ready_sentences(buffer, is_first_chunk=is_first_chunk)
                 for sentence in sentences:
                     _emit(sentence)
 

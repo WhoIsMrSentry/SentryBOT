@@ -58,7 +58,7 @@ class WorldState:
                 name = str(p.get("name", "") or "").strip()
                 if name and name.lower() != "unknown":
                     people.append(name)
-        self.environment = {
+        environment = {
             "scene_summary": str(ctx.get("summary", "") or ""),
             "objects": [str(o.get("label", o)) if isinstance(o, dict) else str(o) for o in (ctx.get("objects", []) or [])][:8],
             "hazards": [str(h.get("label", h)) if isinstance(h, dict) else str(h) for h in (ctx.get("hazards", []) or [])][:5],
@@ -66,6 +66,43 @@ class WorldState:
             "importance": float(ctx.get("importance_score", 0.0) or 0.0),
             "updated_at": str(ctx.get("timestamp", "") or datetime.now().isoformat()),
         }
+        with self._state_lock:
+            self.environment = environment
+
+    def get_laya_scene_summary(self, max_chars: int = 100) -> str:
+        """Return a bounded, thread-safe visual summary for Laya inference."""
+        with self._state_lock:
+            environment = dict(self.environment)
+            hazards = list(environment.get("hazards", []))[:2]
+            objects = list(environment.get("objects", []))[:5]
+            people = list(environment.get("people_present", []))[:3]
+        parts = []
+        summary = str(environment.get("scene_summary", "") or "").strip()
+        if summary:
+            parts.append(summary)
+        if people:
+            parts.append(f"bilinen kişiler: {', '.join(str(person) for person in people)}")
+        if objects:
+            parts.append(f"nesneler: {', '.join(str(item) for item in objects)}")
+        if hazards:
+            parts.append(f"tehlikeler: {', '.join(str(item) for item in hazards)}")
+        return "; ".join(parts)[:max(1, int(max_chars))]
+
+    def update_laya_state(self, decision: Any) -> None:
+        """Publish a compact snapshot of the latest Laya decision."""
+        if decision is None:
+            return
+        try:
+            snapshot = {
+                "laya_last_target": str(getattr(decision, "target_module", "") or ""),
+                "laya_last_urgency": float(getattr(decision, "urgency_score", 0.0) or 0.0),
+                "laya_last_affect": str(getattr(decision, "affective_event", "neutral") or "neutral"),
+                "laya_last_direct": bool(getattr(decision, "is_direct_command", False)),
+                "laya_last_ms": float(getattr(decision, "inference_ms", 0.0) or 0.0),
+            }
+        except (TypeError, ValueError):
+            return
+        self.update_state(snapshot)
         
     def set_action_feedback(self, feedback: str):
         with self._state_lock:

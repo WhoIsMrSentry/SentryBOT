@@ -89,10 +89,38 @@ class AgentMemorySyncMixin:
         return _unified_progress_cb
 
     def _should_fast_path(self, user_prompt: str, *, native_tools: bool = False) -> bool:
+        self._last_laya_fast_path_decision = None
         if native_tools:
             return True
         if not self.fast_path_enabled:
             return False
+
+        # System 1 Laya fast-path check
+        laya_engine = getattr(self, "laya_engine", None)
+        if laya_engine is not None and getattr(laya_engine, "enabled", True):
+            try:
+                world_state = self.world_state.get_state() if hasattr(self.world_state, "get_state") else None
+                visual_context = (
+                    self.world_state.get_laya_scene_summary()
+                    if hasattr(self.world_state, "get_laya_scene_summary") else None
+                )
+                try:
+                    is_fast, decision = laya_engine.should_fast_path(
+                        user_prompt,
+                        world_state=world_state,
+                        visual_context=visual_context,
+                    )
+                except TypeError:
+                    # Keep compatibility with injected pre-context Laya adapters.
+                    is_fast, decision = laya_engine.should_fast_path(user_prompt)
+                self._last_laya_fast_path_decision = decision
+                if is_fast:
+                    return True
+                if decision is not None and not decision.is_direct_command:
+                    return False
+            except Exception:
+                pass
+
         return len(str(user_prompt or "").strip()) <= self.fast_path_max_chars
 
     def _native_loop_messages(self, session_language: str) -> List[Dict[str, Any]]:

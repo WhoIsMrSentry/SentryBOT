@@ -1,4 +1,5 @@
 import os
+import time
 
 from modules.agent_core.services.sensor_loop import SensorFeedbackLoop
 
@@ -60,3 +61,33 @@ def test_due_budget_blocks_until_interval():
     assert loop._due("x", 5.0, 100.0) is True
     assert loop._due("x", 5.0, 101.0) is False
     assert loop._due("x", 5.0, 106.0) is True
+
+
+def test_sensor_loop_temporarily_boosts_after_recent_high_urgency():
+    class Laya:
+        enabled = True
+        high_urgency_threshold = 1.5
+        sensor_boost_hz = 5.0
+        sensor_boost_hold_s = 8.0
+
+        @staticmethod
+        def get_telemetry():
+            return {"last_decisions": [{"urgency": 2.0, "timestamp": time.time()}]}
+
+    loop = SensorFeedbackLoop(World(), poll_hz=2.0, laya_engine=Laya())
+    assert loop._current_loop_interval() == 0.2
+
+
+def test_sensor_loop_ignores_stale_high_urgency():
+    class Laya:
+        enabled = True
+        high_urgency_threshold = 1.5
+        sensor_boost_hz = 5.0
+        sensor_boost_hold_s = 1.0
+
+        @staticmethod
+        def get_telemetry():
+            return {"last_decisions": [{"urgency": 2.0, "timestamp": time.time() - 5.0}]}
+
+    loop = SensorFeedbackLoop(World(), poll_hz=2.0, laya_engine=Laya())
+    assert loop._current_loop_interval() == loop.loop_interval

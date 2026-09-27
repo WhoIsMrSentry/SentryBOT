@@ -100,6 +100,27 @@ class CompanionGoalSelector(CompanionGoalPoliciesMixin, CompanionGoalPlansMixin)
                 scores["safety"] = max(0.0, _as_float(scores.get("safety")) + _as_float(adjustment))
         snap["scores"] = scores
 
+        urgency_cfg = _as_dict(self.cfg.get("laya_urgency"))
+        laya_urgency = _as_dict(snap.get("laya_urgency"))
+        urgency_ts = _as_float(laya_urgency.get("timestamp"), 0.0)
+        freshness_s = max(0.0, _as_float(urgency_cfg.get("freshness_s"), 8.0))
+        urgency_score = _as_float(laya_urgency.get("score"), 0.0)
+        urgency_age = ts - urgency_ts
+        urgency_override = (
+            bool(urgency_cfg.get("enabled", True))
+            and bool(laya_urgency.get("high", False))
+            and urgency_ts > 0.0
+            and 0.0 <= urgency_age <= freshness_s
+        )
+        if urgency_override:
+            safety_floor = max(0.0, min(1.0, _as_float(urgency_cfg.get("safety_score_floor"), 0.75)))
+            scores["safety"] = max(safety_floor, _as_float(scores.get("safety"), 0.0))
+            dominant = "safety"
+            recommended = "pause_and_observe"
+            snap["dominant_need"] = dominant
+            snap["recommended_goal"] = recommended
+            snap["scores"] = scores
+
         formation_decision = None
         if self.goal_formation is not None and bool(_as_dict(self.cfg.get("goal_formation")).get("enabled", True)):
             formation_decision = self.goal_formation.form(
@@ -178,6 +199,10 @@ class CompanionGoalSelector(CompanionGoalPoliciesMixin, CompanionGoalPlansMixin)
             "goal_formation": formation_decision.to_dict() if formation_decision is not None else None,
             "formation_disposition": (
                 formation_decision.disposition.value if formation_decision is not None else "legacy"
+            ),
+            "laya_urgency_override": (
+                {"score": urgency_score, "age_s": round(max(0.0, urgency_age), 3)}
+                if urgency_override else None
             ),
         }
         if not out["deferred"]:
