@@ -1,78 +1,69 @@
-# Common
+# Common — SentryBOT Çekirdek Ortak Kütüphanesi
 
-Modüller arasında paylaşılan, hafif yardımcı kütüphaneler modülüdür. Ağır modül grafiklerini import etmeden ortak davranış sağlar.
+`modules.common`, SentryBOT platformundaki tüm servislerin paylaştığı konfigürasyon, model yönetim politikası, thread-safe olay dağıtımı (event bus) ve HTTP istemcisi gibi ortak araçları barındıran çekirdek modüldür.
 
-## Sorumluluklar
+Mimari detaylar, sınıf yapıları ve veri akış diyagramları için:
+- 📖 [architecture_common.md](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/common/architecture_common.md)
+- 📊 [architecture_common.dot](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/common/architecture_common.dot) (Graphviz DOT kaynağı)
 
-- **Kanonik Duygu Sözlüğü** (`emotion_vocab.py`) - **MERKEZİ KAYNAK**
-- Latency trace deposu (`latency_trace.py`)
-- HTTP istemci yardımcıları (`http_client.py`)
-- Vision/camera kullanılabilirlik kontrolleri (`vision_availability.py`)
-- Model asset doğruluk raporu (`model_asset_truth.py`)
-- Runtime hedef tespiti (`runtime_target.py`)
-- Sistem prompt yardımcıları (`system_prompts.py`)
+---
 
-## Duygu Sözlüğü (KRİTİK - Tek Kaynak)
+## 🚀 Temel Özellikler
 
-`emotion_vocab.py`, **TÜM** ifade/modalite modülleri arasında tek duygu taksonomisi sağlar:
+1. **Konfigürasyon Yükleyici (`config_loader`):** `agent.yaml` ve modül konfigürasyonlarını hiyerarşik olarak birleştirir ve önbelleğe alır.
+2. **Model Politikası (`model_policy`):** Yerel (Ollama / `qwen3.5:9b`) ve bulut (Google AI Studio / `gemini-2.5-flash`) profillerini dinamik ve güvenli yönetir.
+3. **Ollama URL Koruyucusu (`ollama_url`):** Döngüsel Gateway yönlendirmelerini engeller, bozuk adresleri otomatik düzeltir.
+4. **Olay Dağıtıcı (`event_bus`):** Modüller arası tamponlu (bounded ring buffer) pub/sub mesajlaşma sağlar.
+5. **Güvenli HTTP İstemcisi (`http_client`):** Zaman aşımı korumalı, circuit-breaker destekli mikroservis istemcisi.
 
-| Modül (Yeni Yol) | Kullanım |
-|------------------|----------|
-| `visual_output/neopixel` | Palette/effect eşlemesi, companion modes |
-| `visual_output/oled_faces` | Mood/activity/gesture render hints |
-| `expression/piservo` | Emotion → kulak pozisyonu |
-| `expression/animate` | Animasyon sekansında emotion trigger |
-| `voice/speak` | Tone/prosody preset mapping |
-| `autonomy` | MoodManager, NeedsEngine, companion state |
-| `agent_core` | Tool descriptions, expression tool |
-| `expression` | SemanticExpressionEngine, ExpressionArbiter |
+---
 
+## 🛠️ Hızlı Kullanım Örnekleri
+
+### 1. Konfigürasyon Yükleme
 ```python
-from modules.common.emotion_vocab import get_vocab
+from modules.common.config_loader import load_agent_config
 
-vocab = get_vocab()
-vocab.canonical("happy")   # -> "joy" (alias resolution)
-vocab.canonical("mutlu")   # -> "joy" (TR alias)
-render = vocab.render("joy")
-# render.oled (mood name), render.palette (neo variant), render.tone (speak preset), render.rgb (fallback)
+cfg = load_agent_config()
+port = cfg.get("server", {}).get("port", 8080)
 ```
 
-**Config:** `modules/common/config/emotions.yml` - Tek kaynak, tüm modüller bunu import eder.
+### 2. Model ve Sağlayıcı Çözümleme
+```python
+from modules.common.model_policy import get_model_policy
 
-## Diğer Yardımcılar
+policy = get_model_policy()
+provider_cfg = policy.get_provider_config(cfg)
+print(provider_cfg["provider"])  # "ollama" veya "google_ai_studio"
+print(provider_cfg["model"])     # "qwen3.5:9b" veya "gemini-2.5-flash"
+```
 
-| Dosya | Açıklama | Kullananlar |
-|-------|----------|-------------|
-| `latency_trace.py` | Uçtan uca gecikme izleri (trace_id, spans) | `voice/speak`, `agent_core`, `vlm_bridge` |
-| `http_client.py` | Async/sync HTTP wrapper (retry, timeout) | `ai_provider`, `vlm_bridge/google_vlm_client`, `autonomy/client` |
-| `vision_availability.py` | Kamera/VLM girdisinin gerçekten kullanılabilir olup olmadığını kontrol | `agent_core/tools`, `vlm_bridge`, `autonomy/vision_context` |
-| `runtime_target.py` | Pi/PC hedef ortamını tespit etme (`assert_raspberry_pi()`) | `sentrybot.py` preflight, `camera`, `hardware` tests |
-| `model_asset_truth.py` | Model dosyası varlık doğrulaması (piper, openwakeword) | `voice/speech`, `voice/speak`, `voice/wakeword` |
-| `lang_names.py` | Dil kodu → insan okunur dil adı eşlemesi (TTS/STT dili raporlaması için) | `agent_core` |
+### 3. Olay Yayınlama ve Dinleme
+```python
+from modules.common.event_bus import get_event_bus
 
-## İlişkiler
+bus = get_event_bus()
 
-`common` bir servis değil, **paylaşılan kütüphane katmanıdır**. Özellikle:
-- **Otonom ifade senkronizasyonu** → `emotion_vocab` (tek kaynak)
-- **Performans gözlemi** → `latency_trace`
-- **Model doğruluk** → `model_asset_truth`
+# Dinleyici ekleme
+bus.subscribe("VISION", lambda event: print(f"Yeni görüntü olayı: {event.data}"))
 
-**Kural:** Hiçbir modül kendi emotion map/render/palette tutmamalı. Hepsi `from modules.common.emotion_vocab import get_vocab` kullanmalı.
+# Olay yayınlama
+bus.publish("VISION", {"detected": "person", "confidence": 0.94})
+```
 
-## Durum (Güncel 2026-08-21, Tam Tarama)
+### 4. URL Sanitizasyonu
+```python
+from modules.common.ollama_url import normalize_ollama_url
 
-| İhtiyaç | Durum | Dosya |
-|---------|-------|-------|
-| Config Loader Base | ✅ FIXED | `common/config_loader.py:599` tek kaynak, `deep_merge`+`require_dict_section` ortak |
-| Service Base | ✅ EKLENDİ | `common/service_base.py` + `BackgroundTaskMixin` |
-| Event Bus | ✅ EKLENDİ | `common/event_bus.py` `EventBus` async, `get_event_bus`, `publish_sync` |
-| Health Standard | ✅ EKLENDİ | `common/health.py` `HealthResponse`+`HealthChecker` |
-| Router Factory | ✅ EKLENDİ | `common/router_factory.py:create_router` |
-| Gateway URL | ✅ FIXED | `common/config_loader.py:gateway_base_from_agent_cfg` re-export, `gateway/url.py` hala var ama `common` tek kaynak |
-| Persistence | ✅ EKLENDİ | `common/persistence.py` SQLite/WAL+JSON+Memory |
-| Job Types | ✅ EKLENDİ | `common/job_types.py` `JobRegistry` plugin |
-| Command Registry | ✅ EKLENDİ | `common/command_registry.py` |
-| Model Policy | ✅ EKLENDİ | `common/model_policy.py:get_model_policy` |
-| Device Manager | ❌ EKSİK | `camera/device_manager.py` YENİ eklendi ama `common` değil, `voice/audio_router.py` YENİ eklendi |
+# Bozuk veya gateway portu verilen adresi güvenli varsayılana çeker:
+safe_url = normalize_ollama_url("http://127.0.0.1:8080/ollama")
+assert safe_url == "http://127.0.0.1:11434"
+```
 
-Kalan: `common` artık `core layer 55 in` en yüksek fan-in, `router_factory` henüz 0 adopt.
+---
+
+## 🧪 Testlerin Çalıştırılması
+
+```bash
+pytest tests/modules/common -v
+```
