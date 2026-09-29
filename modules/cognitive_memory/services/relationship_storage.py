@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger("autonomy.relationship_storage")
+logger = logging.getLogger("cognitive_memory.relationship_storage")
 
 
 class RelationshipStorageMixin:
