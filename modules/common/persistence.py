@@ -6,7 +6,6 @@ Used by state_manager, cognitive_memory, and other modules needing persistence.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -17,7 +16,7 @@ from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, Generic, Iterator, List, Optional, Type, TypeVar, Union
+from typing import Any, Dict, Generic, Iterator, List, Optional, TypeVar
 
 logger = logging.getLogger("common.persistence")
 
