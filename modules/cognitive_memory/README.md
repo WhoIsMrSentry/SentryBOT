@@ -1,89 +1,82 @@
-# Cognitive Memory (eski Social DB)
+# Cognitive Memory — Bilişsel ve Sosyal Bellek Motoru
 
-SentryBOT'un birleşik bilişsel/sosyal hafıza katmanıdır. Kişi, yüz, sohbet, ilişki, mood, ritüel, etkileşim ve dünya gözlem verilerini tek SQLite dosyasında toplar. HTTP servisi yoktur; kütüphane modülüdür.
+`modules.cognitive_memory`, SentryBOT'un insanları tanımasını, önceki sohbetleri hatırlamasını, yüz embedding vektörlerini saklamasını ve robot-insan ilişkilerini zaman içinde geliştirmesini sağlayan kalıcı bellek motorudur.
 
-## Sorumluluklar
+Mimari detaylar, SQLite WAL şeması ve Mermaid/Graphviz veri akış diyagramları için:
+- 📖 [architecture_cognitive_memory.md](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/cognitive_memory/architecture_cognitive_memory.md)
+- 📊 [architecture_cognitive_memory.dot](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/cognitive_memory/architecture_cognitive_memory.dot) (Graphviz DOT kaynağı)
+- 🖼️ [architecture_cognitive_memory.svg](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/cognitive_memory/architecture_cognitive_memory.svg)
 
-- Kişi kimliği ve yüz vektörleri (face descriptors)
-- Görülme günlüğü, sohbet geçmişi, ilişki tercihleri
-- Mood snapshot, ritüel takibi, etkileşim olayları
-- Sahip oturum pencereleri
-- **World Memory** - Epizodik olgular, semantik varlıklar, dünya hafızası (RAG)
-- Eski JSON depolarının yerini alan tek doğruluk kaynağı
+---
 
-## Mimari (Güncel: 2026-08-20)
+## 🚀 Temel Yetenekler
 
-- **Core DB**: `db.py` → `SocialDB` (connection, migration, transaction management, WAL)
-- **Şema**: `schema.py` (DDL, lazy migrate, version tracking)
-- **Repository'ler**: `repositories/` (11 repo - `WorldMemoryRepo` eklendi):
-  | Repo | Tablo | Sorumluluk |
-  |---|---|---|
-  | `PersonsRepo` | `persons` | Kişi CRUD, sahip işaretleme, güven skoru |
-  | `FaceDescriptorsRepo` | `face_descriptors` | ORB / face vektör blob'ları |
-  | `SightingsRepo` | `sightings` | Görülme günlüğü (append-only) |
-  | `ChatEpisodesRepo` | `chat_episodes` | Sohbet geçmişi + budama |
-  | `RelationshipsRepo` | `relationships` | Tercih anahtar/değer çiftleri |
-  | `MomentsRepo` | `moments` | Salience ağırlıklı anılar |
-  | `MoodSnapshotsRepo` | `mood_snapshots` | Periyodik mood kayıtları |
-  | `RitualsRepo` | `rituals` | Günlük ritüel takibi |
-  | `InteractionEventsRepo` | `interaction_events` | Etkileşim/olay sayaçları |
-  | `OwnerSessionsRepo` | `owner_sessions` | Sahip oturum pencereleri |
-  | `WorldMemoryRepo` | `world_memories`, `world_observations` | Epizodik olgular, semantik varlıklar, dünya hafızası |
-- **Services Katmanı**: `services/`:
-  - `world_memory_rag.py` → RAG tabanlı geri çağırma
-  - `world_memory_autowriter.py` → Otomatik gözlem yazıcı
-  - `preference_learner.py` → İlişki tercihlerinden öğrenme
-  - `people_memory.py` → Kişi hafıza yardımcıları
-- **Singleton**: `get_default()` / `set_default()` (gateway bootstrap'ta set edilir)
+1. **İlişkisel Sosyal Veritabanı (`SocialDB`):** SQLite WAL modunda çalışan, 10 tablolu, bağlantı havuzlu ve thread-safe veritabanı motoru.
+2. **Kişi ve Yüz Tanıma (`PersonRepository`, `FaceDescriptorRepository`):** 512 boyutlu yüz embedding vektörleri ile kimlik eşleştirme.
+3. **İlişki ve Yakınlık Takibi (`RelationshipRepository`):** Güven seviyesi, tanışıklık skoru ve etkileşim sıklığı analizi.
+4. **Epizodik Sohbet Kaydı (`ChatEpisodeRepository`):** Geçmiş konuşmaların bağlamsal saklanması.
+5. **Hibrit RAG Bilgi Arama (`WorldMemoryRAG`):** BM25 anahtar kelime ve vektör benzerliği ile robotun çevresi hakkındaki olguları LLM istemine getirme.
+6. **Uyku Konsolidasyonu (`SleepConsolidator`):** Gece veya şarj anında hatıraların özetlenmesi ve optimize edilmesi.
 
-Gateway `_include_social_db` (bootstrap_ops.py) varsayılan olarak (`include.social_db: true`) startup'ta `SocialDB` oluşturur ve `set_default()` ile kaydeder.
+---
 
-## Kullanım
+## 🛠️ Hızlı Kullanım Örnekleri
 
+### 1. Veritabanına Bağlanma ve Kişi Bilgisi Çekme
 ```python
-from modules.cognitive_memory import get_default
+from modules.cognitive_memory.db import get_social_db
+from modules.cognitive_memory.repositories.persons import PersonRepository
 
-db = get_default()
-if db is not None:
-    person = db.persons.upsert(name="Emir", trust_score=0.6)
-    # World memory observation
-    db.world_memory.record_observation(kind="person", summary="Emir odaya girdi", source="vision")
+db = get_social_db()
+person_repo = PersonRepository(db)
+
+# Kişiyi kimliğe veya takma isme göre bulma
+person = person_repo.get_by_name("Emo")
+if person:
+    print(f"Tanınan Kişi: {person['name']} (Rol: {person['role']}, Güven: {person['trust_level']})")
 ```
 
-Testlerde izole instance:
+### 2. Diyalog Kaydetme ve İlişki Güncelleme
 ```python
-from modules.cognitive_memory.db import SocialDB
-db = SocialDB(path=tmp_path / "social.sqlite3", wal=False)
+from modules.cognitive_memory.services.relationship_memory import RelationshipMemory
+
+rel_mem = RelationshipMemory(db)
+rel_mem.ingest_dialogue_turn(
+    person_id=person["id"],
+    user_text="Bugün nasılsın Sentry?",
+    robot_text="Çok iyiyim, seni görmek güzel!",
+    sentiment=0.8,
+)
 ```
 
-## Konfigürasyon
+### 3. Hibrit RAG ile Olgu Sorgulama
+```python
+from modules.cognitive_memory.services.world_memory_rag import WorldMemoryRAG
 
-`modules/cognitive_memory/config/config.yml` + merkezi `config/agent.yaml` (cognitive_memory section):
+rag = WorldMemoryRAG(db)
+facts = rag.search(query="En sevilen içecek", limit=2)
+for fact in facts:
+    print(f"- {fact['subject']} {fact['predicate']} {fact['object']}")
+```
 
-- `path` — SQLite dosya yolu (default: `data/social.sqlite3`)
-- `wal`, `cache_size_kb`, `busy_timeout_ms` (default: WAL on, 4MB cache, 5000ms timeout)
-- `default_owner_name`, `auto_migrate`
-- `world_memory.enabled`, `persistence.*` (world memory ayarları)
+---
 
-## İlişkiler (Güncel Modül Yolları)
+## 🗄️ Veritabanı Tabloları (10 Tablo)
+- `persons`: Kişi profilleri ve roller
+- `face_descriptors`: 512-dim yüz embedding vektörleri
+- `sightings`: Kameranın kişiyi görüş kayıtları
+- `interaction_events`: Etkileşim günlüğü (dokunma, ses, komut)
+- `relationships`: Robot ile kişi arasındaki samimiyet puanı
+- `rituals`: Tekrarlayan rutinler ve alışkanlıklar
+- `moments`: Önemli ve unutulmaz anılar
+- `chat_episodes`: Sohbet cümleleri ve niyetler
+- `mood_snapshots`: Duygu durumu geçmişi
+- `world_memory`: Dünya ve ortam olguları
 
-- `vlm_bridge/services/processor_identity.py` → Yüz/kişi hafızası (face register, recognize, remember)
-- `autonomy` → Mood, rituals, relationship memory, interaction feedback, world_memory
-- `agent_core/services/tools/social_tools.py` → Tool'lar ve sosyal bağlam (person upsert, chat, preferences)
-- `expression/interactions` → Olay sayaçları (interaction_events)
-- `system_control/config_center` → Runtime registry snapshot
+---
 
-## Otonomlukta Rol
+## 🧪 Testlerin Çalıştırılması
 
-Uzun süreli sosyal bağlam ve kişiselleştirmenin kalıcı hafıza katmanıdır. `autonomy` her döngüde `WorldMemoryRepo` ile gözlem yazır, `RelationshipsRepo` ile tercih öğrenir, `MomentsRepo` ile anı oluşturur.
-
-## Migration
-
-Eski JSON depolarından geçiş: `scripts/migrations/social_db_migrate.py` (idempotent, tüm kaynakları migrate eder)
-
-## Bilinen Sorunlar (Güncel 2026-08-21, Tam Tarama)
-
-1. **SocialDB 183 satır (7242 değil)** - Gerçek `db.py:31 183 satır`, `KB→satır` hatası düzeltildi. Facade uygun boyutta, ek parçalama gerekmez. ✅
-2. **Transaction Isolation Kısmen** - `db.py:118 BEGIN IMMEDIATE` + `RLock:44` var, `busy_timeout 5000` + `WAL` + `fetchone:138` cursor close ✅. Ancak `execute:130` ve `fetchone:138` ayrı lock, `common/persistence.py` henüz adopt edilmedi → write queue eklenmeli 🔜
-3. **WorldMemoryRepo İki Tablo** - `world_memories` + `world_observations` join için `schema.py` index eksik, `snapshot_stats:154` 8x `COUNT(*)` N+1 -> tek UNION ALL optimizasyonu.
-4. **Face Descriptor Blob** - Binary blob, `hotspots ChatEpisodesRepo.append 175` yanında `face_descriptors` similarity Python'da, `common/persistence` vec/FAISS değil.
+```bash
+pytest tests/modules/cognitive_memory -v
+```
