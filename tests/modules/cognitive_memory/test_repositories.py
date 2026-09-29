@@ -96,6 +96,7 @@ def test_snapshot_stats_includes_schema_version(db: SocialDB) -> None:
     stats = db.snapshot_stats()
     assert stats.get("persons", 0) >= 1
     assert stats.get("schema_version") == 1
+    assert "world_memory" in stats
 
 
 def test_purge_old_data(db: SocialDB) -> None:
