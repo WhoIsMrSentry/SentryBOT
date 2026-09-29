@@ -56,3 +56,16 @@ def test_service_init():
     from modules.common.emotion_vocab import EmotionVocab, load_vocab
 
     assert isinstance(load_vocab(), EmotionVocab)
+
+
+def test_router_factory_models():
+    from modules.common.router_factory import HealthResponse, ErrorResponse
+
+    hr = HealthResponse(service="smoke_test")
+    assert hr.ok is True
+    assert hr.service == "smoke_test"
+    assert isinstance(hr.timestamp, str) and len(hr.timestamp) > 0
+
+    err = ErrorResponse(error="something broke", error_code="ERR_TEST")
+    assert err.ok is False
+    assert err.error_code == "ERR_TEST"
