@@ -19,7 +19,7 @@ import os
 
 
 def default_ollama_base_url() -> str:
-    return "http" + "://127.0.0.1:11434"
+    return "http://127.0.0.1:11434"
 
 
 def unwrap_url(value):
@@ -27,6 +27,19 @@ def unwrap_url(value):
     if value.startswith("[") and "](" in value:
         value = value[1:].split("]", 1)[0].strip().rstrip("/")
     return value
+
+
+_GATEWAY_OLLAMA_EXACT = frozenset({
+    "http://127.0.0.1:8080",
+    "http://localhost:8080",
+    "http://0.0.0.0:8080",
+})
+
+_GATEWAY_OLLAMA_PREFIXES = (
+    "http://127.0.0.1:8080/",
+    "http://localhost:8080/",
+    "http://0.0.0.0:8080/",
+)
 
 
 def is_bad_ollama_url(value):
@@ -39,23 +52,13 @@ def is_bad_ollama_url(value):
     if "@gateway" in lowered:
         return True
 
-    if lowered in {
-        "http" + "://127.0.0.1:8080",
-        "http" + "://localhost:8080",
-        "http" + "://0.0.0.0:8080",
-    }:
+    if lowered in _GATEWAY_OLLAMA_EXACT:
         return True
 
-    if lowered.startswith(("http" + "://127.0.0.1:8080/").lower()):
+    if lowered.startswith(_GATEWAY_OLLAMA_PREFIXES):
         return True
 
-    if lowered.startswith(("http" + "://localhost:8080/").lower()):
-        return True
-
-    if lowered.startswith(("http" + "://0.0.0.0:8080/").lower()):
-        return True
-
-    if lowered.endswith("/ollama") or lowered.endswith("/ollama/chat"):
+    if lowered.endswith(("/ollama", "/ollama/chat")):
         return True
 
     return False
