@@ -6,8 +6,8 @@ Provides standardized health check responses across all modules.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, Optional, List
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 from enum import Enum
 
 
@@ -50,7 +50,7 @@ class HealthResponse:
     }
     """
     status: str  # healthy, degraded, unhealthy
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     version: str = "1.0.0"
     uptime_seconds: Optional[float] = None
     checks: Dict[str, Dict[str, Any]] = field(default_factory=dict)

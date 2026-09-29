@@ -10,14 +10,15 @@ Provides standardized FastAPI router creation with:
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set, Type, Union
+from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -43,7 +44,7 @@ class HealthResponse(BaseModel):
     service: str
     version: str = "1.0.0"
     uptime_seconds: Optional[float] = None
-    timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat() + "Z")
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     checks: Dict[str, Any] = field(default_factory=dict)
 
 
