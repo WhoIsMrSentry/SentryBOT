@@ -1,0 +1,68 @@
+// Graphviz Architecture: modules/common
+// SentryBOT V5 - Shared Architecture Foundation
+digraph common_module {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_common {
+        label = "modules.common (Cross-Cutting Foundation)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#38bdf8";
+        fontcolor = "#38bdf8";
+        fontsize = 12;
+
+        subgraph cluster_config_policy {
+            label = "Configuration & Policy Management";
+            fillcolor = "#0f172a";
+            color = "#0284c7";
+            fontcolor = "#7dd3fc";
+
+            cfg_loader [label="config_loader\n- load_agent_config()\n- deep_merge()\n- resolve_agent_cfg_path()", fillcolor="#1e3a5f", fontcolor="#f8fafc", color="#38bdf8"];
+            model_policy [label="model_policy\n- ModelPolicy (Singleton)\n- get_provider_config()\n- set_required_model()", fillcolor="#1e3a5f", fontcolor="#f8fafc", color="#38bdf8"];
+            ollama_url [label="ollama_url\n- normalize_ollama_url()\n- is_bad_ollama_url()\n- default_ollama_base_url()", fillcolor="#1e3a5f", fontcolor="#f8fafc", color="#38bdf8"];
+        }
+
+        subgraph cluster_events_comm {
+            label = "Events & Inter-Module Communication";
+            fillcolor = "#0f172a";
+            color = "#0d9488";
+            fontcolor = "#5eead4";
+
+            event_bus [label="event_bus\n- EventBus (Thread-safe pub/sub)\n- publish_event()\n- subscribe(channel)\n- iter(limit)", fillcolor="#134e4a", fontcolor="#f8fafc", color="#2dd4bf"];
+            http_client [label="http_client\n- SafeHttpClient\n- Circuit Breaker\n- Retry & Timeout Pools", fillcolor="#134e4a", fontcolor="#f8fafc", color="#2dd4bf"];
+            router_factory [label="router_factory\n- create_service_router()\n- CORS, Healthz, Metrics\n- Error Formatter", fillcolor="#134e4a", fontcolor="#f8fafc", color="#2dd4bf"];
+        }
+
+        subgraph cluster_lifecycle_state {
+            label = "Service Lifecycle & Persistence";
+            fillcolor = "#0f172a";
+            color = "#d97706";
+            fontcolor = "#fcd34d";
+
+            service_base [label="service_base\n- BaseService (Lifecycle)\n- start() / stop()\n- health()", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            persistence [label="persistence\n- StatePersistence\n- SQLite/JSON Adapters\n- Atomic File Writes", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            health_check [label="health\n- SubsystemHealthCheck\n- Liveness & Readiness", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+        }
+
+        subgraph cluster_domain_helpers {
+            label = "Robotics Domain Helpers";
+            fillcolor = "#0f172a";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+
+            emotion_vocab [label="emotion_vocab\n- Affective Vocabulary Map\n- Joy, Sorrow, Anger, Fear...", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
+            latency_trace [label="latency_trace\n- Pipeline Latency Profiler\n- TTFT & Actuation Ticks", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
+            target_runtime [label="runtime_target\n- Pi 5 vs Dev Environment\n- Hardware Capabilities", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
+        }
+    }
+
+    // Inter-component flows
+    cfg_loader -> model_policy [label=" feeds raw yaml"];
+    model_policy -> ollama_url [label=" resolves base url"];
+    service_base -> router_factory [label=" registers routes"];
+    service_base -> health_check [label=" status provider"];
+    event_bus -> latency_trace [label=" timestamps events"];
+    router_factory -> http_client [label=" proxies downstream"];
+}
