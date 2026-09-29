@@ -1,0 +1,76 @@
+// Graphviz Architecture: modules/cognitive_memory
+// SentryBOT V5 - Cognitive & Social Memory Engine
+digraph cognitive_memory_module {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_cognitive_memory {
+        label = "modules.cognitive_memory (Cognitive & Social Memory Engine)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#ec4899";
+        fontcolor = "#f472b6";
+        fontsize = 12;
+
+        subgraph cluster_database_engine {
+            label = "Storage Engine & Transaction Manager";
+            fillcolor = "#0f172a";
+            color = "#be185d";
+            fontcolor = "#fbcfe8";
+
+            social_db [label="SocialDB (db.py)\n- SQLite WAL Mode\n- Connection Pooling & Lock\n- Automatic Schema Migration", fillcolor="#831843", fontcolor="#f8fafc", color="#f472b6"];
+            schema_def [label="schema.py\n- 10 Relational Tables\n- Foreign Keys & Indexes\n- Vector/Blob Embeddings", fillcolor="#831843", fontcolor="#f8fafc", color="#f472b6"];
+        }
+
+        subgraph cluster_repositories {
+            label = "Domain Repositories (Data Access Layer)";
+            fillcolor = "#0f172a";
+            color = "#a21caf";
+            fontcolor = "#f0abfc";
+
+            repo_persons [label="PersonRepository\n- Person Profiles & Trust\n- Aliases & Bio", fillcolor="#701a75", fontcolor="#f8fafc", color="#e879f9"];
+            repo_faces [label="FaceDescriptorRepository\n- 512-dim Face Embeddings\n- Cosine Similarity Search", fillcolor="#701a75", fontcolor="#f8fafc", color="#e879f9"];
+            repo_relations [label="RelationshipRepository\n- Familiarity & Sentiment\n- Interaction Counts", fillcolor="#701a75", fontcolor="#f8fafc", color="#e879f9"];
+            repo_episodes [label="ChatEpisodeRepository\n- Multi-turn Dialogues\n- User Intent Logs", fillcolor="#701a75", fontcolor="#f8fafc", color="#e879f9"];
+            repo_world [label="WorldMemoryRepository\n- Factual Knowledge Items\n- Confidence & Provenance", fillcolor="#701a75", fontcolor="#f8fafc", color="#e879f9"];
+            repo_moments [label="MomentRepository\n- Emotional Highlights\n- Significant Experiences", fillcolor="#701a75", fontcolor="#f8fafc", color="#e879f9"];
+        }
+
+        subgraph cluster_services {
+            label = "Cognitive Services & Reasoning";
+            fillcolor = "#0f172a";
+            color = "#6366f1";
+            fontcolor = "#a5b4fc";
+
+            rel_memory [label="RelationshipMemory\n- High-level Agent Interface\n- Context Ingestion", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+            people_memory [label="PeopleMemory\n- Active Speaker Resolution\n- Identity Association", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+            rag_engine [label="WorldMemoryRAG\n- BM25 Keyword Search\n- Hybrid Vector Retrieval", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+            sleep_consol [label="SleepConsolidator\n- Offline Nightly Rollup\n- Memory Pruning & Decay", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+        }
+    }
+
+    // External integration nodes
+    agent_core [label="modules.agent_core\n(Orchestrator)", fillcolor="#334155", fontcolor="#f8fafc", color="#94a3b8", shape=ellipse];
+    camera_feed [label="modules.camera\n(Face Embeddings)", fillcolor="#334155", fontcolor="#f8fafc", color="#94a3b8", shape=ellipse];
+
+    // Inter-component flows
+    social_db -> schema_def [label=" executes DDL"];
+    social_db -> repo_persons [label=" SQL cursor"];
+    social_db -> repo_faces [label=" SQL cursor"];
+    social_db -> repo_relations [label=" SQL cursor"];
+    social_db -> repo_episodes [label=" SQL cursor"];
+    social_db -> repo_world [label=" SQL cursor"];
+    social_db -> repo_moments [label=" SQL cursor"];
+
+    repo_persons -> people_memory [label=" person data"];
+    repo_faces -> people_memory [label=" face vectors"];
+    repo_relations -> rel_memory [label=" relationship metrics"];
+    repo_world -> rag_engine [label=" facts & vectors"];
+    repo_episodes -> sleep_consol [label=" raw dialogues"];
+
+    camera_feed -> people_memory [label=" incoming embeddings"];
+    rel_memory -> agent_core [label=" prompt context injection"];
+    rag_engine -> agent_core [label=" relevant retrieved facts"];
+    sleep_consol -> repo_relations [label=" updates familiarity"];
+}
