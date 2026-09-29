@@ -14,9 +14,20 @@ import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Dict, Iterator, Optional
 
 from .schema import SCHEMA_VERSION, get_ddl
+from .repositories.persons import PersonsRepo
+from .repositories.face_descriptors import FaceDescriptorsRepo
+from .repositories.sightings import SightingsRepo
+from .repositories.chat_episodes import ChatEpisodesRepo
+from .repositories.relationships import RelationshipsRepo
+from .repositories.moments import MomentsRepo
+from .repositories.mood_snapshots import MoodSnapshotsRepo
+from .repositories.rituals import RitualsRepo
+from .repositories.interaction_events import InteractionEventsRepo
+from .repositories.owner_sessions import OwnerSessionsRepo
+from .repositories.world_memory import WorldMemoryRepo
 
 logger = logging.getLogger("social_db")
 
@@ -65,18 +76,6 @@ class SocialDB:
 
         if auto_migrate:
             self._migrate()
-
-        from .repositories.persons import PersonsRepo
-        from .repositories.face_descriptors import FaceDescriptorsRepo
-        from .repositories.sightings import SightingsRepo
-        from .repositories.chat_episodes import ChatEpisodesRepo
-        from .repositories.relationships import RelationshipsRepo
-        from .repositories.moments import MomentsRepo
-        from .repositories.mood_snapshots import MoodSnapshotsRepo
-        from .repositories.rituals import RitualsRepo
-        from .repositories.interaction_events import InteractionEventsRepo
-        from .repositories.owner_sessions import OwnerSessionsRepo
-        from .repositories.world_memory import WorldMemoryRepo
 
         self.persons = PersonsRepo(self)
         self.face_descriptors = FaceDescriptorsRepo(self)
@@ -165,6 +164,7 @@ class SocialDB:
             "rituals",
             "interaction_events",
             "owner_sessions",
+            "world_memory",
         )
         for tbl in tables:
             try:
