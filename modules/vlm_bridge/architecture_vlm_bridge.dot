@@ -1,0 +1,85 @@
+// Graphviz Architecture: modules/vlm_bridge
+// SentryBOT V5 - Vision-Language Multimodal Perception Bridge
+digraph vlm_bridge_module {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_vlm_bridge {
+        label = "modules.vlm_bridge (Vision-Language Perception Bridge)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#8b5cf6";
+        fontcolor = "#a78bfa";
+        fontsize = 12;
+
+        subgraph cluster_sampling_budget {
+            label = "Sampling, Gating & Inference Budget";
+            fillcolor = "#0f172a";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+
+            vision_sampler [label="VisionSampler (services/vision_sampler.py)\n- Periodic Frame Sampler\n- Change Detection & Diff Threshold", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
+            budget_mgr [label="InferenceBudgetManager\n(services/inference_budget.py)\n- Token & Cost Throttler\n- Quota Guard (Cloud / Local)", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
+            request_gate [label="VisionRequestGate\n(services/vision_request_gate.py)\n- Request Debouncer\n- Priority Arbiter", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
+        }
+
+        subgraph cluster_vlm_backends {
+            label = "Multimodal VLM Clients";
+            fillcolor = "#0f172a";
+            color = "#6d28d9";
+            fontcolor = "#ddd6fe";
+
+            ollama_vlm [label="OllamaVlmClient (services/ollama_vlm_client.py)\n- Local Multimodal Model\n- Qwen2.5-VL / Llama-3.2-Vision\n- Base64 Frame Ingestion", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#c4b5fd"];
+            google_vlm [label="GoogleVlmClient (services/google_vlm_client.py)\n- Google AI Studio Client\n- Gemini-2.5-Flash Multimodal\n- High-Res Visual Reasoning", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#c4b5fd"];
+        }
+
+        subgraph cluster_perception_context {
+            label = "Scene Understanding & Context Cache";
+            fillcolor = "#0f172a";
+            color = "#4338ca";
+            fontcolor = "#a5b4fc";
+
+            describer [label="SemanticDescriber\n(services/semantic_describer.py)\n- Structured JSON Perception\n- Scene & Objects Analysis", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+            visual_ctx [label="VisualContext (services/visual_context.py)\n- Latest Perception Snapshot\n- Objects, Emotions & Spatial Layout\n- Thread-Safe Cache", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+            face_emotion [label="FaceEmotionClassifier\n(services/face_emotion.py)\n- Facial Emotion Detector\n- Fast Path Expression Trigger", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+            head_arbiter [label="HeadControlArbiter\n(services/head_control_arbiter.py)\n- Gaze & Focus Controller\n- Follow Target Generation", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+        }
+
+        subgraph cluster_vlm_api {
+            label = "REST API Surface & Event Bus";
+            fillcolor = "#0f172a";
+            color = "#1e3a8a";
+            fontcolor = "#93c5fd";
+
+            vlm_router [label="vlm_router (api/router.py)\n- GET /vlm/context/latest\n- GET /vlm/results/latest\n- POST /vlm/describe\n- POST /vlm/target/follow", fillcolor="#1e40af", fontcolor="#f8fafc", color="#93c5fd"];
+            vlm_event_bus [label="VisionEventBus\n(services/vision_event_bus.py)\n- vision.scene_changed\n- vision.person_spotted\n- vision.emotion_detected", fillcolor="#1e40af", fontcolor="#f8fafc", color="#93c5fd"];
+        }
+    }
+
+    // External dependencies
+    camera_svc [label="modules.camera\n(Raw JPEG Frame)", fillcolor="#334155", fontcolor="#f8fafc", color="#94a3b8", shape=ellipse];
+    agent_core [label="modules.agent_core\n(Cognitive Planner)", fillcolor="#334155", fontcolor="#f8fafc", color="#94a3b8", shape=ellipse];
+    arduino_serial [label="modules.arduino_serial\n(Head Pan/Tilt Servos)", fillcolor="#334155", fontcolor="#f8fafc", color="#94a3b8", shape=ellipse];
+
+    // Inter-component flows
+    camera_svc -> vision_sampler [label=" fetch raw frame"];
+    vision_sampler -> request_gate [label=" frame candidate"];
+    request_gate -> budget_mgr [label=" check inference budget"];
+    budget_mgr -> ollama_vlm [label=" if local profile"];
+    budget_mgr -> google_vlm [label=" if cloud profile"];
+
+    ollama_vlm -> describer [label=" multimodal response"];
+    google_vlm -> describer [label=" multimodal response"];
+    describer -> visual_ctx [label=" update context envelope"];
+    vision_sampler -> face_emotion [label=" crop detected faces"];
+    face_emotion -> visual_ctx [label=" update emotion states"];
+
+    visual_ctx -> vlm_router [label=" serve GET /context/latest"];
+    visual_ctx -> vlm_event_bus [label=" emit vision events"];
+    face_emotion -> head_arbiter [label=" target face coordinates"];
+
+    // Cross-module outputs
+    visual_ctx -> agent_core [label=" inject scene into prompt"];
+    head_arbiter -> arduino_serial [label=" pan/tilt target angles"];
+}
