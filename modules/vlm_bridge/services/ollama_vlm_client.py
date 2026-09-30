@@ -14,13 +14,12 @@ Design constraints:
 from __future__ import annotations
 
 import base64
-import io
 import json
 import logging
 import re
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("vlm_bridge.ollama_vlm")
 
