@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("vlm_bridge.event_bus")
 
@@ -56,9 +56,9 @@ class VisionEventBus:
             if handler in handlers:
                 handlers.remove(handler)
 
-    def publish(self, event_type: str, data: Dict[str, Any] = None) -> None:
-        data = data or {}
-        data["event_type"] = event_type
+    def publish(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
+        payload = dict(data) if isinstance(data, dict) else {}
+        payload["event_type"] = event_type
         self._event_count += 1
 
         with self._lock:
@@ -67,7 +67,7 @@ class VisionEventBus:
 
         for handler in handlers + global_handlers:
             try:
-                handler(event_type, data)
+                handler(event_type, payload)
             except Exception as exc:
                 logger.warning("Event handler error for '%s': %s", event_type, exc)
 
