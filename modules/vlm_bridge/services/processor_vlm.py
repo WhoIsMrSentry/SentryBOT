@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import logging
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 try:
     import cv2
