@@ -14,9 +14,7 @@ import threading
 import time
 import weakref
 from contextlib import contextmanager
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("camera.device_manager")
 
