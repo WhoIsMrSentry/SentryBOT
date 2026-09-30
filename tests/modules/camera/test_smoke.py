@@ -109,3 +109,9 @@ def test_router_start_blocked_when_disabled():
     resp = client.post("/camera/start")
     assert resp.status_code == 503
     cap.start.assert_not_called()
+
+
+def test_camera_config_loader_has_no_audio_coupling():
+    import modules.camera.config_loader as cam_cfg
+
+    assert not hasattr(cam_cfg, "load_audio_router_config")
