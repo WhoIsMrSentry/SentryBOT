@@ -1,115 +1,60 @@
-# Perception - Camera
+# Camera — Görüntü Yakalama ve Donanım Servisi
 
-SentryBOT'un ana görüntü yakalama ve yayın modülüdür. PiCamera2 (veya OpenCV/USB fallback) ile kare yakalar, MJPEG yayınlar ve IMX500 on-sensor AI hattına kare sağlar.
+`modules.camera`, SentryBOT platformunun fiziksel optik girdi katmanıdır. USB web kameralarını, Raspberry Pi Camera (CSI) donanımını ve Raspberry Pi AI Camera (Sony IMX500 on-sensor NPU) modüllerini yönetir.
 
-## Sorumluluklar
+Mimari detaylar, sınıf yapıları ve veri akış diyagramları için:
+- 📖 [architecture_camera.md](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/camera/architecture_camera.md)
+- 📊 [architecture_camera.dot](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/camera/architecture_camera.dot) (Graphviz DOT kaynağı)
+- 🖼️ [architecture_camera.svg](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/camera/architecture_camera.svg)
 
-- Canlı MJPEG video akışı (`/camera/video`)
-- Tek kare snapshot (`/camera/snap`)
-- IMX500/on-sensor algılama verisi sunumu (`/camera/onsensor/*`)
-- Takip (tracking) hedef seçimi ve durum raporlama (`/camera/tracking/*`)
-- Gateway üzerinden `perception/vision/vlm_bridge` ve diğer görsel modüllere kare kaynağı olma
+---
 
-## Mimari (Güncel: 2026-08-20)
+## 🚀 Temel Yetenekler
 
-- Giriş noktası: `xCameraService.py`
-- **Yakalama**: `services/capture.py` → `CameraCapture`, `CaptureConfig`, `FramePublisher`
-- **IMX500**: `services/imx500_runner.py` → `Imx500Runner`, `Imx500Config`
-- **On-sensor Bus**: `services/onsensor_bus.py` → `OnSensorBus` (pub/sub)
-- **Tracking**: `services/tracking.py` → takip hedef yönetimi
-- **Capture Loops**: `services/capture_loops.py` — background capture task
-- **Capture Bridge**: `services/capture_bridge.py` — VLM bridge için frame queue
-- **Router**: `api/router.py`
-- **Config**: `config_loader.py`
+1. **Çoklu Donanım Desteği:** V4L2 USB kameralar, libcamera / Picamera2 ve Raspberry Pi 5 tam uyumluluğu.
+2. **On-Sensor AI (Sony IMX500):** Raspberry Pi AI Camera üzerindeki yerleşik NPU ile sıfır host-CPU yüküyle nesne ve insan algılama.
+3. **Süreç Koruması (`DeviceLock`):** Kamera aygıtının çakışmasını ve kilitlenmesini engelleyen dosya kilidi yönetimi.
+4. **Yüksek Performanslı Tamponlama:** Bağımsız arka plan iş parçacığıyla sürekli kare yakalama ve en son karenin thread-safe JPEG tamponunda saklanması.
+5. **Görsel Hedef Takibi (`TrackingService`):** Algılanan hedefin merkez sapmasını hesaplayıp pan/tilt kafasına açı düzeltmesi üretme.
 
-MCP graph'ta `CameraCapture` doğrudan gateway bootstrap (`_include_camera`) tarafından başlatılır.
+---
 
-## API (Gateway altında `/camera/*`)
+## 🛠️ Hızlı Kullanım Örnekleri
 
-### Stream
-- `GET /camera/video` — MJPEG akış (boundary=frame)
-- `GET /camera/snap` — tek kare JPEG
+### 1. Servisi Başlatma ve Son Kareyi Alma (Python)
+```python
+from modules.camera.xCameraService import xCameraService
 
-### Durum / Kontrol
-- `GET /camera/healthz`
-- `GET /camera/status` — `{ enabled, running, device, resolution, fps, imx500 }`
-- `POST /camera/start` — capture başlat
-- `POST /camera/stop` — capture durdur
+camera_svc = xCameraService()
+camera_svc.start()
 
-### On-sensor / Tracking (IMX500)
-- `GET /camera/onsensor/latest` — son on-sensor inference sonucu
-- `GET /camera/tracking/tracks` — aktif track'ler
-- `GET /camera/tracking/target` — seçili hedef
-- `POST /camera/tracking/select` — hedef seç (`track_id`)
-
-IMX500 için ayrı config endpoint'i yoktur; imx500 durumu `GET /camera/status` yanıtında bir alan olarak döndürülür.
-
-## Konfigürasyon
-
-Merkezi `config/agent.yaml` → `camera` section + modül-içi `config/config.yml` (merge):
-
-```yaml
-enabled: true
-picamera2:
-  size: { width: 1280, height: 720 }
-  format: "RGB888"
-  frame_rate: 30
-  flip: "none"
-imx500:
-  enabled: true
-  model_path: "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk"
-  labels_path: ""
-  confidence: 0.50
-  iou: 0.65
-  max_detections: 20
-  preserve_aspect_ratio: true
-  classes_of_interest: []
-  tracker:
-    iou_threshold: 0.30
-    max_missed: 8
-  target:
-    label: "person"
-    strategy: "largest"
+# En güncel JPEG karesini bayt olarak alma
+jpeg_bytes = camera_svc.get_frame(as_jpeg=True)
+if jpeg_bytes:
+    with open("snapshot.jpg", "wb") as f:
+        f.write(jpeg_bytes)
 ```
 
-## İlişkiler (Güncel Modül Yolları)
+### 2. HTTP Üzerinden Kare Çekme (cURL)
+```bash
+curl -o snapshot.jpg http://127.0.0.1:8080/camera/frame
+```
 
-**Consumer (kare tüketici):**
-- `perception/vision/vlm_bridge` → `VisionProcessor` local/hybrid mode için `CameraCapture` + `OnSensorBus` subscriber
-- `autonomy` → vision context bridge için on-sensor results
-- `agent_core/tools/vision_tools.py` → frame capture, status
+---
 
-**Provider (kare üretici):**
-- `CameraCapture` → `FramePublisher` (pub/sub)
-- `Imx500Runner` → `OnSensorBus` publisher
-- `capture_bridge.py` → VLM bridge için async frame queue
+## 📡 REST API Endpointleri
 
-**Platform:**
-- `platform/telemetry` → camera metrics (fps, latency)
-- `platform/diagnostics` → `/camera/healthz` check
-- `platform/config_center` → runtime config apply (imx500 enabled, resolution)
+| Metot | Endpoint | Açıklama |
+|---|---|---|
+| `GET` | `/camera/healthz` | Kamera servis ve donanım sağlık kontrolü |
+| `GET` | `/camera/frame` | Son yakalanan tekil JPEG görüntüsü |
+| `GET` | `/camera/status` | Aktif backend, gerçek FPS ve çözünürlük bilgisi |
+| `GET` | `/camera/imx500/status` | IMX500 on-sensor AI hızlandırıcısının durumu |
 
-## Processing Modları (VLM Bridge ile Koordineli)
+---
 
-| Mod | Açıklama | Camera Role |
-|-----|----------|-------------|
-| `local` | Pi'de OpenCV face detect/track | `CameraCapture` + `FramePublisher` (CPU) |
-| `remote` | PC'ye stream, PC VLM işler | `CameraCapture` stream only (MJPEG) |
-| `onsensor` | IMX500 hardware accelerator | `Imx500Runner` + `OnSensorBus` (NPU) |
-| `hybrid` | Local capture + remote VLM | `CameraCapture` + `capture_bridge` queue |
+## 🧪 Testlerin Çalıştırılması
 
-`config/robot_execution_profiles.json` → `vision.processing_mode` + `vision.hybrid_local_capture` ile kontrol.
-
-## Bilinen Sorunlar (KRİTİK)
-
-1. **Device Lock / Mode Switching Yok** - `CameraCapture` (PiCamera2) VE `Imx500Runner` **aynı `/dev/video0`**'ı açmaya çalışıyor. `hybrid_local_capture: true` + `mode: local` ikisi de aktifse → **device busy crash**. **`modules/camera/device_manager.py` (YENİ GEREKLİ)** singleton device lock + reference count + mode switching merkezi olmalı.
-
-2. **Capture Bridge Duplicate Logic** - `services/capture_bridge.py` + `services/capture_loops.py` + `services/capture.py` frame publishing logic'i **3 yerde tekrar ediyor**. Tek `FrameSource` abstraction ile birleştirilmeli.
-
-3. **IMX500 Runner Config Drift** - `Imx500Runner` config `Imx500Config` dataclass ama `config_loader.py` merge sonrası dict. Type safety yok. `pydantic` model ile validation.
-
-4. **Healthz Device Check Eksik** - `/camera/healthz` device açık mı kontrol etmiyor, sadece service running döndürüyor.
-
-4. **USB Camera Fallback Test Edilmemiş** - `picamera2` import fail olursa OpenCV `VideoCapture` fallback var ama CI/CD'de test yok.
-
-5. **Resolution/FPS Change Runtime** - `POST /camera/config` yok, capture restart gerekiyor. Dynamic reconfig desteği eklenmeli.
+```bash
+pytest tests/modules/camera -v
+```
