@@ -31,3 +31,19 @@ def test_camera_gave_up_blocks_local_vision():
             available = capture_alive
 
     assert available is False
+
+
+def test_vision_event_bus_does_not_mutate_caller_dict():
+    from modules.vlm_bridge.services.vision_event_bus import VisionEventBus
+
+    bus = VisionEventBus()
+    received = []
+    bus.subscribe("test_ev", lambda et, d: received.append(d))
+
+    caller_data = {"key": "value"}
+    bus.publish("test_ev", caller_data)
+
+    assert "event_type" not in caller_data, "caller dictionary must not be mutated in-place"
+    assert len(received) == 1
+    assert received[0]["event_type"] == "test_ev"
+    assert received[0]["key"] == "value"
