@@ -5,16 +5,10 @@ try:
     from .config_loader import load_config
     from .api.router import get_router
     from .services.processor import VisionProcessor
-except (ImportError, ModuleNotFoundError) as rel_exc:
-    # Try absolute package path as fallback (handles different import contexts)
-    try:
-        from modules.vlm_bridge.config_loader import load_config
-        from modules.vlm_bridge.api.router import get_router
-        from modules.vlm_bridge.services.processor import VisionProcessor
-    except (ImportError, ModuleNotFoundError) as abs_exc:
-        raise ImportError(
-            f"Failed to import vlm_bridge modules. relative={rel_exc!r}; absolute={abs_exc!r}"
-        ) from abs_exc
+except (ImportError, ModuleNotFoundError):
+    from modules.vlm_bridge.config_loader import load_config
+    from modules.vlm_bridge.api.router import get_router
+    from modules.vlm_bridge.services.processor import VisionProcessor
 
 # Optional central logging
 from contextlib import asynccontextmanager
