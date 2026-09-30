@@ -1,77 +1,154 @@
-# Camera Modülü Mimarisi
+# modules.camera — Mimari ve Teknik Dokümantasyon
 
-Camera modülü (`modules/camera`), cihaza bağlı olan kameradan (veya V4L2 cihazından) sürekli görüntü akışını sağlayan ve bunu MJPEG formatında API üzerinden ağa / diğer modüllere sunan donanım bağdaştırıcısıdır.
+> **SentryBOT V5 Görüntü Yakalama, Donanım Yönetimi ve Yapay Zeka Sensör Motoru**  
+> Graphviz Kaynak Dosyası: [architecture_camera.dot](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/camera/architecture_camera.dot)  
+> SVG Diyagramı: [architecture_camera.svg](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/camera/architecture_camera.svg)
 
-## 🏗️ İş Akışı ve Karar Mekanizmaları (Flowchart)
+---
 
-Kamera thread'inin nasıl çalıştığını, çökme anında donanımı nasıl resetlediğini (`retry`) ve web üzerinden nasıl görüntülendiğini (MJPEG Streaming) gösteren mantık:
+## 1. Genel Bakış ve Sorumluluklar
 
+`modules.camera`, SentryBOT'un fiziksel dünyayı görmesini sağlayan birincil optik girdi katmanıdır. USB web kameraları, Raspberry Pi Camera v2/v3 ve Raspberry Pi AI Camera (Sony IMX500) donanımlarını otomatik tespit eder; tekil süreç kilidi (`DeviceLock`) ile donanım çakışmalarını önler; kareleri JPEG olarak tamponlar ve REST API üzerinden diğer modüllere sunar.
+
+### Temel Sorumluluk Alanları
+1. **Donanım Algılama ve Yönetim (`CameraDeviceManager`):** Linux V4L2 (`/dev/video*`) ve Windows indekslerini tarar, kamera mevcudiyetini doğrular ve uygun arka ucu (backend: Picamera2, OpenCV VideoCapture veya Simülasyon) seçer.
+2. **Süreçler Arası Kilit Mekanizması (`DeviceLock`):** Aynı kamera donanımına birden fazla sürecin aynı anda erişerek kaynak kilidine (busy lock) yol açmasını engeller.
+3. **Kare Yakalama Döngüsü (`CaptureWorker`, `services/capture.py`):** Hedef kare hızında (varsayılan 15-30 FPS) arka planda kesintisiz kare çeker, RGB/BGR dönüşümü ve JPEG sıkıştırması uygular, en güncel kareyi thread-safe tamponda saklar.
+4. **On-Sensor AI Hızlandırması (`IMX500Runner`):** Raspberry Pi AI Camera (Sony IMX500) üzerindeki gömülü sinir ağı işlemcisini (NPU) yönetir; host CPU'ya sıfır yük bindirerek insan, yüz ve nesne kutularını (bounding box) çıkarır.
+5. **Görsel Takip Servisi (`TrackingService`):** Tespit edilen nesnelerin merkez koordinatlarını (centroid) hesaplar; robotun kafasının pan/tilt motorlarıyla hedefi takip etmesi için hata farklarını (delta) üretir.
+6. **HTTP API Sunucusu (`api/router.py`):** Gateway ve diğer istemciler için `/camera/frame`, `/camera/status`, `/camera/healthz` endpointlerini sunar.
+
+---
+
+## 2. Mimari ve Veri Akış Şemaları
+
+### 2.1 Kamera Veri Akış Şeması (Flowchart)
 ```mermaid
 flowchart TD
-    %% Ana Thread
-    START_THREAD([Kamera Capture Thread]) --> HW_INIT(Donanıma Bağlan: /dev/video0)
-    
-    HW_INIT --> CHK_HW{"Kamera Cihazı<br>Açıldı mı?"}
-    
-    CHK_HW -- Hayır --> LOG_ERR[Hata: Kamera Bulunamadı] --> RETRY_WAIT(Saniye Bekle, Tekrar Dene) --> HW_INIT
-    CHK_HW -- Evet --> ENTER_LOOP[Okuma Döngüsüne Gir]
-    
-    %% Çerçeve / Frame Okuma Döngüsü
-    subgraph Capture Loop [Sürekli Okuma Döngüsü]
-        direction TB
-        ENTER_LOOP --> GRAB_FRAME(Kareyi Kapat - read)
-        
-        GRAB_FRAME --> CHK_FRAME{"Kare Başarılı <br> Geldi mi?"}
-        CHK_FRAME -- Hayır --> LOG_DROP[Uyarı: Frame Dropped] --> RECONN_HW(Cihazı Kapat / Yeniden Aç) --> ENTER_LOOP
-        
-        CHK_FRAME -- Evet --> FPS_THROTTLE{"Hedef FPS<br>Geçildi mi?"}
-        FPS_THROTTLE -- Evet --> SKIP((Kareyi Atla)) --> GRAB_FRAME
-        
-        FPS_THROTTLE -- Hayır --> ENCODE_JPEG(JPEG Olarak Sıkıştır)
+    subgraph Hardware [Fiziksel Donanım]
+        CAM["Kamera (/dev/video0 veya CSI)"]
+        IMX["Sony IMX500 NPU (On-Sensor AI)"]
     end
-    
-    %% Frame Publishing
-    subgraph Publisher API [Yayın Mekanizması]
-        direction TB
-        ENCODE_JPEG --> LOCK_VAR[MUTEX Kilidi Al]
-        LOCK_VAR --> UPDATE_VAR{"global_frame değişkenini<br>güncelle"}
-        UPDATE_VAR --> UNLOCK_VAR[MUTEX'i Bırak]
-        UNLOCK_VAR --> SIGNAL_EVENT(Tüm bekleyen web<br>istemcilerine Event Yolla)
+
+    subgraph DeviceLayer [Donanım & Kilit Katmanı]
+        DL["DeviceLock (/tmp/camera.lock)"]
+        DM["CameraDeviceManager (device_manager.py)"]
     end
+
+    subgraph CapturePipeline [Yakalama Hattı]
+        CW["CaptureWorker (Worker Thread)"]
+        BUF[("Latest Frame Buffer (JPEG Buffer)")]
+        IR["IMX500Runner (services/imx500_runner.py)"]
+        TR["TrackingService (Centroid Takip)"]
+    end
+
+    subgraph APISurface [REST API Katmanı]
+        RF["/camera/frame (JPEG Snapshot)"]
+        RS["/camera/status"]
+        RH["/camera/healthz"]
+    end
+
+    subgraph Consumers [Tüketici Modüller]
+        VLM["modules.vlm_bridge (Görsel Akıl Yürütme)"]
+        Agent["modules.agent_core (Kafa Takip / Pan-Tilt)"]
+        Gateway["modules.gateway"]
+    end
+
+    DL -->|Exclusive Lock Al| DM
+    DM -->|Backend Başlat| CAM
+    CAM --> CW
+    CW -->|Encode JPEG| BUF
+    BUF --> RF
     
-    SIGNAL_EVENT --> GRAB_FRAME
-    
-    %% Web Stream İstemcileri
-    API_REQ([GET /camera/stream]) --> WEB_LOOP[Sonsuz Yield Döngüsü]
-    WEB_LOOP --> WAIT_EVT(Signal Bekle)
-    WAIT_EVT --> READ_F(global_frame'i oku)
-    READ_F --> SEND_F(HTTP Multi-part olarak Yolla) --> WEB_LOOP
+    CAM --> IMX
+    IMX --> IR
+    IR -->|Tespit Koordinatları| TR
+    TR -->|Pan/Tilt Hatası| Agent
+
+    RF --> VLM
+    RS --> Gateway
+    RH --> Gateway
 ```
 
-## 🔄 İlişkisel Etkileşimler (Veri Akışı)
-
+### 2.2 Kare Yakalama ve İstek Sıralaması (Sequence Diagram)
 ```mermaid
-erDiagram
-    CameraCapture ||--o{ WebClients : streams_to
-    VisionBridge ||--|| CameraCapture : polls_latest_frame
+sequenceDiagram
+    autonumber
+    participant Client as VLM Bridge / İstemci
+    participant API as /camera/frame Router
+    participant Worker as CaptureWorker Thread
+    participant Dev as CameraDeviceManager
+    participant HW as Fiziksel Kamera (V4L2)
 
-    CameraCapture {
-        string current_frame_jpeg
-        bool frame_ready
-    }
-    VisionBridge {
-        string frame_source
-        string detection_target
-    }
+    Worker->>Dev: get_frame()
+    Dev->>HW: cv2.VideoCapture.read()
+    HW-->>Dev: ret=True, raw_bgr_frame
+    Dev-->>Worker: raw_bgr_frame
+    Worker->>Worker: cv2.imencode('.jpg', frame, [JPEG_QUALITY, 85])
+    Worker->>Worker: _latest_jpeg_frame güncelle (Thread-safe Lock)
+
+    Client->>API: GET /camera/frame
+    activate API
+    API->>Worker: get_latest_jpeg()
+    Worker-->>API: bytes (image/jpeg, timestamp)
+    API-->>Client: 200 OK (Content-Type: image/jpeg)
+    deactivate API
 ```
 
-## ⚙️ Detaylı Karar Mantığı (if/else)
+---
 
-1. **Donanım Çökmesini İyileştirme (Auto-Recovery)**
-   - Kameralar fiziksel kablo veya yoğun akım sebebiyle anlık kopmalar yaşayabilir.
-   - **`while` loop içinde `if not ret`**: Eğer `cv2.VideoCapture` `False` sonuç döndürürse yazılım çökmez. Hemen `cap.release()` yaparak kamera buffer'ını boşaltır, 2 saniye `time.sleep()` atar ve tekrar (`cap = cv2.VideoCapture(0)`) başlatmayı dener. Bu sistemin "robot devrilse bile" kurtarılabilir olmasını sağlar.
-2. **Yayın Modeli (Publisher - Subscriber)**
-   - API'ye (örneğin Web tarayıcısı `/camera/stream` adresine girdiğinde) bağlanmış birden fazla kullanıcı veya modül olabilir.
-   - Her istek için ayrı ayrı kameradan okuma YAPILMAZ (USB veriyolunu kitler).
-   - Bunun yerine tek bir ana thread, kamerayı okur ve bellekteki (RAM) `global_frame` adlı bayte array'ini (**`if`** `mutex.acquire()` kilitleri içinde) ezerek günceller.
-    - Okumak isteyen herkes sadece RAM'den okur, böylece RPi 10 cihaza birden yayın yapabilir (CPU tabanlı MJPEG multicast). Görüntü işleme (VLM Bridge) de bu RAM adresindeki son resmi çeker.
+## 3. Bileşen Detayları ve API Sözleşmeleri
+
+### 3.1 `CameraDeviceManager` (`modules/camera/device_manager.py`)
+- `probe_devices() -> List[Dict[str, Any]]`
+  - Sistemdeki `/dev/video*` aygıtlarını veya Windows indekslerini (0, 1, 2) tarar.
+  - Açılabilirlik, desteklenen çözünürlükler ve piksel formatlarını tespit eder.
+- `open_camera(device_index: int = 0, width: int = 640, height: int = 480, fps: int = 30) -> bool`
+  - Belirtilen parametrelerle kamerayı başlatır. Başarısız olursa güvenli fallback uygular.
+- `read_frame() -> Tuple[bool, np.ndarray | None]`
+  - Kameradan son BGR matrisini çeker. Hata durumunda `(False, None)` döner.
+- `close_camera() -> None`
+  - Donanım kaynaklarını serbest bırakır ve kilit dosyasını temizler.
+
+### 3.2 `CaptureWorker` (`modules/camera/services/capture.py`)
+- `start() -> None`: Arka plan yakalama iş parçacığını (`daemon=True`) başlatır.
+- `stop() -> None`: Yakalama döngüsünü güvenle sonlandırır.
+- `get_latest_frame(as_jpeg: bool = True) -> bytes | np.ndarray | None`
+  - **Parametreler:** `as_jpeg=True` ise sıkıştırılmış JPEG bayt dizisi, `False` ise ham NumPy BGR matrisi döner.
+  - **Dönüş:** En güncel kare baytları veya matrisi.
+
+### 3.3 `IMX500Runner` (`modules/camera/services/imx500_runner.py`)
+- `is_available() -> bool`: Sistemde Sony IMX500 AI kameranın takılı olup olmadığını kontrol eder.
+- `get_detections() -> List[Dict[str, Any]]`: Sensör üzerinde çalışan NPU'dan nesne etiketlerini (`label`), güven skorunu (`score`) ve sınır kutularını (`box: [x, y, w, h]`) döner.
+
+### 3.4 REST API Endpointleri (`modules/camera/api/router.py`)
+
+| Metot | Yol | Açıklama | Yanıt / Model |
+|:---|:---|:---|:---|
+| **`GET`** | `/camera/healthz` | Donanım ve servis sağlık kontrolü. | `{"ok": bool, "device_open": bool}` |
+| **`GET`** | `/camera/frame` | Son yakalanan tekil JPEG görüntüsü. | `image/jpeg` binary akışı |
+| **`GET`** | `/camera/status` | Aktif çözünürlük, gerçek FPS ve backend bilgisi. | `{"backend": str, "fps": float, "resolution": [w, h]}` |
+| **`GET`** | `/camera/imx500/status`| IMX500 AI sensörünün çalışma durumu ve NPU yükü. | `{"available": bool, "npu_active": bool}` |
+
+---
+
+## 4. Hata Yönetimi ve Edge-Case Senaryoları
+
+| Senaryo / Edge-Case | Olası Risk | Savunma Mekanizması |
+|:---|:---|:---|
+| **Kamera Kablosunun Çıkması (Disconnect)** | `read_frame()` bloklanır veya süreç çöker. | `CaptureWorker` arka arkaya 5 boş kare aldığında aygıtı kapatır, 2 saniye aralıklarla otomatik yeniden bağlanma (`auto-reconnect`) dener. |
+| **Aygıt Kilit Çakışması (Device Busy)** | Başka bir süreç `/dev/video0`'ı tuttuğunda kamera açılamaz. | `DeviceLock` dosya kilidi kontrol edilir; gerekirse alternatif video indeksine (`/dev/video1`) otomatik geçiş yapılır. |
+| **Aşırı İstek Yükü (High Request Rate)** | Her HTTP isteğinde kameradan okuma yapılması FPS düşüşüne yol açar. | Ayrık `CaptureWorker` döngüsü bağımsız çalışır; HTTP istekleri sadece tampon bellekteki son hazır kareyi okur (sıfır ek gecikme). |
+| **IMX500 Sensörünün Bulunmaması** | AI kamera modeli başlatılamaz. | `imx500_runner` fail-soft davranır; NPU devre dışı bırakılır ve sistem standart yazılımsal OpenCV pipeline'ına geçer. |
+
+---
+
+## 5. Modüller Arası Giriş ve Çıkışlar
+
+- **Girişler:**
+  - Fiziksel kamera optik sensör verisi
+  - `config/agent.yaml` altındaki `camera` ayarları (çözünürlük, fps, aygıt yolu)
+- **Çıkışlar:**
+  - `modules.vlm_bridge`: Çok modlu görsel akıl yürütme için son JPEG kareleri
+  - `modules.agent_core`: Centroid hedef takip koordinatları (`pan_error`, `tilt_error`)
+  - `modules.gateway`: Sistem izleme ve web paneli için canlı görüntü akışı
