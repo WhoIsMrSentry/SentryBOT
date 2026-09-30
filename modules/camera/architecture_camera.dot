@@ -1,0 +1,73 @@
+// Graphviz Architecture: modules/camera
+// SentryBOT V5 - Vision Acquisition & Sensor Engine
+digraph camera_module {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_camera {
+        label = "modules.camera (Vision Acquisition & Sensor Engine)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#06b6d4";
+        fontcolor = "#22d3ee";
+        fontsize = 12;
+
+        subgraph cluster_device_layer {
+            label = "Hardware Access & V4L2 Device Management";
+            fillcolor = "#0f172a";
+            color = "#0891b2";
+            fontcolor = "#67e8f9";
+
+            device_mgr [label="CameraDeviceManager\n(device_manager.py)\n- V4L2 Device Prober\n- Dynamic Resolution / FPS\n- Device Lockfile & Auto-recovery", fillcolor="#164e63", fontcolor="#f8fafc", color="#22d3ee"];
+            device_lock [label="DeviceLock\n(devices/device_lock.py)\n- Mutex for /dev/video*\n- Process Isolation", fillcolor="#164e63", fontcolor="#f8fafc", color="#22d3ee"];
+        }
+
+        subgraph cluster_capture_pipeline {
+            label = "Frame Capture & Processing Loop";
+            fillcolor = "#0f172a";
+            color = "#0e7490";
+            fontcolor = "#a5f3fc";
+
+            capture_worker [label="CaptureWorker (services/capture.py)\n- Thread-safe Frame Grabber\n- JPEG Encoding & Timestamping\n- Latest Frame Buffer", fillcolor="#155e75", fontcolor="#f8fafc", color="#38bdf8"];
+            capture_loops [label="CaptureLoops\n(services/capture_loops.py)\n- FPS Throttler & Drop Frames\n- Adaptive Reconnection", fillcolor="#155e75", fontcolor="#f8fafc", color="#38bdf8"];
+        }
+
+        subgraph cluster_ai_sensor {
+            label = "On-Sensor AI Acceleration (IMX500)";
+            fillcolor = "#0f172a";
+            color = "#0369a1";
+            fontcolor = "#7dd3fc";
+
+            imx500_runner [label="IMX500Runner\n(services/imx500_runner.py)\n- On-Sensor Neural Network\n- MobileNet / YOLO / Face Tensors\n- Zero-Host-CPU Inference", fillcolor="#075985", fontcolor="#f8fafc", color="#60a5fa"];
+            onsensor_bus [label="OnSensorBus\n(services/onsensor_bus.py)\n- Bounding Box Metadata Pub\n- Raw Detections Dispatcher", fillcolor="#075985", fontcolor="#f8fafc", color="#60a5fa"];
+            tracking_svc [label="TrackingService\n(services/tracking.py)\n- Centroid Tracking\n- Pan / Tilt Error Calculation", fillcolor="#075985", fontcolor="#f8fafc", color="#60a5fa"];
+        }
+
+        subgraph cluster_api_surface {
+            label = "REST API & Stream Endpoints";
+            fillcolor = "#0f172a";
+            color = "#1d4ed8";
+            fontcolor = "#93c5fd";
+
+            camera_router [label="camera_router (api/router.py)\n- GET /camera/frame (JPEG Snapshot)\n- GET /camera/healthz\n- GET /camera/status\n- GET /camera/imx500/status", fillcolor="#1e40af", fontcolor="#f8fafc", color="#93c5fd"];
+        }
+    }
+
+    // Downstream consumers
+    vlm_bridge [label="modules.vlm_bridge\n(Multimodal Perception)", fillcolor="#334155", fontcolor="#f8fafc", color="#94a3b8", shape=ellipse];
+    agent_core [label="modules.agent_core\n(Visual Context / Tracking)", fillcolor="#334155", fontcolor="#f8fafc", color="#94a3b8", shape=ellipse];
+
+    // Inter-component flows
+    device_lock -> device_mgr [label=" acquire exclusive lock"];
+    device_mgr -> capture_worker [label=" hardware camera handle"];
+    capture_worker -> capture_loops [label=" raw bgr frame"];
+    capture_loops -> camera_router [label=" encoded jpeg buffer"];
+    device_mgr -> imx500_runner [label=" ai sensor stream"];
+    imx500_runner -> onsensor_bus [label=" tensor detections"];
+    onsensor_bus -> tracking_svc [label=" target coordinates"];
+
+    // Cross-module outputs
+    camera_router -> vlm_bridge [label=" frame snapshot / bytes"];
+    tracking_svc -> agent_core [label=" pan/tilt target delta"];
+}
