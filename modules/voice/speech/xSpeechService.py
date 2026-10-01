@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import logging
 from threading import Event, Lock
 import time
-from typing import Optional, Callable, Iterable, TYPE_CHECKING
+from typing import Any, Callable, Optional
 from fastapi import FastAPI
 
 from modules.voice.speech.config_loader import load_config, load_audio_router_config
@@ -13,14 +12,9 @@ from modules.voice.speech.services.recognizer import Recognizer, RecognitionResu
 from modules.voice.speech.services.stt_language import resolve_stt_text_and_language
 from modules.voice.speech.services.direction import DirectionEstimator
 from modules.voice.speech.services.pan_tilt import PanTiltController
-from modules.voice.audio_router import (
-    get_audio_router, AudioRouterConfig, AudioConfig
-)
+from modules.voice.audio_router import get_audio_router
 from .services.audio_filters import SpeechAudioFilterMixin
 from .services.sound_tracking import SpeechSoundTrackingMixin
-
-if TYPE_CHECKING:
-    from modules.voice.speech.api import get_router  # type: ignore
 
 try:
     from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
