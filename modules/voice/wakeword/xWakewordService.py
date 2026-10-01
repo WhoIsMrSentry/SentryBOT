@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import argparse
 import logging
-import os
-from pathlib import Path
-import threading
 import time
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from typing import Any, Optional
 
 try:
@@ -19,17 +16,10 @@ from fastapi import FastAPI
 from modules.voice.wakeword.config_loader import load_config, load_audio_router_config
 from modules.voice.wakeword.services.wakeword_detector import WakewordDetector
 from modules.voice.wakeword.services.openwakeword_runner import OpenWakewordRunner
-from modules.voice.wakeword.services.wakeword_actions import (
-    WakewordActions,
-    _now,
-    _post_json,
-    _get_json,
-    _normalize_command_text,
-    _is_wakeword_only,
-)
+from modules.voice.wakeword.services.wakeword_actions import WakewordActions
 from modules.voice.audio_router import (
-    get_audio_router, AudioRouterConfig, AudioConfig,
-    OpenWakeWordConsumerAdapter
+    get_audio_router,
+    OpenWakeWordConsumerAdapter,
 )
 
 try:
@@ -51,7 +41,7 @@ class WakewordService:
         self._lock = Lock()
         self._last_trigger_ts = 0.0
         self._active_window = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: Optional[Thread] = None
         self._degraded_reason: Optional[str] = None
 
         # Initialize audio router
@@ -247,35 +237,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# sentrybot_batch06e_xwakeword_no_hardware_init_stub
-def _sentrybot_batch06e_wakeword_hw_disabled():
-    import os as _os
-    return (
-        str(_os.getenv("SENTRYBOT_NO_HARDWARE", "")).lower() in {"1", "true", "yes", "on"}
-        or str(_os.getenv("SENTRYBOT_SKIP_WAKEWORD_AUTOSTART", "")).lower() in {"1", "true", "yes", "on"}
-    )
-
-try:
-    _sentrybot_batch06e_prev_wakeword_init = xWakewordService.__init__
-
-    def _sentrybot_batch06e_wakeword_init(self, *args, **kwargs):
-        if _sentrybot_batch06e_wakeword_hw_disabled():
-            self.enabled = False
-            self.available = False
-            self.running = False
-            self.runner = None
-            self.thread = None
-            self._thread = None
-            self.last_detection = None
-            self.config = kwargs.get("config") or kwargs.get("config_overrides") or {}
-            return None
-
-        return _sentrybot_batch06e_prev_wakeword_init(self, *args, **kwargs)
-
-    xWakewordService.__init__ = _sentrybot_batch06e_wakeword_init
-
-except NameError:
-    pass
 
