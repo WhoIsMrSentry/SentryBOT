@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import heapq
 import logging
 import os
 import threading
+import time
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import requests
@@ -39,26 +42,6 @@ def _sanitize_google_api_key(raw_value: Any) -> str:
     return value
 
 
-def _normalize_ollama_daemon_base_url(raw: Any) -> str:
-    value = str(raw or "").strip().rstrip("/")
-    lowered = value.lower()
-    if (
-        not value
-        or "@gateway" in lowered
-        or lowered in {"http://127.0.0.1:8080", "http://localhost:8080"}
-        or lowered.startswith("http://127.0.0.1:8080/")
-        or lowered.startswith("http://localhost:8080/")
-        or lowered.endswith("/ollama")
-        or lowered.endswith("/ollama/chat")
-    ):
-        return "http:"
-    return value
-
-
-import heapq
-import time
-from contextlib import contextmanager
-
 class PriorityInferenceLock:
     """Öncelikli çıkarım kuyruğu: Kullanıcı sesli komutları (0) arka plan düşüncelerinin (2) önüne geçer."""
     def __init__(self) -> None:
@@ -92,7 +75,6 @@ class PriorityInferenceLock:
                     self._active = False
 
 _INFERENCE_SCHEDULER = PriorityInferenceLock()
-_INFERENCE_SEMAPHORE = threading.BoundedSemaphore(1)
 
 
 class OllamaClient:
@@ -265,7 +247,7 @@ class LLMClientProtocol(Protocol):
 
 
 def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
-    from modules.system_control.config_center.gemini_model import DEFAULT_GEMINI_MODEL
+    from modules.common.config_loader import DEFAULT_GEMINI_MODEL
     llm_cfg = cfg.get("llm", {}) or {}
     provider = str(llm_cfg.get("provider", "ollama")).strip().lower() or "ollama"
 
