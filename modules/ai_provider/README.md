@@ -1,84 +1,150 @@
-# Cognition - AI Provider (LLM Gateway)
+# SentryBOT V5 — AI Provider Modülü (`modules/ai_provider`)
 
-SentryBOT'un merkezi LLM gateway modülüdür. Sohbet, persona yönetimi ve LLM istemci fabrikasını sağlar. Adı "Ollama" olsa da sağlayıcı katmanı artık **Google AI Studio/Gemini** profilini de destekler.
+SentryBOT V5'in merkezi büyük dil modeli (LLM) ağ geçidi ve bilişsel çıkarım servisidir. Robotun akıl yürütme, doğal dil anlama, diyalog yönetimi, çoklu sağlayıcı (Ollama & Google AI Studio Gemini) desteği ve araç/eylem (action calling) entegrasyonunu yürütür.
 
-## Sorumluluklar
+---
 
-- LLM istemci fabrikası (`create_llm_client`) — **Tek kaynak**
-- Chat endpoint'leri ve structured response modu (`{ text, thoughts, actions }`)
-- Persona seçimi/yönetimi
-- Model listeleme ve ekleme
-- Autonomy/agent_core'ye action forwarding (`apply_actions`)
+## 🚀 Hızlı Başlangıç
 
-## Mimari (Güncel: 2026-08-20)
+### 1. Bağımlılıklar
 
-- Giriş noktası: `xOllamaService.py` → `OllamaService` (legacy isim, sınıf adı kalabilir)
-- **İstemciler**: `services/clients.py` → `OllamaClient`, `GoogleAIStudioClient`, `BaseLLMClient` (abstract)
-- **Chat**: `services/chat.py` → `ChatService` (structured response logic)
-- **Router Parçaları**: `api/chat_routes.py`, `api/persona_routes.py`, `api/models_routes.py`, `api/health.py`
-- **Config**: `config_loader.py` — **KRİTİK: `config_center/agent_yaml_loader.py` ile DUPLICATE**
+AI Provider servisi hem yerel Ollama motorunu hem de Google AI Studio Gemini API'sini destekler:
 
-## Sağlayıcı Politika
+```bash
+# Gerekli Python kütüphaneleri:
+pip install requests fastapi uvicorn pydantic pyyaml
+```
 
-`create_llm_client(cfg)` sağlayıcıyı `llm.provider` alanından seçer:
-- `ollama` → `OllamaClient` (local Ollama server)
-- `google`, `google_ai_studio`, `gemini` → `GoogleAIStudioClient` (Google AI Studio / Gemini API)
+### 2. Yerel Modeli Hazırlama (Ollama)
+SentryBOT varsayılan olarak **`qwen3.5:9b`** modelini kullanır:
 
-Graph'ta çağrıcılar:
-- `cognition/agent_core/services/agent.AgentOrchestrator` — ana ajan LLM çağrıları
-- `perception/vision/vlm_bridge/services/llm_client` — semantic scene generation
-- `cognition/autonomy` — companion chat ve LLM kararları
-- `voice/speech` — tanınan metin → chat → `speak` akışında ara katman
+```bash
+# Ollama kurulu değilse: https://ollama.com
+ollama pull qwen3.5:9b
+```
 
-**Strict single-model politika** modül config'inde zorlanabilir; `agent_core` tarafında ayrıca model politikası uygulanır.
+---
 
-## API (Gateway altında `/ollama/*`)
+## 📂 Dizin Yapısı
 
-Router prefix **yalnızca `/ollama`** (`api/router.py:88`). Gateway'de `/ai_provider` alias/mount **yoktur** — `/ai_provider/*` uçları çağrılabilir DEĞİLDİR; "ai_provider" yalnızca merkezi config'deki bölüm adıdır. Gateway bootstrap, modülü `include.ollama: true` ile kendi router'ı üzerinden mount eder.
+```
+modules/ai_provider/
+├── xOllamaService.py                # Servis Giriş Noktası & FastAPI Başlatıcı (:8099)
+├── config_loader.py                 # agent.yaml ve Yerel YAML Yapılandırma Yükleyici
+├── architecture_ai_provider.dot     # Graphviz Mimari Diyagram Kaynağı
+├── architecture_ai_provider.svg     # Derlenmiş Vektörel Mimari Şema
+├── architecture_ai_provider.md      # Kapsamlı Teknik & Sınıf Referansı
+├── README.md                        # Bu doküman
+├── api/                             # REST API Yönlendiricileri (Prefix: /ollama)
+│   ├── router.py                    # Ana API Montajı ve Servis Yaşam Döngüsü
+│   ├── chat_routes.py               # /ollama/chat, /ollama/generate, /ollama/stream
+│   ├── health.py                    # /ollama/health (Model Doğruluk & Gecikme Probu)
+│   ├── persona_routes.py            # /ollama/persona, /ollama/persona/set
+│   └── models_routes.py             # /ollama/models, /ollama/models/pull
+├── services/                        # Temel İş Mantığı ve İstemciler
+│   ├── clients.py                   # create_llm_client, OllamaClient, PriorityInferenceLock
+│   ├── google_ai_client.py          # Google AI Studio Gemini REST İstemcisi
+│   ├── chat.py                      # OllamaChatService (Çok Turlu Sohbet & Bellek)
+│   ├── translator.py                # OllamaTranslator (TR/EN Çift Yönlü Çeviri Köprüsü)
+│   ├── tags.py                      # Regex Fallback XML/Tag Ayrıştırıcısı
+│   └── memory.py                    # Konuşma Geçmişi Önbelleği
+└── models/                          # Pydantic Şemaları
+    └── sentry_schema.py             # SentryResponse, ActionCall Yapılandırılmış Çıktı
+```
 
-- `GET /ollama/healthz`
-- `GET|POST /ollama/chat`
-- `POST /ollama/warmup`
-- `POST /ollama/translate`
-- `POST /ollama/runtime/num_predict`
-- `GET /ollama/persona`, `/personas`
-- `GET /ollama/models`
-- `POST /ollama/model/add`
-- `POST /ollama/persona/select`
-- `POST /ollama/persona/create_from_url`
+---
 
-**Structured mode:** `structured=true` → `{ text, thoughts, actions }` (agent tool calling için)
+## 🛠️ Servisi Çalıştırma
 
-## Konfigürasyon
+### Bağımsız API Sunucusu Olarak Başlatma
+```bash
+python -m modules.ai_provider.xOllamaService
+# Varsayılan: 0.0.0.0:8099 adresinde FastAPI sunucusunu açar.
+```
 
-Merkezi `config/agent.yaml` bölümleri (tek kaynak `common/config_loader.py:612`):
+---
 
-- `agent` — agent_core config
-- `llm` — provider, model, timeout, request params
-- `ai_provider` (eski `ollama`) — base_url, model, timeout
-- `google_ai_studio` — api_key, model, safety_settings (Google profili seçildiyse)
-- `persona` — aktif persona, personas listesi
-- `actions` — action forwarding endpoint (`/autonomy/apply_actions`)
+## 💻 Python Kullanım Örnekleri
 
-Persona klasörleri: `modules/ai_provider/config/personalities/<name>/` (modelfile, persona.txt)
+### 1. Fabrika Üzerinden İstemci Oluşturma ve Öncelikli Çıkarım
+```python
+from modules.ai_provider.services.clients import create_llm_client, _INFERENCE_SCHEDULER
 
-## İlişkiler (Güncel Modül Yolları)
+config = {
+    "llm": {"provider": "ollama"},
+    "ollama": {"base_url": "http://127.0.0.1:11434", "model": "qwen3.5:9b"}
+}
 
-- `cognition/agent_core` — ana ajan LLM çağrıları (tool calling, tri-layer)
-- `cognition/autonomy` — companion chat, LLM kararları, proactive scene comment
-- `perception/vision/vlm_bridge` — metin üretimi fallback, semantic scene (`llm_client.py`)
-- `voice/speech` — tanınan metin → chat → `voice/speak` akışında ara katman
-- `common/config_loader` — **TEK KAYNAK** (eski `platform/config_center` ile birleşti)
+client, provider = create_llm_client(config)
+print(f"Aktif Sağlayıcı: {provider}, Model: {client.model}")
 
-## ✅ DÜZELTİLDİ (2026-08-21): CONFIG LOADER BİRLEŞTİRİLDİ
+# Öncelikli sohbet çağrısı (Öncelik 0: Acil Kullanıcı Komutu)
+with _INFERENCE_SCHEDULER.acquire(priority=0):
+    response = client.chat(
+        messages=[{"role": "user", "content": "SentryBOT, durum raporu ver."}],
+        options={"temperature": 0.5}
+    )
+    print("Yanıt:", response["message"]["content"])
+```
 
-`common/config_loader.py:612 load_agent_config` tek kaynak yapıldı. `ai_provider/config_loader.py:179` artık `common` import ediyor, duplicate kalmadı. Graph kanıtı: `nodes 11736` içinde `common core 55 in`.
+### 2. Kişilik Destekli Sohbet Servisi
+```python
+from modules.ai_provider.services.chat import OllamaChatService
+from modules.ai_provider.services.clients import create_llm_client
 
-## Bilinen Sorunlar
+client, _ = create_llm_client({"llm": {"provider": "ollama"}})
+chat_svc = OllamaChatService(client, persona_name="sentry", max_history=6)
 
-1. **Config Loader Duplication (Yukarıda)** - En büyük teknik borç. 40+ modül etkilenen.
-2. **xOllamaService Sınıf Adı** - Modül `ai_provider` ama sınıf `OllamaService`. `AIProviderService` veya `LLMGatewayService` olmalı.
-3. **GoogleAIStudioClient Error Handling** - API key invalid, quota exceeded, rate limit durumlarında retry/backoff zayıf.
-3. **Structured Response Parser** - `services/chat.py` içinde basit regex/json parse. `agent_core` tool calling formatı ile tutarlı olmalı (OpenAI function calling format).
-4. **Model Policy Çakışması** - `agent_core` kendi `_get_active_persona_model()` + `realtime_profile` var, `ai_provider` kendi `create_llm_client()` var. **Tek model policy: `modules/common/model_policy.py`**
-5. **Persona Reload** - `POST /persona/select` sonrası `agent_core` ve `autonomy` yeni persona'yı nasıl alır? Event bus yok, polling yapıyorlar.
+reply = chat_svc.chat("Sen kimsin ve ne iş yaparsın?")
+print("Asistan Yanıtı:", reply)
+```
+
+---
+
+## 🌐 HTTP REST API Örnekleri (cURL)
+
+### 1. Sohbet ve Eylem Yürütme (Chat)
+```bash
+curl -X POST http://127.0.0.1:8099/ollama/chat \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "Bana bak ve selam ver.",
+    "persona": "sentry",
+    "priority": 0,
+    "apply_actions": true
+  }'
+```
+
+### 2. Sağlık ve Model Doğruluk Kontrolü (Health Probe)
+```bash
+curl -X GET http://127.0.0.1:8099/ollama/health
+```
+
+### 3. Aktif Kişiliği Değiştirme
+```bash
+curl -X POST http://127.0.0.1:8099/ollama/persona/set \
+  -H "Content-Type: application/json" \
+  -d '{"persona": "glados"}'
+```
+
+### 4. Yüklü Modelleri Listeleme
+```bash
+curl -X GET http://127.0.0.1:8099/ollama/models
+```
+
+---
+
+## 🧪 Testleri Çalıştırma
+
+Modüle ait tüm testleri (Google anahtar doğrulama, Ollama URL kontrolü, çevirici ve öncelik zamanlayıcısı testleri) çalıştırmak için:
+
+```bash
+pytest tests/modules/ai_provider -v
+```
+
+---
+
+## 🔗 Detaylı Mimari Dokümantasyonu
+- [architecture_ai_provider.md](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/ai_provider/architecture_ai_provider.md): Sınıf, metot, algoritma ve parametre düzeyinde derin mimari dokümanı.
+- [architecture_ai_provider.dot](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/ai_provider/architecture_ai_provider.dot): Graphviz formatında modüler alt sistem çizimi.
+- [architecture_ai_provider.svg](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/ai_provider/architecture_ai_provider.svg): Vektörel mimari şeması.

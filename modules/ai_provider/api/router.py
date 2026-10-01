@@ -5,14 +5,9 @@ import os
 from fastapi import APIRouter
 from typing import Dict
 
-try:
-    from ..services.clients import create_llm_client
-    from ..services.chat import OllamaChatService
-    from ..services.translator import OllamaTranslator
-except Exception:
-    from modules.ai_provider.services.clients import create_llm_client
-    from modules.ai_provider.services.chat import OllamaChatService
-    from modules.ai_provider.services.translator import OllamaTranslator
+from ..services.clients import create_llm_client
+from ..services.chat import OllamaChatService
+from ..services.translator import OllamaTranslator
 
 from modules.ai_provider.api._helpers import load_persona_text, should_use_persona_model as _should_use_persona_model
 from modules.ai_provider.api.health import get_health_router
