@@ -5,8 +5,7 @@ import logging
 import re
 import threading
 import time
-import uuid
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional
 
 try:
     import requests  # type: ignore
@@ -19,9 +18,6 @@ from modules.common.latency_trace import latency_trace
 from modules.voice.speak.config_loader import load_config
 from modules.voice.speak.services.player import AudioPlayer
 from modules.voice.speak.services.tts import TextToSpeech, TTSUnavailableError
-
-if TYPE_CHECKING:
-    from modules.voice.speak.api import get_router  # type: ignore
 
 try:
     from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
