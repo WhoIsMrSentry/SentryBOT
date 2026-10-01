@@ -1,21 +1,12 @@
 from __future__ import annotations
 
-# sentrybot_batch06e_no_hardware_wakeword_asset_guard
-def _sentrybot_batch06e_skip_wakeword_assets():
-    import os as _os
-    return (
-        str(_os.getenv("SENTRYBOT_NO_HARDWARE", "")).lower() in {"1", "true", "yes", "on"}
-        or str(_os.getenv("SENTRYBOT_SKIP_WAKEWORD_AUTOSTART", "")).lower() in {"1", "true", "yes", "on"}
-    )
-
-
 from collections import deque
 import os
 import importlib
 import logging
 from pathlib import Path
 import time
-from typing import Dict, Iterable, Optional
+from typing import Dict, Optional
 
 try:
     import numpy as np  # type: ignore
