@@ -1,0 +1,130 @@
+// Graphviz Architecture: modules/voice
+// SentryBOT V5 - Unified Voice Subsystem (AudioRouter, WakeWord, STT Speech, TTS Speak)
+digraph voice_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_voice {
+        label = "modules.voice (Unified Voice Subsystem)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#0284c7";
+        fontcolor = "#38bdf8";
+        fontsize = 12;
+
+        // 1. Audio Router & Hardware Capture
+        subgraph cluster_audio_router {
+            label = "Audio Device Router & Arbiter (audio_router.py)";
+            fillcolor = "#0f172a";
+            color = "#0369a1";
+            fontcolor = "#7dd3fc";
+
+            audio_router [label="AudioRouter (Singleton)\n- Central Capture Lifecycle\n- Multicast Dispatcher\n- Pull Stream Generator", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            audio_capture [label="AudioCapture\n- PyAudio / ALSA I2S Stream\n- 16kHz Stereo PCM Capture\n- Lock-Free Frame Slicing", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            shared_vad [label="SharedVAD\n- Energy-Based Voice Activity\n- 500ms Hangover State\n- Unified Speaking Detector", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            oww_adapter [label="OpenWakeWordConsumerAdapter\n- Mono float32 Resampling\n- Frame Dispatcher", fillcolor="#0c4a6e", fontcolor="#e2e8f0", color="#0284c7"];
+            doa_adapter [label="DoAConsumerAdapter\n- Multi-Channel Frame Slicer\n- Spatial Audio Delivery", fillcolor="#0c4a6e", fontcolor="#e2e8f0", color="#0284c7"];
+        }
+
+        // 2. WakeWord Detection Subservice
+        subgraph cluster_wakeword {
+            label = "WakeWord Service (modules/voice/wakeword)";
+            fillcolor = "#0f172a";
+            color = "#0891b2";
+            fontcolor = "#67e8f9";
+
+            wakeword_service [label="WakewordService\n(xWakewordService.py)\n- Threaded Audio Stream Loop\n- Debounce & Cooldown Timer", fillcolor="#155e75", fontcolor="#f8fafc", color="#22d3ee"];
+            oww_runner [label="OpenWakewordRunner\n- ONNX Runtime Inference\n- Model: 'hey sentry'\n- Prob Thresholding (0.5+)", fillcolor="#155e75", fontcolor="#f8fafc", color="#22d3ee"];
+            wakeword_actions [label="WakewordActions\n- Instant Barge-In Trigger\n- Wake Chime / Sound Playback\n- Wake Event Emitter", fillcolor="#164e63", fontcolor="#f8fafc", color="#06b6d4"];
+        }
+
+        // 3. Speech Recognition (STT) Subservice
+        subgraph cluster_speech {
+            label = "Speech Recognition & DoA (modules/voice/speech)";
+            fillcolor = "#0f172a";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+
+            speech_service [label="SpeechService\n(xSpeechService.py)\n- Capture Stream Ingestion\n- STT Suppression Watchdog\n- Sound Tracking State Machine", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            stt_recognizer [label="Recognizer\n- Faster-Whisper / Vosk Backend\n- Streaming Acoustic VAD\n- Dual-Decode Ambiguity Check", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            stt_lang [label="Language Resolver\n(stt_language.py)\n- Auto TR / EN Routing\n- Dynamic Model Switcher", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+            doa_estimator [label="DirectionEstimator\n- GCC-PHAT Algorithm\n- Stereo Time Delay Estimation\n- Angle Calculation (-90°..+90°)", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+            pan_tilt_ctrl [label="PanTiltController\n- Head Saccade towards Sound\n- Deadband & Smoothing Filter", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+        }
+
+        // 4. Speech Synthesis (TTS) Subservice
+        subgraph cluster_speak {
+            label = "Speech Synthesis & Playback (modules/voice/speak)";
+            fillcolor = "#0f172a";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+
+            speak_service [label="SpeakService\n(xSpeakService.py)\n- Split Synthesis & Play Locks\n- 0ms Immediate Barge-In Cancel\n- Sentence Stream Chunk Queue", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            thought_filter [label="ThoughtFilter\n- Monologue / Thinking Stripper\n- Code & Markdown Sanitizer", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#8b5cf6"];
+            tts_engine [label="TextToSpeech (services/tts.py)\n- Piper ONNX (GLaDOS / TR Voice)\n- XTTS / Remote HTTP Fallback\n- eSpeak / Dummy Graceful Modes", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            prosody_mapper [label="Tone & Prosody Mapper\n- Emotion to Piper length_scale\n- 16 Tone Presets (Happy, Angry)", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#8b5cf6"];
+            audio_player [label="AudioPlayer (services/player.py)\n- Blocking ALSA/Pulse Playback\n- Interrupt Event Monitor", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#8b5cf6"];
+        }
+
+        // 5. REST APIs
+        subgraph cluster_apis {
+            label = "REST API Surface (FastAPI Endpoints)";
+            fillcolor = "#0f172a";
+            color = "#334155";
+            fontcolor = "#cbd5e1";
+
+            wakeword_api [label="Wakeword Router (:8085)\n- GET /wakeword/status\n- POST /wakeword/start|stop", fillcolor="#1e293b", fontcolor="#94a3b8", color="#475569"];
+            speech_api [label="Speech Router (:8084)\n- POST /speech/recognize\n- GET /speech/direction\n- POST /speech/suppress", fillcolor="#1e293b", fontcolor="#94a3b8", color="#475569"];
+            speak_api [label="Speak Router (:8083)\n- POST /speak/say\n- POST /speak/say_stream\n- POST /speak/stop\n- GET /speak/status", fillcolor="#1e293b", fontcolor="#94a3b8", color="#475569"];
+        }
+    }
+
+    // Hardware & External Nodes
+    mic_array [label="Microphone Array\n(I2S / USB Stereo Mic)", shape=ellipse, fillcolor="#0284c7", fontcolor="#ffffff", color="#38bdf8"];
+    speaker_hw [label="Speaker / Amplifier\n(ALSA Hardware Out)", shape=ellipse, fillcolor="#7c3aed", fontcolor="#ffffff", color="#c4b5fd"];
+    servos_hw [label="Pan/Tilt Servos\n(Arduino Head Rig)", shape=ellipse, fillcolor="#059669", fontcolor="#ffffff", color="#34d399"];
+
+    gateway_mod [label="Gateway Module\n(:8080 API Gateway)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#e2e8f0"];
+    agent_core_mod [label="Agent Core\n(Dialogue Orchestrator)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#e2e8f0"];
+    expression_mod [label="Expression / OLED\n(Facial Subtitles & Lip-Sync)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#e2e8f0"];
+
+    // Internal connections
+    mic_array -> audio_capture [label="I2S PCM 16kHz Stereo"];
+    audio_capture -> shared_vad [label="frame audio"];
+    audio_capture -> audio_router [label="multiplex frames"];
+
+    audio_router -> oww_adapter [label="dispatch"];
+    audio_router -> doa_adapter [label="dispatch"];
+    audio_router -> speech_service [label="pull-stream"];
+
+    oww_adapter -> wakeword_service [label="mono frames"];
+    wakeword_service -> oww_runner [label="detect 'hey sentry'"];
+    oww_runner -> wakeword_actions [label="trigger on confidence"];
+    wakeword_actions -> speak_service [label="0ms barge-in stop", color="#ef4444", fontcolor="#f87171", style="dashed"];
+    wakeword_actions -> gateway_mod [label="wake event (:8080)"];
+
+    speech_service -> stt_recognizer [label="stream pcm"];
+    speech_service -> doa_estimator [label="stereo frames"];
+    doa_estimator -> pan_tilt_ctrl [label="estimated angle"];
+    pan_tilt_ctrl -> servos_hw [label="serial pan angle"];
+    stt_recognizer -> stt_lang [label="resolve language"];
+    stt_lang -> gateway_mod [label="final transcript (/autonomy/speech)"];
+    stt_lang -> expression_mod [label="subtitles (/oled_faces/stt_text)"];
+
+    speak_service -> thought_filter [label="strip <think>"];
+    thought_filter -> prosody_mapper [label="clean text & tone"];
+    prosody_mapper -> tts_engine [label="synthesis params"];
+    tts_engine -> audio_player [label="synthesized PCM"];
+    audio_player -> speaker_hw [label="audio out"];
+    speak_service -> expression_mod [label="speak.started / finished"];
+
+    // Self-echo suppression feedback
+    speak_service -> speech_service [label="suppress STT during speech", color="#f59e0b", fontcolor="#fbbf24", style="dashed"];
+
+    // API linkages
+    wakeword_api -> wakeword_service [style="dotted"];
+    speech_api -> speech_service [style="dotted"];
+    speak_api -> speak_service [style="dotted"];
+    agent_core_mod -> speak_api [label="say / say_stream"];
+}
