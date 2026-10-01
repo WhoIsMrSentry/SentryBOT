@@ -6,14 +6,12 @@ Solves ALSA EBUSY when multiple modules try to open the same I2S device.
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
 import queue
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Generator, List, Optional, Protocol
+from typing import Any, Callable, Dict, Generator, Optional, Protocol
 
 import numpy as np
 
