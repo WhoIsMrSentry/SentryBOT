@@ -1,0 +1,109 @@
+// Graphviz Architecture: modules/ai_provider
+// SentryBOT V5 - Multi-Provider LLM Orchestration & Cognitive Engine
+digraph ai_provider_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_ai_provider {
+        label = "modules.ai_provider (Multi-Provider LLM Engine)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#d97706";
+        fontcolor = "#fbbf24";
+        fontsize = 12;
+
+        // 1. LLM Client Orchestration & Priority Scheduler
+        subgraph cluster_provider_clients {
+            label = "Provider Abstraction & Inference Scheduler";
+            fillcolor = "#0f172a";
+            color = "#b45309";
+            fontcolor = "#fde68a";
+
+            factory [label="create_llm_client (services/clients.py)\n- Factory & Fallback Router\n- Provider: 'ollama' | 'google_ai_studio'", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            priority_lock [label="PriorityInferenceLock\n- Priority 0: Voice Command (User)\n- Priority 1: Conversational Chat\n- Priority 2: Autonomous Thoughts (Idle)", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            ollama_client [label="OllamaClient\n- Local HTTP Client (:11434)\n- Model: qwen3.5:9b (Default)\n- Transient Retry (2 attempts, 200ms)", fillcolor="#92400e", fontcolor="#f8fafc", color="#fbbf24"];
+            google_client [label="GoogleAIStudioClient\n- Cloud REST Client (Gemini-2.5-Flash)\n- Strict API Key Sanitizer\n- GenerativeLanguage API", fillcolor="#92400e", fontcolor="#f8fafc", color="#fbbf24"];
+        }
+
+        // 2. Chat Service & Persona Management
+        subgraph cluster_chat_persona {
+            label = "Conversational Memory & Persona System";
+            fillcolor = "#0f172a";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+
+            chat_service [label="OllamaChatService (services/chat.py)\n- Multi-Turn Sliding Context (max_history=6)\n- System Prompt Injection\n- Persona Model Switcher", fillcolor="#065f46", fontcolor="#f8fafc", color="#34d399"];
+            persona_cache [label="Persona Cache & Loader\n- Personalities: 'sentry', 'glados'\n- Modelfile Compiler & Hot-Reload", fillcolor="#047857", fontcolor="#f8fafc", color="#10b981"];
+        }
+
+        // 3. Structured Outputs & Action Forwarder
+        subgraph cluster_actions_schema {
+            label = "Structured Actions & Tag Extraction";
+            fillcolor = "#0f172a";
+            color = "#4338ca";
+            fontcolor = "#a5b4fc";
+
+            sentry_schema [label="SentryResponse (Pydantic)\n- Structured JSON Schema\n- thoughts, speech, actions\n- Emotion & Gesture Payloads", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+            tag_extractor [label="Tag Extractor (services/tags.py)\n- Fallback XML/Regex Tag Parser\n- Extracts <action>, <emotion>", fillcolor="#312e81", fontcolor="#f8fafc", color="#818cf8"];
+            action_forwarder [label="Action Forwarder (chat_routes.py)\n- HTTP POST to Gateway / Actions\n- Configurable Timeout (1.5s)", fillcolor="#3730a3", fontcolor="#f8fafc", color="#6366f1"];
+        }
+
+        // 4. Multilingual Translation Bridge
+        subgraph cluster_translation {
+            label = "Language Detection & Translation Bridge";
+            fillcolor = "#0f172a";
+            color = "#0369a1";
+            fontcolor = "#7dd3fc";
+
+            translator [label="OllamaTranslator (services/translator.py)\n- Heuristic Language Detector (TR/EN)\n- Bidirectional In-Memory Cache\n- Low-Latency Prompt Translation", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+        }
+
+        // 5. REST API Routers
+        subgraph cluster_api_routes {
+            label = "FastAPI REST API Surface (Port: 8099)";
+            fillcolor = "#0f172a";
+            color = "#334155";
+            fontcolor = "#cbd5e1";
+
+            main_router [label="Main Router (api/router.py)\n- Prefix: /ollama\n- Service Factory & Runtime State", fillcolor="#1e293b", fontcolor="#f8fafc", color="#64748b"];
+            chat_route [label="POST /ollama/chat\nPOST /ollama/generate\nPOST /ollama/stream", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+            health_route [label="GET /ollama/health\n- Probes Active Model Truth\n- Provider Latency Metric", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+            persona_route [label="GET /ollama/persona\nPOST /ollama/persona/set\nPOST /ollama/persona/create", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+            models_route [label="GET /ollama/models\nPOST /ollama/models/pull\nPOST /ollama/models/switch", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+        }
+    }
+
+    // External Services & Modules
+    ollama_daemon [label="Local Ollama Daemon\n(:11434 HTTP Engine)", shape=cylinder, fillcolor="#b45309", fontcolor="#ffffff", color="#fbbf24"];
+    gemini_cloud [label="Google AI Studio\n(Gemini Cloud Endpoint)", shape=ellipse, fillcolor="#1d4ed8", fontcolor="#ffffff", color="#60a5fa"];
+    gateway_actions [label="Gateway Actions Endpoint\n(:8080/actions/execute)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#94a3b8"];
+    agent_core [label="Agent Core\n(Autonomous Orchestrator)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#94a3b8"];
+
+    // Internal linkages
+    main_router -> chat_route;
+    main_router -> health_route;
+    main_router -> persona_route;
+    main_router -> models_route;
+
+    chat_route -> priority_lock [label="acquire priority"];
+    priority_lock -> chat_service;
+    chat_service -> persona_cache [label="fetch system prompt"];
+    chat_service -> sentry_schema [label="structured format"];
+    chat_service -> factory [label="execute inference"];
+
+    factory -> ollama_client [label="provider=ollama"];
+    factory -> google_client [label="provider=google"];
+
+    ollama_client -> ollama_daemon [label="POST /api/chat\n(Retry logic)"];
+    google_client -> gemini_cloud [label="generateContent REST"];
+
+    chat_route -> tag_extractor [label="fallback parsing"];
+    chat_route -> action_forwarder [label="apply_actions=True"];
+    action_forwarder -> gateway_actions [label="HTTP POST actions"];
+
+    chat_route -> translator [label="translate input/output"];
+
+    // External traffic
+    agent_core -> chat_route [label="POST /ollama/chat\n(Priority 0 or 2)"];
+}
