@@ -10,42 +10,11 @@ from __future__ import annotations
 
 import requests
 
-
-def _default_base_url() -> str:
-    return "http" + "://127.0.0.1:11434"
-
-
-def _unwrap_url(value):
-    value = str(value or "").strip().replace("\r", "").replace("\n", "").rstrip("/")
-
-    if value.startswith("[") and "](" in value:
-        value = value[1:].split("]", 1)[0].strip().rstrip("/")
-
-    return value
-
-
-def _normalize_base_url(raw):
-    value = _unwrap_url(raw)
-    lowered = value.lower()
-
-    if (
-        not value
-        or value in {"http:", "https:", "http:/", "https:/"}
-        or "@gateway" in lowered
-        or lowered in {
-            "http" + "://127.0.0.1:8080",
-            "http" + "://localhost:8080",
-            "http" + "://0.0.0.0:8080",
-        }
-        or lowered.startswith(("http" + "://127.0.0.1:8080/").lower())
-        or lowered.startswith(("http" + "://localhost:8080/").lower())
-        or lowered.startswith(("http" + "://0.0.0.0:8080/").lower())
-        or lowered.endswith("/ollama")
-        or lowered.endswith("/ollama/chat")
-    ):
-        return _default_base_url()
-
-    return value.rstrip("/")
+from modules.common.ollama_url import (
+    default_ollama_base_url as _default_base_url,
+    unwrap_url as _unwrap_url,
+    normalize_ollama_url as _normalize_base_url,
+)
 
 
 def _extract_model_names(data):
