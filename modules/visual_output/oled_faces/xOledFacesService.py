@@ -3,23 +3,23 @@ OLED_FACE_SERVICE_COMPATIBILITY_CONTRACT = True
 OLED_FACE_SERVICE_ROLE = "gateway_runtime_oled_face_compatibility_service"
 
 
+from contextlib import asynccontextmanager
 import logging
-import threading
+from threading import Event, Lock, Thread
 import time
 from typing import Any, Dict, List, Optional
-from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-logger = logging.getLogger("oled_faces.service")
-
 from .config_loader import load_config
-from .services.mapper import FaceMapper, OledAction
+from .services.mapper import FaceMapper
 from .services.face_renderer import FaceRenderer
 from .services.face_coordinator import FaceCoordinator
 from .services.idle_ambient import IdleAmbientPlayer
 from .services.legacy_map import resolve_mood
 from .api.router import get_router
+
+logger = logging.getLogger("oled_faces.service")
 
 
 class xOledFacesService:
@@ -38,8 +38,8 @@ class xOledFacesService:
         display_cfg = self.cfg.get("display") if isinstance(self.cfg.get("display"), dict) else {}
         self.display = FaceRenderer(display_cfg)
 
-        self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._stop = Event()
+        self._thread: Optional[Thread] = None
         self._last_operational: Optional[str] = None
         self._last_emotions: Optional[List[str]] = None
         self._last_sent: Optional[tuple[str, str]] = None
@@ -48,7 +48,7 @@ class xOledFacesService:
         self._active_priority: int = 0
         self._last_event_ts: Dict[str, float] = {}
         self._last_mode: str = ""
-        self._apply_lock = threading.Lock()
+        self._apply_lock = Lock()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
