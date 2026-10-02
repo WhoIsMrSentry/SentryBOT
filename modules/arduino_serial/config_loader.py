@@ -58,8 +58,6 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
         serial_cfg = root.get("arduino_serial")
         if isinstance(serial_cfg, dict):
             cfg.update({k: v for k, v in serial_cfg.items() if v is not None})
-    except FileNotFoundError:
-        pass
     except Exception:
         pass
 

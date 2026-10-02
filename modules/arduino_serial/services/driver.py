@@ -3,10 +3,7 @@ from __future__ import annotations
 import threading
 from typing import Dict, Any, Optional
 
-try:
-    from ..xArduinoSerialService import xArduinoSerialService
-except Exception:
-    from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
+from ..xArduinoSerialService import xArduinoSerialService
 
 # Process-wide shared service instance (R11/R33 fix): implicit
 # ArduinoDriver() constructions (e.g. piservo ears) must reuse ONE service
