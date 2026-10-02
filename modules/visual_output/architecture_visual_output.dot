@@ -1,0 +1,85 @@
+// Graphviz Architecture: modules/visual_output
+// SentryBOT V5 - Visual Output Subsystem (OLED Facial Expressions & NeoPixel RGB Lighting)
+digraph visual_output_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_visual_output {
+        label = "modules.visual_output (Visual Expression & Lighting)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#ec4899";
+        fontcolor = "#f472b6";
+        fontsize = 12;
+
+        // 1. OLED Faces Subservice
+        subgraph cluster_oled_faces {
+            label = "OLED Facial Displays (modules/visual_output/oled_faces)";
+            fillcolor = "#0f172a";
+            color = "#db2777";
+            fontcolor = "#fbcfe8";
+
+            oled_service [label="xOledFacesService\n(xOledFacesService.py)\n- Facial State Lifecycle\n- Event Stream Processor\n- Priority & Hold Arbiter", fillcolor="#831843", fontcolor="#f8fafc", color="#f472b6"];
+            face_coord [label="FaceCoordinator (services/face_coordinator.py)\n- Baseline Moods (Happy, Curious, Neutral)\n- Biological Blinking & Eye Gaze Saccade\n- Speech / Listen / Think Session State", fillcolor="#9d174d", fontcolor="#f8fafc", color="#f472b6"];
+            face_renderer [label="FaceRenderer (services/face_renderer.py)\n- SSD1306 128x64 Framebuffer\n- Bitmap & Geometric Eye Shapes\n- Real-Time STT Subtitle Bar", fillcolor="#9d174d", fontcolor="#f8fafc", color="#f472b6"];
+            face_mapper [label="FaceMapper & IdleAmbient\n- Event-to-Mood Translation\n- Idle Ambient Eye Wander", fillcolor="#831843", fontcolor="#f8fafc", color="#db2777"];
+        }
+
+        // 2. NeoPixel Subservice
+        subgraph cluster_neopixel {
+            label = "NeoPixel RGB LED Rings (modules/visual_output/neopixel)";
+            fillcolor = "#0f172a";
+            color = "#9333ea";
+            fontcolor = "#e9d5ff";
+
+            neo_service [label="xNeopixelService & NeoRunner\n(xNeopixelService.py)\n- High-Speed Frame Dispatcher\n- Fast-Path Non-Blocking Worker", fillcolor="#581c87", fontcolor="#f8fafc", color="#c084fc"];
+            companion_renderer [label="CompanionRenderer\n- wake_spin (Cyan Wake Ring Animation)\n- emotion_pulse (Breathing Mood Color)\n- scanner / rainbow / breathe", fillcolor="#6b21a8", fontcolor="#f8fafc", color="#c084fc"];
+            segment_mgr [label="SegmentManager (services/segments.py)\n- Head Ring (LED 0..15)\n- Body / Chest Arc (LED 16..29)\n- Independent Effect Scoping", fillcolor="#6b21a8", fontcolor="#f8fafc", color="#c084fc"];
+            neo_driver [label="NeoDriver (services/driver.py)\n- Hardware SPI / PWM (800kHz)\n- Degraded Safe SimStrip (Testing)", fillcolor="#581c87", fontcolor="#f8fafc", color="#9333ea"];
+            palette_map [label="EmotionPalette (emotions/palette.py)\n- Canonical Emotion -> RGB Hex\n- Brightness Scaling & Transitions", fillcolor="#6b21a8", fontcolor="#f8fafc", color="#c084fc"];
+        }
+
+        // 3. REST API Surface
+        subgraph cluster_visual_apis {
+            label = "FastAPI Endpoints";
+            fillcolor = "#0f172a";
+            color = "#334155";
+            fontcolor = "#cbd5e1";
+
+            oled_api [label="OLED Faces Router\n- POST /oled_faces/emotion\n- POST /oled_faces/gaze\n- POST /oled_faces/stt_text\n- GET /oled_faces/status", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+            neo_api [label="NeoPixel Router (:8092)\n- POST /neopixel/emotion\n- POST /neopixel/effect\n- POST /neopixel/segment\n- GET /neopixel/status", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+        }
+    }
+
+    // Hardware & External Nodes
+    oled_hw [label="SSD1306 OLED Display\n(128x64 I2C / SPI Screen)", shape=ellipse, fillcolor="#db2777", fontcolor="#ffffff", color="#f472b6"];
+    led_hw [label="WS2812B NeoPixel Strip\n(Head Ring & Chest LEDs)", shape=ellipse, fillcolor="#9333ea", fontcolor="#ffffff", color="#c084fc"];
+
+    gateway_mod [label="Gateway Module (:8080)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    voice_speech [label="Speech / STT Module (:8084)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    voice_speak [label="Speak / TTS Module (:8083)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    agent_core [label="Agent Core / Autonomy", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+
+    // Internal connections
+    oled_api -> oled_service;
+    oled_service -> face_coord [label="update mood / session"];
+    oled_service -> face_mapper [label="resolve interaction event"];
+    face_coord -> face_renderer [label="render frame (20-30 FPS)"];
+    face_renderer -> oled_hw [label="I2C/SPI Byte Stream"];
+
+    neo_api -> neo_service;
+    neo_service -> companion_renderer [label="companion mode"];
+    neo_service -> segment_mgr [label="segment target"];
+    neo_service -> palette_map [label="resolve emotion color"];
+    companion_renderer -> neo_driver [label="RGB array"];
+    neo_driver -> led_hw [label="WS2812B 800kHz Pulse"];
+
+    // External event traffic
+    voice_speech -> oled_api [label="POST /stt_text\n(live subtitles)"];
+    voice_speak -> oled_api [label="speak.started / finished\n(talking mouth session)"];
+    gateway_mod -> oled_api [label="interaction events"];
+    gateway_mod -> neo_api [label="lighting presets"];
+    agent_core -> oled_api [label="set emotional mood"];
+    agent_core -> neo_api [label="set RGB pulse"];
+}
