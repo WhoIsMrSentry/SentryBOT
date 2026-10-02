@@ -4,10 +4,7 @@ from typing import Optional, Dict, Any
 
 from ..contract import validate_arduino_payload
 
-try:
-    from ..xArduinoSerialService import xArduinoSerialService
-except Exception:
-    from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
+from ..xArduinoSerialService import xArduinoSerialService
 
 
 def get_router(svc: xArduinoSerialService) -> APIRouter:
