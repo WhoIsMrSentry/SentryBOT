@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import json as _json
 import logging
 import os
-import pathlib as _pathlib
 import threading
 import time
 from queue import Empty, Queue
@@ -24,7 +22,6 @@ from .transports import (
     EspTransportMixin,
     FirmwareHelpersMixin,
     SerialTransport,
-    _PI_SERIAL_CANDIDATE_GLOBS,
 )
 
 try:
@@ -32,7 +29,6 @@ try:
     import serial.tools.list_ports  # type: ignore
 except Exception:  # pragma: no cover
     serial = None
-
 
 from .services.port_detector import (
     _PI_SERIAL_CANDIDATE_GLOBS,
