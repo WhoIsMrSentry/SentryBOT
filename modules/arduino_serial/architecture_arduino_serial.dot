@@ -1,0 +1,97 @@
+// Graphviz Architecture: modules/arduino_serial
+// SentryBOT V5 - Microcontroller Serial & Hardware Abstraction
+digraph arduino_serial_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_arduino_serial {
+        label = "modules.arduino_serial (Hardware Abstraction & Serial Bridge)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#0284c7";
+        fontcolor = "#38bdf8";
+        fontsize = 12;
+
+        // 1. Contract & Command Builders
+        subgraph cluster_contract {
+            label = "Strict NDJSON Contract & Builders";
+            fillcolor = "#0f172a";
+            color = "#0369a1";
+            fontcolor = "#7dd3fc";
+
+            cmd_builder [label="CommandBuilder (contract.py)\n- build_set_servo_cmd(index, deg)\n- build_stepper_cmd(id, mode, val)\n- build_drive_cmd, build_liveliness_cmd\n- build_cute_cmd, build_laser_cmd", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            contract_validator [label="ContractValidators\n(contract_validators.py)\n- Servo Index & Angle Bounds\n- Stepper Mode & Speed Limits\n- Liveliness Amplitude / Period Checks\n- Payload Structure Enforcement", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+        }
+
+        // 2. Service Core & Loops
+        subgraph cluster_service_core {
+            label = "Service Engine & Event Handlers";
+            fillcolor = "#0f172a";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+
+            service_core [label="xArduinoSerialService\n(xArduinoSerialService.py)\n- High-Level Hardware Facade\n- Metrics: rx_count, tx_count, acks\n- Boot-Ready Detection", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            serial_loops [label="SerialLoopsMixin (services/serial_loops.py)\n- Dedicated RX Thread & Queue (max=100)\n- Non-Blocking TX with Lock\n- Heartbeat & Auto-Reconnect", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+            rfid_handler [label="RfidHandlerMixin (services/rfid_handler.py)\n- RC522 Tag Ingestion\n- 2.0s Debounce Filter\n- Event Emission to Gateway", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+            cute_catalog [label="CuteSoundCatalog (services/cute_catalog.py)\n- Emotion to Piezo Melody Mapping\n- RTTTL Ringtone Payloads", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+        }
+
+        // 3. Transports & Head Arbiter
+        subgraph cluster_transports {
+            label = "Physical & Network Transports";
+            fillcolor = "#0f172a";
+            color = "#b45309";
+            fontcolor = "#fde68a";
+
+            serial_trans [label="SerialTransport (transports/serial_transport.py)\n- Direct USB/UART (PySerial)\n- 115200 Baud, Timeout Guard", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            esp_trans [label="EspTransportMixin (transports/esp_transport.py)\n- WiFi / HTTP Bridge to ESP32 (:8091)\n- Health Probes & Circuit Breaker\n- Failure Streak Pause (120s)", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            port_detector [label="PortDetector (services/port_detector.py)\n- Linux /dev/ttyACM* & /dev/ttyUSB*\n- Windows COM* Auto-Detection", fillcolor="#92400e", fontcolor="#f8fafc", color="#fbbf24"];
+            head_arbiter_wrapper [label="HeadArbiterTransportWrapper\n(head_arbiter_integration.py)\n- Gaze & Focus Channel Routing\n- Prevents Pan/Tilt Servo Conflict", fillcolor="#92400e", fontcolor="#f8fafc", color="#fbbf24"];
+        }
+
+        // 4. REST API Surface
+        subgraph cluster_arduino_api {
+            label = "FastAPI Surface (api/router.py - Port: 8091)";
+            fillcolor = "#0f172a";
+            color = "#334155";
+            fontcolor = "#cbd5e1";
+
+            api_router [label="Arduino Router\n- POST /arduino/send\n- POST /arduino/servo\n- POST /arduino/stepper\n- POST /arduino/liveliness\n- GET /arduino/status\n- POST /arduino/ping", fillcolor="#1e293b", fontcolor="#f8fafc", color="#64748b"];
+        }
+    }
+
+    // Hardware & External Nodes
+    mcu_hw [label="Arduino Mega / ESP32 Hardware\n(115200 Baud / UART / WiFi)", shape=cylinder, fillcolor="#0369a1", fontcolor="#ffffff", color="#38bdf8"];
+    servos_hw [label="Servos (Pan, Tilt, Ears)\nPWM 50Hz", shape=ellipse, fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+    steppers_hw [label="Differential Stepper Motors\n(A4988 / TMC2209)", shape=ellipse, fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+    rfid_hw [label="RC522 RFID Reader\nSPI Interface", shape=ellipse, fillcolor="#b45309", fontcolor="#ffffff", color="#f59e0b"];
+
+    gateway_mod [label="Gateway Module (:8080)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    agent_core_mod [label="Agent Core / Autonomy", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+
+    // Internal connections
+    api_router -> cmd_builder [label="build command"];
+    cmd_builder -> contract_validator [label="validate payload"];
+    contract_validator -> service_core [label="safe payload"];
+
+    service_core -> serial_loops [label="dispatch tx"];
+    service_core -> rfid_handler [label="tag received"];
+    service_core -> cute_catalog [label="emotion cues"];
+    service_core -> head_arbiter_wrapper [label="pan/tilt commands"];
+
+    head_arbiter_wrapper -> serial_trans [label="if mode == serial"];
+    head_arbiter_wrapper -> esp_trans [label="if mode == esp_http"];
+    port_detector -> serial_trans [label="resolve port"];
+
+    serial_trans -> mcu_hw [label="NDJSON Stream (115200 Baud)"];
+    esp_trans -> mcu_hw [label="HTTP REST /send (WiFi)"];
+
+    mcu_hw -> servos_hw [label="PWM Angles"];
+    mcu_hw -> steppers_hw [label="Step & Dir Pulses"];
+    rfid_hw -> mcu_hw [label="Tag UID"];
+    mcu_hw -> serial_loops [label="NDJSON RX Telemetry"];
+
+    rfid_handler -> gateway_mod [label="rfid.detected Event"];
+    agent_core_mod -> api_router [label="hardware actions"];
+}
