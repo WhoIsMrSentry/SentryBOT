@@ -1,43 +1,6 @@
 from __future__ import annotations
 
-import os as _sentrybot_agent_context_os
-
-def _sentrybot_agent_context_env_ollama_url() -> str:
-    return (
-        _sentrybot_agent_context_os.environ.get("SENTRYBOT_OLLAMA_BASE_URL")
-        or _sentrybot_agent_context_os.environ.get("SENTRYBOT_REMOTE_OLLAMA_URL")
-        or _sentrybot_agent_context_os.environ.get("SENTRYBOT_OLLAMA_URL")
-        or _sentrybot_agent_context_os.environ.get("OLLAMA_HOST")
-        or _sentrybot_agent_context_os.environ.get("OLLAMA_BASE_URL")
-        or "http://whoismrsentry.local:11434"
-    ).strip().rstrip("/")
-
-def _sentrybot_normalize_ollama_base_url(raw) -> str:
-    value = str(raw or "").strip().rstrip("/")
-    env_value = _sentrybot_agent_context_env_ollama_url()
-
-    lowered = value.lower()
-
-    if (
-        not value
-        or lowered in {"http:", "https:", "http", "https"}
-        or lowered.startswith("http://http:")
-        or lowered.startswith("https://http:")
-        or lowered.startswith("http://https:")
-        or lowered == "http://http:11434"
-        or lowered == "https://http:11434"
-        or lowered.endswith("/ollama")
-        or lowered.endswith("/ollama/chat")
-    ):
-        value = env_value
-
-    if value.lower() in {"http:", "https:", "http", "https"}:
-        value = "http://whoismrsentry.local:11434"
-
-    if "://" not in value:
-        value = "http://" + value
-
-    return value.rstrip("/")
+from modules.common.ollama_url import normalize_ollama_url
 
 
 
@@ -46,6 +9,7 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from .action_arbiter import ActionArbiter
+from .agent_fast_path import AgentFastPathMixin
 from .agent_handlers import register_default_action_handlers
 from .agent_memory_sync import AgentMemorySyncMixin
 from .expression_arbiter import ExpressionArbiter
@@ -178,7 +142,7 @@ class AgentContextMixin(AgentMemorySyncMixin):
         self._cached_model_names_ts = 0.0
         if ollama:
             try:
-                self.ollama_base_url = _sentrybot_normalize_ollama_base_url(getattr(self, "ollama_base_url", None))
+                self.ollama_base_url = normalize_ollama_url(getattr(self, "ollama_base_url", None))
                 self.ollama_client = ollama.Client(host=self.ollama_base_url, timeout=self.request_timeout)
             except Exception as exc:
                 logger.warning("Ollama client init failed for host %s: %s", self.ollama_base_url, exc)
