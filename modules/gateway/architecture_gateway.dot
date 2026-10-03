@@ -1,0 +1,78 @@
+// Graphviz Architecture: modules/gateway
+// SentryBOT V5 - Central API Gateway & Dynamic Reverse Proxy
+digraph gateway_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_gateway {
+        label = "modules.gateway (Central API Gateway & Route Multiplexer)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#0ea5e9";
+        fontcolor = "#38bdf8";
+        fontsize = 12;
+
+        // 1. Gateway Server Core
+        subgraph cluster_gw_core {
+            label = "Gateway Server Core (:8080)";
+            fillcolor = "#0f172a";
+            color = "#0284c7";
+            fontcolor = "#7dd3fc";
+
+            gw_service [label="xGatewayService (xGatewayService.py)\n- Central FastAPI Application\n- Global CORS & Middleware\n- Port 8080 Listener", fillcolor="#0369a1", fontcolor="#f8fafc", color="#38bdf8"];
+            url_guard [label="UrlHelper (url.py)\n- Gateway Self-URL Loop Guard\n- Remote vs Local URL Resolver", fillcolor="#0369a1", fontcolor="#f8fafc", color="#38bdf8"];
+            gw_router [label="Root Router (api/router.py)\n- GET /healthz\n- GET /status\n- GET /routes (Discovery)", fillcolor="#075985", fontcolor="#f8fafc", color="#7dd3fc"];
+        }
+
+        // 2. Dynamic Bootstrappers & Module Mounts
+        subgraph cluster_gw_bootstrappers {
+            label = "Dynamic Service Mount Bootstrappers";
+            fillcolor = "#0f172a";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+
+            cfg_boot [label="BootstrapConfig (bootstrap_config.py)\n- Parses agent.yaml (R18 Single-Source)\n- Evaluates include.<module> flags", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            hw_boot [label="BootstrapHardware (bootstrap_hardware.py)\n- Mounts /arduino (Arduino Serial)\n- Mounts /camera (IMX500 / RTSP)\n- Mounts /oled_faces & /neopixel", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            ai_boot [label="BootstrapAI (bootstrap_ai.py)\n- Mounts /ollama (AI Provider)\n- Mounts /vlm (VLM Bridge)\n- Mounts /memory (Cognitive Memory)", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            ops_boot [label="BootstrapOps (bootstrap_ops.py)\n- Mounts /system (System Control)\n- Mounts /console (Runtime Console)", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            agent_binding [label="AgentCoreBinding (agent_core_binding.py)\n- Binds Agent Orchestrator\n- Mounts /agent/* & /chat", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+        }
+
+        // 3. Compatibility Shims & Event Router
+        subgraph cluster_gw_compat {
+            label = "Compatibility Shims & Event Multiplexer";
+            fillcolor = "#0f172a";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+
+            api_compat [label="AgentAPICompat (agent_api_compat.py)\n- Shims /speak/* -> SpeakService\n- Shims /speech/* -> SpeechService\n- Shims /wakeword/* -> WakewordService\n- Shims /actions/execute & /events", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+        }
+    }
+
+    // External Clients & Modules
+    web_client [label="Web Dashboard / Operator\n(Browser / REST / SSE)", shape=ellipse, fillcolor="#0ea5e9", fontcolor="#ffffff", color="#38bdf8"];
+    agent_core_mod [label="modules.agent_core\n(Cognitive Brain)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    ai_provider_mod [label="modules.ai_provider\n(LLM Engine)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    voice_mod [label="modules.voice\n(Audio Subsystem)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    hardware_mods [label="Hardware Modules\n(arduino_serial, camera, visual_output)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+
+    // Linkages
+    web_client -> gw_service [label="HTTP REST / SSE (:8080)"];
+    gw_service -> gw_router;
+    gw_service -> url_guard;
+    gw_service -> cfg_boot [label="on startup"];
+
+    cfg_boot -> hw_boot;
+    cfg_boot -> ai_boot;
+    cfg_boot -> ops_boot;
+    cfg_boot -> agent_binding;
+
+    hw_boot -> hardware_mods [label="mount routers"];
+    ai_boot -> ai_provider_mod [label="mount /ollama"];
+    agent_binding -> agent_core_mod [label="bind orchestrator"];
+
+    gw_service -> api_compat [label="route fallback & events"];
+    api_compat -> voice_mod [label="dispatch /speak, /speech"];
+    api_compat -> agent_core_mod [label="dispatch /actions/execute"];
+}
