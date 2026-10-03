@@ -101,21 +101,15 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
         client = httpx.Client(base_url=f"http://127.0.0.1:{port}")
         try:
             for name, _ in started.items():
-                if name in checks and checks[name] is not None:
-                    method, path = checks[name]
+                check = checks.get(name) or mounted_checks.get(name)
+                if check is not None:
+                    method, path = check
                     try:
                         resp = client.request(method, path, timeout=0.5)
-                        summary[name] = {"ok": resp.status_code == 200, "body": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None}
-                        if not summary[name]["ok"]:
-                            summary["ok"] = False
-                    except Exception as e:
-                        summary[name] = {"ok": False, "error": str(e)}
-                        summary["ok"] = False
-                elif name in mounted_checks:
-                    method, path = mounted_checks[name]
-                    try:
-                        resp = client.request(method, path, timeout=0.5)
-                        summary[name] = {"ok": resp.status_code == 200, "body": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None}
+                        summary[name] = {
+                            "ok": resp.status_code == 200,
+                            "body": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None,
+                        }
                         if not summary[name]["ok"]:
                             summary["ok"] = False
                     except Exception as e:
