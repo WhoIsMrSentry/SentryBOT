@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from .config_loader import load_config
-from modules.gateway.services.agent_api_compat import install_agent_api_compat
+from .services.agent_api_compat import install_agent_api_compat
 
 logger = logging.getLogger("gateway.service")
 
@@ -155,7 +155,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
             started = bootstrap(app, cfg) or {}
             app.state.started = started
             try:
-                from modules.gateway.services.agent_core_binding import ensure_agent_core_bound
+                from .services.agent_core_binding import ensure_agent_core_bound
 
                 ensure_agent_core_bound(app, cfg, app.state.started)
             except Exception as exc:

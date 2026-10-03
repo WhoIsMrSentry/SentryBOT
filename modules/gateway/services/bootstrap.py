@@ -12,10 +12,7 @@ from fastapi import FastAPI
 # Suppress FastAPI on_event deprecation noise
 warnings.filterwarnings("ignore", message=".*on_event is deprecated.*", category=DeprecationWarning)
 
-logger = logging.getLogger("gateway.bootstrap")
-
 from .bootstrap_config import (
-    _AGENT_CFG_CACHE,
     _agent_section,
     _camera_hardware_available,
     _merge_with_agent_section,
@@ -24,7 +21,6 @@ from .bootstrap_config import (
     _register_runtime_keys,
     _register_state_manager_keys,
     _register_vlm_keys,
-    _root_agent_cfg,
     _should_autostart_services,
 )
 from .bootstrap_hardware import (
@@ -57,7 +53,6 @@ from .bootstrap_ai import (
     _wire_wakeword_interactions,
 )
 from .bootstrap_ops import (
-    _CRITICAL_MODULES,
     _IMPORT_MODULES,
     _include_logs,
     _include_notifier,
@@ -68,6 +63,8 @@ from .bootstrap_ops import (
     _mount_scheduler,
     _mount_state_manager,
 )
+
+logger = logging.getLogger("gateway.bootstrap")
 
 
 def _init_gateway_base_url(started: Dict[str, object], cfg: Dict[str, Any]) -> str:
