@@ -1,0 +1,106 @@
+// Graphviz Architecture: modules/agent_core
+// SentryBOT V5 - Cognitive Brain, Tri-Layer Architecture & Autonomous Orchestrator
+digraph agent_core_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_agent_core {
+        label = "modules.agent_core (Cognitive Brain & Decision Orchestrator)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#f59e0b";
+        fontcolor = "#fbbf24";
+        fontsize = 12;
+
+        // 1. Tri-Layer Cognitive Architecture
+        subgraph cluster_tri_layer {
+            label = "Tri-Layer Cognitive Engine (services/tri_layer.py)";
+            fillcolor = "#0f172a";
+            color = "#d97706";
+            fontcolor = "#fde68a";
+
+            tri_router [label="TriLayerRouter\n- Request Urgency & Keyword Classifier\n- Token Budget & Sub-Agent Bounds", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            layer1_reflex [label="Layer 1: Fast-Path Reflex (<50ms)\n- Emergency Stop, Reactive Greeting\n- Instant Gaze Lock, Barge-in Ack", fillcolor="#92400e", fontcolor="#f8fafc", color="#fbbf24"];
+            layer2_tactical [label="Layer 2: Tactical Planning (50-300ms)\n- Tool Dispatch & Head Saccade\n- Short-term Dialogue & Obstacle Bypass", fillcolor="#92400e", fontcolor="#f8fafc", color="#fbbf24"];
+            layer3_strategic [label="Layer 3: Strategic Deliberation (>300ms)\n- Deep LLM Reasoning & Planning\n- Long-Horizon Goal Decomposition", fillcolor="#92400e", fontcolor="#f8fafc", color="#fbbf24"];
+        }
+
+        // 2. Central Orchestration & LAYA Engine
+        subgraph cluster_orchestrator {
+            label = "Central Orchestration & Social Companion Engine";
+            fillcolor = "#0f172a";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+
+            orchestrator [label="AgentOrchestrator (services/agent.py)\n- Multi-Turn FSM Decision Loop\n- Context Assembly & Streaming Emitter\n- Sub-Agent Coordinator", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            laya_engine [label="LAYA Engine (services/laya_engine.py)\n- Social Yielding & Empathy Modeling\n- Latency Filler Generator ('Hmm, bakıyorum...')\n- Interruption & Conversation Turn Model", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+            world_state [label="WorldState (services/world_state.py)\n- Unified Situational Awareness\n- Active Speaker, Battery, Face, Location\n- Injected System Prompt Context", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+            progress_mgr [label="ProgressTracker (services/progress.py)\n- Multi-Step Sub-Goal Monitor\n- TR/EN Natural Language Status Cues", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+        }
+
+        // 3. Execution & Safety Arbiters
+        subgraph cluster_arbiters {
+            label = "Safety, Action & Speech Arbiters";
+            fillcolor = "#0f172a";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+
+            action_arbiter [label="ActionArbiter (services/action_arbiter.py)\n- Action Verification & Concurrency Guard\n- Single Physical Movement Mutex", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            safety_filter [label="SafetyFilter (services/safety_filter.py)\n- Hardware Servo Degree Clamping\n- Speed & Velocity Ceiling Guard", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            speech_arbiter [label="SpeechArbiter (services/speech_arbiter.py)\n- Priority Audio Queue (Filler -> Status -> Final)\n- Zero-Latency Barge-In Interruption", fillcolor="#6d28d9", fontcolor="#f8fafc", color="#c4b5fd"];
+            tool_arbiter [label="ToolExecutionArbiter\n- JSON Schema Validator\n- Vision / Sensor Dependency Checker", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+        }
+
+        // 4. Memory & Spatial SLAM
+        subgraph cluster_mem_slam {
+            label = "Episodic Recall & 2D Spatial SLAM";
+            fillcolor = "#0f172a";
+            color = "#0369a1";
+            fontcolor = "#7dd3fc";
+
+            semantic_mem [label="SemanticIndex & Memory\n(services/semantic_index.py)\n- TF-IDF Relevance Ranking\n- Social Memory (User Preferences)", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            slam_engine [label="SlamEngine (services/slam.py)\n- 2D Occupancy Grid Map\n- A* Pathfinding & Waypoint Navigation", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+        }
+
+        // 5. REST API
+        subgraph cluster_agent_api {
+            label = "Agent Core API (Port: 8080 Mount)";
+            fillcolor = "#0f172a";
+            color = "#334155";
+            fontcolor = "#cbd5e1";
+
+            agent_api [label="Agent Router\n- POST /agent/step\n- POST /agent/speech/interrupt\n- GET /agent/status", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+        }
+    }
+
+    // External Connections
+    llm_service [label="AI Provider / LLM Engine\n(:8099 qwen3.5:9b / Gemini)", fillcolor="#b45309", fontcolor="#ffffff", color="#fbbf24"];
+    vlm_service [label="VLM Bridge\n(:8080/vlm Scene & Face)", fillcolor="#4338ca", fontcolor="#ffffff", color="#818cf8"];
+    voice_speak [label="Speak / TTS\n(:8083 Piper Output)", fillcolor="#7c3aed", fontcolor="#ffffff", color="#c4b5fd"];
+    arduino_hal [label="Arduino Serial HAL\n(:8091 Servos & Motors)", fillcolor="#0369a1", fontcolor="#ffffff", color="#38bdf8"];
+
+    // Internal linkages
+    agent_api -> orchestrator;
+    orchestrator -> tri_router [label="route user intent"];
+    tri_router -> layer1_reflex [label="reflexive"];
+    tri_router -> layer2_tactical [label="tactical"];
+    tri_router -> layer3_strategic [label="deliberative"];
+
+    orchestrator -> world_state [label="query current state"];
+    orchestrator -> semantic_mem [label="retrieve context"];
+    orchestrator -> laya_engine [label="companion behavior"];
+
+    layer3_strategic -> llm_service [label="chat / reasoning"];
+    layer2_tactical -> tool_arbiter [label="dispatch tool"];
+    
+    laya_engine -> speech_arbiter [label="emit latency filler (Priority 1)"];
+    orchestrator -> speech_arbiter [label="emit final response (Priority 3)"];
+    speech_arbiter -> voice_speak [label="speak(text, tone)"];
+
+    tool_arbiter -> action_arbiter;
+    action_arbiter -> safety_filter [label="clamp angles & velocity"];
+    safety_filter -> arduino_hal [label="execute physical action"];
+
+    vlm_service -> world_state [label="update visual context"];
+}
