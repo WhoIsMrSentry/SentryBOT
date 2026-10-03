@@ -469,3 +469,63 @@ def test_tri_layer_router_with_laya_integration():
 
     routed = router.route("kafanı hafifçe sağa çevir")
     assert "arduino_serial" in routed
+
+
+def test_laya_engine_extended_affect_palettes():
+    engine = _fresh_engine()
+    for affect, expected_face in [
+        ("anger", "angry"),
+        ("disgust", "disgusted"),
+        ("joy", "happy"),
+        ("fear", "fear"),
+        ("curiosity", "curious"),
+        ("sadness", "sad"),
+    ]:
+        reaction = engine.get_affective_reaction(affect)
+        assert reaction["face"] == expected_face
+        assert reaction["emotion"] in {affect, "joy", "anger", "disgust", "fear", "curiosity", "sorrow"}
+        assert reaction["led_color"].startswith("#")
+        assert "led_mode" in reaction
+        assert "body_pose" in reaction
+
+
+def test_laya_engine_disgust_urgency_intensity():
+    engine = _fresh_engine()
+    mild_rx = engine.get_affective_reaction("disgust", urgency=0.5)
+    assert mild_rx["emotion"] == "disgust"
+    assert mild_rx["led_color"] in engine.palettes["disgust"]["mild"]
+
+    intense_rx = engine.get_affective_reaction("disgust", urgency=2.0)
+    assert intense_rx["emotion"] == "disgust"
+    assert intense_rx["led_color"] in engine.palettes["disgust"]["intense"]
+
+
+def test_laya_engine_extended_mood_deltas():
+    engine = _fresh_engine()
+    from types import SimpleNamespace
+
+    dec_disgust = SimpleNamespace(affective_event="disgust", is_emergency=False, urgency_score=1.0, urgency_confidence=0.9, is_direct_command=False, target_module="other")
+    deltas = engine.get_mood_deltas(dec_disgust)
+    assert deltas.get("anger", 0) > 0
+    assert deltas.get("happiness", 0) < 0
+
+    dec_fear = SimpleNamespace(affective_event="fear", is_emergency=False, urgency_score=1.0, urgency_confidence=0.9, is_direct_command=False, target_module="other")
+    deltas_fear = engine.get_mood_deltas(dec_fear)
+    assert deltas_fear.get("fear", 0) > 0
+
+    dec_curiosity = SimpleNamespace(affective_event="curiosity", is_emergency=False, urgency_score=1.0, urgency_confidence=0.9, is_direct_command=False, target_module="other")
+    deltas_curious = engine.get_mood_deltas(dec_curiosity)
+    assert deltas_curious.get("curiosity", 0) > 0
+
+
+def test_hardware_tools_turkish_colors():
+    from modules.agent_core.services.tools.hardware_tools import _normalize_rgb
+
+    assert _normalize_rgb("kırmızı") == [255, 0, 0]
+    assert _normalize_rgb("kirmizi") == [255, 0, 0]
+    assert _normalize_rgb("yeşil") == [0, 255, 0]
+    assert _normalize_rgb("yesil") == [0, 255, 0]
+    assert _normalize_rgb("mavi") == [0, 0, 255]
+    assert _normalize_rgb("sarı") == [255, 255, 0]
+    assert _normalize_rgb("kapalı") == [0, 0, 0]
+
