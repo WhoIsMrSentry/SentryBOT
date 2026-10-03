@@ -213,8 +213,13 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                         self._bind_laya_action_request(laya_dec, request_id)
                     if laya_dec and hasattr(self.world_state, "update_laya_state"):
                         self.world_state.update_laya_state(laya_dec)
-                    if laya_dec and laya_dec.affective_event in {"user_praise", "user_rude"}:
-                        reaction = laya_eng.get_affective_reaction(laya_dec.affective_event)
+                    if laya_dec and laya_dec.affective_event in {
+                        "user_praise", "user_rude", "joy", "anger", "disgust", "fear", "curiosity", "sadness",
+                    }:
+                        reaction = laya_eng.get_affective_reaction(
+                            laya_dec.affective_event,
+                            urgency=float(getattr(laya_dec, "urgency_score", 0.0) or 0.0),
+                        )
                         if autonomy_client and hasattr(autonomy_client, "set_expression_event"):
                             autonomy_client.set_expression_event("agent.affect", reaction)
                 except Exception:

@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 import yaml
 
-from modules.common.config_loader import load_agent_config, require_dict_section
+from modules.common.config_loader import load_agent_config
 from modules.common.model_policy import get_model_policy, set_required_model
 from modules.common.ollama_url import (
     default_ollama_base_url,
@@ -18,13 +18,6 @@ from modules.common.ollama_url import (
 # Set required model globally (enforced by model_policy when strict mode enabled)
 _REQUIRED_OLLAMA_MODEL = "qwen3.5:9b"
 set_required_model(_REQUIRED_OLLAMA_MODEL)
-
-
-def _to_float(raw: Any, fallback: float) -> float:
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        return fallback
 
 
 def _required_model() -> str:
@@ -165,11 +158,5 @@ def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
     # Former batch06d/e guards, consolidated as direct passes:
     _apply_ollama_url_guard(cfg)
     _enforce_strict_models(cfg)
-
-    # Ensure tri_layer and safety sections exist
-    if not isinstance(cfg.get("tri_layer", {}), dict):
-        cfg["tri_layer"] = {}
-    if not isinstance(cfg.get("safety", {}), dict):
-        cfg["safety"] = {}
 
     return cfg

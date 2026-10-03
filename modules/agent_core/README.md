@@ -1,116 +1,123 @@
-# Agent Core
+# SentryBOT V5 — Agent Core Modülü (`modules/agent_core`)
 
-SentryBOT'un konuşma odaklı ana ajan orkestratörüdür. `AgentOrchestrator`, kullanıcı isteğini veya olay tetiklerini alır; route eder, uygun araçları çalıştırır, bellek ve dünya durumunu kullanır ve son cevabı üretir.
+SentryBOT V5'in merkezi bilişsel beyni, karar orkestratörü ve otonom davranış yöneticisidir. Çok katmanlı zekâ mimarisi (Tri-Layer Architecture), LAYA sosyal yoldaş motoru, eylem güvenlik denetçisi (`ActionArbiter`) ve dünya durumu modelini (`WorldState`) tek bir orkestrasyon çatısı altında birleştirir.
 
-## Sorumluluklar
+---
 
-- Tri-layer ajan akışı: Router/Planner, görev odaklı Sub-Agent'lar ve son Persona cevabı
-- Tool-calling ve donanım güvenlik süzgeci (ExpressionArbiter lease sistemi)
-- Epizodik bellek arama ve semantik sıralama (CognitiveMemory entegrasyonu)
-- Dünya durumu ve SLAM konumu yüzeyi
-- Eylem arbitrajı, ilerleme olayları ve gerçek zamanlı profil değiştirme
+## 🚀 Hızlı Başlangıç
 
-## Mimari (Güncel: 2026-08-20)
+### 1. Bağımlılıklar
 
-- Giriş noktası: `xAgentCoreService.py`
-- Konfigürasyon: `config_loader.py` → merkezi `config/agent.yaml` (agent section)
-- Ana orkestratör: `services/agent.py` → `AgentOrchestrator`
-- **Yeni Tool Registry**: `services/tools/` (10 dosya: action_schemas, hardware_schemas, hardware_tools, http_client, motion_tools, perception_schemas, social_tools, tool_registry, tool_schemas, vision_tools)
-- **Yeni Agent Parçaları**: `services/agent_context.py`, `agent_handlers.py`, `agent_memory_sync.py`, `agent_provider_parser.py`, `agent_streaming.py`, `agent_subagents.py`, `agent_turn.py`
-- Yardımcı servisler: `memory.py`, `memory_consolidator.py`, `world_state.py`, `expression_arbiter.py`, `idle_behavior.py`, `tri_layer.py`
-- **Arbiter'lar**: `action_arbiter.py` (aksiyon exclusive-lock hakemi), `speech_arbiter.py` (öncelikli TTS kuyruğu), `tool_execution_arbiter.py` (tool kaynak kilidi), `vision_arbiter.py` (VLM çağrı serileştirici)
-- **Diğer**: `sensor_loop.py` (donanım sensör döngüsü), `semantic_index.py` (TF-IDF semantik router), `safety_filter.py` (girdi güvenlik filtresi), `slam.py`
+```bash
+# Gerekli Python kütüphaneleri:
+pip install fastapi uvicorn requests pydantic pyyaml numpy
+```
 
-Modül hem import edilebilir kütüphane hem de bağımsız FastAPI servisi olarak çalışır.
+### 2. Ajan Servisini Başlatma
 
-## Bağımlılıklar (Güncel)
+Agent Core doğrudan Gateway (`:8080`) üzerinden koşabileceği gibi bağımsız bir mikroservis olarak da başlatılabilir:
 
-- `autonomy`: Olay ve ajan koordinasyonu (brain.agent provider)
-- `ai_provider` (eski `ollama`): LLM sağlayıcısı
-- `system_control/config_center`: Merkezi config yükleme
-- `runtime_console/logwrapper`: Merkezi log altyapısı
-- `gateway`: URL çözümleme ve tek-port entegrasyon
-- `common`: Ortak sözlükler (emotion_vocab), yardımcı fonksiyonlar
-- `cognitive_memory` (eski `social_db`): Hafıza ve araç/kontrat yardımları
-- `arduino_serial`: Donanım araçları için kontrat builder'lar
-- `expression`: ExpressionArbiter (LED/servo/OLED lease)
-- `vlm_bridge`: Vision tools için görüntü bağlamı
+```bash
+python -m modules.agent_core.xAgentCoreService
+```
 
-## API
+---
 
-Gateway altında `/agent/*` olarak yayınlanır.
+## 📂 Dizin Yapısı
 
-### Core
+```
+modules/agent_core/
+├── xAgentCoreService.py              # Bağımsız Servis Başlatıcı
+├── config_loader.py                  # YAML Yapılandırma Yükleyici
+├── architecture_agent_core.dot       # Graphviz Mimari Diyagram Kaynağı
+├── architecture_agent_core.svg       # Derlenmiş Vektörel Mimari Şema
+├── architecture_agent_core.md        # Kapsamlı Teknik & Sınıf Referansı
+├── README.md                         # Bu doküman
+├── api/                              # FastAPI Yönlendiricileri (/agent/*)
+├── domain/                           # Alan Modelleri ve Veri Yapıları
+└── services/                         # Bilişsel ve Eylemsel Servisler
+    ├── agent.py                      # AgentOrchestrator (Merkezi Karar Döngüsü)
+    ├── tri_layer.py                  # Tri-Layer Router (Refleks, Taktik, Stratejik)
+    ├── laya_engine.py                # LAYA Sosyal Yoldaş & Dolgu Cümlesi Motoru
+    ├── action_arbiter.py             # Eylem Eşzamanlılık ve Kaynak Hakemi
+    ├── safety_filter.py              # Donanım Açı ve Hız Güvenlik Kırpıcısı (Clamping)
+    ├── speech_arbiter.py             # Öncelikli Konuşma Kuyruğu & Barge-In
+    ├── world_state.py                # Merkezi Dünya Durumu & Prompt Enjeksiyonu
+    ├── progress.py                   # Çok Adımlı Hedef İlerleme Takibi (TR/EN)
+    ├── semantic_index.py             # TF-IDF Anlamsal Epizodik Bellek Arama
+    ├── slam.py                       # 2D Grid Haritalama ve A* Yol Bulucu
+    └── tools/                        # Ajan Araçları (Hareket, Algı, Donanım)
+```
 
-- `GET /agent/healthz`
-- `GET /agent/latency/latest`
-- `GET /agent/latency/{trace_id}`
-- `POST /agent/speech/interrupt`
-- `POST /agent/step`
-- `POST /agent/step_event`
-- `POST /agent/step_stream`
-- `POST /agent/route_preview`
+---
 
-### State and Memory
+## 🧠 Üç Katmanlı Bilişsel Mimari (Tri-Layer)
 
-- `GET /agent/world_state`
-- `GET /agent/memory/search`
-- `GET /agent/slam/location`
-- `GET /agent/slam/pathfind`
+1. **Katman 1: Hızlı Refleks (<50 ms):** Acil durdurma, selamlama ve ani uyanma refleksleri.
+2. **Katman 2: Taktik Planlama (50-300 ms):** Araç yürütme, engel aşma, kafa yönlendirme ve kısa yanıtlar.
+3. **Katman 3: Stratejik Muhakeme (>300 ms):** Çok adımlı derin akıl yürütme, LLM zincirleri ve uzun vadeli planlama.
 
-### Action Arbitration and Progress
+---
 
-- `GET /agent/actions/status`
-- `GET /agent/arbiters/status`
-- `GET /agent/arbiters/stream`
-- `POST /agent/actions/queue`
-- `POST /agent/actions/cancel`
-- `POST /agent/progress`
-- `POST /agent/events`
-- `GET /agent/progress/latest`
+## 💻 Python Kullanım Örnekleri
 
-### Runtime Profiles
-
-- `GET /agent/profile`
-- `POST /agent/profile/switch`
-
-## Tool Registry (YENİ)
-
-`services/tools/tool_registry.py` merkezi tool kayıt sistemi:
-- **Hardware Tools**: servo, stepper, IMU, lazer, pose, IK, track, estop
-- **Motion Tools**: animate sequences, piservo gestures
-- **Perception Tools**: VLM track, face detect, scene analysis
-- **Social Tools**: person upsert, chat episodes, preferences, relationships
-- **Vision Tools**: capture frame, IMX500 status
-- **Action Schemas**: JSON Schema tabanlı tool tanımları
-
-Her tool: `schema` (JSON Schema), `handler` (async fn), `permissions` (hardware lease gerektirir mi?)
-
-## Konfigürasyon
-
-Bu modül merkezi `config/agent.yaml` içindeki `agent` bölümünü okur.
-
-- `llm.provider`: `ollama` veya `google_ai_studio` (→ `ai_provider` modülü)
-- `agent.model`, `agent.request_timeout`
-- `tri_layer.*` (router, subagents, persona)
-- `realtime_profile.*` (hız/kalite profilleri)
-- `tools.hardware_lease_required`: donanım araçları için ExpressionArbiter lease
-
-`ai_provider` profili aktifse model `qwen3.5:9b` olmalıdır.
-
-## Kullanım
-
+### 1. AgentOrchestrator ile Adım Yürütme
 ```python
 from modules.agent_core.services.agent import AgentOrchestrator
 
-agent = AgentOrchestrator(config, autonomy_client=client)
-agent.start()
-result = agent.step("Ortamı tara ve bana kimlerin burada olduğunu söyle.")
-print(result["text"])
+orchestrator = AgentOrchestrator()
+
+# Bir karar adımı koştur
+response = orchestrator.step("Etrafı tara ve şüpheli bir şey var mı bak.")
+print("Ajan Cevabı:", response.get("speech"))
+print("Yürütülen Eylemler:", response.get("actions"))
 ```
 
-## İlgili Belgeler
+### 2. Güvenli Eylem Denetimi (`SafetyFilter`)
+```python
+from modules.agent_core.services.safety_filter import SafetyFilter
 
-- `architecture_agent_core.md`
-- `MIGRATION_TRI_LAYER.md`
-- `services/tools/__init__.py` docstring (tool registry detayları)
+safety = SafetyFilter()
+
+# Aşırı servoyu güvenli sınıra (10-170 derece) kırpar
+clamped_deg = safety.clamp_servo(index=0, deg=210.0)
+print("Kırpılmış Güvenli Açı:", clamped_deg) # 170.0
+```
+
+---
+
+## 🌐 HTTP REST API Örnekleri (cURL)
+
+### 1. Akıllı Diyalog ve Görev Yürütme
+```bash
+curl -X POST http://127.0.0.1:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Devriye moduna geç ve çevreyi izle."}'
+```
+
+### 2. Konuşmayı Anında Kesme (Barge-In)
+```bash
+curl -X POST http://127.0.0.1:8080/agent/speech/interrupt
+```
+
+### 3. Ajan ve Dünya Durumunu Sorgulama
+```bash
+curl -X GET http://127.0.0.1:8080/agent/status
+```
+
+---
+
+## 🧪 Testleri Çalıştırma
+
+Tri-layer router, LAYA motoru, güvenlik süzgeci ve anlamsal bellek testlerini koşturmak için:
+
+```bash
+pytest tests/modules/agent_core -v
+```
+
+---
+
+## 🔗 Detaylı Belgeler
+- [architecture_agent_core.md](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/agent_core/architecture_agent_core.md): Sınıf, metot, algoritma ve parametre düzeyinde derin mimari dokümanı.
+- [architecture_agent_core.dot](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/agent_core/architecture_agent_core.dot): Graphviz formatında modüler bilişsel beyin çizimi.
+- [architecture_agent_core.svg](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/agent_core/architecture_agent_core.svg): Vektörel mimari şeması.
