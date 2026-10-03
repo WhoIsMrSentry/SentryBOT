@@ -9,17 +9,17 @@ except Exception:
 DEFAULT_CONFIG: Dict[str, Any] = {
     "server": {"host": "0.0.0.0", "port": 8080},
     "include": {
-    "arduino": True,
-    "vlm_bridge": True,
-    "neopixel": True,
-    "interactions": True,
-    "speak": True,
-    "speech": True,
-    "ollama": True,
-    "camera": True,
-    "logs": True,
-    "animate": True,
-    "piservo": True,
+        "arduino": True,
+        "vlm_bridge": True,
+        "neopixel": True,
+        "interactions": True,
+        "speak": True,
+        "speech": True,
+        "ollama": True,
+        "camera": True,
+        "logs": True,
+        "animate": True,
+        "piservo": True,
     },
 }
 
