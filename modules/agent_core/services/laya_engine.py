@@ -39,6 +39,100 @@ FAST_ACK_EN = [
 ]
 
 
+_DEFAULT_AFFECT_PALETTES: Dict[str, Dict[str, Any]] = {
+    "anger": {
+        "anim_mild": "slow_breathe",
+        "anim_intense": "strobe",
+        "mild": ["#8B0000", "#A52A2A", "#B22222"],
+        "intense": ["#FF0000", "#FF1E00", "#DC143C"],
+        "face": "angry",
+        "emotion": "anger",
+        "oled_text": ">_<",
+        "body_pose": {"pan_delta": -4, "tilt_delta": 6},
+    },
+    "user_rude": {
+        "anim_mild": "slow_breathe",
+        "anim_intense": "strobe",
+        "mild": ["#ff3333", "#8B0000"],
+        "intense": ["#FF0000", "#DC143C"],
+        "face": "sad",
+        "emotion": "sorrow",
+        "oled_text": ":'(",
+        "body_pose": {"pan_delta": -3, "tilt_delta": 5},
+    },
+    "disgust": {
+        "anim_mild": "flicker",
+        "anim_intense": "flicker",
+        "mild": ["#556B2F", "#6B8E23", "#4A5D23"],
+        "intense": ["#808000", "#7FFF00", "#2E8B57"],
+        "face": "disgusted",
+        "emotion": "disgust",
+        "oled_text": ":P",
+        "body_pose": {"pan_delta": -6, "tilt_delta": -4},
+    },
+    "joy": {
+        "anim_mild": "breathe",
+        "anim_intense": "pulse",
+        "mild": ["#00FF88", "#20B2AA", "#3CB371"],
+        "intense": ["#00FFCC", "#39FF14", "#FFD700"],
+        "face": "happy",
+        "emotion": "joy",
+        "oled_text": "^_^",
+        "body_pose": {"pan_delta": 5, "tilt_delta": -3},
+    },
+    "user_praise": {
+        "anim_mild": "breathe",
+        "anim_intense": "pulse",
+        "mild": ["#00ff88", "#20B2AA"],
+        "intense": ["#00FFCC", "#39FF14"],
+        "face": "happy",
+        "emotion": "joy",
+        "oled_text": "^_^",
+        "body_pose": {"pan_delta": 5, "tilt_delta": -3},
+    },
+    "fear": {
+        "anim_mild": "slow_fade",
+        "anim_intense": "rapid_flash",
+        "mild": ["#483D8B", "#4B0082"],
+        "intense": ["#FF1493", "#FF0033"],
+        "face": "fear",
+        "emotion": "fear",
+        "oled_text": "O_O",
+        "body_pose": {"pan_delta": 0, "tilt_delta": 8},
+    },
+    "curiosity": {
+        "anim_mild": "static",
+        "anim_intense": "sweep",
+        "mild": ["#4682B4", "#5F9EA0"],
+        "intense": ["#00D4FF", "#00FFFF"],
+        "face": "curious",
+        "emotion": "curiosity",
+        "oled_text": "o_O",
+        "body_pose": {"pan_delta": 6, "tilt_delta": 2},
+    },
+    "sadness": {
+        "anim_mild": "slow_breathe",
+        "anim_intense": "slow_fade",
+        "mild": ["#1E3A8A", "#2563EB"],
+        "intense": ["#1D4ED8", "#1E40AF"],
+        "face": "sad",
+        "emotion": "sorrow",
+        "oled_text": ":'(",
+        "body_pose": {"pan_delta": -3, "tilt_delta": 5},
+    },
+    "neutral": {
+        "anim_mild": "static",
+        "anim_intense": "breathe",
+        "mild": ["#00D4FF", "#4060FF"],
+        "intense": ["#00D4FF", "#4060FF"],
+        "face": "neutral",
+        "emotion": "neutral",
+        "oled_text": "-_-",
+        "body_pose": {"pan_delta": 0, "tilt_delta": 0},
+    },
+}
+
+
 @dataclass
 class LayaDecision:
     """Represents a single System 1 reflex decision from the Laya neural model."""
@@ -112,7 +206,14 @@ class LayaEngine:
         "affective_event": {
             "type": "choice",
             "instructions": "Kullanıcının robota karşı duygusal/sosyal tutumu nedir?",
+            "instructions": "Kullanıcının robota karşı duygusal/sosyal tutumu veya sözündeki duygu nedir?",
             "criteria": {
+                "joy": "Övgü, tebrik, sevinç, sevgi, memnuniyet, teşekkür veya aferin",
+                "anger": "Öfke, kızgınlık, kabalık, hakaret, küfür, susturma veya bağırma",
+                "disgust": "İğrenme, tiksinti, beğenmeme, küçümseme, hoşnutsuzluk veya iticilik",
+                "fear": "Korku, panik, endişe, ürkme, tehlike veya kaza riski",
+                "curiosity": "Merak, soru sorma, keşfetme veya inceleme isteği",
+                "sadness": "Üzüntü, keder, mutsuzluk, yorgunluk veya yalnızlık",
                 "user_praise": "Övgü, sevgi, aferin, teşekkür, iltifat veya sevme",
                 "user_rude": "Kabalık, hakaret, küfür, susturma veya kızgınlık",
                 "neutral": "Duygusal olmayan nötr komut veya bilgi sorusu",
@@ -174,6 +275,8 @@ class LayaEngine:
         self.mood_impact_scale = float(affect_cfg.get("mood_impact_scale", 1.0))
         self.vision_events_enabled = bool(affect_cfg.get("vision_events", True))
         self.face_emotion_events_enabled = bool(affect_cfg.get("face_emotion_events", True))
+        self.palettes = self._init_palettes(affect_cfg.get("palettes"))
+        self._last_palette_colors: Dict[str, str] = {}
 
         urgency_cfg = _cfg.get("urgency", {}) if isinstance(_cfg.get("urgency"), dict) else {}
         self.emergency_threshold = float(urgency_cfg.get("emergency_threshold", 2.0))
@@ -580,35 +683,53 @@ class LayaEngine:
             return random.choice(FAST_ACK_EN)
         return random.choice(FAST_ACK_TR)
 
-    def get_affective_reaction(self, affect: str) -> Dict[str, Any]:
-        """Maps detected affective event to immediate OLED face, LED, and emotion."""
-        reactions: Dict[str, Dict[str, Any]] = {
-            "user_praise": {
-                "face": "happy",
-                "emotion": "joy",
-                "oled_text": "^_^",
-                "led_color": "#00ff88",
-                "led_mode": "pulse",
-                "body_pose": {"pan_delta": 5, "tilt_delta": -3},
-            },
-            "user_rude": {
-                "face": "sad",
-                "emotion": "sorrow",
-                "oled_text": ":'(",
-                "led_color": "#ff3333",
-                "led_mode": "slow_breathe",
-                "body_pose": {"pan_delta": -3, "tilt_delta": 5},
-            },
+    @staticmethod
+    def _init_palettes(cfg_palettes: Optional[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        palettes: Dict[str, Dict[str, Any]] = {k: dict(v) for k, v in _DEFAULT_AFFECT_PALETTES.items()}
+        if isinstance(cfg_palettes, dict):
+            for k, custom in cfg_palettes.items():
+                if not isinstance(custom, dict):
+                    continue
+                k_norm = str(k).strip().lower()
+                base = dict(palettes.get(k_norm, _DEFAULT_AFFECT_PALETTES.get("neutral", {})))
+                base.update(custom)
+                palettes[k_norm] = base
+        return palettes
+
+    def get_affective_reaction(self, affect: str, urgency: float = 0.0) -> Dict[str, Any]:
+        """Maps detected affective event to immediate OLED face, LED color cluster, and pose."""
+        normalized = str(affect or "neutral").strip().lower()
+        alias_map = {
+            "praise": "user_praise",
+            "rude": "user_rude",
+            "insult": "anger",
+            "scared": "fear",
+            "curious": "curiosity",
+            "sorrow": "sadness",
         }
-        if affect in reactions:
-            return dict(reactions[affect])
+        key = alias_map.get(normalized, normalized)
+        entry = self.palettes.get(key) or self.palettes.get("neutral", _DEFAULT_AFFECT_PALETTES["neutral"])
+
+        is_intense = float(urgency) >= self.high_urgency_threshold
+        pool = entry.get("intense" if is_intense else "mild", [])
+        if not pool:
+            pool = entry.get("mild") or entry.get("intense") or ["#00d4ff"]
+
+        # Anti-flicker: pick a color from pool, preferring different from last used for this affect if possible
+        last_color = self._last_palette_colors.get(key)
+        candidates = [c for c in pool if c != last_color] if len(pool) > 1 else pool
+        chosen_color = random.choice(candidates if candidates else pool)
+        self._last_palette_colors[key] = chosen_color
+
+        anim_mode = entry.get("anim_intense" if is_intense else "anim_mild", "pulse" if is_intense else "static")
+
         return {
-            "face": "neutral",
-            "emotion": "neutral",
-            "oled_text": "-_-",
-            "led_color": "#00d4ff",
-            "led_mode": "static",
-            "body_pose": {"pan_delta": 0, "tilt_delta": 0},
+            "face": entry.get("face", "neutral"),
+            "emotion": entry.get("emotion", "neutral"),
+            "oled_text": entry.get("oled_text", "-_-"),
+            "led_color": chosen_color,
+            "led_mode": anim_mode,
+            "body_pose": dict(entry.get("body_pose", {"pan_delta": 0, "tilt_delta": 0})),
         }
 
     def get_telemetry(self) -> Dict[str, Any]:
@@ -650,13 +771,25 @@ class LayaEngine:
         scale = self.mood_impact_scale
         deltas: Dict[str, float] = {}
 
-        if dec.affective_event == "user_praise":
+        affect = str(getattr(dec, "affective_event", "") or "").strip().lower()
+        if affect in ("user_praise", "joy"):
             deltas["happiness"] = 25.0 * scale
             deltas["anger"] = -15.0 * scale
-        elif dec.affective_event == "user_rude":
+        elif affect in ("user_rude", "anger"):
             deltas["anger"] = 30.0 * scale
             deltas["happiness"] = -25.0 * scale
             deltas["fear"] = 10.0 * scale
+        elif affect == "disgust":
+            deltas["anger"] = 15.0 * scale
+            deltas["happiness"] = -15.0 * scale
+        elif affect == "fear":
+            deltas["fear"] = 25.0 * scale
+            deltas["energy"] = -10.0 * scale
+        elif affect == "sadness":
+            deltas["happiness"] = -20.0 * scale
+            deltas["energy"] = -10.0 * scale
+        elif affect == "curiosity":
+            deltas["curiosity"] = 20.0 * scale
 
         if bool(getattr(dec, "is_emergency", False)):
             deltas["fear"] = deltas.get("fear", 0.0) + 20.0 * scale
