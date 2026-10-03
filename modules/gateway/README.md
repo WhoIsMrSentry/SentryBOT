@@ -1,134 +1,108 @@
-# Gateway
+# SentryBOT V5 — Gateway Modülü (`modules/gateway`)
 
-SentryBOT'un tek FastAPI sürecinde tüm modül router'larını birleştiren ana giriş kapısıdır. Üretim modunda robot tek port üzerinden hizmet verir.
+SentryBOT V5'in tüm dış istemciler (Web Arayüzü, Mobil Panel, REST/SSE istemcileri) ve modüller arası dahili iletişim trafiğini tek bir çatı altında birleştiren merkezi ters vekili (reverse proxy) ve API ağ geçididir. Robotun üretim ortamında tek bir port (`:8080`) üzerinden kararlı ve güvenli hizmet vermesini sağlar.
 
-## Sorumluluklar
+---
 
-- Modül router'larını mount etme ve başlatma (`bootstrap`)
-- Merkezi sağlık, durum ve derin sağlık kontrolü
-- İsteğe bağlı API anahtarı ve rol tabanlı güvenlik katmanı
-- Modüller arası kablolama: Arduino↔NeoPixel, VLM↔Autonomy, Speech↔Interactions vb.
-- `resolve_gateway_base_url` ile loopback URL çözümleme (modüller tarafından kullanılır)
+## 🚀 Hızlı Başlangıç
 
-## Mimari (Güncel: 2026-08-20)
-
-- Giriş noktası: `xGatewayService.py`
-- **Bootstrap** (parçalanmış):
-  - `services/bootstrap.py` - Ana orchestration
-  - `services/bootstrap_config.py` - Config helpers, agent section merge, runtime keys
-  - `services/bootstrap_ai.py` - AI/Expression modülleri (vlm_bridge, autonomy, agent_core, expression, voice, animate, oled_faces)
-  - `services/bootstrap_hardware.py` - Hardware modülleri (arduino, camera, neopixel, piservo, esp_link)
-  - `services/bootstrap_ops.py` - Platform modülleri (social_db, logs, notifier, runtime_console, state_manager, scheduler, config_center)
-- Çekirdek router: `api/router.py`
-- URL yardımcıları: `url.py`
-- Konfigürasyon: `config/config.yml` + `config/agent.yaml` birleşimi
-
-## Bootstrap Davranışı
-
-`bootstrap(app, cfg)` modülleri `include.<module>` bayraklarına göre yükler.
-
-**Config.yml'deki `include` anahtarları (eski isimler - bootstrap map'inde yeni yollara yönlendirilir):**
-
-| Config Key | Gerçek Modül Yolu | Bootstrap Fonksiyonu |
-|------------|-------------------|---------------------|
-| `social_db` | `cognitive_memory` | `_include_social_db` |
-| `arduino` | `arduino_serial` | `_include_arduino` |
-| `esp_link` | `arduino_serial.transports.esp_transport` | `_include_esp_link` |
-| `camera` | `camera` | `_include_camera` |
-| `vlm_bridge` | `vlm_bridge` | `_include_vlm_bridge` |
-| `neopixel` | `visual_output/neopixel` | `_include_neopixel` |
-| `interactions` | `expression/interactions` | `_include_interactions` |
-| `expression` | `expression` | `_include_expression` |
-| `speak` | `voice/speak` | `_include_speak` |
-| `wakeword` | `voice/wakeword` | `_include_wakeword` |
-| `speech` | `voice/speech` | `_include_speech` |
-| `ollama` | `ai_provider` | `_include_ollama` |
-| `logs` | `runtime_console/logwrapper` | `_include_logs` |
-| `animate` | `expression/animate` | `_include_animate` |
-| `piservo` | `expression/piservo` | `_include_piservo` |
-| `autonomy` | `autonomy` | `_include_autonomy` |
-| `agent_core` | `agent_core` | `_include_agent_core` |
-| `oled_faces` | `visual_output/oled_faces` | `_include_oled_faces` |
-| `notifier` | `system_control/notifier` | `_include_notifier` |
-| `runtime_console` | `runtime_console` | `_include_runtime_console` |
-
-**Kritik modüller** (mount hatası `error` seviyesinde loglanır):
-- `arduino`, `camera`, `autonomy`, `agent_core`, `speech`, `wakeword`, `speak`, `ollama`
-
-**Import-tabanlı mount** (`_IMPORT_MODULES` - `system_control` alt modülleri):
-- `telemetry` → `system_control.telemetry`
-- `diagnostics` → `system_control.diagnostics`
-
-**Opsiyonel mount** (ayrı fonksiyonlar):
-- `state_manager` → `system_control/state_manager` (`_mount_state_manager`)
-- `scheduler` → `system_control/scheduler` (`_mount_scheduler`)
-- `config_center` → `system_control/config_center` (`_mount_config_center`)
-
-**Bootstrap sonrası kablolama (wire functions):**
-- `_wire_arduino_neopixel` - Arduino event `neopixel_request` → NeoRunner (ExpressionArbiter lease ile)
-- `_wire_arduino_autonomy` - Arduino hardware events (cliff, bump, estop) → Autonomy brain
-- `_wire_vlm_autonomy` - VLM bridge → Autonomy (vision context)
-- `_wire_onsensor_vlm` - IMX500 bus → VLM bridge
-- `_wire_head_arbiter` - HeadControlArbiter shared instance
-- `_wire_animate_piservo` - Animate ↔ Piservo (ear channels)
-- `_wire_interactions_piservo` - Interactions events → Piservo gestures
-- `_wire_wakeword_interactions` - Wakeword → Interactions/NeoPixel
-- `_wire_speech_interactions` - Speech → Interactions
-
-## API
-
-- `GET /healthz` — Startup durumu + modül bazlı sağlık
-- `GET /status` — Include/start farkı
-- `GET /health` — Derin sağlık taraması (httpx varsa)
-
-Route listesi ayrı bir HTTP endpoint'i olarak sunulmaz; mount edilen tüm route'lar `api/router.py` içindeki `ROUTE_MANIFEST` sabitinde tutulur.
-
-Mount edilen modüller kendi prefix'leri altında yayınlanır:
-- `/arduino/*` - Arduino serial
-- `/vlm/*` - VLM Bridge
-- `/camera/*` - Camera
-- `/neopixel/*` - Visual Output NeoPixel
-- `/oled_faces/*` - Visual Output OLED
-- `/expression/*` - Expression (semantic state, express tool)
-- `/expression/animate/*` - Animate sequences
-- `/expression/piservo/*` - Piservo ears
-- `/expression/interactions/*` - Interactions rules
-- `/voice/speech/*` - Speech ASR/DoA
-- `/voice/speak/*` - Speak TTS
-- `/voice/wakeword/*` - Wakeword
-- `/autonomy/*` - Autonomy brain
-- `/agent/*` - Agent Core
-- `/cognitive/*` - Cognitive Memory (SocialDB)
-- `/system/*` - System Control (telemetry, diagnostics, scheduler, state, config, notifier)
-- `/ai_provider/*` - LLM Provider (Ollama)
-- `/runtime_console/*` - TUI / Logs
-
-## Konfigürasyon
-
-`modules/gateway/config/config.yml`:
-- `server.host`, `server.port` (default: 0.0.0.0:8080)
-- `include.*` — Modül aç/kapa (yukarıdaki tablo)
-- `security.enabled`, `security.api_key`, `security.admin_roles`
-- `protected_get_prefixes` - Hassas GET uçları (camera, speech, state, telemetry, vlm, agent, autonomy, social)
-- `arduino_neopixel_bridge.expression_lease` - Arduino NeoPixel bridge lease config
-
-Güvenlik etkinse yazma uçları `X-API-Key` bekler; admin prefix'leri ek rol kontrolü uygular. `trust_loopback: true` ile localhost'tan key'siz erişim izin verilir.
-
-## Çalıştırma
+### 1. Bağımlılıklar
 
 ```bash
-# Gateway tek başına
-python -m modules.gateway.xGatewayService
-
-# Üretim: run_robot.py (TUI + gateway + services)
-python run_robot.py
-
-# Docker
-docker compose up --build -d
+# Gerekli Python kütüphaneleri:
+pip install fastapi uvicorn requests pyyaml
 ```
 
-## İlişkiler
+### 2. Gateway'i Başlatma
 
-Gateway, projedeki modüller arası entegrasyonun omurgasıdır. Diğer modüller bağımsız servis olarak da çalışabilir (`uvicorn modules.xxx.xXxxService:create_app --factory`); ancak Pi5 üretim senaryosunda gateway tek süreç modelini sağlar.
+```bash
+# Gateway'i varsayılan 8080 portunda koşturma:
+python -m modules.gateway.xGatewayService
+```
 
-**Önemli:** `config.yml` hala **eski modül isimlerini** kullanıyor (bootstrap `_include_map` yeni yollara yönlendirir). Gelecekte config.yml de yeni isimlere güncellenebilir.
+---
+
+## 📂 Dizin Yapısı
+
+```
+modules/gateway/
+├── xGatewayService.py                # Merkezi FastAPI Uygulaması ve Başlatıcı (:8080)
+├── url.py                            # Gateway Self-URL ve Loopback Döngü Koruması
+├── config_loader.py                  # YAML Yapılandırma Yükleyici
+├── architecture_gateway.dot          # Graphviz Mimari Diyagram Kaynağı
+├── architecture_gateway.svg          # Derlenmiş Vektörel Mimari Şema
+├── architecture_gateway.md           # Kapsamlı Teknik & Sınıf Referansı
+├── README.md                         # Bu doküman
+├── api/
+│   └── router.py                     # Kök Sağlık ve Durum Uç Noktaları (/healthz, /status)
+└── services/                         # Modüler Önyükleme (Bootstrapper) Katmanı
+    ├── bootstrap.py                  # Ana Orkestrasyon ve Yaşam Döngüsü
+    ├── bootstrap_config.py           # agent.yaml ve Bayrak Değerlendirici
+    ├── bootstrap_hardware.py         # Donanım Modülleri Montajı (/arduino, /camera, /visual_output)
+    ├── bootstrap_ai.py               # Yapay Zeka Modülleri Montajı (/ollama, /vlm, /memory)
+    ├── bootstrap_ops.py              # Platform Modülleri Montajı (/system, /console)
+    ├── agent_core_binding.py         # Agent Core Orkestratör Bağlantısı (/agent, /chat)
+    └── agent_api_compat.py           # Geriye Dönük Uyumluluk Şimleri (/speak, /speech, /events)
+```
+
+---
+
+## 🛠️ Modül Montaj Bayrakları (`include.*`)
+
+Gateway, `config/agent.yaml` içerisindeki bayraklara göre servisleri çalışma zamanında dinamik olarak bağlar:
+
+| Bayrak | Montaj Yolu | Açıklama |
+|---|---|---|
+| `include.camera` | `/camera` | Kamera servisi (IMX500, RTSP) |
+| `include.arduino` | `/arduino` | Seri mikrodenetleyici donanım HAL |
+| `include.ollama` | `/ollama` | LLM yapay zekâ servisi (Yerel Ollama / Gemini) |
+| `include.voice` | `/speak`, `/speech` | Konuşma sentezi (TTS) ve tanıma (STT) |
+| `include.visual_output` | `/oled_faces`, `/neopixel` | OLED yüz ifadeleri ve RGB LED halkası |
+| `include.vlm` | `/vlm` | Çok modlu görme köprüsü |
+| `include.memory` | `/memory` | Epizodik ve anlamsal bilişsel bellek |
+| `include.agent_core` | `/agent`, `/chat` | Merkezi bilişsel ajan orkestratörü |
+
+---
+
+## 🌐 HTTP REST API Örnekleri (cURL)
+
+### 1. Sistem Sağlık ve Aktif Modül Kontrolü
+```bash
+curl -X GET http://127.0.0.1:8080/healthz
+```
+
+### 2. Doğrudan Ajanla Sohbet (/chat)
+```bash
+curl -X POST http://127.0.0.1:8080/chat \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Merhaba Sentry, devriye durumunu bildir."}'
+```
+
+### 3. Kamera Görüntüsü Alma
+```bash
+curl -X GET http://127.0.0.1:8080/camera/capture --output snapshot.jpg
+```
+
+### 4. Robotu Konuşturma (/speak/say şimi üzerinden)
+```bash
+curl -X POST http://127.0.0.1:8080/speak/say \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Sistemler hazır.", "tone": "happy"}'
+```
+
+---
+
+## 🧪 Testleri Çalıştırma
+
+Gateway önyükleme, dinamik montaj ve URL koruma testlerini çalıştırmak için:
+
+```bash
+pytest tests/modules/gateway -v
+```
+
+---
+
+## 🔗 Detaylı Belgeler
+- [architecture_gateway.md](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/gateway/architecture_gateway.md): Sınıf, metot, algoritma ve parametre düzeyinde derin mimari dokümanı.
+- [architecture_gateway.dot](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/gateway/architecture_gateway.dot): Graphviz formatında modüler ağ geçidi çizimi.
+- [architecture_gateway.svg](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/gateway/architecture_gateway.svg): Vektörel mimari şeması.
