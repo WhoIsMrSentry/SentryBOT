@@ -1,0 +1,106 @@
+// Graphviz Architecture: modules/autonomy
+// SentryBOT V5 - Autonomous Life, Needs Engine & Self-Directed Behavior
+digraph autonomy_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_autonomy {
+        label = "modules.autonomy (Autonomous Life & Companion Engine)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#10b981";
+        fontcolor = "#34d399";
+        fontsize = 12;
+
+        // 1. Needs Engine & Mood Space
+        subgraph cluster_needs_mood {
+            label = "Living Needs & Affective Appraisal";
+            fillcolor = "#0f172a";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+
+            needs_engine [label="NeedsEngine (services/needs_engine.py)\n- Needs: Energy, Social, Curiosity, Play, Rest\n- Decay Functions & Homeostatic Balancer", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            mood_engine [label="MoodEngine (services/mood.py)\n- Valence / Arousal 2D Affective Space\n- Sensory Appraisal & Hazard Reactions", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+        }
+
+        // 2. Companion Goals & Spontaneous Behaviors
+        subgraph cluster_companion_goals {
+            label = "Goal Selection & Companion Routines";
+            fillcolor = "#0f172a";
+            color = "#0d9488";
+            fontcolor = "#5eead4";
+
+            goal_selector [label="CompanionGoalSelector\n(services/companion_goal_selector.py)\n- Proactive Idle Goal Decision\n- Explore / Greet Owner / Recharge", fillcolor="#115e59", fontcolor="#f8fafc", color="#2dd4bf"];
+            goal_gate [label="AutoExecuteGate\n- Safety Permission Evaluator\n- Operator In-The-Loop Checks", fillcolor="#115e59", fontcolor="#f8fafc", color="#2dd4bf"];
+            companion_lines [label="CompanionLines\n- Contextual Spontaneous Remarks\n- TR/EN Conversational Prompts", fillcolor="#134e4a", fontcolor="#f8fafc", color="#14b8a6"];
+            companion_rituals [label="CompanionRituals\n- Morning Greeting / Night Routine\n- Idle Stretching & Head Tilt", fillcolor="#134e4a", fontcolor="#f8fafc", color="#14b8a6"];
+        }
+
+        // 3. Reflexes & Safe Navigation
+        subgraph cluster_reflex_nav {
+            label = "Reflex Control & Topological Navigation";
+            fillcolor = "#0f172a";
+            color = "#0284c7";
+            fontcolor = "#7dd3fc";
+
+            system1_reflex [label="System1Reflex (services/system1_reflex.py)\n- Sub-50ms Collision Aversion\n- Sudden Touch / Loud Sound React", fillcolor="#0369a1", fontcolor="#f8fafc", color="#38bdf8"];
+            topomap_nav [label="TopomapMotionExecutor\n- Node-Based Topological Navigation\n- Waypoint Execution & Patrol Loops", fillcolor="#0369a1", fontcolor="#f8fafc", color="#38bdf8"];
+        }
+
+        // 4. Visual Saliency & World Memory
+        subgraph cluster_saliency_world {
+            label = "Visual Saliency & Perception Bridges";
+            fillcolor = "#0f172a";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+
+            saliency_map [label="SaliencyMap (services/saliency_map.py)\n- Object Interest Scoring\n- Faces > Moving > Unknown", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            context_bridges [label="PerceptionBridges\n- VisionContextBridge (VLM Ingestion)\n- AudioEventNeedsBridge (Voice Ingestion)", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            scene_register [label="SceneRegister (services/scene_register.py)\n- Object Spatial Registry & Cache\n- Persistent Freshness Metadata", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#8b5cf6"];
+        }
+
+        // 5. REST API
+        subgraph cluster_autonomy_api {
+            label = "Autonomy API Surface (:8080/autonomy)";
+            fillcolor = "#0f172a";
+            color = "#334155";
+            fontcolor = "#cbd5e1";
+
+            autonomy_api [label="Autonomy Router\n- GET /autonomy/status\n- GET /autonomy/needs\n- POST /autonomy/goals/select\n- POST /autonomy/speech", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+        }
+    }
+
+    // External Connections
+    vlm_mod [label="VLM Bridge\n(:8080/vlm)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    voice_mod [label="Voice Subsystem\n(:8083 / :8084)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    agent_core_mod [label="Agent Core\n(Cognitive Brain)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    expression_mod [label="Expression Subsystem\n(Emotional Output)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    arduino_hal [label="Arduino Serial HAL\n(:8091)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+
+    // Internal linkages
+    vlm_mod -> context_bridges [label="scene & face events"];
+    voice_mod -> context_bridges [label="wakeword & audio energy"];
+
+    context_bridges -> needs_engine [label="update hunger/social/curiosity"];
+    context_bridges -> mood_engine [label="appraise valence/arousal"];
+    context_bridges -> saliency_map [label="identify focus target"];
+
+    needs_engine -> goal_selector [label="needs state vector"];
+    mood_engine -> goal_selector [label="affective state"];
+    saliency_map -> goal_selector [label="salient target"];
+
+    goal_selector -> goal_gate [label="request execution"];
+    goal_gate -> topomap_nav [label="if motion permitted"];
+    goal_gate -> companion_lines [label="if speech permitted"];
+    goal_gate -> companion_rituals [label="if ritual active"];
+
+    system1_reflex -> arduino_hal [label="fast emergency stop", color="#ef4444", style="bold"];
+    topomap_nav -> arduino_hal [label="drive commands"];
+
+    companion_lines -> voice_mod [label="speak spontaneous line"];
+    mood_engine -> expression_mod [label="set emotional mood"];
+
+    goal_selector -> agent_core_mod [label="delegate complex goal"];
+    autonomy_api -> goal_selector [style="dotted"];
+}
