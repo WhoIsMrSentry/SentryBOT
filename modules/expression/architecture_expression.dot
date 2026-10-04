@@ -1,0 +1,94 @@
+// Graphviz Architecture: modules/expression
+// SentryBOT V5 - Unified Expression, Motion Choreography & Emotional Output
+digraph expression_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_expression {
+        label = "modules.expression (Unified Emotional Choreography & Expression)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#f43f5e";
+        fontcolor = "#fb7185";
+        fontsize = 12;
+
+        // 1. Semantic Expression Director
+        subgraph cluster_semantic {
+            label = "Semantic Expression Director (semantic/)";
+            fillcolor = "#0f172a";
+            color = "#e11d48";
+            fontcolor = "#fda4af";
+
+            semantic_director [label="xExpressionService\n(semantic/xExpressionService.py)\n- High-Level Emotional Choreographer\n- Multi-Modal Expression State", fillcolor="#9f1239", fontcolor="#f8fafc", color="#fb7185"];
+            expr_arbitrator [label="ExpressionArbitrator\n- Intensity Scaling (0.0 .. 1.0)\n- Visual State Mutex & Lock Guard\n- Synchronized Output Plan", fillcolor="#be123c", fontcolor="#f8fafc", color="#fda4af"];
+        }
+
+        // 2. Interaction Events & State Machine
+        subgraph cluster_interactions {
+            label = "Interaction Router (interactions/)";
+            fillcolor = "#0f172a";
+            color = "#d97706";
+            fontcolor = "#fde68a";
+
+            interactions_svc [label="xInteractionsService\n(interactions/xInteractionsService.py)\n- Event Stream Processor\n- Quiet Hours Filter", fillcolor="#92400e", fontcolor="#f8fafc", color="#fbbf24"];
+            companion_dispatch [label="CompanionEventDispatcher\n- Maps events to LED/Face modes\n- wakeword, speech, person_spotted", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+        }
+
+        // 3. Multi-Joint Keyframe & Procedural Animation
+        subgraph cluster_animate {
+            label = "Procedural Animation (animate/)";
+            fillcolor = "#0f172a";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+
+            animate_svc [label="xAnimateService\n(animate/xAnimateService.py)\n- Poses: sit, stand, stretch, nod\n- Multi-Modal Trigger (OLED + LEDs)", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            procedural_motion [label="ProceduralMotion\n- Natural Breathing Sine Waves\n- Head Jitter & Life Pulsing", fillcolor="#6d28d9", fontcolor="#f8fafc", color="#c4b5fd"];
+        }
+
+        // 4. Auxiliary Expressive Servos (Ears)
+        subgraph cluster_piservo {
+            label = "Ear Expressive Servos (piservo/)";
+            fillcolor = "#0f172a";
+            color = "#0284c7";
+            fontcolor = "#7dd3fc";
+
+            piservo_svc [label="xPiServoService\n(piservo/xPiServoService.py)\n- Dedicated Ear PWM Hardware Driver\n- PCA9685 / PiGPIO Controller", fillcolor="#0369a1", fontcolor="#f8fafc", color="#38bdf8"];
+            ear_reflex [label="EarReflexEngine\n- Left / Right Sound Reflex\n- Happy Perk Up / Sad Droop", fillcolor="#075985", fontcolor="#f8fafc", color="#7dd3fc"];
+        }
+
+        // 5. REST API
+        subgraph cluster_expression_api {
+            label = "Expression API Surface (:8080/expression)";
+            fillcolor = "#0f172a";
+            color = "#334155";
+            fontcolor = "#cbd5e1";
+
+            expr_api [label="Expression Router\n- POST /expression/express\n- POST /expression/animate\n- POST /expression/ears\n- GET /expression/status", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+        }
+    }
+
+    // External Connections
+    oled_faces [label="visual_output/oled_faces\n(Facial Eyes Display)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    neopixel [label="visual_output/neopixel\n(RGB LED Strip)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    arduino_hal [label="arduino_serial HAL\n(Head Pan/Tilt Servos)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    gateway_events [label="Gateway EventBus\n(System Events)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+
+    // Internal linkages
+    expr_api -> semantic_director;
+    semantic_director -> expr_arbitrator;
+
+    gateway_events -> interactions_svc [label="push_event"];
+    interactions_svc -> companion_dispatch;
+    companion_dispatch -> semantic_director [label="trigger emotional mode"];
+
+    semantic_director -> animate_svc [label="execute gesture"];
+    animate_svc -> procedural_motion;
+    semantic_director -> piservo_svc [label="set ear angles"];
+    piservo_svc -> ear_reflex;
+
+    // Choreographed outputs
+    expr_arbitrator -> oled_faces [label="mood / bitmap eye"];
+    expr_arbitrator -> neopixel [label="companion_set_mode"];
+    animate_svc -> arduino_hal [label="multi-servo pose"];
+}
