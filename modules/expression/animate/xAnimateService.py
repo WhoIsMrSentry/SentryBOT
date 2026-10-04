@@ -7,14 +7,10 @@ from typing import Any, Dict, List, Optional
 
 try:
     from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
-    from modules.arduino_serial.contract import (  # type: ignore
-        SERVO_COUNT,
-    )
-except Exception:
-    from modules.arduino_serial.xArduinoSerialService import xArduinoSerialService  # type: ignore
-    from modules.arduino_serial.contract import (  # type: ignore
-        SERVO_COUNT,
-    )
+    from modules.arduino_serial.contract import SERVO_COUNT  # type: ignore
+except Exception:  # pragma: no cover
+    xArduinoSerialService = None  # type: ignore
+    SERVO_COUNT = 4  # type: ignore
 
 from .config_loader import load_config
 
