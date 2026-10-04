@@ -1,138 +1,126 @@
-# Autonomy
+# SentryBOT V5 — Otonomi Modülü (`modules/autonomy`)
 
-SentryBOT'un sürekli çalışan davranış beynidir. `AutonomyBrain`, duyulardan ve diğer modüllerden gelen sinyalleri birleştirir; ihtiyaç, duygu, hedef ve güvenli eylem kararları üretir; ardından konuşma, ifade, hareket ve hafıza katmanlarını koordine eder.
+SentryBOT V5'in bağımsız yaşam motoru ve otonom davranış beynidir. Robotun içsel ihtiyaçlarını (`living_needs`), duygusal durumunu (`mood`), görsel/işitsel dikkat haritasını (`saliency_map`) ve topolojik harita navigasyonunu yöneterek robotun canlı bir yoldaş gibi kendi kendine hedefler üretmesini sağlar.
 
-## Ana Yetenekler
+---
 
-- Sense-think-act beyin döngüsü (event-driven, ~100ms cycle)
-- Duygu (MoodManager), ihtiyaç (NeedsEngine) ve Companion hedef seçimi
-- Dünya hafızası (WorldMemory), RAG, ihtiyaç yanlı bellek ve karar gölgesi
-- Ses, görüntü ve olay girdilerinden proaktif tepki üretimi
-- Sahip tanıma, geçici yetki ve owner-guard davranışları
-- Güvenli navigasyon, topomap ve dinlenme noktası akışları
-- LED palet yönetimi ve ifade orkestrasyonu (ExpressionArbiter üzerinden)
-- Dry-run destekli otomatik hedef yürütme
+## 🚀 Hızlı Başlangıç
 
-## Mimari (Güncel: 2026-08-20)
+### 1. Bağımlılıklar
 
-- Giriş noktası: `xAutonomyService.py`
-- Router: `api/router.py` (+ `api/companion_routes.py`, `api/memory_routes.py`)
-- **Ana Beyin (Parçalanmış)**: `services/brain.py` (facade) → `services/brain_parts/`:
-  - `decision.py` - Eylem kararı, tool calling koordinasyonu
-  - `emotion_sync.py` - MoodManager, duygu durumu senkronizasyonu
-  - `scenario_rituals.py` - Companion ritüeller, sahne yönetimi
-  - `speech_react.py` - Ses tepkileri, prosody
-  - `vocal_prosody.py` - Ses tonu, hız, vurgu profilleri
-- **Client Katmanı**: `services/client.py` → `services/client_parts/` (modüler)
-- **Hedef Yürütme**: `services/companion_goal_executor.py`, `companion_goal_selector.py`, `companion_goal_policies.py`, `companion_goal_plans.py`, `companion_goal_translator.py`
-- **Diğer**: `behavior_planner.py`, `interaction_feedback.py`, `mood.py`, `topomap_motion_executor.py`, `hardware_policy.py`, `brain_init.py`
+```bash
+# Gerekli Python kütüphaneleri:
+pip install fastapi uvicorn requests pydantic pyyaml numpy
+```
 
-## Bağımlılıklar (Güncel Modül Adları)
+### 2. Otonomi Servisini Başlatma
 
-- `agent_core`: Üst seviye ajan çağrıları ve olay tabanlı reaksiyonlar (brain.agent provider)
-- `voice/speech`: Final konuşma metni ve ses kesme entegrasyonu
-- `voice/speak`: Yanıtların seslendirilmesi
-- `expression/interactions`: Olay, efekt ve temel LED durumları
-- `system_control/state_manager`: Dominant duygu ve operasyonel durum paylaşımı
-- `expression/animate`: Jest, servo ve hareket yürütme
-- `arduino_serial`: Donanım hareket komutları (track, pose, estop)
-- `cognitive_memory` (eski `social_db`): Kişi/ilişki hafızası (repository pattern)
-- `gateway`: Servis URL çözümleme
-- `vlm_bridge`: Görsel bağlam (vision context bridge)
-- `expression`: ExpressionArbiter (LED/servo/OLED lease arbitrajı)
+Otonomi döngüsü Gateway (`:8080`) üzerinden koşturulabileceği gibi bağımsız olarak da başlatılabilir:
 
-## API
+```bash
+python -m modules.autonomy.xAutonomyService
+```
 
-Gateway altında `/autonomy/*` olarak sunulur.
+---
 
-### Temel Durum
+## 📂 Dizin Yapısı
 
-- `GET /autonomy/state`
-- `POST /autonomy/interaction`
-- `POST /autonomy/speech`
-- `POST /autonomy/apply_actions`
-- `POST /autonomy/start`
-- `POST /autonomy/stop`
+```
+modules/autonomy/
+├── xAutonomyService.py              # Otonomi Servis Başlatıcı
+├── config_loader.py                 # YAML Yapılandırma Yükleyici
+├── architecture_autonomy.dot        # Graphviz Mimari Diyagram Kaynağı
+├── architecture_autonomy.svg        # Derlenmiş Vektörel Mimari Şema
+├── architecture_autonomy.md         # Kapsamlı Teknik & Sınıf Referansı
+├── README.md                        # Bu doküman
+├── api/                             # FastAPI Yönlendiricileri (/autonomy/*)
+├── tools/                           # Otonomi Eylem Araçları
+└── services/                        # Temel Yaşam ve Karar Motorları
+    ├── living_needs.py              # Homeostatik İhtiyaçlar Modeli (Energy, Social, Curiosity)
+    ├── needs_engine.py              # İhtiyaç Bozunumu ve Dengeleme Döngüsü
+    ├── mood.py                      # 2D Değerlik-Uyarılma (Valence-Arousal) Duygu Motoru
+    ├── companion_goal_selector.py   # Proaktif Otonom Hedef Seçici
+    ├── companion_auto_execute_gate.py # Güvenli Otomatik Yürütme Kapısı
+    ├── companion_lines.py           # Kendiliğinden Spontane Konuşma İfadeleri
+    ├── companion_rituals.py         # Günlük Selamlama ve Uyku Ritüelleri
+    ├── system1_reflex.py            # Sub-50ms Hızlı Engel ve Tehlike Refleksi
+    ├── topomap_motion_executor.py   # Topolojik Graf Navigasyonu
+    ├── saliency_map.py              # Görsel Dikkat ve Odak Sıralayıcısı
+    └── scene_register.py            # Çevresel Nesne Konum Hafızası
+```
 
-### Companion Routes (`api/companion_routes.py`)
+---
 
-Not: `companion_routes.py` route'ları `/companion/` prefix'siz ana `/autonomy` router'ına eklenir.
+## 💡 Temel Yetenekler
 
-- `GET /autonomy/needs`
-- `GET /autonomy/goal`
-- `POST /autonomy/goal/auto/tick`
-- `POST /autonomy/sound-interrupt`
+- **Canlı İhtiyaçlar (Living Needs):** Robotun sosyal ilgi ve keşif merakı zamanla artar; kendi kendine sahibini arar veya etrafı inceler.
+- **Duygusal Tepkisellik (Affective Appraisal):** Olaylara göre anlık duygu değişimi yaşar (tanıdık yüz $\rightarrow$ sevinç, yüksek gürültü $\rightarrow$ alarm).
+- **Spontane Yoldaş Sözleri:** Kullanıcı sormasa da ortam durumuna uygun samimi yorumlar yapar.
+- **Topolojik Devriye:** Haritalandırılmış oda noktaları arasında güvenli otonom serbest dolaşım.
 
-### Memory Routes (YENİ: `api/memory_routes.py`)
+---
 
-- `GET /autonomy/memory/context`
-- `POST /autonomy/memory/observe`
-- `GET /autonomy/memory/search`
-- `GET /autonomy/memory/recent`
-- `POST /autonomy/memory/autowrite`
-- `GET /autonomy/memory/rag`
+## 💻 Python Kullanım Örnekleri
 
-### Navigation, Owner, Runtime
+### 1. İhtiyaç Motoru ve Durum Sorgulama
+```python
+from modules.autonomy.services.living_needs import LivingNeedsState
+from modules.autonomy.services.needs_engine import NeedsEngine
 
-- `GET /autonomy/navigation/status`
-- `GET /autonomy/navigation/places`
-- `POST /autonomy/navigation/places/learn`
-- `GET /autonomy/navigation/topomap`
-- `POST /autonomy/navigation/topomap/learn`
-- `GET /autonomy/owner/status`
-- `POST /autonomy/owner/learn`
-- `POST /autonomy/owner/identify`
-- `GET /autonomy/runtime/profile`, `POST /autonomy/runtime/profile/switch` — **planlanan** (API yüzü henüz yok)
+engine = NeedsEngine()
+state = engine.get_state()
 
-### Lighting (ExpressionArbiter üzerinden)
+print("Sosyal İhtiyaç Seviyesi:", state.social)
+print("Merak Seviyesi:", state.curiosity)
 
-- `GET /autonomy/lights/palettes`
-- `POST /autonomy/lights/palettes/{name}`
-- `DELETE /autonomy/lights/palettes/{name}`
+# Sahibini gördüğünde sosyal ihtiyacı tatmin et
+engine.satisfy_need("social", 0.4)
+```
 
-### Diğer Uçlar
+### 2. Otonom Hedef Belirleme
+```python
+from modules.autonomy.services.companion_goal_selector import CompanionGoalSelector
 
-- `/autonomy/mood`
-- `/autonomy/express/{emotion}`
-- `/autonomy/audio-event` (+ `/observe`)
-- `/autonomy/vision-context` (+ `/observe`)
-- `/autonomy/navigation/rest-corner`
-- `/autonomy/navigation/goal`
-- `/autonomy/assets/status`
-- `/autonomy/pi-runtime/status`
-- `/autonomy/memory/needs-bias` (+ `/evaluate`)
-- `/autonomy/memory/decision-shadow` (+ `/evaluate`)
-- `/autonomy/memory/schema` | `history` | `clear`
-- `/autonomy/goal/execute` | `simulate` | `execution`
-- `/autonomy/living-needs` (+ `/tick`)
-- `/autonomy/scenario/replay` | `e2e`
+selector = CompanionGoalSelector()
+goal = selector.select_next_goal()
 
-## Konfigürasyon
+if goal:
+    print(f"Yeni Otonom Hedef: {goal.name} (Öncelik: {goal.priority})")
+```
 
-Bu modül modül-içi `config/config.yml` + merkezi `config/agent.yaml` (autonomy section) kullanır.
+---
 
-Önemli alanlar:
-- `endpoints.*`: `speech`, `interactions`, `state_manager`, `animate`, `agent_core`, `arduino`, `speak` (gateway URL'leri)
-- `vision_hooks.*`
-- `owner.*`
-- `speech_quiet_hours.*`
-- `behaviors.idle_tree.*`
-- `defaults.body_language.*`
-- `scenes.*`
-- `offline_mode.*`
-- `realtime_profile.*` (hız/kalite profilleri)
+## 🌐 HTTP REST API Örnekleri (cURL)
 
-## Otonomluk Açısından Önemi
+### 1. Otonomi Durumunu ve Aktif Hedefi Alma
+```bash
+curl -X GET http://127.0.0.1:8080/autonomy/status
+```
 
-Bu modül, projedeki otonomluğun merkezidir. Pasif API cevaplayıcısı değildir; kendi döngüsünü çalıştırır (`Brain.run_cycle`), yeni bağlamlardan hafıza yazar (`WorldMemory`), ihtiyaç ve hedef üretir (`NeedsEngine`, `CompanionGoalSelector`), bazı akışları dry-run güvenlik kapılarıyla otomatik değerlendirebilir ve diğer modülleri davranış planının bir parçası olarak tetikler.
+### 2. Canlı İhtiyaç Seviyelerini Sorgulama
+```bash
+curl -X GET http://127.0.0.1:8080/autonomy/needs
+```
 
-**Davranış Otoritesi:** `autonomy` planlar → `agent_core` bir LLM turunu yürütür → `expression` yüz/ışık/kulak render eder. Ayrıntı: `.sentrybot/context/behavior-authority.md`.
+### 3. Otonom Döngüyü Duraklatma / Başlatma
+```bash
+curl -X POST http://127.0.0.1:8080/autonomy/stop
+curl -X POST http://127.0.0.1:8080/autonomy/start
+```
 
-Raspberry Pi'de `companion_goal_executor.follow_runtime_profile` gerçek donanımı `config/robot_execution_profiles.json` üzerinden açar; PC'de dry-run kalır.
+---
 
-## Bilinen Çakışma Riskleri (Bkz: `../otonomi_ve_cakisma_analizi.md`)
+## 🧪 Testleri Çalıştırma
 
-1. **Head Control** - `vlm_bridge`, `expression/animate`, `voice/speech` doğrudan `arduino.track()` çağırıyor, `HeadControlArbiter` bypass ediliyor
-2. **NeoPixel** - `autonomy.mood` → `interactions` → `neopixel` yolu `ExpressionArbiter` lease'ını tanımıyor
-3. **Memory Yazma** - `autonomy`, `agent_core/tools`, `vlm_bridge` eşzamanlı `cognitive_memory` DB'sine yazıyor (SQLite WAL + busy_timeout var ama transaction isolation yok)
-4. **Event Fan-out** - Tek event (örn. `wakeword.detected`) 5-6 modülü tetikliyor, sıralama garantisi yok
+İhtiyaç motoru, duygu alanı, topomap navigasyonu ve hedef seçici testlerini koşturmak için:
+
+```bash
+pytest tests/modules/autonomy -v
+```
+
+---
+
+## 🔗 Detaylı Belgeler
+- [architecture_autonomy.md](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/autonomy/architecture_autonomy.md): Sınıf, metot, algoritma ve parametre düzeyinde derin mimari dokümanı.
+- [architecture_autonomy.dot](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/autonomy/architecture_autonomy.dot): Graphviz formatında modüler otonomi motoru çizimi.
+- [architecture_autonomy.svg](file:///c:/Users/emohi/Desktop/Project%20SentryBOT%20V5/modules/autonomy/architecture_autonomy.svg): Vektörel mimari şeması.
