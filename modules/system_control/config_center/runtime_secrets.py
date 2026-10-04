@@ -15,7 +15,11 @@ _ENV_PATHS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    p = Path(__file__).resolve()
+    for parent in p.parents:
+        if (parent / "config").exists() and (parent / "modules").exists():
+            return parent
+    return p.parents[3] if len(p.parents) > 3 else p.parent
 
 
 def load_dotenv(path: Path | None = None) -> None:
