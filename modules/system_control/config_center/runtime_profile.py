@@ -8,9 +8,7 @@ Switch backends by editing only::
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List
-
-from modules.common.config_loader import deep_merge
+from typing import Any, Dict, List
 
 
 def _deep_merge_profile(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
