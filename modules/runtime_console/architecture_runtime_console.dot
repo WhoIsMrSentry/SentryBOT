@@ -1,0 +1,81 @@
+// Graphviz Architecture: modules/runtime_console
+// SentryBOT V5 - Terminal UI Dashboard & Central Log Infrastructure
+digraph runtime_console_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_runtime_console {
+        label = "modules.runtime_console (Terminal User Interface & Central Logging)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#6366f1";
+        fontcolor = "#818cf8";
+        fontsize = 12;
+
+        // 1. Central Logging Infrastructure (logwrapper)
+        subgraph cluster_logwrapper {
+            label = "Central Log Infrastructure (logwrapper/)";
+            fillcolor = "#0f172a";
+            color = "#4f46e5";
+            fontcolor = "#a5b4fc";
+
+            logwrapper_init [label="LogWrapper (logwrapper/__init__.py)\n- init_logging() Singleton\n- Unified Formatter & Noise Filter\n- In-Memory Ring Buffer", fillcolor="#3730a3", fontcolor="#f8fafc", color="#818cf8"];
+            file_router [label="SeparateFileRouting\n- warnings.log & errors.log\n- tui.log & system.log\n- Clean Level Segregation", fillcolor="#3730a3", fontcolor="#f8fafc", color="#818cf8"];
+            run_rotator [label="RunRotator (services/run_rotator.py)\n- Automatic Run Session Archiving\n- Prunes Old Sessions (>5 runs)", fillcolor="#312e81", fontcolor="#f8fafc", color="#6366f1"];
+        }
+
+        // 2. Textual TUI Application Engine
+        subgraph cluster_tui_app {
+            label = "Textual TUI Application Engine (tui_app.py)";
+            fillcolor = "#0f172a";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+
+            tui_core [label="SentryBotApp (tui_app.py)\n- Textual Async Terminal App\n- Real-Time Live Render Loop\n- Keyboard Shortcuts & Navigation", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            theme_reg [label="ThemeRegistry (themes.py)\n- Dark, Cyberpunk, Monokai Themes\n- Compiles sentrybot.tcss Styles", fillcolor="#6d28d9", fontcolor="#f8fafc", color="#c4b5fd"];
+            sys_info_tui [label="SystemInfoTUI (system_info_tui.py)\n- Hardware Specs & OS Status Card\n- CPU/RAM/Thermal Live Gauges", fillcolor="#6d28d9", fontcolor="#f8fafc", color="#c4b5fd"];
+        }
+
+        // 3. TUI Tabs & Interactive Widgets
+        subgraph cluster_tui_tabs {
+            label = "TUI Tabs & Operational Widgets";
+            fillcolor = "#0f172a";
+            color = "#0369a1";
+            fontcolor = "#7dd3fc";
+
+            main_tab [label="Tab Main & Service Cards\n- Subsystem Process Buttons (Start/Stop)\n- Live Rolling Log Stream", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            telemetry_tab [label="Tab Telemetry\n- History Graphs & Sparklines\n- Battery & Temperature Trends", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            config_tab [label="Tab Config\n- Tree-Sitter Syntax Highlight\n- Dynamic YAML Editor", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+        }
+
+        // 4. REST API
+        subgraph cluster_console_api {
+            label = "Console API Surface (:8080/console)";
+            fillcolor = "#0f172a";
+            color = "#334155";
+            fontcolor = "#cbd5e1";
+
+            console_api [label="Console Router\n- GET /console/healthz\n- GET /console/logs/recent\n- POST /console/action", fillcolor="#1e293b", fontcolor="#cbd5e1", color="#475569"];
+        }
+    }
+
+    // External Connections
+    all_modules [label="All 14 SentryBOT Modules\n(logging.getLogger)", shape=box3d, fillcolor="#1e293b", fontcolor="#f8fafc", color="#94a3b8"];
+    terminal_screen [label="Operator Terminal\n(SSH / Linux Console / Windows Terminal)", shape=ellipse, fillcolor="#4f46e5", fontcolor="#ffffff", color="#818cf8"];
+
+    // Internal linkages
+    all_modules -> logwrapper_init [label="log records"];
+    logwrapper_init -> file_router [label="route by level"];
+    logwrapper_init -> run_rotator [label="archive on start"];
+    logwrapper_init -> tui_core [label="stream memory logs"];
+
+    tui_core -> theme_reg;
+    tui_core -> sys_info_tui;
+    tui_core -> main_tab;
+    tui_core -> telemetry_tab;
+    tui_core -> config_tab;
+
+    tui_core -> terminal_screen [label="Rich / Textual ANSI Frame"];
+    console_api -> logwrapper_init [label="fetch buffer"];
+}
