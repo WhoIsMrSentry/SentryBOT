@@ -1,6 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Iterable
+from typing import Any, Callable, Dict, List
 import copy
 import json
 import sqlite3
