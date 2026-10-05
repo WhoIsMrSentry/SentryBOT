@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from modules.runtime_console.event_bus import get_event_bus
+from ..event_bus import get_event_bus
 
 router = APIRouter(prefix="/runtime_console", tags=["runtime_console"])
 
