@@ -1,0 +1,74 @@
+// Graphviz Architecture: modules/system_control
+// SentryBOT V5 - Platform Diagnostics, Telemetry, Scheduling & State Management
+digraph system_control_subsystem {
+    graph [rankdir=TB, bgcolor="#0f172a", fontname="Segoe UI, Arial, sans-serif", fontcolor="#f8fafc", compound=true, pad="0.5"];
+    node [shape=box, style="filled,rounded", fontname="Segoe UI, Arial, sans-serif", fontsize=10, penwidth=1.5];
+    edge [fontname="Segoe UI, Arial, sans-serif", fontsize=9, color="#94a3b8", fontcolor="#cbd5e1", penwidth=1.2];
+
+    subgraph cluster_system_control {
+        label = "modules.system_control (Platform Operations & Diagnostics)";
+        style = "filled,rounded";
+        fillcolor = "#1e293b";
+        color = "#14b8a6";
+        fontcolor = "#2dd4bf";
+        fontsize = 12;
+
+        // 1. Configuration Center & State Store
+        subgraph cluster_config_state {
+            label = "Configuration Center & Global State";
+            fillcolor = "#0f172a";
+            color = "#0f766e";
+            fontcolor = "#5eead4";
+
+            config_center [label="ConfigCenter (config_center/)\n- Runtime Registry & Dynamic Apply\n- Sensitive Data Redaction\n- Profile Merging (PC / Raspberry Pi)", fillcolor="#115e59", fontcolor="#f8fafc", color="#2dd4bf"];
+            state_mgr [label="StateManager (state_manager/)\n- Persistent System State Store\n- Operational & Emotional State Cache", fillcolor="#115e59", fontcolor="#f8fafc", color="#2dd4bf"];
+        }
+
+        // 2. Diagnostics & Self-Healing
+        subgraph cluster_diag_heal {
+            label = "Diagnostics & Autonomous Self-Healing";
+            fillcolor = "#0f172a";
+            color = "#0284c7";
+            fontcolor = "#7dd3fc";
+
+            diag_service [label="Diagnostics (diagnostics/)\n- Deep Subsystem Self-Test\n- Hard Failure Instant Restart\n- Latency Stabilization Window", fillcolor="#0369a1", fontcolor="#f8fafc", color="#38bdf8"];
+        }
+
+        // 3. Scheduler & Notifications
+        subgraph cluster_sched_notif {
+            label = "Periodic Scheduler & Notifier";
+            fillcolor = "#0f172a";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+
+            scheduler_svc [label="Scheduler (scheduler/)\n- Cron & Periodic Async Job Runner\n- In-Flight Task Deduplication\n- Health & Diagnostic Sweeps", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            notifier_svc [label="Notifier (notifier/)\n- Webhook, Discord & Telegram Alerts\n- Critical Error Dispatcher", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+        }
+
+        // 4. Host Telemetry
+        subgraph cluster_telemetry {
+            label = "Host Hardware Telemetry";
+            fillcolor = "#0f172a";
+            color = "#b45309";
+            fontcolor = "#fde68a";
+
+            telemetry_svc [label="Telemetry (telemetry/)\n- Host Hardware Gauges\n- CPU, RAM, Disk, Thermal Metrics\n- Background Sampling Worker", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+        }
+    }
+
+    // External Connections
+    gateway_mod [label="Gateway Module (:8080)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+    os_host [label="Host OS / Linux systemd\n(Process Supervisor)", shape=ellipse, fillcolor="#0f766e", fontcolor="#ffffff", color="#2dd4bf"];
+    runtime_console [label="modules.runtime_console\n(Operator TUI Dashboard)", fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1"];
+
+    // Linkages
+    gateway_mod -> config_center [label="runtime config sync"];
+    gateway_mod -> diag_service [label="health & self-test"];
+    scheduler_svc -> diag_service [label="periodic sweep"];
+    diag_service -> notifier_svc [label="alert on failure"];
+    diag_service -> os_host [label="trigger self-heal restart", color="#ef4444", style="bold"];
+
+    telemetry_svc -> os_host [label="read proc/sysfs"];
+    telemetry_svc -> runtime_console [label="feed live metrics"];
+    state_mgr -> runtime_console [label="sync operational state"];
+}
