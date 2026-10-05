@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Dict, Any, Tuple
+from typing import Dict, Any
 import time
 
 # Cross-call stabilization state for latency-triggered heals (R55): a single
