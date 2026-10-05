@@ -62,18 +62,26 @@ def _env_bool(name: str, current: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def load_config(overrides: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def load_config(
+    config_path: str | os.PathLike | Mapping[str, Any] | None = None,
+    overrides: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    if isinstance(config_path, Mapping) and overrides is None:
+        overrides = config_path
+        config_path = None
+
     cfg = dict(_DEFAULT_CONFIG)
-    path = Path(__file__).resolve().parent / "config" / "config.yml"
-    if yaml is not None and path.exists():
+    default_path = Path(__file__).resolve().parent / "config" / "config.yml"
+    target_path = Path(config_path) if config_path else default_path
+    if yaml is not None and target_path.exists():
         try:
-            with path.open("r", encoding="utf-8") as fh:
+            with target_path.open("r", encoding="utf-8") as fh:
                 data = yaml.safe_load(fh) or {}
             if isinstance(data, Mapping):
                 cfg = _deep_merge(cfg, data)
         except Exception:
             cfg = dict(_DEFAULT_CONFIG)
-    if overrides:
+    if overrides and isinstance(overrides, Mapping):
         cfg = _deep_merge(cfg, overrides)
 
     mode = os.getenv("SENTRYBOT_CONSOLE_MODE")
