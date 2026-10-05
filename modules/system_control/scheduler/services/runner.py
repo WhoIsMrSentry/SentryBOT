@@ -3,7 +3,6 @@ from typing import Dict, Any, List
 import asyncio
 import time
 import threading
-import json
 
 
 class Scheduler:
