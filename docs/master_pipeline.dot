@@ -1,0 +1,377 @@
+// SentryBOT V5 Geometric Master Workflow Architecture (English)
+// Covers all 14 modules in a strictly hierarchical 5-layer waterfall layout, with 90-degree orthogonal (ortho) routing and 7 closed feedback loops routed through external side channels.
+
+digraph sentrybot_master_pipeline {
+    graph [
+        rankdir=TB,
+        bgcolor="#060913",
+        fontname="Segoe UI, Inter, Arial, sans-serif",
+        fontcolor="#f8fafc",
+        compound=true,
+        newrank=true,
+        pad="0.6",
+        nodesep="0.65",
+        ranksep="0.80",
+        splines=ortho,
+        forcelabels=true,
+        concentrate=false
+    ];
+
+    node [
+        shape=box,
+        style="filled,rounded",
+        fontname="Segoe UI, Inter, Arial, sans-serif",
+        fontsize=9,
+        penwidth=1.4,
+        margin="0.15,0.1"
+    ];
+
+    edge [
+        fontname="Segoe UI, Inter, Arial, sans-serif",
+        fontsize=8,
+        color="#475569",
+        fontcolor="#94a3b8",
+        penwidth=1.2
+    ];
+
+    // =========================================================================
+    // LAYER 0: PHYSICAL ENVIRONMENT & INPUT SENSORS (TOP LAYER)
+    // =========================================================================
+    subgraph cluster_katman0 {
+        label = "LAYER 0: Physical Environment, Humans & Input Sensors";
+        style = "dashed,rounded";
+        fillcolor = "#0b1329";
+        color = "#1e3a8a";
+        fontcolor = "#93c5fd";
+        fontsize = 12;
+
+        hw_kamera [label="Sony IMX500 / USB Camera\n(/dev/video0 - 1080p 30fps)", shape=ellipse, fillcolor="#064e3b", fontcolor="#ffffff", color="#34d399"];
+        hw_mikrofon [label="I2S 16kHz Microphone Array\n(Stereo Hardware hw:0,0)", shape=ellipse, fillcolor="#0c4a6e", fontcolor="#ffffff", color="#38bdf8"];
+        hw_sonar [label="HC-SR04 Ultrasonic & IMU\n(Distance & Fall Detection)", shape=ellipse, fillcolor="#78350f", fontcolor="#ffffff", color="#facc15"];
+        hw_rfid [label="RC522 RFID Reader\n(13.56MHz SPI Badge Reader)", shape=ellipse, fillcolor="#7c2d12", fontcolor="#ffffff", color="#fb923c"];
+        hw_cevre [label="Physical Environment & Human Interaction\n(Acoustic Waves, Visual Field, Obstacles)", shape=oval, fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1", penwidth=2.0];
+    }
+
+    // =========================================================================
+    // LAYER 1: PERCEPTION & INGEST LAYER
+    // =========================================================================
+    subgraph cluster_katman1 {
+        label = "LAYER 1: Perception, Ingest & Multi-Modal Processing";
+        style = "filled,rounded";
+        fillcolor = "#0f172a";
+        color = "#0284c7";
+        fontcolor = "#38bdf8";
+        fontsize = 12;
+
+        // Module 3: Camera
+        subgraph cluster_cam_mod {
+            label = "3. modules.camera (:8002)";
+            fillcolor = "#06231c";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+            cam_dev [label="DeviceManager\nV4L2 Device Enumerator", fillcolor="#064e3b", fontcolor="#ffffff", color="#34d399"];
+            cam_capture [label="FrameCaptureWorker\nCapture Loop Worker", fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+            cam_streamer [label="JPEGStreamer\n/video_feed MJPEG Broadcaster", fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+        }
+
+        // Module 4: VLM Bridge
+        subgraph cluster_vlm_mod {
+            label = "4. modules.vlm_bridge (:8011)";
+            fillcolor = "#1a1233";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+            vlm_proc [label="ProcessorVLM\nFrame Sampler & Token Budgeter", fillcolor="#5b21b6", fontcolor="#ffffff", color="#a78bfa"];
+            vlm_client [label="VLM Client Factory\nQwen2.5-VL / Gemini Vision", fillcolor="#6d28d9", fontcolor="#ffffff", color="#c4b5fd"];
+            vlm_scene [label="SceneDescriptor\nScene, Face & Emotion Analysis", fillcolor="#5b21b6", fontcolor="#ffffff", color="#a78bfa"];
+        }
+
+        // Module 5: Voice Ingest Pipeline
+        subgraph cluster_voice_in {
+            label = "5. modules.voice — Ingest Pipeline (:8003, :8005)";
+            fillcolor = "#091e36";
+            color = "#0284c7";
+            fontcolor = "#7dd3fc";
+            voice_router [label="audio_router.py (Singleton)\nSharedVAD, Ring Buffer & Multiplexer", fillcolor="#0369a1", fontcolor="#ffffff", color="#38bdf8"];
+            ww_engine [label="Wakeword (:8005)\nopenWakeWord 'hey sentry'", fillcolor="#0284c7", fontcolor="#ffffff", color="#38bdf8"];
+            ww_bargein [label="0ms Barge-In Emitter\nInstant Abort Signal", fillcolor="#991b1b", fontcolor="#ffffff", color="#f87171"];
+            stt_doa [label="GCC-PHAT DoA\nSound Azimuth Angle", fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+            stt_engine [label="Speech STT (:8003)\nSherpa-ONNX / Whisper", fillcolor="#059669", fontcolor="#ffffff", color="#34d399"];
+        }
+    }
+
+    // =========================================================================
+    // LAYER 2: COGNITIVE DECISION, MEMORY & AUTONOMY
+    // =========================================================================
+    subgraph cluster_katman2 {
+        label = "LAYER 2: Cognitive Reasoning, Tri-Layer Brain, Memory & Autonomy";
+        style = "filled,rounded";
+        fillcolor = "#181424";
+        color = "#d97706";
+        fontcolor = "#fcd34d";
+        fontsize = 12;
+
+        // Module 10: Agent Core
+        subgraph cluster_agent_mod {
+            label = "10. modules.agent_core (:8001) — Decision Core";
+            fillcolor = "#2a1506";
+            color = "#f59e0b";
+            fontcolor = "#fde68a";
+            agent_orch [label="AgentOrchestrator\nCentral Cognitive Coordinator", fillcolor="#b45309", fontcolor="#ffffff", color="#fbbf24"];
+            
+            layer_reflex [label="Layer 1: Reflex (<50ms)\nEmergency Fall & Collision Stop", fillcolor="#78350f", fontcolor="#ffffff", color="#facc15"];
+            layer_tactical [label="Layer 2: Tactical (50-300ms)\nGaze Tracking, Saccades & LAYA Fillers", fillcolor="#92400e", fontcolor="#ffffff", color="#fbbf24"];
+            layer_strategic [label="Layer 3: Strategic (>300ms)\nLLM Reasoning, Planning, Tools", fillcolor="#b45309", fontcolor="#ffffff", color="#fde68a"];
+            
+            agent_laya [label="LAYA Engine\nEmpathic Filler ('Hmm...')", fillcolor="#92400e", fontcolor="#ffffff", color="#fbbf24"];
+            agent_arbiters [label="Action & Speech Arbiters\nMutex Execution Lock & Safety Filter", fillcolor="#78350f", fontcolor="#ffffff", color="#facc15"];
+        }
+
+        // Module 6: AI Provider
+        subgraph cluster_ai_mod {
+            label = "6. modules.ai_provider (:8009)";
+            fillcolor = "#241306";
+            color = "#d97706";
+            fontcolor = "#fcd34d";
+            ai_client [label="ClientFactory\nOllama Local / Gemini Cloud", fillcolor="#b45309", fontcolor="#ffffff", color="#fcd34d"];
+            ai_lock [label="PriorityInferenceLock\nP0 Speech > P2 Autonomy Lock", fillcolor="#92400e", fontcolor="#ffffff", color="#fbbf24"];
+            ai_trans [label="TranslationBridge\nBidirectional TR <-> EN Translation", fillcolor="#78350f", fontcolor="#ffffff", color="#f59e0b"];
+        }
+
+        // Module 2: Cognitive Memory
+        subgraph cluster_mem_mod {
+            label = "2. modules.cognitive_memory (:8008)";
+            fillcolor = "#081f26";
+            color = "#0891b2";
+            fontcolor = "#67e8f9";
+            mem_episodic [label="EpisodicMemory\nDialogue History & Past Events", fillcolor="#0e7490", fontcolor="#ffffff", color="#38bdf8"];
+            mem_social [label="RelationshipMemory\nUser Profiles & RFID Mapping", fillcolor="#0891b2", fontcolor="#ffffff", color="#67e8f9"];
+            mem_db [label="SQLiteStore\nmemory.sqlite3 (WAL Mode)", fillcolor="#155e75", fontcolor="#ffffff", color="#22d3ee"];
+        }
+
+        // Module 11: Autonomy
+        subgraph cluster_auto_mod {
+            label = "11. modules.autonomy (:8012)";
+            fillcolor = "#082116";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+            auto_life [label="LifeEngine (Drives)\nEnergy, Social, Curiosity, Boredom", fillcolor="#065f46", fontcolor="#ffffff", color="#34d399"];
+            auto_companion [label="CompanionEngine\nSpontaneous Curious Remarks", fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+            auto_patrol [label="PatrolController\nTopological Patrol & Navigation", fillcolor="#065f46", fontcolor="#ffffff", color="#34d399"];
+        }
+    }
+
+    // =========================================================================
+    // LAYER 3: ACTION PLANNING, EXPRESSION & DRIVERS
+    // =========================================================================
+    subgraph cluster_katman3 {
+        label = "LAYER 3: Action Planning, Expression Choreography & Hardware Drivers";
+        style = "filled,rounded";
+        fillcolor = "#1f101d";
+        color = "#be123c";
+        fontcolor = "#fda4af";
+        fontsize = 12;
+
+        // Module 5: Voice Output Pipeline (SpeakService)
+        subgraph cluster_voice_out {
+            label = "5. modules.voice — SpeakService (:8007) Pipeline";
+            fillcolor = "#240b3b";
+            color = "#a855f7";
+            fontcolor = "#d8b4fe";
+            tts_prep [label="TextPreprocessor\nStrip <think>, Clean Emojis", fillcolor="#581c87", fontcolor="#ffffff", color="#c084fc"];
+            tts_queue [label="PrioritySpeechQueue\nP0: Dialog | P2: Autonomy", fillcolor="#6b21a8", fontcolor="#ffffff", color="#c084fc"];
+            tts_locks [label="R21 Split Locks\nsynthesis_lock & playback_lock", fillcolor="#7e22ce", fontcolor="#ffffff", color="#e9d5ff"];
+            tts_synth [label="Piper / Kokoro TTS\nONNX Neural Voice Synthesizer", fillcolor="#6b21a8", fontcolor="#ffffff", color="#c084fc"];
+            tts_player [label="SoundDevice Playback Worker\nPCM Audio Stream Buffer", fillcolor="#581c87", fontcolor="#ffffff", color="#c084fc"];
+            tts_abort [label="stop_talking() Aborter\n0ms Hardware Canceler", fillcolor="#991b1b", fontcolor="#ffffff", color="#f87171"];
+        }
+
+        // Module 12: Expression
+        subgraph cluster_exp_mod {
+            label = "12. modules.expression (:8010, :8014)";
+            fillcolor = "#2b0a1f";
+            color = "#f43f5e";
+            fontcolor = "#fecdd3";
+            exp_director [label="ExpressionDirector\nMulti-Modal Gesture Coordinator", fillcolor="#9f1239", fontcolor="#ffffff", color="#fb7185"];
+            exp_animate [label="AnimateService\nKeyframe Motor Interpolator", fillcolor="#be123c", fontcolor="#ffffff", color="#fda4af"];
+            exp_piservo [label="PiServoService\nEar Servos PWM Driver", fillcolor="#881337", fontcolor="#ffffff", color="#f43f5e"];
+        }
+
+        // Module 8: Visual Output
+        subgraph cluster_vis_mod {
+            label = "8. modules.visual_output (:8006, :8013)";
+            fillcolor = "#2b0c23";
+            color = "#db2777";
+            fontcolor = "#fbcfe8";
+            vis_face [label="FaceRenderer (OLED :8013)\nEye Animation & Biological Blinks", fillcolor="#9d174d", fontcolor="#ffffff", color="#f472b6"];
+            vis_sub [label="SubtitleRenderer\nLive STT Subtitle Line", fillcolor="#831843", fontcolor="#ffffff", color="#f472b6"];
+            vis_neo [label="NeoRunner (NeoPixel :8006)\nRGB Lighting Effects & Aura", fillcolor="#701a75", fontcolor="#ffffff", color="#e879f9"];
+        }
+
+        // Module 7: Arduino Serial
+        subgraph cluster_ard_mod {
+            label = "7. modules.arduino_serial (:8004)";
+            fillcolor = "#071e33";
+            color = "#0284c7";
+            fontcolor = "#7dd3fc";
+            ard_contract [label="contract.py CommandBuilder\nSERVO_BOUNDS Safety Clamp", fillcolor="#0369a1", fontcolor="#ffffff", color="#38bdf8"];
+            ard_driver [label="UART & ESP32 Driver\n115200 Baud NDJSON Link", fillcolor="#075985", fontcolor="#ffffff", color="#38bdf8"];
+            ard_rx [label="RX Worker Thread\nTelemetry Listener & RFID Parser", fillcolor="#0c4a6e", fontcolor="#ffffff", color="#7dd3fc"];
+        }
+    }
+
+    // =========================================================================
+    // LAYER 4: PHYSICAL OUTPUT ACTUATORS (BOTTOM LAYER)
+    // =========================================================================
+    subgraph cluster_katman4 {
+        label = "LAYER 4: Physical Actuators & World Actuation";
+        style = "dashed,rounded";
+        fillcolor = "#0d111d";
+        color = "#334155";
+        fontcolor = "#94a3b8";
+        fontsize = 12;
+
+        hw_hoparlor [label="Speaker & Amplifier\n(PCM Audio Output hw:1,0)", shape=ellipse, fillcolor="#4c1d95", fontcolor="#ffffff", color="#c4b5fd"];
+        hw_servolar [label="Pan/Tilt & Ear Servos\n(MG996R & SG90 PWM)", shape=ellipse, fillcolor="#065f46", fontcolor="#ffffff", color="#34d399"];
+        hw_motorlar [label="Stepper / DC Drive Motors\n(A4988 Drivers / Wheels)", shape=ellipse, fillcolor="#065f46", fontcolor="#ffffff", color="#34d399"];
+        hw_oled [label="SSD1306 OLED Display\n(128x64 Pixel I2C Face Screen)", shape=ellipse, fillcolor="#831843", fontcolor="#ffffff", color="#f472b6"];
+        hw_neopixel [label="WS2812B NeoPixel\n(16 LED Head Ring + Chest)", shape=ellipse, fillcolor="#581c87", fontcolor="#ffffff", color="#c084fc"];
+    }
+
+    // =========================================================================
+    // PLATFORM, GATEWAY & MONITORING (SIDE COLUMN)
+    // =========================================================================
+    subgraph cluster_platform {
+        label = "Platform Infrastructure, Gateway & Monitoring";
+        style = "filled,rounded";
+        fillcolor = "#09151e";
+        color = "#0d9488";
+        fontcolor = "#5eead4";
+        fontsize = 12;
+
+        gw_proxy [label="9. modules.gateway (:8000)\nFastAPI Reverse Proxy & Supervisor", fillcolor="#0e7490", fontcolor="#ffffff", color="#22d3ee"];
+        sys_control [label="13. modules.system_control (:8015-:8019)\nStateManager, Diagnostics, Telemetry, Scheduler", fillcolor="#115e59", fontcolor="#ffffff", color="#2dd4bf"];
+        rc_console [label="14. modules.runtime_console (:8080)\nTextual TUI, logwrapper & WebSocket", fillcolor="#3730a3", fontcolor="#ffffff", color="#818cf8"];
+        com_core [label="1. modules.common\nEventBus, ConfigLoader & ServiceBase", fillcolor="#334155", fontcolor="#ffffff", color="#94a3b8"];
+    }
+
+    // =========================================================================
+    // WATERFALL FORWARD PIPELINE (STRICTLY TOP-TO-BOTTOM)
+    // =========================================================================
+
+    // Layer 0 -> Layer 1 (Sensors to Perception)
+    hw_kamera:s -> cam_dev:n [xlabel="Video Stream"];
+    cam_dev:s -> cam_capture:n;
+    cam_capture:s -> cam_streamer:n;
+    cam_streamer:s -> vlm_proc:n [xlabel="Sample Frame"];
+    vlm_proc:s -> vlm_client:n;
+    vlm_client:s -> vlm_scene:n;
+
+    hw_mikrofon:s -> voice_router:n [xlabel="16kHz PCM"];
+    voice_router:s -> ww_engine:n;
+    voice_router:s -> stt_doa:n;
+    voice_router:s -> stt_engine:n;
+
+    hw_sonar:s -> ard_rx:n [xlabel="Sensor Telemetry", style="dashed"];
+    hw_rfid:s -> ard_rx:n [xlabel="Card UID", style="dashed"];
+
+    // Layer 1 -> Layer 2 (Perception to Cognition)
+    stt_engine:s -> agent_orch:n [xlabel="User Utterance", color="#34d399"];
+    stt_doa:s -> layer_tactical:n [xlabel="Sound Azimuth (DoA)", color="#38bdf8"];
+    vlm_scene:s -> agent_orch:n [xlabel="Scene & Face Context", color="#c4b5fd"];
+    vlm_scene:s -> auto_life:n [xlabel="Visual Stimulus", style="dotted"];
+
+    // Layer 2 Internal Reasoning Flow
+    agent_orch:s -> layer_reflex:n;
+    agent_orch:s -> layer_tactical:n;
+    agent_orch:s -> layer_strategic:n;
+    layer_tactical:s -> agent_laya:n;
+    layer_strategic:s -> ai_client:n [xlabel="LLM Request", color="#f59e0b"];
+    ai_client:s -> ai_lock:n;
+    ai_lock:s -> ai_trans:n;
+    layer_strategic:s -> mem_episodic:n [xlabel="Query Memory"];
+    layer_strategic:s -> mem_social:n [xlabel="User Profile"];
+    mem_episodic:s -> mem_db:n;
+    mem_social:s -> mem_db:n;
+    auto_life:s -> auto_companion:n;
+    auto_companion:s -> agent_orch:n [xlabel="Inner Thought", color="#34d399"];
+    auto_life:s -> auto_patrol:n;
+
+    // Layer 2 -> Layer 3 (Cognition to Action)
+    agent_orch:s -> tts_prep:n [xlabel="Response Text", color="#c084fc"];
+    agent_laya:s -> tts_queue:n [xlabel="Filler Speech ('Hmm')", color="#fbbf24"];
+    agent_orch:s -> exp_director:n [xlabel="Emotion Intent", color="#f43f5e"];
+    layer_reflex:s -> agent_arbiters:n [xlabel="Reflex Brake", color="#facc15"];
+    layer_tactical:s -> agent_arbiters:n [xlabel="Tracking Angles", color="#fbbf24"];
+    auto_patrol:s -> agent_arbiters:n [xlabel="Patrol Velocity"];
+
+    exp_director:s -> exp_animate:n;
+    exp_director:s -> exp_piservo:n;
+    exp_animate:s -> vis_face:n [xlabel="Eye Matrix"];
+    exp_animate:s -> vis_neo:n [xlabel="LED Pattern"];
+    stt_engine:s -> vis_sub:n [xlabel="Live Subtitle", color="#f472b6", style="dashed"];
+    exp_animate:s -> agent_arbiters:n [xlabel="Head Movement"];
+
+    agent_arbiters:s -> ard_contract:n [xlabel="Safe Action", color="#38bdf8"];
+    ard_contract:s -> ard_driver:n;
+
+    // SpeakService Internal Pipeline (Inside Layer 3)
+    tts_prep:s -> tts_queue:n;
+    tts_queue:s -> tts_locks:n;
+    tts_locks:s -> tts_synth:n;
+    tts_synth:s -> tts_player:n;
+
+    // Layer 3 -> Layer 4 (Drivers to Physical Actuators)
+    tts_player:s -> hw_hoparlor:n [xlabel="PCM Signal", color="#c4b5fd"];
+    exp_piservo:s -> hw_servolar:n [xlabel="Ear PWM", color="#f43f5e"];
+    vis_face:s -> hw_oled:n [xlabel="I2C Data", color="#f472b6"];
+    vis_sub:s -> hw_oled:n;
+    vis_neo:s -> hw_neopixel:n [xlabel="WS2812B Signal", color="#c084fc"];
+    ard_driver:s -> hw_servolar:n [xlabel="Pan/Tilt PWM (50Hz)", color="#38bdf8"];
+    ard_driver:s -> hw_motorlar:n [xlabel="Step Pulses", color="#38bdf8"];
+
+    // Platform & Management Lines
+    gw_proxy:s -> agent_orch:n [xlabel="/chat API"];
+    gw_proxy:s -> ard_contract:n [xlabel="/arduino API"];
+    sys_control:s -> gw_proxy:n [xlabel="Watchdog & Selftest"];
+    rc_console:s -> gw_proxy:n [xlabel="WebSocket Log Channel"];
+    com_core:s -> sys_control:n [style="dotted"];
+
+    // =========================================================================
+    // 7 CLOSED FEEDBACK LOOPS (ROUTED CLEANLY VIA EXTERNAL SIDE CHANNELS)
+    // =========================================================================
+
+    // LOOP 1: Visual-Motor Gaze Closed Loop (LEFT CHANNEL - GREEN)
+    edge [color="#10b981", penwidth=2.2, fontcolor="#34d399", style="bold"];
+    hw_servolar:w -> hw_cevre:w [constraint=false, xlabel="LOOP 1: Head Rotates Physically"];
+    hw_cevre:w -> hw_kamera:w [constraint=false, xlabel="LOOP 1: Viewfield Shifts -> Face Centered in Lens (CLOSED)"];
+
+    // LOOP 2: Acoustic Dialogue, 0ms Barge-In & Echo Ducking (RIGHT CHANNEL - RED)
+    edge [color="#ef4444", penwidth=2.2, fontcolor="#f87171", style="bold"];
+    ww_engine:e -> ww_bargein:e [xlabel="'hey sentry'"];
+    ww_bargein:e -> tts_abort:e [constraint=false, xlabel="LOOP 2: 0ms Barge-In Abort Signal"];
+    tts_abort:e -> tts_player:e [xlabel="Halt Playback Immediately"];
+    tts_player:e -> voice_router:e [constraint=false, xlabel="LOOP 2: Echo Ducking -> Mute/Unmute Mic (CLOSED)"];
+
+    // LOOP 3: Reflex Collision & Obstacle Avoidance (LEFT CHANNEL - YELLOW)
+    edge [color="#eab308", penwidth=2.2, fontcolor="#fde047", style="bold"];
+    ard_rx:w -> layer_reflex:w [constraint=false, xlabel="LOOP 3: Obstacle < 15cm Reflex Signal (<50ms)"];
+    hw_motorlar:w -> hw_sonar:w [constraint=false, xlabel="LOOP 3: Robot Halts -> Safe Distance Maintained (CLOSED)"];
+
+    // LOOP 4: Autonomy Boredom & Life Loop (RIGHT CHANNEL - PURPLE)
+    edge [color="#8b5cf6", penwidth=2.2, fontcolor="#c4b5fd", style="bold"];
+    hw_cevre:e -> auto_life:e [constraint=false, xlabel="LOOP 4: Long Idle Time -> Boredom Increases"];
+    hw_hoparlor:e -> hw_cevre:e [constraint=false, xlabel="LOOP 4: Robot Speaks -> Human Responds (CLOSED)"];
+
+    // LOOP 5: RFID Identity & Social Memory (LEFT CHANNEL - ORANGE)
+    edge [color="#f97316", penwidth=2.2, fontcolor="#fdba74", style="bold"];
+    ard_rx:w -> mem_social:w [constraint=false, xlabel="LOOP 5: RFID UID -> User Profile Identified (Ahmet)"];
+    tts_player:w -> hw_cevre:w [constraint=false, xlabel="LOOP 5: Personalized Greeting -> User Talks (CLOSED)"];
+
+    // LOOP 6: System Health & Autonomous Self-Healing (RIGHT CHANNEL - CYAN)
+    edge [color="#06b6d4", penwidth=2.2, fontcolor="#67e8f9", style="bold"];
+    sys_control:e -> gw_proxy:e [constraint=false, xlabel="LOOP 6: Dead Service Detected -> Auto Restart (CLOSED)"];
+
+    // LOOP 7: Operator Telemetry & Control Loop (RIGHT CHANNEL - PINK)
+    edge [color="#ec4899", penwidth=2.2, fontcolor="#f472b6", style="bold"];
+    rc_console:e -> gw_proxy:e [constraint=false, xlabel="LOOP 7: TUI Operator Intervention Command (CLOSED)"];
+}
