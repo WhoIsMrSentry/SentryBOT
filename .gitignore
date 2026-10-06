@@ -6,6 +6,7 @@ __pycache__
 /arduino_knowledge.md
 /modules_knowledge.md
 sentry.log
+.agents/
 .pytest_cache
 arduino.avr.mega
 modules/notifier/.env
