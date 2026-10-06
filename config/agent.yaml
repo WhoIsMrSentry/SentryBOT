@@ -421,6 +421,42 @@ tri_layer:
       vision_event_min_confidence: 0.80
       vision_event_min_affect_confidence: 0.80
       vision_event_cooldown_s: 8.0
+      palettes:
+        anger:
+          anim_mild: "slow_breathe"
+          anim_intense: "strobe"
+          mild: ["#8B0000", "#A52A2A", "#B22222"]
+          intense: ["#FF0000", "#FF1E00", "#DC143C"]
+        disgust:
+          anim_mild: "flicker"
+          anim_intense: "flicker"
+          mild: ["#556B2F", "#6B8E23", "#4A5D23"]
+          intense: ["#808000", "#7FFF00", "#2E8B57"]
+        joy:
+          anim_mild: "breathe"
+          anim_intense: "pulse"
+          mild: ["#00FF88", "#20B2AA", "#3CB371"]
+          intense: ["#00FFCC", "#39FF14", "#FFD700"]
+        fear:
+          anim_mild: "slow_fade"
+          anim_intense: "rapid_flash"
+          mild: ["#483D8B", "#4B0082"]
+          intense: ["#FF1493", "#FF0033"]
+        curiosity:
+          anim_mild: "static"
+          anim_intense: "sweep"
+          mild: ["#4682B4", "#5F9EA0"]
+          intense: ["#00D4FF", "#00FFFF"]
+        sadness:
+          anim_mild: "slow_breathe"
+          anim_intense: "slow_fade"
+          mild: ["#1E3A8A", "#2563EB"]
+          intense: ["#1D4ED8", "#1E40AF"]
+        neutral:
+          anim_mild: "static"
+          anim_intense: "breathe"
+          mild: ["#00D4FF", "#4060FF"]
+          intense: ["#00D4FF", "#4060FF"]
     telemetry:
       log_decisions: true
       histogram_enabled: false
