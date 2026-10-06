@@ -236,3 +236,97 @@ Geliştirici ve operatörün sistemin tüm iç dünyasını canlı olarak izledi
 
 ---
 
+## 3. Sistemdeki 7 Tam Kapalı Geri Besleme Döngüsü (Closed Feedback Loops)
+
+SentryBOT V5'te algıdan eyleme giden akışlar fiziksel dünyada bir değişim yaratır ve bu değişim sensörler tarafından tekrar okunarak döngüyü kapatır. Aşağıda sistemdeki 7 temel kapalı döngü detaylandırılmıştır:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as Donanım (Kamera/Servo/Hoparlör)
+    participant A as Algı (Voice/Camera/Sensör)
+    participant B as Bilişsel (AgentCore/Tri-Layer)
+    participant E as Eyleyici (Arduino/Expression/Speak)
+    participant C as Fiziksel Çevre & İnsan
+
+    Note over D,C: DÖNGÜ 1: Görsel-Motor Kafa Takip Döngüsü
+    D->>A: Yüz Koordinatları Algılandı (Kamera)
+    A->>B: Taktik Katmana İlet (Azimuth: +25°)
+    B->>E: Kafa Pan Servosunu Çevir (+25°)
+    E->>D: PWM Sinyali ile Kafa Döner
+    D->>C: Kameranın Bakış Açısı Değişir
+    C-->>D: Yüz Merkeze Gelir (DÖNGÜ KAPANIR)
+
+    Note over D,C: DÖNGÜ 2: Akustik Diyalog & 0ms Kesinti Döngüsü
+    E->>D: Hoparlörden Ses Çıkar (SpeakService)
+    C->>D: İnsan Konuşur ("Hey Sentry!")
+    D->>A: Mikrofon Sesi Yakalar (Wakeword)
+    A->>E: 0ms Barge-In Abort Sinyali
+    E->>D: Çalmayı Anında Durdur (DÖNGÜ KAPANIR)
+```
+
+---
+
+### Döngü 1: Görsel-Motor Kafa Takip Kapalı Döngüsü (Visual-Motor Gaze Closed Loop)
+1. **Algı:** Kullanıcı robotun sol tarafına geçer; `modules.camera` kareyi yakalar.
+2. **İşleme:** `modules.vlm_bridge` veya hızlı yüz takip algoritması yüzün merkezden 25 derece solda olduğunu hesaplar.
+3. **Karar:** `modules.agent_core` Taktik Katmanı (Layer 2, <300ms) kafa yönelim komutu üretir.
+4. **Eylem:** `modules.arduino_serial` pan servosuna sol yönlü PWM sinyali gönderir ve mekanik boyun fiziksel olarak döner.
+5. **Kapanış:** Robot kafası döndüğü için kameranın optik açısı değişir; yüz kameranın tam merkezine girer ve takip hatası sıfırlanarak **döngü kapanır**.
+
+---
+
+### Döngü 2: Akustik Diyalog, 0ms Kesinti ve Yankı Bastırma Döngüsü (Acoustic Barge-In Closed Loop)
+1. **Eylem:** Robot `modules.voice (SpeakService)` üzerinden hoparlörden bir açıklama yapmaktadır.
+2. **Çevre Etkisi:** Ses dalgaları ortamda yayılır. Aynı anda kullanıcı araya girerek "Hey Sentry, dur!" der.
+3. **Algı:** Mikrofon her iki sesi de yakalar. `audio_router` içerisindeki `openWakeWord` anahtar kelimeyi yakalar.
+4. **Müdahale:** `WakewordService` anında `stop_talking()` kesinti sinyalini fırlatır.
+5. **Kapanış:** `SpeakService` o anda ses kartına giden PCM akışını 0ms içinde keser ve hoparlör anında susar. `audio_router` STT üzerindeki susturmayı kaldırır ve kullanıcıyı dinlemeye başlar (**döngü kapanır**).
+
+---
+
+### Döngü 3: Refleks Engel & Çarpışma Önleme Kapalı Döngüsü (Reflex Collision Avoidance Loop)
+1. **Algı:** Robot ileri doğru sürüş yaparken gövde altındaki HC-SR04 ultrasonik sensörü 12 cm mesafede bir engel okur.
+2. **İletim:** Arduino RX iş parçacığı telemetri paketini `modules.agent_core`'a iletir.
+3. **Refleks Karar:** Refleks Katmanı (Layer 1, <50ms) LLM veya hafıza sorgusunu beklemeden doğrudan Acil Fren kararı alır.
+4. **Eylem:** `modules.arduino_serial` motor sürücülerine (A4988) acil durma komutu basar.
+5. **Kapanış:** Robot mekanik olarak durur; mesafe 12 cm'de sabit kalır, çarpışma engellenir ve robot güvenli moda geçer (**döngü kapanır**).
+
+---
+
+### Döngü 4: Otonom Can Sıkıntısı & Merak Döngüsü (Autonomy Boredom & Life Loop)
+1. **İçsel Durum:** Ortamda uzun süre hiçbir insan etkileşimi olmaz. `modules.autonomy (LifeEngine)` içerisindeki Can Sıkıntısı (Boredom) metriği yükselir.
+2. **Biliş:** `CompanionEngine`, `modules.cognitive_memory`'den geçmişte konuşulmuş bir konuyu veya kameradan ilginç bir nesneyi seçer.
+3. **Eylem:** `modules.agent_core` aracılığıyla robot başını kaldırır, NeoPixel mavi nefes animasyonuna geçer ve robot kendi kendine bir soru sorar ("Az önce gördüğüm kitap ne hakkındaydı acaba?").
+4. **Çevre Etkisi:** Odadaki insan robotun sesini ve ışığını fark eder.
+5. **Kapanış:** İnsan robota cevap verir ("O bir yapay zekâ kitabı Sentry"); mikrofon sesi algılar, robotun Sosyal İhtiyacı karşılanır ve Can Sıkıntısı sıfırlanarak **döngü kapanır**.
+
+---
+
+### Döngü 5: RFID Kimlik & Sosyal Bellek Döngüsü (RFID Identity Closed Loop)
+1. **Fiziksel Eylem:** Kullanıcı masadaki RC522 RFID okuyucuya kişisel kartını yaklaştırır.
+2. **HAL Okuma:** `modules.arduino_serial` kart UID'sini okur ve Gateway üzerinden `modules.cognitive_memory`'ye iletir.
+3. **Bellek Eşleme:** `RelationshipMemory` bu UID'nin "Ahmet" kullanıcısına ait olduğunu ve arkadaşlık seviyesinin "Yüksek" olduğunu doğrular.
+4. **Biliş & İfade:** `agent_core (LAYA)` ve `expression` Ahmet'e özel bir selamlama başlatır: OLED gözler neşeyle kısılır, NeoPixel yeşil yanar ve TTS "Hoş geldin Ahmet, seni tekrar görmek harika!" der.
+5. **Kapanış:** Ahmet robota teşekkür eder, ses tanıma kullanıcının varlığını onaylar ve oturum başlar (**döngü kapanır**).
+
+---
+
+### Döngü 6: Sistem Sağlığı & Otonom İyileşme Döngüsü (Self-Healing Watchdog Loop)
+1. **Gözlem:** `modules.system_control (Diagnostics)` her 10 saniyede bir 14 modülün `/healthz` uç noktalarını yoklar.
+2. **Arıza Tespiti:** Bir hafıza taşması sebebiyle `modules.vlm_bridge (:8011)` portu yanıt vermez (Timeout / 503).
+3. **Kurtarma Kararı:** `system_control`, durumu `StateManager`'a bildirir ve `modules.gateway (ProcessSupervisor)` servisine yeniden başlatma çağrısı gönderir.
+4. **Yeniden Doğuş:** Supervisor VLM sürecini güvenli şekilde sonlandırıp sıfırdan ayağa kaldırır.
+5. **Kapanış:** Diagnostics bir sonraki döngüde :8011 portunu tekrar yeşil (200 OK) olarak okur ve sistem normal operasyona döner (**döngü kapanır**).
+
+---
+
+### Döngü 7: Operatör İzleme & Müdahale Döngüsü (Operator Telemetry & Control Loop)
+1. **Yayılım:** Tüm modüller log ve metriklerini `modules.runtime_console`'un WebSocket hattına pompalar.
+2. **Görselleştirme:** Operatör, Textual TUI ekranında motor sıcaklığının veya CPU yükünün yükseldiğini canlı olarak görür.
+3. **Müdahale:** Operatör konsoldan acil mod değişikliği veya `/chat` komutu gönderir.
+4. **Yürütme:** Gateway gelen komutu doğrular, `agent_core` motor hızlarını sınırlar.
+5. **Kapanış:** Düşen motor yükü ve sıcaklık telemetri akışında tekrar normale döner; konsol ekranında telemetri yeşile boyanır (**döngü kapanır**).
+
+---
+
