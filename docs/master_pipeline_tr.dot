@@ -1,0 +1,377 @@
+// SentryBOT V5 Geometrik Master İş Akışı Mimarisi (Türkçe)
+// 14 Modülün Tamamı, Dikey Katmanlı Şelale Akışı, 90 Derecelik Ortogonal (Ortho) Çizgiler ve Dış Kanallardan Dönen 7 Kapalı Geri Besleme Döngüsü
+
+digraph sentrybot_master_pipeline_tr {
+    graph [
+        rankdir=TB,
+        bgcolor="#060913",
+        fontname="Segoe UI, Inter, Arial, sans-serif",
+        fontcolor="#f8fafc",
+        compound=true,
+        newrank=true,
+        pad="0.6",
+        nodesep="0.65",
+        ranksep="0.80",
+        splines=ortho,
+        forcelabels=true,
+        concentrate=false
+    ];
+
+    node [
+        shape=box,
+        style="filled,rounded",
+        fontname="Segoe UI, Inter, Arial, sans-serif",
+        fontsize=9,
+        penwidth=1.4,
+        margin="0.15,0.1"
+    ];
+
+    edge [
+        fontname="Segoe UI, Inter, Arial, sans-serif",
+        fontsize=8,
+        color="#475569",
+        fontcolor="#94a3b8",
+        penwidth=1.2
+    ];
+
+    // =========================================================================
+    // KATMAN 0: FİZİKSEL ÇEVRE VE GİRİŞ SENSÖRLERİ (EN ÜST KATMAN)
+    // =========================================================================
+    subgraph cluster_katman0 {
+        label = "KATMAN 0: Fiziksel Çevre, Kullanıcı ve Giriş Sensörleri";
+        style = "dashed,rounded";
+        fillcolor = "#0b1329";
+        color = "#1e3a8a";
+        fontcolor = "#93c5fd";
+        fontsize = 12;
+
+        hw_kamera [label="Sony IMX500 / USB Kamera\n(/dev/video0 - 1080p 30fps)", shape=ellipse, fillcolor="#064e3b", fontcolor="#ffffff", color="#34d399"];
+        hw_mikrofon [label="I2S 16kHz Mikrofon Dizilimi\n(Stereo Donanım hw:0,0)", shape=ellipse, fillcolor="#0c4a6e", fontcolor="#ffffff", color="#38bdf8"];
+        hw_sonar [label="HC-SR04 Ultrasonik & IMU\n(Mesafe ve Düşme Sensörleri)", shape=ellipse, fillcolor="#78350f", fontcolor="#ffffff", color="#facc15"];
+        hw_rfid [label="RC522 RFID Okuyucu\n(13.56MHz SPI Kart Okuyucu)", shape=ellipse, fillcolor="#7c2d12", fontcolor="#ffffff", color="#fb923c"];
+        hw_cevre [label="Fiziksel Çevre & İnsan Etkileşimi\n(Ses Dalgaları, Görsel Alan, Engeller)", shape=oval, fillcolor="#1e293b", fontcolor="#f8fafc", color="#cbd5e1", penwidth=2.0];
+    }
+
+    // =========================================================================
+    // KATMAN 1: ALGI & ÖNİŞLEME KATMANI
+    // =========================================================================
+    subgraph cluster_katman1 {
+        label = "KATMAN 1: Algı, Önişleme ve Çok Modlu Sinyal Ayrıştırma";
+        style = "filled,rounded";
+        fillcolor = "#0f172a";
+        color = "#0284c7";
+        fontcolor = "#38bdf8";
+        fontsize = 12;
+
+        // Modül 3: Kamera
+        subgraph cluster_cam_mod {
+            label = "3. modules.camera (:8002)";
+            fillcolor = "#06231c";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+            cam_dev [label="DeviceManager\nV4L2 Aygıt Seçici", fillcolor="#064e3b", fontcolor="#ffffff", color="#34d399"];
+            cam_capture [label="FrameCaptureWorker\nKare Yakalama Döngüsü", fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+            cam_streamer [label="JPEGStreamer\n/video_feed MJPEG Dağıtıcı", fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+        }
+
+        // Modül 4: VLM Bridge
+        subgraph cluster_vlm_mod {
+            label = "4. modules.vlm_bridge (:8011)";
+            fillcolor = "#1a1233";
+            color = "#7c3aed";
+            fontcolor = "#c4b5fd";
+            vlm_proc [label="ProcessorVLM\nKare Örnekleme & Token Süzgeci", fillcolor="#5b21b6", fontcolor="#ffffff", color="#a78bfa"];
+            vlm_client [label="VLM İstemci Fabrikası\nQwen2.5-VL / Gemini Vision", fillcolor="#6d28d9", fontcolor="#ffffff", color="#c4b5fd"];
+            vlm_scene [label="SceneDescriptor\nSahne, Yüz ve Duygu Çıkarımı", fillcolor="#5b21b6", fontcolor="#ffffff", color="#a78bfa"];
+        }
+
+        // Modül 5: Voice Giriş Hattı
+        subgraph cluster_voice_in {
+            label = "5. modules.voice — Giriş Hattı (:8003, :8005)";
+            fillcolor = "#091e36";
+            color = "#0284c7";
+            fontcolor = "#7dd3fc";
+            voice_router [label="audio_router.py (Singleton)\nSharedVAD, Halka Tampon & Dağıtıcı", fillcolor="#0369a1", fontcolor="#ffffff", color="#38bdf8"];
+            ww_engine [label="Wakeword (:8005)\nopenWakeWord 'hey sentry'", fillcolor="#0284c7", fontcolor="#ffffff", color="#38bdf8"];
+            ww_bargein [label="0ms Barge-In Emitter\nAnlık İptal Sinyali", fillcolor="#991b1b", fontcolor="#ffffff", color="#f87171"];
+            stt_doa [label="GCC-PHAT DoA\nSes Açısı (Azimuth)", fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+            stt_engine [label="Speech STT (:8003)\nSherpa-ONNX / Whisper", fillcolor="#059669", fontcolor="#ffffff", color="#34d399"];
+        }
+    }
+
+    // =========================================================================
+    // KATMAN 2: BİLİŞSEL MUHAKEME, HAFIZA VE KARAR KATMANI
+    // =========================================================================
+    subgraph cluster_katman2 {
+        label = "KATMAN 2: Bilişsel Zekâ, Tri-Layer Karar, Bellek ve Otonomi";
+        style = "filled,rounded";
+        fillcolor = "#181424";
+        color = "#d97706";
+        fontcolor = "#fcd34d";
+        fontsize = 12;
+
+        // Modül 10: Agent Core
+        subgraph cluster_agent_mod {
+            label = "10. modules.agent_core (:8001) — Karar Çekirdeği";
+            fillcolor = "#2a1506";
+            color = "#f59e0b";
+            fontcolor = "#fde68a";
+            agent_orch [label="AgentOrchestrator\nMerkezi Bilişsel Koordinatör", fillcolor="#b45309", fontcolor="#ffffff", color="#fbbf24"];
+            
+            layer_reflex [label="Layer 1: Refleks (<50ms)\nAcil Çarpma & Düşme Önleme", fillcolor="#78350f", fontcolor="#ffffff", color="#facc15"];
+            layer_tactical [label="Layer 2: Taktik (50-300ms)\nKafa Takibi, Göz & LAYA Dolgusu", fillcolor="#92400e", fontcolor="#ffffff", color="#fbbf24"];
+            layer_strategic [label="Layer 3: Stratejik (>300ms)\nLLM Muhakemesi, Planlama, Araçlar", fillcolor="#b45309", fontcolor="#ffffff", color="#fde68a"];
+            
+            agent_laya [label="LAYA Engine\nEmpatik Sosyal Dolgu ('Hmm...')", fillcolor="#92400e", fontcolor="#ffffff", color="#fbbf24"];
+            agent_arbiters [label="Action & Speech Arbiters\nMutex Kaynak Kilidi & Güvenlik Filtresi", fillcolor="#78350f", fontcolor="#ffffff", color="#facc15"];
+        }
+
+        // Modül 6: AI Provider
+        subgraph cluster_ai_mod {
+            label = "6. modules.ai_provider (:8009)";
+            fillcolor = "#241306";
+            color = "#d97706";
+            fontcolor = "#fcd34d";
+            ai_client [label="ClientFactory\nOllama Yerel / Gemini Bulut", fillcolor="#b45309", fontcolor="#ffffff", color="#fcd34d"];
+            ai_lock [label="PriorityInferenceLock\nP0 Ses > P2 Otonomi Kilidi", fillcolor="#92400e", fontcolor="#ffffff", color="#fbbf24"];
+            ai_trans [label="TranslationBridge\nİki Yönlü TR <-> EN Çeviri", fillcolor="#78350f", fontcolor="#ffffff", color="#f59e0b"];
+        }
+
+        // Modül 2: Cognitive Memory
+        subgraph cluster_mem_mod {
+            label = "2. modules.cognitive_memory (:8008)";
+            fillcolor = "#081f26";
+            color = "#0891b2";
+            fontcolor = "#67e8f9";
+            mem_episodic [label="EpisodicMemory\nGeçmiş Olaylar ve Diyaloglar", fillcolor="#0e7490", fontcolor="#ffffff", color="#38bdf8"];
+            mem_social [label="RelationshipMemory\nKullanıcı Profilleri & RFID", fillcolor="#0891b2", fontcolor="#ffffff", color="#67e8f9"];
+            mem_db [label="SQLiteStore\nmemory.sqlite3 (WAL Modu)", fillcolor="#155e75", fontcolor="#ffffff", color="#22d3ee"];
+        }
+
+        // Modül 11: Autonomy
+        subgraph cluster_auto_mod {
+            label = "11. modules.autonomy (:8012)";
+            fillcolor = "#082116";
+            color = "#059669";
+            fontcolor = "#6ee7b7";
+            auto_life [label="LifeEngine (Dürtüler)\nEnerji, Sosyal, Merak, Can Sıkıntısı", fillcolor="#065f46", fontcolor="#ffffff", color="#34d399"];
+            auto_companion [label="CompanionEngine\nKendiliğinden Yoldaş Sözleri", fillcolor="#047857", fontcolor="#ffffff", color="#34d399"];
+            auto_patrol [label="PatrolController\nTopolojik Devriye Gezisi", fillcolor="#065f46", fontcolor="#ffffff", color="#34d399"];
+        }
+    }
+
+    // =========================================================================
+    // KATMAN 3: EYLEM PLANLAMA, İFADE VE SÜRÜCÜLER
+    // =========================================================================
+    subgraph cluster_katman3 {
+        label = "KATMAN 3: Eylem Planlama, İfade Koreografisi ve Donanım Sürücüleri";
+        style = "filled,rounded";
+        fillcolor = "#1f101d";
+        color = "#be123c";
+        fontcolor = "#fda4af";
+        fontsize = 12;
+
+        // Modül 5: Voice Çıkış Hattı (SpeakService Pipeline)
+        subgraph cluster_voice_out {
+            label = "5. modules.voice — SpeakService (:8007) İşlem Hattı";
+            fillcolor = "#240b3b";
+            color = "#a855f7";
+            fontcolor = "#d8b4fe";
+            tts_prep [label="TextPreprocessor\n<think> Sil, Emoji Temizle", fillcolor="#581c87", fontcolor="#ffffff", color="#c084fc"];
+            tts_queue [label="PrioritySpeechQueue\nP0: Diyalog | P2: Otonomi", fillcolor="#6b21a8", fontcolor="#ffffff", color="#c084fc"];
+            tts_locks [label="R21 Ayrık Kilitler\nsynthesis_lock & playback_lock", fillcolor="#7e22ce", fontcolor="#ffffff", color="#e9d5ff"];
+            tts_synth [label="Piper / Kokoro TTS\nONNX Nöral Ses Sentezleyici", fillcolor="#6b21a8", fontcolor="#ffffff", color="#c084fc"];
+            tts_player [label="SoundDevice Playback Worker\nPCM Ses Çıkış Tamponu", fillcolor="#581c87", fontcolor="#ffffff", color="#c084fc"];
+            tts_abort [label="stop_talking() Aborter\n0ms Donanım Kesici", fillcolor="#991b1b", fontcolor="#ffffff", color="#f87171"];
+        }
+
+        // Modül 12: Expression
+        subgraph cluster_exp_mod {
+            label = "12. modules.expression (:8010, :8014)";
+            fillcolor = "#2b0a1f";
+            color = "#f43f5e";
+            fontcolor = "#fecdd3";
+            exp_director [label="ExpressionDirector\nÇok Modlu Jest Koordinatörü", fillcolor="#9f1239", fontcolor="#ffffff", color="#fb7185"];
+            exp_animate [label="AnimateService\nKeyframe Motor Enterpolasyonu", fillcolor="#be123c", fontcolor="#ffffff", color="#fda4af"];
+            exp_piservo [label="PiServoService\nKulak Servoları PWM Sürücüsü", fillcolor="#881337", fontcolor="#ffffff", color="#f43f5e"];
+        }
+
+        // Modül 8: Visual Output
+        subgraph cluster_vis_mod {
+            label = "8. modules.visual_output (:8006, :8013)";
+            fillcolor = "#2b0c23";
+            color = "#db2777";
+            fontcolor = "#fbcfe8";
+            vis_face [label="FaceRenderer (OLED :8013)\nGöz Animasyonu & Biyolojik Kırpma", fillcolor="#9d174d", fontcolor="#ffffff", color="#f472b6"];
+            vis_sub [label="SubtitleRenderer\nCanlı STT Altyazı Satırı", fillcolor="#831843", fontcolor="#ffffff", color="#f472b6"];
+            vis_neo [label="NeoRunner (NeoPixel :8006)\nRGB Işık Efektleri & Aura", fillcolor="#701a75", fontcolor="#ffffff", color="#e879f9"];
+        }
+
+        // Modül 7: Arduino Serial
+        subgraph cluster_ard_mod {
+            label = "7. modules.arduino_serial (:8004)";
+            fillcolor = "#071e33";
+            color = "#0284c7";
+            fontcolor = "#7dd3fc";
+            ard_contract [label="contract.py CommandBuilder\nSERVO_BOUNDS Açı Kırpma", fillcolor="#0369a1", fontcolor="#ffffff", color="#38bdf8"];
+            ard_driver [label="UART & ESP32 Driver\n115200 Baud NDJSON İletişimi", fillcolor="#075985", fontcolor="#ffffff", color="#38bdf8"];
+            ard_rx [label="RX Worker Thread\nTelemetri Dinleyici & RFID Ayrıştırıcı", fillcolor="#0c4a6e", fontcolor="#ffffff", color="#7dd3fc"];
+        }
+    }
+
+    // =========================================================================
+    // KATMAN 4: FİZİKSEL ÇIKIŞ AKTÜATÖRLERİ (EN ALT KATMAN)
+    // =========================================================================
+    subgraph cluster_katman4 {
+        label = "KATMAN 4: Fiziksel Çıkış Aktüatörleri ve Dünyaya Etki";
+        style = "dashed,rounded";
+        fillcolor = "#0d111d";
+        color = "#334155";
+        fontcolor = "#94a3b8";
+        fontsize = 12;
+
+        hw_hoparlor [label="Hoparlör & Amplifikatör\n(PCM Ses Çıkışı hw:1,0)", shape=ellipse, fillcolor="#4c1d95", fontcolor="#ffffff", color="#c4b5fd"];
+        hw_servolar [label="Pan/Tilt & Kulak Servoları\n(MG996R & SG90 PWM)", shape=ellipse, fillcolor="#065f46", fontcolor="#ffffff", color="#34d399"];
+        hw_motorlar [label="Adım / DC Sürüş Motorları\n(A4988 Sürücü / Tekerlekler)", shape=ellipse, fillcolor="#065f46", fontcolor="#ffffff", color="#34d399"];
+        hw_oled [label="SSD1306 OLED Ekran\n(128x64 Piksel I2C Yüz)", shape=ellipse, fillcolor="#831843", fontcolor="#ffffff", color="#f472b6"];
+        hw_neopixel [label="WS2812B NeoPixel\n(16 LED Kafa Halkası + Göğüs)", shape=ellipse, fillcolor="#581c87", fontcolor="#ffffff", color="#c084fc"];
+    }
+
+    // =========================================================================
+    // PLATFORM, AĞ GEÇİDİ VE YÖNETİM (YAN SÜTUN)
+    // =========================================================================
+    subgraph cluster_platform {
+        label = "Platform Altyapısı, Ağ Geçidi & İzleme";
+        style = "filled,rounded";
+        fillcolor = "#09151e";
+        color = "#0d9488";
+        fontcolor = "#5eead4";
+        fontsize = 12;
+
+        gw_proxy [label="9. modules.gateway (:8000)\nFastAPI Ters Vekil & Supervisor", fillcolor="#0e7490", fontcolor="#ffffff", color="#22d3ee"];
+        sys_control [label="13. modules.system_control (:8015-:8019)\nStateManager, Teşhis, Telemetri, Scheduler", fillcolor="#115e59", fontcolor="#ffffff", color="#2dd4bf"];
+        rc_console [label="14. modules.runtime_console (:8080)\nTextual TUI, logwrapper & WebSocket", fillcolor="#3730a3", fontcolor="#ffffff", color="#818cf8"];
+        com_core [label="1. modules.common\nEventBus, ConfigLoader & ServiceBase", fillcolor="#334155", fontcolor="#ffffff", color="#94a3b8"];
+    }
+
+    // =========================================================================
+    // ŞELALE AKIŞI (TAMAMI YUKARIDAN AŞAĞIYA DÜZ ÇİZGİLERLE)
+    // =========================================================================
+
+    // Katman 0 -> Katman 1 (Sensörden Algıya)
+    hw_kamera:s -> cam_dev:n [xlabel="Video Akışı"];
+    cam_dev:s -> cam_capture:n;
+    cam_capture:s -> cam_streamer:n;
+    cam_streamer:s -> vlm_proc:n [xlabel="Örnek Kare"];
+    vlm_proc:s -> vlm_client:n;
+    vlm_client:s -> vlm_scene:n;
+
+    hw_mikrofon:s -> voice_router:n [xlabel="16kHz PCM"];
+    voice_router:s -> ww_engine:n;
+    voice_router:s -> stt_doa:n;
+    voice_router:s -> stt_engine:n;
+
+    hw_sonar:s -> ard_rx:n [xlabel="Sensör Telemetrisi", style="dashed"];
+    hw_rfid:s -> ard_rx:n [xlabel="Kart UID", style="dashed"];
+
+    // Katman 1 -> Katman 2 (Algıdan Bilişe)
+    stt_engine:s -> agent_orch:n [xlabel="Kullanıcı Sözü", color="#34d399"];
+    stt_doa:s -> layer_tactical:n [xlabel="Ses Açısı (DoA)", color="#38bdf8"];
+    vlm_scene:s -> agent_orch:n [xlabel="Görsel Sahne & Yüz", color="#c4b5fd"];
+    vlm_scene:s -> auto_life:n [xlabel="Görsel Uyaran", style="dotted"];
+
+    // Katman 2 İçi Muhakeme Akışı
+    agent_orch:s -> layer_reflex:n;
+    agent_orch:s -> layer_tactical:n;
+    agent_orch:s -> layer_strategic:n;
+    layer_tactical:s -> agent_laya:n;
+    layer_strategic:s -> ai_client:n [xlabel="LLM İstemi", color="#f59e0b"];
+    ai_client:s -> ai_lock:n;
+    ai_lock:s -> ai_trans:n;
+    layer_strategic:s -> mem_episodic:n [xlabel="Hafıza Ara"];
+    layer_strategic:s -> mem_social:n [xlabel="Kullanıcı Profili"];
+    mem_episodic:s -> mem_db:n;
+    mem_social:s -> mem_db:n;
+    auto_life:s -> auto_companion:n;
+    auto_companion:s -> agent_orch:n [xlabel="İç Düşünce", color="#34d399"];
+    auto_life:s -> auto_patrol:n;
+
+    // Katman 2 -> Katman 3 (Bilişten Eyleme)
+    agent_orch:s -> tts_prep:n [xlabel="Yanıt Metni", color="#c084fc"];
+    agent_laya:s -> tts_queue:n [xlabel="Dolgu Sözü ('Hmm')", color="#fbbf24"];
+    agent_orch:s -> exp_director:n [xlabel="Duygu Niyeti", color="#f43f5e"];
+    layer_reflex:s -> agent_arbiters:n [xlabel="Refleks Fren", color="#facc15"];
+    layer_tactical:s -> agent_arbiters:n [xlabel="Takip Açısı", color="#fbbf24"];
+    auto_patrol:s -> agent_arbiters:n [xlabel="Devriye Hızı"];
+
+    exp_director:s -> exp_animate:n;
+    exp_director:s -> exp_piservo:n;
+    exp_animate:s -> vis_face:n [xlabel="Göz Matrisi"];
+    exp_animate:s -> vis_neo:n [xlabel="LED Deseni"];
+    stt_engine:s -> vis_sub:n [xlabel="Canlı Altyazı", color="#f472b6", style="dashed"];
+    exp_animate:s -> agent_arbiters:n [xlabel="Kafa Hareketi"];
+
+    agent_arbiters:s -> ard_contract:n [xlabel="Güvenli Eylem", color="#38bdf8"];
+    ard_contract:s -> ard_driver:n;
+
+    // SpeakService İç Boru Hattı (Katman 3 İçi)
+    tts_prep:s -> tts_queue:n;
+    tts_queue:s -> tts_locks:n;
+    tts_locks:s -> tts_synth:n;
+    tts_synth:s -> tts_player:n;
+
+    // Katman 3 -> Katman 4 (Sürücülerden Fiziksel Aktüatörlere)
+    tts_player:s -> hw_hoparlor:n [xlabel="PCM Sinyali", color="#c4b5fd"];
+    exp_piservo:s -> hw_servolar:n [xlabel="Kulak PWM", color="#f43f5e"];
+    vis_face:s -> hw_oled:n [xlabel="I2C Verisi", color="#f472b6"];
+    vis_sub:s -> hw_oled:n;
+    vis_neo:s -> hw_neopixel:n [xlabel="WS2812B Sinyali", color="#c084fc"];
+    ard_driver:s -> hw_servolar:n [xlabel="Pan/Tilt PWM (50Hz)", color="#38bdf8"];
+    ard_driver:s -> hw_motorlar:n [xlabel="Step Darbeleri", color="#38bdf8"];
+
+    // Platform ve Yönetim Hatları
+    gw_proxy:s -> agent_orch:n [xlabel="/chat API"];
+    gw_proxy:s -> ard_contract:n [xlabel="/arduino API"];
+    sys_control:s -> gw_proxy:n [xlabel="Watchdog & Selftest"];
+    rc_console:s -> gw_proxy:n [xlabel="WebSocket Log Hattı"];
+    com_core:s -> sys_control:n [style="dotted"];
+
+    // =========================================================================
+    // 7 TAM KAPALI GERİ BESLEME DÖNGÜSÜ (DIŞ KANALLARDAN DÖNEN HATLAR)
+    // =========================================================================
+
+    // DÖNGÜ 1: Görsel-Motor Kafa Takip Döngüsü (SOL KANAL - YEŞİL)
+    edge [color="#10b981", penwidth=2.2, fontcolor="#34d399", style="bold"];
+    hw_servolar:w -> hw_cevre:w [constraint=false, xlabel="DÖNGÜ 1: Kafa Fiziksel Olarak Döner"];
+    hw_cevre:w -> hw_kamera:w [constraint=false, xlabel="DÖNGÜ 1: Görsel Alan Değişir -> Yüz Merkeze Gelir (KAPANDI)"];
+
+    // DÖNGÜ 2: Akustik Diyalog, 0ms Kesinti ve Yankı Bastırma (SAĞ KANAL - KIRMIZI)
+    edge [color="#ef4444", penwidth=2.2, fontcolor="#f87171", style="bold"];
+    ww_engine:e -> ww_bargein:e [xlabel="'hey sentry'"];
+    ww_bargein:e -> tts_abort:e [constraint=false, xlabel="DÖNGÜ 2: 0ms Barge-In Abort Sinyali"];
+    tts_abort:e -> tts_player:e [xlabel="Oynatmayı Anında Kes"];
+    tts_player:e -> voice_router:e [constraint=false, xlabel="DÖNGÜ 2: STT Mikrofonunu Sustur/Aç (Echo Ducking - KAPANDI)"];
+
+    // DÖNGÜ 3: Refleks Engel & Çarpışma Önleme (SOL KANAL - SARI)
+    edge [color="#eab308", penwidth=2.2, fontcolor="#fde047", style="bold"];
+    ard_rx:w -> layer_reflex:w [constraint=false, xlabel="DÖNGÜ 3: Engel < 15cm Refleks Uyarısı (<50ms)"];
+    hw_motorlar:w -> hw_sonar:w [constraint=false, xlabel="DÖNGÜ 3: Robot Fren Yapar -> Güvenli Mesafe Korunur (KAPANDI)"];
+
+    // DÖNGÜ 4: Otonomi Can Sıkıntısı & Merak Döngüsü (SAĞ KANAL - MOR)
+    edge [color="#8b5cf6", penwidth=2.2, fontcolor="#c4b5fd", style="bold"];
+    hw_cevre:e -> auto_life:e [constraint=false, xlabel="DÖNGÜ 4: Boşta Kalma Süresi Uzar -> Can Sıkıntısı Artar"];
+    hw_hoparlor:e -> hw_cevre:e [constraint=false, xlabel="DÖNGÜ 4: Robot Konuşur -> İnsan Cevap Verir (KAPANDI)"];
+
+    // DÖNGÜ 5: RFID Kimlik & Sosyal Bellek Döngüsü (SOL KANAL - TURUNCU)
+    edge [color="#f97316", penwidth=2.2, fontcolor="#fdba74", style="bold"];
+    ard_rx:w -> mem_social:w [constraint=false, xlabel="DÖNGÜ 5: RFID UID -> Kullanıcı Tanındı (Ahmet)"];
+    tts_player:w -> hw_cevre:w [constraint=false, xlabel="DÖNGÜ 5: Kişisel Karşılama -> Kullanıcı Yanıtlar (KAPANDI)"];
+
+    // DÖNGÜ 6: Sistem Sağlığı & Otonom İyileşme (SAĞ KANAL - CAMGÖBEĞİ)
+    edge [color="#06b6d4", penwidth=2.2, fontcolor="#67e8f9", style="bold"];
+    sys_control:e -> gw_proxy:e [constraint=false, xlabel="DÖNGÜ 6: Servis Çöktü -> Otomatik Yeniden Başlat (KAPANDI)"];
+
+    // DÖNGÜ 7: Operatör İzleme & Müdahale Döngüsü (SAĞ KANAL - PEMBE)
+    edge [color="#ec4899", penwidth=2.2, fontcolor="#f472b6", style="bold"];
+    rc_console:e -> gw_proxy:e [constraint=false, xlabel="DÖNGÜ 7: TUI Operatör Müdahale Komutu (KAPANDI)"];
+}
