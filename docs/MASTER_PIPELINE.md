@@ -330,3 +330,54 @@ sequenceDiagram
 
 ---
 
+## 4. Port, Protokol ve Donanım Arayüzleri Matrisi
+
+Aşağıdaki tablo, sistemdeki tüm mikroservislerin ağ portlarını, iletişim protokollerini ve kullandıkları donanım yollarını özetlemektedir:
+
+| Port | Modül Adı | Servis / Rol | Birincil Protokol | Donanım / Fiziksel Arayüz |
+|---|---|---|---|---|
+| **8000** | `gateway` | Merkezi API Ağ Geçidi & Vekil | HTTP REST, WebSocket | Yerel Loopback (127.0.0.1) |
+| **8001** | `agent_core` | Bilişsel Karar Motoru & Tri-Layer | HTTP REST, Async Bus | RAM / CPU |
+| **8002** | `camera` | Video Yakalama & Dağıtım | HTTP MJPEG Stream | Sony IMX500 / USB (`/dev/video0`) |
+| **8003** | `voice` | Speech-to-Text (STT) & DoA | HTTP REST, WebSocket | Alsa PCM (`hw:0,0`) |
+| **8004** | `arduino_serial` | Mikrodenetleyici Donanım HAL | HTTP REST, NDJSON | USB UART (115200 Baud), RC522 SPI |
+| **8005** | `voice` | Wakeword & Barge-In Motoru | WebSocket Event Stream | Alsa PCM Paylaşımlı Tampon |
+| **8006** | `visual_output` | WS2812B NeoPixel Kontrolü | HTTP REST | GPIO PWM / SPI Veri Hattı |
+| **8007** | `voice` | Text-to-Speech (TTS, Speak) | HTTP REST, SoundDevice | Ses Kartı Çıkışı (`hw:1,0`) |
+| **8008** | `cognitive_memory` | Epizodik & Sosyal Bellek | HTTP REST, SQLite API | NVMe / SSD (`memory.sqlite3`) |
+| **8009** | `ai_provider` | Çoklu Model LLM Yönlendirici | HTTP REST, JSON | Ollama Socket / Google API |
+| **8010** | `expression` | Jest & Koreografi Direktörü | HTTP REST | RAM / Dahili EventBus |
+| **8011** | `vlm_bridge` | Çok Modlu Görsel Anlamlandırma | HTTP REST, JSON | GPU / NPU / Harici VLM |
+| **8012** | `autonomy` | Otonom Yaşam & Yoldaş Motoru | HTTP REST | Zamanlayıcı & Arka Plan Worker |
+| **8013** | `visual_output` | SSD1306 OLED Göz Arayüzü | HTTP REST | I2C Veri Yolu (Adres: `0x3C`) |
+| **8014** | `expression` | PiServo Kulak Kontrolcüsü | HTTP REST | Donanımsal/Yazılımsal PWM |
+| **8015** | `system_control` | Alarm ve Notifier Servisi | HTTP REST, Webhook | Harici Ağ (Telegram/Discord) |
+| **8016** | `system_control` | Teşhis & Watchdog (Diagnostics)| HTTP REST | Port Denetleyicisi |
+| **8017** | `system_control` | Zamanlanmış Görev Motoru | HTTP REST | Cron Zamanlayıcı |
+| **8018** | `system_control` | Sistem Durum Yöneticisi | HTTP REST, SQLite | `state.sqlite3` |
+| **8019** | `system_control` | Donanım Telemetri Toplayıcı | HTTP REST | Linux `/sys` ve `/proc` Dosya Sistemi |
+| **8080** | `runtime_console` | TUI Operatör Konsolu & Loglar | WebSocket, ANSI TUI | Linux TTY Terminal |
+
+---
+
+## 5. Arıza Kurtarma ve Güvenlik Mekanizmaları (Fail-Safe Matrix)
+
+Robotun fiziksel dünyada insanlarla güvenli bir şekilde bir arada yaşayabilmesi için aşağıdaki yazılımsal ve donanımsal güvenlik bariyerleri uygulanmıştır:
+
+1. **Donanımsal Watchdog ve Açı Kırpma (`SERVO_BOUNDS`)**:
+   - `contract.py` tarafından denetlenmeyen hiçbir açı mikrodenetleyiciye iletilemez.
+   - Kafa motorları fiziksel limitlerin (Pan: 30°-150°, Tilt: 45°-120°) dışına çıkamaz; mekanik kablo kopmaları ve dişli sıyırmaları engellenir.
+2. **Akustik Çift Kilit Koruması (R21 Split Locks)**:
+   - TTS sentezi esnasında CPU aşırı yüklenirse oynatma kilitlenmez; sentez ve çalma ayrık iş parçacıklarında izole edilmiştir.
+3. **0ms Kesinti Önceliği (Barge-In)**:
+   - Robot konuşurken acil bir sesli komut ("DUR", "HEY SENTRY") algılandığında sistem bekleme yapmaz; donanım seviyesinde ses kesilir.
+4. **Çok Modlu Düşme & Çarpışma Refleksi (<50ms)**:
+   - Ultrasonik sensörler veya IMU ivmeölçer düşme eğimi algıladığında, LLM ve planlama katmanları bypass edilerek motor frenleri kitlenir.
+5. **Bellek Bütünlüğü ve WAL Modu**:
+   - SQLite veri tabanları ani güç kesintilerine karşı Write-Ahead Logging (WAL) modunda çalışır; veri bozulması (corruption) yaşanmaz.
+
+---
+
+## 6. Özet ve Sonuç
+
+Bu teknik mimari ile **Project SentryBOT V5**, 14 mikroservisin birbirinden izole ama tam bir uyum içinde çalıştığı, her uyarana karşı kapalı bir sibernetik geri besleme döngüsüyle yanıt veren, insan benzeri akıcı diyalog ve güvenli hareket kabiliyetine sahip eksiksiz bir otonom robotik platform haline getirilmiştir.
