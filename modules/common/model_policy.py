@@ -9,7 +9,7 @@ import asyncio
 import os
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 LOCAL_MODEL = "qwen3.5:9b"
 LOCAL_PROVIDER = "ollama"
