@@ -14,7 +14,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import yaml
 

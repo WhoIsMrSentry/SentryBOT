@@ -12,7 +12,7 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Type
 from uuid import uuid4
 
 logger = logging.getLogger("common.job_types")
@@ -328,7 +328,7 @@ class NotifyHandler(JobHandler):
         if not text:
             raise ValueError("Notify job requires 'text' parameter")
         
-        result = await notifier_service.send(text=text, channel=channel)
+        await notifier_service.send(text=text, channel=channel)
         return {"sent": True, "channel": channel}
 
 
@@ -412,6 +412,7 @@ def get_job_registry() -> JobRegistry:
 
 async def get_job_registry_async() -> JobRegistry:
     """Async version for async contexts."""
+    global _global_registry
     async with _registry_lock:
         if _global_registry is None:
             _global_registry = JobRegistry()
