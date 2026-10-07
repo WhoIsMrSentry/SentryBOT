@@ -10,15 +10,17 @@ Provides standardized FastAPI router creation with:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
 import logging
 import time
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Optional, Type
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -137,13 +139,11 @@ class RateLimitMiddleware:
         self._lock = asyncio.Lock()
     
     async def __call__(self, request: Request, call_next):
-        client_ip = request.client.host if request.client else "unknown"
-        key = f"ratelimit:{client_ip}"
         
         async with self._lock:
             now = time.time()
             # Clean old entries
-            cutoff = now - 60  # 60 second window
+            now - 60  # 60 second window
             # We'll use the global store with a lock
         
         # For simplicity, use a simple counter per IP
@@ -261,15 +261,15 @@ class RouterFactory:
         # Add request ID middleware
         @router.middleware("http")
         async def add_request_id(request: Request, call_next):
-            request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-            start_time = time.perf_counter()
+            request.headers.get("X-Request-ID", str(uuid.uuid4()))
+            time.perf_counter()
             
             if self.config.log_requests:
                 logger.info("Request: %s %s", request.method, request.url.path)
             
             response = await call_next(request)
             
-            duration_ms = (time.perf_counter() - time.time()) * 1000
+            (time.perf_counter() - time.time()) * 1000
             response.headers["X-Request-ID"] = request.headers.get("X-Request-ID", str(uuid.uuid4()))
             response.headers["X-Response-Time-MS"] = f"{(time.perf_counter() - time.time()) * 1000:.2f}"
             
