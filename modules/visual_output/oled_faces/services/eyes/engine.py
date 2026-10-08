@@ -12,6 +12,7 @@ import math
 import random
 import threading
 import time
+from typing import Optional
 
 from PIL import Image, ImageDraw
 
