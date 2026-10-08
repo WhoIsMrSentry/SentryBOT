@@ -6,7 +6,7 @@ import importlib
 import logging
 from pathlib import Path
 import time
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional
 
 try:
     import numpy as np  # type: ignore
@@ -18,7 +18,7 @@ try:
 except Exception:
     OpenWakeWordModel = None  # type: ignore
 
-from .openwakeword_assets import (
+from .openwakeword_assets import (  # noqa: F401
     BUILTIN_FEATURE_MODELS_ONNX,
     BUILTIN_FEATURE_MODELS_TFLITE,
     BUILTIN_VAD_MODELS,

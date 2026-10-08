@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import threading
 import time
 from threading import Event, Lock, Thread
-from typing import Any, Optional
+from typing import Optional
 
 try:
     import audioop
@@ -16,7 +17,7 @@ from fastapi import FastAPI
 from modules.voice.wakeword.config_loader import load_config, load_audio_router_config
 from modules.voice.wakeword.services.wakeword_detector import WakewordDetector
 from modules.voice.wakeword.services.openwakeword_runner import OpenWakewordRunner
-from modules.voice.wakeword.services.wakeword_actions import WakewordActions
+from modules.voice.wakeword.services.wakeword_actions import WakewordActions, _now
 from modules.voice.audio_router import (
     get_audio_router,
     OpenWakeWordConsumerAdapter,
