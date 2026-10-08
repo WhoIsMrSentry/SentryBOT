@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
+import os  # noqa: F401  -- port_detector and tests resolve os via this module
 import threading
 import time
+from pathlib import Path
 from queue import Empty, Queue
 from typing import Any, Callable, Dict, List, Optional
 
@@ -17,7 +18,6 @@ from .config_loader import load_config
 from .services.cute_catalog import CUTE_SOUND_CATALOG, EMOTION_TO_CUTE
 from .services.rfid_handler import RfidHandlerMixin
 from .services.serial_loops import SerialLoopsMixin
-from .head_arbiter_integration import HeadArbiterTransportWrapper
 from .transports import (
     EspTransportMixin,
     FirmwareHelpersMixin,
@@ -30,7 +30,7 @@ try:
 except Exception:  # pragma: no cover
     serial = None
 
-from .services.port_detector import (
+from .services.port_detector import (  # noqa: F401
     _PI_SERIAL_CANDIDATE_GLOBS,
     _existing_device_from_globs,
     _default_serial_device,
@@ -102,12 +102,12 @@ class xArduinoSerialService(RfidHandlerMixin, SerialLoopsMixin, EspTransportMixi
             self._attach_head_arbiter_wrapper(head_arbiter, bypass_for_testing=head_arbiter_bypass_for_testing)
 
         try:
-            mfile = _pathlib.Path(__file__).parent / "config" / "cute_mapping.json"
+            mfile = Path(__file__).parent / "config" / "cute_mapping.json"
             if mfile.exists():
                 with open(mfile, "r", encoding="utf-8") as fh:
-                    self.CUTE_SOUND_CATALOG = _json.load(fh)
+                    self.CUTE_SOUND_CATALOG = json.load(fh)
         except Exception:
-            pass
+            self._logger.exception("cute_mapping.json could not be loaded")
 
         self._write_queue: "Queue[Optional[bytes]]" = Queue()
         self._writer_thread: Optional[threading.Thread] = None
