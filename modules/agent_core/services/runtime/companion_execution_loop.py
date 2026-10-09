@@ -620,7 +620,7 @@ class CompanionExecutionLoop:
             fallback_plan = observation_replan(plan, failed_step, failure)
             if fallback_plan is None:
                 return False
-            fallback_candidate = CandidatePlan(
+            CandidatePlan(
                 plan=Plan(
                     goal_id=goal.id,
                     steps=[s for s in plan.steps if s.metadata.get("replan")],
