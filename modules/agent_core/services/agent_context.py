@@ -5,11 +5,9 @@ from modules.common.ollama_url import normalize_ollama_url
 
 
 import logging
-import os
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .action_arbiter import ActionArbiter
-from .agent_fast_path import AgentFastPathMixin
 from .agent_handlers import register_default_action_handlers
 from .agent_memory_sync import AgentMemorySyncMixin
 from .expression_arbiter import ExpressionArbiter
@@ -22,7 +20,7 @@ from .slam import TopologicalMap
 from .speech_arbiter import SpeechArbiter
 from .tool_execution_arbiter import ToolExecutionArbiter
 from .tools import ToolRegistry
-from .tri_layer import TriLayerRouter, build_subagent_profiles
+from .tri_layer import TriLayerRouter
 from .vision_arbiter import VisionArbiter
 from .world_state import WorldState
 
@@ -278,7 +276,7 @@ class AgentContextMixin(AgentMemorySyncMixin):
             default_modules = ["autonomy", "agent_core"]
         if not self._vision_input_available():
             default_modules = [m for m in default_modules if str(m).strip().lower() != "vlm_bridge"]
-        profile_overrides = tri_cfg.get("profiles") if isinstance(tri_cfg.get("profiles"), dict) else None
+        tri_cfg.get("profiles") if isinstance(tri_cfg.get("profiles"), dict) else None
         from .laya_engine import LayaEngine
 
         self.laya_engine = LayaEngine.get_instance(config)
