@@ -3,7 +3,7 @@ from __future__ import annotations
 import json as _json
 import time
 from queue import Empty, Queue
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List
 
 try:
     import requests
