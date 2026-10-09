@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 
 def get_state_router(agent) -> APIRouter:
