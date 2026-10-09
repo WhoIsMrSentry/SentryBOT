@@ -1,12 +1,9 @@
 """Speech and tone helpers for AutonomyBrain."""
 from __future__ import annotations
 
-import datetime
 import logging
-import random
 import time
 import uuid
-from typing import Any, Dict, List, Optional
 
 try:
     from modules.voice.speak.services.lang_detect import detect_text_language
@@ -195,7 +192,7 @@ class VocalMixin(VocalProsodyMixin):
         self.memory.add_event(f"I replied: {clean_text}")
 
     def _react_to_speech(self, text: str, source_lang: str | None = None) -> None:
-        from modules.voice.speech.services.wake_phrase import contains_wakeword, strip_wakewords
+        from modules.voice.speech.services.wake_phrase import contains_wakeword
 
         low = str(text or "").lower()
         has_wake = contains_wakeword(low)
