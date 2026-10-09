@@ -1,9 +1,8 @@
 import logging
 import time
-import json
 import yaml
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger("autonomy.shadow_learner")
 
