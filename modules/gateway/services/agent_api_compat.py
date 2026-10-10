@@ -9,7 +9,7 @@ import time
 import urllib.request
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import Request
 
 # Consolidated duplicates (audit FIX-12): both legacy helpers now live in
 # modules.common.ollama_url; local names kept as aliases for call sites.
