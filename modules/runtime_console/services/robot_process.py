@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from .models import LogEvent, Snapshot
+from .models import Snapshot
 
 
 class RobotProcess:
@@ -368,7 +368,7 @@ def request_background_refresh(snapshot: Snapshot, ui: Any | None = None) -> Non
             else:  # Overview / Logs / other
                 refresh_camera_snapshot(snapshot)
                 refresh_expression_snapshot(snapshot)
-        except Exception as exc:
+        except Exception:
             pass
         finally:
             request_background_refresh.running = False

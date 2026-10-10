@@ -6,7 +6,6 @@ from pathlib import Path
 import platform
 import sys
 import time
-from typing import Any
 
 try:
     import psutil
@@ -18,7 +17,6 @@ from .system_info_hardware import (
     get_memory_info,
     get_disk_info,
     get_gpu_and_graphics,
-    get_gpu_info,
     get_resolution,
     get_battery,
 )
