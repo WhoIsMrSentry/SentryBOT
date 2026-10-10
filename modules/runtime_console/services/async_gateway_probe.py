@@ -57,7 +57,7 @@ class AsyncGatewayProbe:
                     self.online = False
                     self.error_message = f"Gateway HTTP {resp.status_code}"
                     return False
-            except Exception as exc:
+            except Exception:
                 self.online = False
                 self.last_probe_ms = (time.perf_counter() - t0) * 1000.0
                 self.error_message = "Gateway offline / unreachable"
