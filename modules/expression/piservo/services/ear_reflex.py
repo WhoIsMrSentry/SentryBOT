@@ -8,7 +8,7 @@ yöndeki kulağını dikleştirir ve seğirtir (ear twitch).
 from __future__ import annotations
 import time
 from dataclasses import dataclass
-from typing import Tuple, Optional
+from typing import Tuple
 
 @dataclass
 class EarAngles:
