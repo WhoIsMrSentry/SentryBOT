@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 from textual.app import ComposeResult
-from textual.containers import Container, Grid, Horizontal, Vertical
+from textual.containers import Grid, Horizontal, Vertical
 from textual.widget import Widget
-from textual.widgets import Button, Label, Sparkline, Static
+from textual.widgets import Label, Sparkline, Static
 
 
 class TabTelemetry(Widget):
