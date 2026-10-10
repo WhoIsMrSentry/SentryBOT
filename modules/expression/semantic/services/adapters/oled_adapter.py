@@ -6,9 +6,8 @@ Translates semantic expression calls into OLED face service HTTP requests.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
 
-from modules.common.http_client import AsyncHTTPClient, get_http_client
+from modules.common.http_client import get_http_client
 
 logger = logging.getLogger("expression.adapter.oled")
 

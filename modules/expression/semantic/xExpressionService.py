@@ -81,7 +81,7 @@ class xExpressionService:
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
-    cfg = load_config(config_path)
+    load_config(config_path)
     service = xExpressionService()
     
     @asynccontextmanager

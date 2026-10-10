@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from modules.common.http_client import AsyncHTTPClient, get_http_client
+from modules.common.http_client import get_http_client
 
 logger = logging.getLogger("expression.adapter.speak")
 
