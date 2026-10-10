@@ -5,9 +5,7 @@ from typing import Optional
 import httpx
 
 from modules.common.command_registry import (  # type: ignore
-    CommandRegistry,
     CommandResult,
-    CommandContext,
     get_command_registry,
 )
 
@@ -87,8 +85,8 @@ class CommandRouterLegacy:
         return CommandResult(text=result_text)
 
 
-# For backward compatibility - export the old class name
-CommandRouter = CommandRouterLegacy
+# Intentional: the legacy router is the public CommandRouter name.
+CommandRouter = CommandRouterLegacy  # noqa: F811
 
 __all__ = [
     "CommandResult",
