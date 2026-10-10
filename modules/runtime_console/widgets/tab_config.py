@@ -11,7 +11,7 @@ except ImportError:
 
 import yaml
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, OptionList, TextArea
 from textual.widgets.option_list import Option

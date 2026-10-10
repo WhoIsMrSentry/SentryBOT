@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-import asyncio
-import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 import httpx
 import yaml
 from textual import work
 from textual.app import ComposeResult
-from textual.containers import Container, Grid, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
-from textual.widgets import Button, Input, Label, RichLog, Static
+from textual.widgets import Button, Input, Label, RichLog
 
 from ..services.async_gateway_probe import resolve_base_url
 

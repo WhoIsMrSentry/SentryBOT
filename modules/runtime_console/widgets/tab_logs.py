@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import List, Tuple
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RichLog
 from ..services.async_log_streamer import ParsedLogEntry
