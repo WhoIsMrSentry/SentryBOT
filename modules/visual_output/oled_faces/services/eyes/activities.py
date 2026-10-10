@@ -12,20 +12,6 @@ from .activity_drawings import (
     _PP_SEG,
     _GLITCH_BEAT,
     _GLITCH_BEATS,
-    _think,
-    _headphones,
-    _magnifier,
-    _hammer,
-    _typing,
-    _arc_ring,
-    _link_dots,
-    _debug_bug,
-    _building,
-    _testing,
-    _deploying,
-    _ping_pong,
-    _waiting,
-    _glitch,
 )
 
 ACTIVITIES = (
