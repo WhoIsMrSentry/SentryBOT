@@ -47,7 +47,7 @@ class ExpressionStateEventsMixin:
 
         if evt.startswith("needs."):
             need = evt.split(".", 1)[1].strip().lower()
-            scores = data.get("scores") if isinstance(data.get("scores"), dict) else {}
+            data.get("scores") if isinstance(data.get("scores"), dict) else {}
             goal = str(data.get("recommended_goal") or data.get("goal") or "").strip().lower()
             confidence = data.get("confidence", 0.75)
             try:
