@@ -1,6 +1,5 @@
 from __future__ import annotations
 from fastapi import FastAPI
-import asyncio
 
 from contextlib import asynccontextmanager
 
