@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import dataclass
-import time
 from typing import List, Tuple, Protocol
 
 NEOPIXEL_SAFE_DEGRADED_DRIVER_CONTRACT = True

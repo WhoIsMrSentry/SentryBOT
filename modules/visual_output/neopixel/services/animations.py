@@ -2,7 +2,7 @@ from __future__ import annotations
 import math
 import random
 import time
-from typing import Iterable, List, Sequence, Tuple
+from typing import Sequence, Tuple
 
 try:
     from .driver import NeoDriver
