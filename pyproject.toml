@@ -1,0 +1,18 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = [
+    ".venv",
+    "venv",
+    "vendor",
+    "3d_Print",
+    ".ruff_cache",
+]
+
+[tool.ruff.lint]
+# Undefined names and unused imports are enforced in CI.
+# Re-exports in package __init__ modules stay imported on purpose.
+select = ["E9", "F401", "F811", "F821", "F823", "F841"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]
