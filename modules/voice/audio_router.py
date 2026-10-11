@@ -268,7 +268,7 @@ class AudioCapture:
             # VAD processing
             # Use first channel for VAD
             vad_mono = frame[:, 0] if frame.shape[1] > 0 else frame.flatten()
-            is_speech = self._vad.process(vad_mono)
+            self._vad.process(vad_mono)
             
             # Dispatch to consumers
             with self._consumers_lock:

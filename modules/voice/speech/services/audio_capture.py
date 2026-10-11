@@ -3,10 +3,9 @@ import logging
 import math
 import queue
 import threading
-import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Any
+from typing import Dict, Iterable, Any
 
 try:
     import audioop
