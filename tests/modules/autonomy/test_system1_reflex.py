@@ -1,4 +1,3 @@
-import pytest
 from modules.autonomy.services.system1_reflex import System1ReflexEngine, THINKING_FILLERS_TR
 
 def test_system1_body_pose():

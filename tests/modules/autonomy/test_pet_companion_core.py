@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from modules.autonomy.services.pet_companion_core import (
     PET_COMPANION_CORE_CONTRACT,

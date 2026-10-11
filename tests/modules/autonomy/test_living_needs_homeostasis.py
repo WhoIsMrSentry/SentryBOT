@@ -1,4 +1,3 @@
-import pytest
 from modules.autonomy.services.living_needs import LivingNeedsEngine
 
 def test_homeostasis_battery_low():

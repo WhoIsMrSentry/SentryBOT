@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from modules.agent_core.services.tri_layer import (
-    SubAgentProfile,
     TriLayerRouter,
     build_subagent_profiles,
 )

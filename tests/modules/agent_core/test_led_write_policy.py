@@ -114,7 +114,7 @@ def test_client_lights_gate_blocks_when_higher_lease_held():
     result = client.set_neopixel("PULSE")
     assert result == {"ok": False, "reason": "lights_locked"}
     assert client.posts == []
-    lease = policy._leases["lights"]
+    policy._leases["lights"]
     policy.release("emergency")
     result = client.set_neopixel("COMET", duration=1.5)
     assert result == {"ok": True}

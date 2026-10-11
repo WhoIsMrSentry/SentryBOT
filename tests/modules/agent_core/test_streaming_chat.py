@@ -55,7 +55,7 @@ def test_first_clause_streaming_emits_early():
     def _on_sentence(text: str, idx: int) -> None:
         spoken.append((idx, text))
 
-    out = agent._chat_maybe_stream(
+    agent._chat_maybe_stream(
         "test-model",
         [{"role": "user", "content": "yapay zeka nedir?"}],
         None,
