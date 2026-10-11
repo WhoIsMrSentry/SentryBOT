@@ -1,7 +1,5 @@
 """Tests for BehaviorComposer multi-modal execution and pose locking."""
 
-import time
-import pytest
 from unittest.mock import MagicMock
 from modules.autonomy.services.behavior_composer import BehaviorComposer
 from modules.autonomy.services.brain_parts.vocal_prosody import VocalProsodyMixin

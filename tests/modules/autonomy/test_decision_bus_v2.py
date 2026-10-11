@@ -1,6 +1,5 @@
 """Tests for Decision Bus v2 integration and speak tone presets."""
 
-import pytest
 from unittest.mock import MagicMock, patch
 from modules.voice.speak.xSpeakService import _TONE_PRESETS
 from modules.autonomy.services.brain import AutonomyBrain

@@ -1,4 +1,3 @@
-import pytest
 from modules.autonomy.services.saliency_map import SaliencyMapEngine
 
 def test_saliency_owner_priority():

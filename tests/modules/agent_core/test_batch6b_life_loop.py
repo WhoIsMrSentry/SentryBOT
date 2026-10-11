@@ -162,7 +162,7 @@ def test_life_loop_waiting_resumes_without_reform():
         {"type": "expression", "event": "curiosity", "capability": "expression.event", "risk": "none"},
     ]
     brain._think_plans = [_plan(plan_id="wait1", goal_id="goal_wait", actions=acts)]
-    t1 = brain.think_tick(now=2000.0)
+    brain.think_tick(now=2000.0)
     active = brain.goal_store.active_or_waiting()
     if active is None:
         # Completed too fast — force WAITING snapshot for resume proof

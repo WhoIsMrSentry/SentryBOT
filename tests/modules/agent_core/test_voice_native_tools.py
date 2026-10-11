@@ -6,12 +6,6 @@ from modules.agent_core.services.agent import AgentOrchestrator
 
 
 def _make_agent(**overrides) -> AgentOrchestrator:
-    cfg = {
-        "agent": {"model": "test", "cooldown_s": 0, "max_steps": 2},
-        "llm": {"provider": "ollama"},
-        "tri_layer": {"enabled": True, "fast_path": {"enabled": True, "max_chars": 20}},
-        "actions": {"gateway_base_url": "http://127.0.0.1:8080"},
-    }
     agent = AgentOrchestrator.__new__(AgentOrchestrator)
     agent.fast_path_enabled = True
     agent.fast_path_max_chars = 20
