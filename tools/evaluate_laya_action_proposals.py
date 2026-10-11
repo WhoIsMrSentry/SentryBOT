@@ -623,7 +623,7 @@ def _model_path() -> str:
 
 
 def _answers_for(agent: Any, text: str, *, include_candidates: bool = True) -> Dict[str, Any]:
-    current_color = get_laya_action_questions()["action_color"]
+    get_laya_action_questions()["action_color"]
     color_criteria = {
         "red": "kırmızı / red",
         "green": "yeşil / green",

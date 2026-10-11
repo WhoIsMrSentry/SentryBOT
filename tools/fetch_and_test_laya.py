@@ -2,7 +2,6 @@
 """Laya Multilingual modelini doğrudan indirip SentryBOT testlerini çalıştırır."""
 
 import os
-import sys
 import time
 import urllib.request
 
@@ -66,7 +65,6 @@ def download_weights():
 
 def run_tests():
     import laya
-    from laya import Agent
 
     print("=" * 70, flush=True)
     print("SentryBOT — Laya System 1 Karar Testi Başlatılıyor...", flush=True)

@@ -8,10 +8,8 @@ import json
 import os
 import platform
 import py_compile
-import re
 import sys
 import traceback
-from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any

@@ -7,7 +7,6 @@ associating them with relationships (owner, family, friend, known) and recogniti
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 import time
 from pathlib import Path
