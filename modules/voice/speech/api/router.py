@@ -201,7 +201,6 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         else:
             logger.debug("stt final empty")
         
-        last_partial_text = ""
         
         if text:
             final_spoken = text
