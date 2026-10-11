@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("PIL")
+
 from modules.visual_output.oled_faces.services.legacy_map import (
     OLED_LEGACY_COMPATIBILITY_CONTRACT,
     OLED_LEGACY_COMPATIBILITY_ROLE,
