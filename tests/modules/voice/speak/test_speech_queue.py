@@ -1,4 +1,3 @@
-import pytest
 from modules.voice.speak.services.speech_queue import SpeechPriorityQueue, SpeechPriority
 
 def test_speech_queue_order():

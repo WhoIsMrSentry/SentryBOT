@@ -1,4 +1,3 @@
-import pytest
 from modules.voice.speech.services.turn_taking import DynamicTurnTakingEngine, TurnState
 
 def test_turn_taking_speech_and_completion():
