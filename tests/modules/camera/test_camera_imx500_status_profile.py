@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import MagicMock
 
 from fastapi import FastAPI
 from starlette.testclient import TestClient
