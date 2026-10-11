@@ -4,9 +4,7 @@ VLM_PROCESSOR_LEGACY_COMPATIBILITY_CONTRACT = True
 VLM_PROCESSOR_LEGACY_COMPATIBILITY_ROLE = "opencv_api_and_cached_context_compatibility"
 
 import logging
-import threading
-import time
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 try:
     import cv2
@@ -20,26 +18,6 @@ except Exception:
         from modules.vlm_bridge.services.face_manager import FaceManager
     except Exception:
         FaceManager = None  # type: ignore
-
-try:
-    from .cascade_loader import load_frontal_face_cascade
-except Exception:
-    from modules.vlm_bridge.services.cascade_loader import load_frontal_face_cascade  # type: ignore
-
-try:
-    from .semantic_describer import SemanticDescriber
-except Exception:
-    from modules.vlm_bridge.services.semantic_describer import SemanticDescriber  # type: ignore
-
-try:
-    from .people_memory import PeopleMemory
-except Exception:
-    from modules.cognitive_memory.services.people_memory import PeopleMemory  # type: ignore
-
-try:
-    from .action_dispatcher import VisionActionDispatcher
-except Exception:
-    from modules.vlm_bridge.services.action_dispatcher import VisionActionDispatcher  # type: ignore
 
 try:
     from .person_identity import PersonIdentityManager
@@ -91,7 +69,7 @@ except Exception:
 
 import requests
 
-from .processor_follow import ProcessorFollowMixin, _clamp
+from .processor_follow import ProcessorFollowMixin
 from .processor_identity import ProcessorIdentityMixin
 from .processor_modes import ProcessorModesMixin
 from .processor_stream import ProcessorStreamMixin

@@ -2,7 +2,7 @@ from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from typing import Any, Optional
 from modules.arduino_serial.contract import build_track_cmd
-from modules.vlm_bridge.api._common import gw, notify_autonomy, request_arduino
+from modules.vlm_bridge.api._common import notify_autonomy, request_arduino
 
 
 def get_control_router(processor: Any, ardu: Optional[Any], base_url: str) -> APIRouter:
