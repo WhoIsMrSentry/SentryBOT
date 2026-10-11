@@ -2,6 +2,10 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+pytest.importorskip("PIL")
+
 
 def test_face_renderer_begin_uses_config_brightness():
     from modules.visual_output.oled_faces.services.face_renderer import FaceRenderer

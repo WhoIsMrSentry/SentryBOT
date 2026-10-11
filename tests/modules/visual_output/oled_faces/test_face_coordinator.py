@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
+pytest.importorskip("PIL")
+
 from modules.visual_output.oled_faces.config_loader import load_config
 from modules.visual_output.oled_faces.services.face_coordinator import FaceCoordinator
 from modules.visual_output.oled_faces.services.mapper import FaceMapper, OledAction

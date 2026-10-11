@@ -5,6 +5,8 @@ import time
 
 import pytest
 
+pytest.importorskip("PIL")
+
 from modules.visual_output.oled_faces.services.eyes.engine import EyeEngine
 from modules.visual_output.oled_faces.services.eyes.moods import MOODS
 from modules.visual_output.oled_faces.services.legacy_map import resolve_animation, resolve_bitmap, resolve_mood
