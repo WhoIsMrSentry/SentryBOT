@@ -113,7 +113,8 @@ runtime_profile:
           request_timeout: 60
 ollama_service:
   server:
-    host: 0.0.0.0
+    # Loopback by default. Set 0.0.0.0 or OLLAMA_SERVICE_HOST=0.0.0.0 for LAN access.
+    host: 127.0.0.1
     port: 8099
   persona:
     default: sentry
@@ -140,7 +141,8 @@ ollama_service:
     request_timeout: 60
 vlm_bridge:
   server:
-    host: 0.0.0.0
+    # Loopback by default. Set 0.0.0.0 or VLM_HOST=0.0.0.0 for LAN access.
+    host: 127.0.0.1
     port: 8101
   vision:
     processing_mode: local

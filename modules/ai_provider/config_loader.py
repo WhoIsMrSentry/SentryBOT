@@ -3,13 +3,14 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
+from modules.common.bind_host import apply_bind_host
 from modules.common.config_loader import deep_merge, load_agent_config, require_dict_section, DEFAULT_GEMINI_MODEL
 
 _REQUIRED_MODEL = "qwen3.5:9b"
 _GOOGLE_PROVIDERS = frozenset({"google", "google_ai_studio", "gemini"})
 
 _DEFAULT_CFG: Dict[str, Any] = {
-    "server": {"host": "0.0.0.0", "port": 8099},
+    "server": {"host": "127.0.0.1", "port": 8099},
     "llm": {"provider": "ollama", "single_model_mode": True},
     "ollama": {"base_url": "http://127.0.0.1:11434", "model": _REQUIRED_MODEL, "request_timeout": 60.0},
     "google_ai_studio": {
@@ -167,4 +168,4 @@ def load_config(config_path: str | None = None) -> Dict[str, Any]:
                 google_cfg = {**google_cfg, "api_key": env_key}
                 merged["google_ai_studio"] = google_cfg
 
-    return merged
+    return apply_bind_host(merged, "OLLAMA_SERVICE_HOST")
