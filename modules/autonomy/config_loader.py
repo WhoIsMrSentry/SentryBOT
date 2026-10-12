@@ -4,6 +4,8 @@ import os
 from typing import Any, Dict, Optional
 import yaml
 
+from modules.common.bind_host import apply_bind_host
+
 
 def load_config(
     config_path: Optional[str | Dict[str, Any]] = None,
@@ -17,7 +19,7 @@ def load_config(
     target_path = str(config_path) if (config_path and os.path.exists(str(config_path))) else default_path
 
     if not os.path.exists(target_path):
-        return dict(overrides or {})
+        return apply_bind_host(dict(overrides or {}), "AUTONOMY_HOST")
 
     with open(target_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
@@ -25,4 +27,4 @@ def load_config(
     if overrides and isinstance(overrides, dict):
         config.update(overrides)
 
-    return config
+    return apply_bind_host(config, "AUTONOMY_HOST")
