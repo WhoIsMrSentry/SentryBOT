@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import threading
 from typing import Any, Dict, List, Optional
 
-from .state_events import ExpressionStateEventsMixin, _DEFAULT_MAPPINGS
+from .state_events import ExpressionStateEventsMixin
 
 _ALLOWED_EMOTIONS = {
     "neutral", "curious", "happy", "sleepy", "alert", "sad", "thinking", "listening", "speaking"

@@ -1,4 +1,3 @@
-import pytest
 from modules.expression.animate.services.procedural_motion import ProceduralMotionEngine
 
 def test_procedural_motion_breathing():

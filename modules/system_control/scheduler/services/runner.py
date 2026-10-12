@@ -226,8 +226,8 @@ class Scheduler:
         
         jid = str(job.get("id", ""))
         kind = str(job.get("kind", "http")).lower()
-        timeout_s = max(0.1, float(job.get("timeout_s", 1.0)))
-        retries = max(0, int(job.get("max_retries", 0)))
+        max(0.1, float(job.get("timeout_s", 1.0)))
+        max(0, int(job.get("max_retries", 0)))
 
         registry = get_job_registry()
         handler = registry.get(kind)
@@ -242,7 +242,7 @@ class Scheduler:
             }
 
         # Prepare context for handler
-        from modules.common.job_types import JobDefinition, JobContext  # type: ignore
+        from modules.common.job_types import JobDefinition  # type: ignore
         
         job_def = JobDefinition(
             id=jid,
@@ -273,7 +273,6 @@ class Scheduler:
             **self._services,
         }
 
-        context = job_def  # Using JobDefinition as context for simplicity
         # For compatibility, add services attribute
         job_def.services = services
 

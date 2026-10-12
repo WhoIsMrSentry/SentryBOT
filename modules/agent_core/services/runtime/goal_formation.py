@@ -18,7 +18,6 @@ from .schemas import (
     GoalFormationContext,
     GoalFormationDecision,
     GoalFormationDisposition,
-    GoalSnapshot,
     GoalStatus,
     NeedSignal,
     PolicyConstraints,

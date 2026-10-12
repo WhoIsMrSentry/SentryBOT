@@ -3,9 +3,9 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from .command_validators import (
-    LIVELINESS_MODES,
-    LIVELINESS_AMPLITUDE_MAX_DEG,
-    LIVELINESS_PERIOD_MIN_MS,
+    LIVELINESS_MODES,  # noqa: F401
+    LIVELINESS_AMPLITUDE_MAX_DEG,  # noqa: F401
+    LIVELINESS_PERIOD_MIN_MS,  # noqa: F401
     SERVO_MIN_DEG,
     SERVO_MAX_DEG,
     _as_int,

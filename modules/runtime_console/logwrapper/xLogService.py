@@ -7,7 +7,7 @@ import warnings
 from typing import Any, Dict, Optional
 
 from .config_loader import load_config
-from .services.handlers import InMemoryLogHandler, WarningOnlyFilter, build_formatter
+from .services.handlers import InMemoryLogHandler, build_formatter
 
 _MEMORY_HANDLER: Optional[InMemoryLogHandler] = None
 _ROUTER = None  # lazy import for FastAPI

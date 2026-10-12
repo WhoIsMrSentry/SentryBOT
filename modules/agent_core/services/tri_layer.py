@@ -22,7 +22,7 @@ _sentrybot_force_agent_ollama_env()
 
 
 from dataclasses import dataclass
-from typing import Dict, List, Sequence
+from typing import Any, Dict, List, Sequence
 import re
 
 

@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import os
 import re
-import sys
 import time
 from collections import Counter, deque
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-from .console_constants import (
+from .console_constants import (  # noqa: F401
     RUNTIME_CONSOLE_PREVIEW_WARNING_COMPATIBILITY_CONTRACT,
     RUNTIME_CONSOLE_PREVIEW_WARNING_ROLE,
     APP,
@@ -302,5 +300,5 @@ class LogTailer:
                     for line in fh:
                         snapshot.feed_line(line)
                     self.positions[path] = fh.tell()
-            except Exception as exc:
+            except Exception:
                 pass

@@ -7,7 +7,7 @@ compatible with CompanionGoalExecutor.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional
 
 from .capability_index import CapabilityIndex
 from .schemas import Goal, Plan, PlanStep, StepStatus

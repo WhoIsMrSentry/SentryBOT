@@ -12,7 +12,7 @@ from fastapi import FastAPI
 # Suppress FastAPI on_event deprecation noise
 warnings.filterwarnings("ignore", message=".*on_event is deprecated.*", category=DeprecationWarning)
 
-from .bootstrap_config import (
+from .bootstrap_config import (  # noqa: F401
     _agent_section,
     _camera_hardware_available,
     _merge_with_agent_section,
@@ -53,6 +53,7 @@ from .bootstrap_ai import (
     _wire_wakeword_interactions,
 )
 from .bootstrap_ops import (
+    _CRITICAL_MODULES,
     _IMPORT_MODULES,
     _include_logs,
     _include_notifier,

@@ -19,6 +19,7 @@ MODULES_DIR = ROOT / "modules"
 REGISTRY_PATH = ROOT / ".sentrybot" / "context" / "module-registry.md"
 
 SKILLS_DIR = ROOT / ".sentrybot" / "skills" / "modules"
+OBSIDIAN_MODULES_DIR = ROOT / ".sentrybot" / "obsidian" / "modules"
 
 EXCLUDE_DIR_NAMES = {"__pycache__", "node_modules", "_irisoled_src", ".git", ".pytest_cache"}
 INCLUDE_SUFFIXES = {
@@ -745,7 +746,6 @@ def obsidian_module_note(module: ModuleInfo, analysis: ModuleAnalysis, module_ma
         for sf in analysis.source_files
     )
 
-    same_layer_peers = []  # filled by caller via frontmatter if needed
 
     return f"""---
 tags: [sentrybot, module, {layer_tag}, knowledge-base]

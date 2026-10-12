@@ -6,6 +6,8 @@ from typing import Any, Dict
 
 import yaml
 
+from modules.common.bind_host import apply_bind_host
+
 
 _DEFAULT_CFG_PATH = Path(__file__).parent / "config" / "config.yml"
 
@@ -65,4 +67,4 @@ def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
     enabled = os.getenv("CAM_ENABLED")
     if enabled is not None:
         env_overrides["enabled"] = str(enabled).strip().lower() in {"1", "true", "yes", "on"}
-    return _deep_update(data, env_overrides)
+    return apply_bind_host(_deep_update(data, env_overrides), "CAM_HOST")

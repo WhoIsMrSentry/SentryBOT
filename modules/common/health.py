@@ -5,10 +5,11 @@ Provides standardized health check responses across all modules.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
 from enum import Enum
+from typing import Any, Callable, Dict, Optional
 
 
 class HealthStatus(str, Enum):
@@ -122,7 +123,7 @@ class HealthChecker:
         def wrapper():
             try:
                 start = time.perf_counter()
-                result = check_fn()
+                check_fn()
                 latency_ms = (time.perf_counter() - start) * 1000
                 
                 if latency_ms <= healthy_threshold_ms:
@@ -145,8 +146,6 @@ class HealthChecker:
     
     def run(self) -> Dict[str, Any]:
         """Run all checks and return aggregated response."""
-        start = time.perf_counter()
-        checks = {}
         overall_status = "healthy"
         
         for name, check_fn in self._checks.items():
@@ -172,8 +171,6 @@ class HealthChecker:
                     "status": "unhealthy",
                     "message": str(e),
                 }
-        
-        latency_ms = (time.perf_counter() - time.perf_counter()) * 1000  # This will be 0, but placeholder
         
         return {
             "status": overall_status,
@@ -235,7 +232,7 @@ def health_check_decorator(
         def wrapper() -> Dict[str, Any]:
             start = time.perf_counter()
             try:
-                result = func()
+                func()
                 latency_ms = (time.perf_counter() - start) * 1000
                 
                 if latency_ms <= healthy_threshold_ms:
@@ -260,6 +257,28 @@ def health_check_decorator(
         return wrapper
     
     return decorator
+
+
+def check_latency(
+    fn: Callable[[], Any],
+    name: str,
+    healthy_threshold_ms: float = 100,
+    degraded_threshold_ms: float = 500,
+) -> Dict[str, Any]:
+    """Time ``fn`` and return a standard latency health payload."""
+    start = time.perf_counter()
+    try:
+        fn()
+        latency_ms = (time.perf_counter() - start) * 1000
+        if latency_ms <= healthy_threshold_ms:
+            status = "healthy"
+        elif latency_ms <= degraded_threshold_ms:
+            status = "degraded"
+        else:
+            status = "unhealthy"
+        return {"name": name, "status": status, "latency_ms": latency_ms}
+    except Exception as exc:
+        return {"name": name, "status": "unhealthy", "message": str(exc)}
 
 
 # Standard check functions

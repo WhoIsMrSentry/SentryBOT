@@ -14,7 +14,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import yaml
 
@@ -31,7 +31,7 @@ _GOOGLE_PROVIDERS = frozenset({"google", "google_ai_studio", "gemini"})
 DEFAULT_GEMINI_MODEL = "gemma-4-31b-it"
 
 _DEFAULT_CFG: Dict[str, Any] = {
-    "server": {"host": "0.0.0.0", "port": 8099},
+    "server": {"host": "127.0.0.1", "port": 8099},
     "llm": {"provider": "ollama", "single_model_mode": True},
     "ollama": {"base_url": "http://whoismrsentry.local:11434", "model": _REQUIRED_MODEL, "request_timeout": 60.0},
     "google_ai_studio": {
@@ -552,7 +552,9 @@ def load_ai_provider_config(config_path: str | None = None) -> Dict[str, Any]:
                 google_cfg = {**google_cfg, "api_key": env_key}
                 merged["google_ai_studio"] = google_cfg
 
-    return merged
+    from modules.common.bind_host import apply_bind_host
+
+    return apply_bind_host(merged, "OLLAMA_SERVICE_HOST")
 
 
 # =============================================================================

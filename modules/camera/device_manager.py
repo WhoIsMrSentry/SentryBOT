@@ -14,7 +14,7 @@ import threading
 import time
 import weakref
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
 
 logger = logging.getLogger("camera.device_manager")
 
@@ -285,7 +285,7 @@ class CameraDeviceManager:
                 return True
             
             if self._refs and not force:
-                owners = list(self._refs.keys())
+                list(self._refs.keys())
                 raise RuntimeError(
                     f"Cannot switch mode while references exist: {list(self._refs.keys())}. "
                     f"Use force=True to force switch (will notify owners)."

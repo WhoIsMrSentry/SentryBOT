@@ -1,5 +1,8 @@
 import pytest
 import time
+
+pytest.importorskip("PIL")
+
 from modules.visual_output.oled_faces.services.eyes.engine import EyeEngine
 from modules.visual_output.neopixel.services.animations import emotional_pulse
 from modules.visual_output.neopixel.services.driver import NeoDriver, NeoDriverConfig

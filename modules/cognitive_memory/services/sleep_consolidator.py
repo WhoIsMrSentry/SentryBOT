@@ -43,7 +43,6 @@ class SleepConsolidator:
 
         consolidated: List[Dict[str, Any]] = []
         user_mentions: Dict[str, int] = {}
-        key_topics: List[str] = []
 
         for item in interactions:
             user = item.get("user") or item.get("speaker") or "owner"

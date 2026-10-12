@@ -1,6 +1,10 @@
 """Ensure every Pip motor entry is wired through config expansion."""
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("PIL")
+
 from modules.visual_output.oled_faces.config_loader import load_config
 from modules.visual_output.oled_faces.services.catalog_registry import (
     MOTOR_ACTIVITIES,

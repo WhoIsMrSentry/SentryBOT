@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import platform
 import shutil
-from typing import Any
 
 try:
     import psutil

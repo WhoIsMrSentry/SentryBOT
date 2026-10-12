@@ -5,7 +5,7 @@ arbiter snapshot."""
 from __future__ import annotations
 import time
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 from unittest.mock import patch
 
 from modules.agent_core.services.action_arbiter import ActionArbiter, ActionRequest

@@ -4,10 +4,11 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from modules.common.bind_host import apply_bind_host
 from modules.common.config_loader import deep_merge, load_agent_config, require_dict_section, DEFAULT_GEMINI_MODEL
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "server": {"host": "0.0.0.0", "port": 8101},
+    "server": {"host": "127.0.0.1", "port": 8101},
     "vision": {
         "processing_mode": "local",
         "hybrid_local_capture": True,
@@ -272,7 +273,7 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
 
     cfg = rewrite_loopback_urls(cfg, gateway_base_from_agent_cfg(root_cfg))
     _apply_ollama_url_guard(cfg)
-    return cfg
+    return apply_bind_host(cfg, "VLM_HOST")
 
 
 def _apply_ollama_url_guard(cfg: Dict[str, Any]) -> None:

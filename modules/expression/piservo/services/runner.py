@@ -3,11 +3,11 @@ import time
 
 try:
     from .driver import Servo, ServoConfig
-    from .ears import EMOTION_POSES, gesture_sound, gesture_wakeword, pose_for_emotion
+    from .ears import gesture_sound, gesture_wakeword, pose_for_emotion
     from .ear_reflex import EarReflexEngine
 except Exception:
     from driver import Servo, ServoConfig  # type: ignore
-    from ears import EMOTION_POSES, gesture_sound, gesture_wakeword, pose_for_emotion  # type: ignore
+    from ears import gesture_sound, gesture_wakeword, pose_for_emotion  # type: ignore
     from ear_reflex import EarReflexEngine  # type: ignore
 
 

@@ -23,7 +23,7 @@ def test_add_chat_extracts_likes_into_social_db(tmp_path):
 
 def test_social_profile_includes_trust_score(tmp_path):
     rm, db = _rm_with_db(tmp_path)
-    rec = db.persons.upsert(name="Emir", trust_score=0.7)
+    db.persons.upsert(name="Emir", trust_score=0.7)
     profile = rm.social_profile("Emir")
     assert profile.get("trust_score") == 0.7 or profile.get("trust_score") is not None
 

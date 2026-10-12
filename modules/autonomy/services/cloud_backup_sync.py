@@ -7,7 +7,6 @@ to a remote HTTP or S3 endpoint. Safely disabled by default.
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 import tempfile
 import threading

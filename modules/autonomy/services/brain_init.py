@@ -4,7 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from .affective_appraisal import AffectiveAppraisal
 from .audio_event_needs_bridge import AudioEventNeedsBridge

@@ -1,5 +1,6 @@
 server:
-  host: 0.0.0.0
+  # Loopback by default. Set host: 0.0.0.0 or VLM_HOST=0.0.0.0 for LAN access.
+  host: 127.0.0.1
   port: 8101
 
 vision:

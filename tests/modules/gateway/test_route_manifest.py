@@ -1,4 +1,3 @@
-from fastapi import FastAPI
 
 from modules.gateway.api.router import ROUTE_MANIFEST, get_router
 

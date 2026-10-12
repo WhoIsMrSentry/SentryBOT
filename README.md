@@ -188,6 +188,7 @@ Raspberry Pi 5 + Arduino profili (donanım modülleri açık):
 	- `include.<module>` anahtarları ile modülleri aç/kapat
 - Modül yapılandırmaları: Her modül altında `config/config.yml`
 	- Örnek env değişkenleri: `ARDUINO_PORT`, `ARDUINO_BAUD`, `NEO_DEVICE`, `NEO_NUM_LEDS` …
+- Kamera, autonomy, VLM ve Ollama servisleri varsayılan olarak `127.0.0.1` dinler. LAN erişimi için ilgili `server.host` değerini `0.0.0.0` yapın veya `CAM_HOST`, `AUTONOMY_HOST`, `VLM_HOST`, `OLLAMA_SERVICE_HOST` ortam değişkenlerini kullanın. Ayrıntı: `docs/PI_DEPLOYMENT_RUNTIME.md`.
 - Canlı düzenleme: Config Center UI → `/config/ui` (Gateway açıkken)
 
 

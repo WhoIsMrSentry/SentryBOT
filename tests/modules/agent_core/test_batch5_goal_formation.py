@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from modules.agent_core.services.runtime import (
     CompanionPlanAdapter,
-    DecisionTraceStore,
     Goal,
     GoalCandidate,
     GoalCandidateSource,
@@ -17,7 +16,6 @@ from modules.agent_core.services.runtime import (
     GoalStore,
 )
 from modules.agent_core.services.runtime.goal_candidate_generator import GoalCandidateGenerator
-from modules.agent_core.services.runtime.goal_formation import context_fingerprint
 from modules.agent_core.services.runtime.schemas import GoalFormationContext, NeedSignal, PolicyConstraints
 from modules.autonomy.services.companion_goal_selector import CompanionGoalSelector
 

@@ -1,11 +1,9 @@
 """Tests for SceneRegister (Peripheral Vision L1)."""
 
 import time
-import pytest
 from modules.autonomy.services.scene_register import (
     SceneRegister,
     bbox_to_region,
-    REGIONS_3X3,
 )
 
 

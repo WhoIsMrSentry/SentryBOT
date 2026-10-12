@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict
 
 from modules.arduino_serial.contract import (
     SERVO_INDEX_PAN,

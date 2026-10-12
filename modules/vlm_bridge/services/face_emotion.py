@@ -164,7 +164,6 @@ class FaceEmotionEstimator:
             return self._heuristic(face_roi)
         try:
             import cv2
-            import numpy as np
 
             gray = face_roi
             if len(face_roi.shape) == 3:

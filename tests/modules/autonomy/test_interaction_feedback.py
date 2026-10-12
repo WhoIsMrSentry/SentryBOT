@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from modules.autonomy.services.interaction_feedback import InteractionFeedbackLearner
 from modules.cognitive_memory.db import SocialDB

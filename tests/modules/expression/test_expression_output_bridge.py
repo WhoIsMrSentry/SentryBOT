@@ -29,6 +29,6 @@ def test_output_bridge_skips_unchanged_targets():
     engine = SemanticExpressionEngine()
     engine.event("interactions.idle", {})
     bridge = ExpressionOutputBridge(engine, cfg={"enabled": True, "gateway_url": "http://127.0.0.1:9"})
-    first = bridge.apply()
+    bridge.apply()
     second = bridge.apply()
     assert second["reason"] == "unchanged"

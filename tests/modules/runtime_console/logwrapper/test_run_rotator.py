@@ -1,5 +1,4 @@
 import tempfile
-import time
 from pathlib import Path
 from modules.runtime_console.logwrapper.services.run_rotator import rotate_run_logs
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 from fastapi import APIRouter
-from typing import Optional
 
 try:
     from ..services.runner import EarRunner

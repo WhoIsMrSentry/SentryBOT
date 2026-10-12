@@ -1,6 +1,5 @@
 from __future__ import annotations
 from fastapi import APIRouter, Query
-from typing import Optional
 
 try:
     from ..xAnimateService import xAnimateService

@@ -4,7 +4,6 @@ import random
 import time
 from typing import Any, Dict, Optional
 
-from modules.autonomy.services.pet_companion_core import PetCompanionCore
 from .companion_goal_policies import CompanionGoalPoliciesMixin, _as_float, _as_dict
 from .companion_goal_plans import CompanionGoalPlansMixin
 

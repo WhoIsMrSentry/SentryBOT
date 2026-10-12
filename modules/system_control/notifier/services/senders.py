@@ -1,5 +1,4 @@
 from __future__ import annotations
-from typing import Optional
 
 
 def send_telegram(bot_token: str, chat_id: str, text: str) -> bool:

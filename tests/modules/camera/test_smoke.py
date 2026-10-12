@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
-import os
 from unittest.mock import MagicMock
 
 import pytest

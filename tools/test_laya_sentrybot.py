@@ -7,7 +7,6 @@ girdi senaryoları üzerinde yerel olarak test eder ve karar süresini (ms) öl�
 
 import sys
 import time
-from typing import Dict, Any
 
 def test_laya():
     try:
@@ -20,7 +19,7 @@ def test_laya():
 
     try:
         import laya
-        from laya import Router
+        from laya import Router  # noqa: F401  # import probe: Router must be importable
         print(f"[+] Laya kütüphanesi başarıyla yüklendi (Sürüm: {getattr(laya, '__version__', 'unknown')})")
     except ImportError as e:
         print(f"[-] HATA: Laya kütüphanesi import edilemedi: {e}")

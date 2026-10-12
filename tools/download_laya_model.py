@@ -1,5 +1,4 @@
 import os
-import sys
 import time
 from huggingface_hub import hf_hub_download
 

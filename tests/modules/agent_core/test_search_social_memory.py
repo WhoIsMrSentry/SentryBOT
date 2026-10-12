@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from modules.agent_core.services.tools import ToolRegistry
 from modules.agent_core.services.world_state import WorldState
