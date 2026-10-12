@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 from modules.autonomy.services.brain import AutonomyBrain
 from modules.autonomy.services.proactive_planner import ProactivePlanner
@@ -10,7 +9,7 @@ from modules.cognitive_memory.db import SocialDB
 
 
 def _minimal_brain(tmp_path):
-    db = SocialDB(path=tmp_path / "social.sqlite3", wal=False)
+    SocialDB(path=tmp_path / "social.sqlite3", wal=False)
     cfg = {
         "companion": {"enabled": True, "learning": {"enabled": True}},
         "endpoints": {},

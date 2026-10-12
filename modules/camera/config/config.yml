@@ -40,7 +40,8 @@ imx500:
     - cell phone
     - tv
 server:
-  host: 0.0.0.0
+  # Loopback by default. Set host: 0.0.0.0 or CAM_HOST=0.0.0.0 for LAN access.
+  host: 127.0.0.1
   port: 8000
 logging:
   level: INFO

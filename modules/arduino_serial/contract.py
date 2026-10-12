@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from .contract_validators import (
+from .contract_validators import (  # noqa: F401
     SERVO_INDEX_PAN,
     SERVO_INDEX_TILT,
     SERVO_INDEX_EAR_L,

@@ -3,11 +3,8 @@ import sys
 sys.path.insert(0, ".")
 
 import asyncio
-import time
 
-from modules.common.emotion_vocab import Emotion
 from modules.expression.semantic.services.arbitrator import ExpressionArbiter, ModalityClients
-import pytest
 
 def test_express_emotion_returns_ok():
     async def run():
@@ -33,7 +30,7 @@ def test_intensity_scales_render():
             emotion="anger", intensity=1.0, duration_s=0.2,
             modalities=["leds"], force=True,
         )
-        intense = await arb.express_emotion(
+        await arb.express_emotion(
             emotion="anger", intensity=2.0, duration_s=0.2,
             modalities=["leds"], force=True,
         )
@@ -44,7 +41,7 @@ def test_intensity_scales_render():
 def test_visual_lock_prevents_immediate_switch():
     async def run():
         arb = ExpressionArbiter(ModalityClients())
-        r1 = await arb.express_emotion(
+        await arb.express_emotion(
             emotion="furious", intensity=1.0, duration_s=0.2,
             modalities=["leds"], force=True,
         )

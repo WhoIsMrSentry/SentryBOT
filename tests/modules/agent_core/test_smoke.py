@@ -1,6 +1,4 @@
 """Smoke tests for Agent Core native tool calling module."""
-import json
-import pytest
 
 def test_safety_filter_clamp_servo():
     from modules.agent_core.services.safety_filter import ActionSafetyFilter

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from modules.common.http_client import AsyncHTTPClient, get_http_client
+from modules.common.http_client import get_http_client
 from modules.arduino_serial.contract import SERVO_INDEX_PAN, SERVO_INDEX_TILT, build_set_servo_cmd
 
 logger = logging.getLogger("expression.adapter.head")

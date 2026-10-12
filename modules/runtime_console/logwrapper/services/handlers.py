@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from typing import Deque, Iterable, List, Optional
+from typing import Deque, Iterable, List
 
 
 class InMemoryLogHandler(logging.Handler):

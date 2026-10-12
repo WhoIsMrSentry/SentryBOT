@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import pytest
+
+pytest.importorskip("textual")
+
 from rich.text import Text
 
-from modules.runtime_console.services.async_log_streamer import AsyncLogStreamer, parse_log_line, format_log_entry_to_rich
+from modules.runtime_console.services.async_log_streamer import parse_log_line, format_log_entry_to_rich
 from modules.runtime_console.services.async_robot_manager import AsyncRobotManager
 from modules.runtime_console.services.async_gateway_probe import AsyncGatewayProbe
 from modules.runtime_console.tui_app import SentryBotApp
 from modules.runtime_console.widgets.tab_main import TabMain
-from modules.runtime_console.widgets.tab_logs import TabLogs
 from modules.runtime_console.widgets.tab_config import TabConfig
 from modules.runtime_console.widgets.tab_telemetry import TabTelemetry
 from modules.runtime_console.widgets.tab_controls import TabControls
@@ -69,7 +71,7 @@ def test_sentrybot_app_instance(tmp_path: Path) -> None:
 
 
 def test_theme_registry_and_switching() -> None:
-    from modules.runtime_console.themes import THEMES, get_theme_names, get_theme
+    from modules.runtime_console.themes import get_theme_names, get_theme
     names = get_theme_names()
     assert "sentry-crimson" in names
     assert "posting" in names
@@ -122,9 +124,6 @@ def test_all_themes_compile_stylesheet(tmp_path: Path) -> None:
 
 
 def test_new_tabs_instantiation(tmp_path: Path) -> None:
-    from modules.runtime_console.widgets.tab_telemetry import TabTelemetry
-    from modules.runtime_console.widgets.tab_controls import TabControls
-
     telem = TabTelemetry()
     assert telem is not None
 
@@ -190,8 +189,6 @@ def test_tab_controls_ollama_url_resolution(tmp_path: Path) -> None:
 
 
 def test_tui_v2_no_run_argument_parsing() -> None:
-    import argparse
-    from modules.runtime_console.tui_v2 import main
 
     # Directly verify parser behavior on --no-run
     # Parser should accept --no-run without unrecognized argument error
@@ -216,8 +213,7 @@ def test_sentrybot_app_no_run_badge(tmp_path: Path) -> None:
 
 
 def test_tab_config_tree_sitter_syntax_and_themes(tmp_path: Path) -> None:
-    from modules.runtime_console.widgets.tab_config import TabConfig, LANG_MAP, SYNTAX_THEMES
-    from textual.widgets import TextArea
+    from modules.runtime_console.widgets.tab_config import LANG_MAP
 
     # Create sample config files
     cfg_dir = tmp_path / "config"
@@ -244,7 +240,6 @@ def test_tab_config_tree_sitter_syntax_and_themes(tmp_path: Path) -> None:
 
 def test_tab_controls_subsystem_process_buttons(tmp_path: Path) -> None:
     import asyncio
-    from modules.runtime_console.widgets.tab_controls import TabControls
     from textual.app import App, ComposeResult
     from textual.widgets import Button
 

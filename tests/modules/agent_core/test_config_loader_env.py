@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 import pytest
-from unittest.mock import patch
 
 from modules.agent_core.config_loader import load_config
 

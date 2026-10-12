@@ -1,4 +1,3 @@
-import pytest
 from modules.cognitive_memory.services.sleep_consolidator import SleepConsolidator
 
 def test_ebbinghaus_retention():

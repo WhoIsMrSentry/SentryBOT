@@ -1,3 +1,7 @@
+server:
+  # Loopback by default. Set host: 0.0.0.0 or AUTONOMY_HOST=0.0.0.0 for LAN access.
+  host: 127.0.0.1
+  port: 8100
 runtime:
   auto_start: true
   start_on_gateway_boot: true

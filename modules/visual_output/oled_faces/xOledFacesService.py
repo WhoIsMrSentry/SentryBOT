@@ -5,6 +5,7 @@ OLED_FACE_SERVICE_ROLE = "gateway_runtime_oled_face_compatibility_service"
 
 from contextlib import asynccontextmanager
 import logging
+import threading
 from threading import Event, Lock, Thread
 import time
 from typing import Any, Dict, List, Optional
@@ -12,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI
 
 from .config_loader import load_config
-from .services.mapper import FaceMapper
+from .services.mapper import FaceMapper, OledAction
 from .services.face_renderer import FaceRenderer
 from .services.face_coordinator import FaceCoordinator
 from .services.idle_ambient import IdleAmbientPlayer

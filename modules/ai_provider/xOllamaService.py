@@ -28,6 +28,6 @@ if __name__ == "__main__":
     cfg = load_config()
     uvicorn.run(
         create_app(),
-        host=str(cfg.get("server", {}).get("host", "0.0.0.0")),
+        host=str(cfg.get("server", {}).get("host", "127.0.0.1")),
         port=int(cfg.get("server", {}).get("port", 8099)),
     )

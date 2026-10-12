@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import Any, Dict, List, Mapping, Tuple
+from typing import Any, Dict, List, Mapping
 
 from .companion_led_helpers import Color, _StickSegment, _parse_hex_color
 

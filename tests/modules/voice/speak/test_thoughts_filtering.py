@@ -1,4 +1,3 @@
-import pytest
 from modules.voice.speak.xSpeakService import SpeakService
 
 

@@ -205,7 +205,6 @@ class LayaEngine:
         },
         "affective_event": {
             "type": "choice",
-            "instructions": "Kullanıcının robota karşı duygusal/sosyal tutumu nedir?",
             "instructions": "Kullanıcının robota karşı duygusal/sosyal tutumu veya sözündeki duygu nedir?",
             "criteria": {
                 "joy": "Övgü, tebrik, sevinç, sevgi, memnuniyet, teşekkür veya aferin",

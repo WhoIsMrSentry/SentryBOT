@@ -8,14 +8,14 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional
 
 from .companion_led_helpers import (
     Color,
     _StickSegment,
     _parse_hex_color,
-    _lerp_color,
-    _interpolate_gradient,
+    _lerp_color,  # noqa: F401
+    _interpolate_gradient,  # noqa: F401
 )
 from .companion_led_render import CompanionLedRenderMixin
 

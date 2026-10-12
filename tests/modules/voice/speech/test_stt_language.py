@@ -52,7 +52,6 @@ def test_piper_locks_voice_from_explicit_language() -> None:
             },
         }
     )
-    from modules.voice.speak.services.lang_detect import piper_voice_for_language
 
     voice = tts._resolve_piper_voice(
         "Merhaba nasılsın",

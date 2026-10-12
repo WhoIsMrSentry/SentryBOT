@@ -59,7 +59,8 @@ modules/ai_provider/
 ### Bağımsız API Sunucusu Olarak Başlatma
 ```bash
 python -m modules.ai_provider.xOllamaService
-# Varsayılan: 0.0.0.0:8099 adresinde FastAPI sunucusunu açar.
+# Varsayılan: 127.0.0.1:8099 adresinde FastAPI sunucusunu açar.
+# LAN için server.host: 0.0.0.0 veya OLLAMA_SERVICE_HOST=0.0.0.0.
 ```
 
 ---

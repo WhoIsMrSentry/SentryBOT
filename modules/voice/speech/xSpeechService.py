@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import logging
 from threading import Event, Lock
 import time
@@ -9,8 +10,6 @@ from fastapi import FastAPI
 
 from modules.voice.speech.config_loader import load_config, load_audio_router_config
 from modules.voice.speech.services.recognizer import Recognizer, RecognitionResult
-from modules.voice.speech.services.stt_language import resolve_stt_text_and_language
-from modules.voice.speech.services.direction import DirectionEstimator
 from modules.voice.speech.services.pan_tilt import PanTiltController
 from modules.voice.audio_router import get_audio_router
 from .services.audio_filters import SpeechAudioFilterMixin

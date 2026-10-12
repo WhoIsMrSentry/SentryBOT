@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 class RobotAction(BaseModel):
     type: str = Field(..., description="Action category: 'servo', 'lights', 'anim', 'event', 'speak', 'buzzer', 'laser', 'stepper', 'system', 'stand', 'sit', 'home'. NEVER use 'hardware'.")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 try:
     from ..services.engine import InteractionEngine

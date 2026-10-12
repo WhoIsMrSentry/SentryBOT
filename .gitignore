@@ -11,8 +11,8 @@ sentry.log
 arduino.avr.mega
 modules/notifier/.env
 modules/notifier/config/config.local.yml
-*.ini
-!pytest.ini
+# Local tool ini only. Tracked project ini files such as pytest.ini stay in git.
+*.local.ini
 *.log
 *.db
 urls.txt

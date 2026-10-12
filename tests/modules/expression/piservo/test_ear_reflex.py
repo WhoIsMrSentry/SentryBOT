@@ -1,4 +1,3 @@
-import pytest
 from modules.expression.piservo.services.ear_reflex import EarReflexEngine
 
 def test_ear_reflex_left():

@@ -3,11 +3,12 @@ from __future__ import annotations
 import copy
 import logging
 import os
-from pathlib import Path
 import threading
 from dataclasses import dataclass
+from pathlib import Path  # noqa: F401  -- tests patch tts.Path.is_file on the shared Path class
 from typing import Any, Dict, Optional
-import requests
+
+import requests  # noqa: F401  -- remote backends and tests resolve requests via this module
 
 from .lang_detect import (
     has_piper_voice_for_language,
@@ -16,7 +17,7 @@ from .lang_detect import (
     resolve_speak_language,
 )
 from .pcm import PCM
-from .tts_piper_model import (
+from .tts_piper_model import (  # noqa: F401
     PersistentPiperModel,
     _load_piper_api,
     _wav_bytes_to_pcm,

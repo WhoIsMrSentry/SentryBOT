@@ -17,7 +17,7 @@ sees the same persona on every path.
 from __future__ import annotations
 
 import logging
-from typing import Iterable, List, Optional
+from typing import Iterable, Optional
 
 from .emotion_vocab import Emotion, get_vocab
 

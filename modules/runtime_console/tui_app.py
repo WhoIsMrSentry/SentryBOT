@@ -1,16 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import os
-import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
-from rich.markup import escape
 from textual import work
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Footer, Header, Label, TabbedContent, TabPane
+from textual.containers import Horizontal
+from textual.widgets import Footer, Label, TabbedContent, TabPane
 
 from .services.async_gateway_probe import AsyncGatewayProbe
 from .services.async_log_streamer import AsyncLogStreamer, ParsedLogEntry
@@ -19,7 +16,7 @@ from .services.console_constants import APP, VERSION
 from .services.system_info_collector import get_cpu_info, get_memory_info
 from .services.system_info_hardware import get_disk_info
 from .services.console_helpers import is_pc_test
-from .themes import DEFAULT_THEME_NAME, THEMES
+from .themes import THEMES
 from .widgets.modal_sysinfo import SysInfoModal
 from .widgets.modal_theme import ThemeSelectorModal
 from .widgets.tab_config import TabConfig

@@ -93,7 +93,6 @@ class AudioPlayer:
 
     def play_wav_bytes(self, payload: bytes) -> float:
         """WAV (RIFF) byte dizisini okuyup çalar."""
-        import io
         import soundfile as sf
         f = io.BytesIO(payload)
         data, sr = sf.read(f, dtype='float32')

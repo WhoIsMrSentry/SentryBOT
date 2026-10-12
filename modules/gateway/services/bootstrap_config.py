@@ -14,7 +14,7 @@ def _root_agent_cfg() -> Dict[str, Any]:
     if _AGENT_CFG_CACHE is not None:
         return _AGENT_CFG_CACHE
     try:
-        from modules.common.config_loader import load_agent_config, deep_merge  # type: ignore
+        from modules.common.config_loader import load_agent_config  # type: ignore
 
         cfg = load_agent_config(None)
         _AGENT_CFG_CACHE = cfg if isinstance(cfg, dict) else {}
@@ -34,6 +34,8 @@ def _merge_with_agent_section(base_cfg: Dict[str, Any], section_name: str) -> Di
     if not section:
         return base_cfg
     try:
+        from modules.common.config_loader import deep_merge  # type: ignore
+
         return deep_merge(base_cfg, section)
     except Exception:
         merged = dict(base_cfg)

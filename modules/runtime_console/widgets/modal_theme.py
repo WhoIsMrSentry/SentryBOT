@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, OptionList, Static
+from textual.widgets import Button, Label, OptionList
 from textual.widgets.option_list import Option
 from textual import on
-from ..themes import THEMES, get_theme_names
+from ..themes import THEMES
 
 
 class ThemeSelectorModal(ModalScreen[None]):

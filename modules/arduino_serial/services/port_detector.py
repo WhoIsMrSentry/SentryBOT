@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 _PI_SERIAL_CANDIDATE_GLOBS: tuple[str, ...] = (
     "/dev/serial/by-id/*",

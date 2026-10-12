@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
@@ -8,9 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .agent_provider_parser import (
     build_provider_tool_instruction,
-    loads_first_json_object,
     parse_provider_tool_call,
-    strip_code_fence,
 )
 
 logger = logging.getLogger("agent.orchestrator")

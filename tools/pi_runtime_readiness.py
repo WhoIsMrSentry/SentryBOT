@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, importlib.util, json, platform, shutil, subprocess
+import argparse, importlib.util, json, platform, shutil
 from pathlib import Path
 
 def root() -> Path:

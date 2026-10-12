@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import time
-import pytest
 from modules.vlm_bridge.services.head_control_arbiter import HeadControlArbiter, HeadCommand
 
 

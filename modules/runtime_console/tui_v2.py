@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-from .services import (
+from .services import (  # noqa: F401
     ANSI_RE,
     APP,
     ASCII_TRANSLATION,
@@ -98,7 +98,6 @@ from .services import (
     visible_len,
     yes_no,
 )
-from .tui_app import SentryBotApp, run_textual_tui
 
 
 def run_tui(
@@ -110,6 +109,8 @@ def run_tui(
     profile: str | None = None,
 ) -> int:
     """Launch the modern Textual SentryBOT Control Center."""
+    from .tui_app import run_textual_tui
+
     return run_textual_tui(
         root=root,
         run_robot=run_robot,

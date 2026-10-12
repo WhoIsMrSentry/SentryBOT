@@ -19,7 +19,7 @@ SAFETY_ACTION_BOUNDARY_REASON = 'ToolExecutionArbiter is still passed into Agent
 import logging
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any, Dict, Set
 
 logger = logging.getLogger("agent.tool_arbiter")
 

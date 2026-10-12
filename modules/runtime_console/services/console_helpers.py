@@ -13,7 +13,6 @@ except Exception:
 from .console_types import (
     CHANNEL_HINTS,
     COMPACT_RE,
-    LEVEL_ORDER,
     LOG_RE,
     MAX_SEARCH_FILE_BYTES,
     NOISE_HINTS,
@@ -25,7 +24,7 @@ from .console_types import (
     Snapshot,
     UIState,
 )
-from .console_formatting import clean_path, safe_text, strip_ansi
+from .console_formatting import safe_text, strip_ansi
 
 
 def infer_channel(source: str, msg: str) -> str:
