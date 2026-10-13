@@ -87,6 +87,26 @@
 // IMU
 #define IMU_I2C_ADDR 0x68
 
+// Reflex event emission (impact/cliff) -> Pi otomasi reflex zinciri
+#ifndef IMPACT_TILT_DELTA_DEG
+#define IMPACT_TILT_DELTA_DEG 25.0f  // tek telemetri tick'inde (100ms) toplam tilt degisimi eşiği
+#endif
+#ifndef IMPACT_G_FORCE_DELTA
+#define IMPACT_G_FORCE_DELTA 4.0f    // |accMag - 9.81| bu degerin uzerinde ise jolt'dur
+#endif
+#ifndef IMPACT_COOLDOWN_MS
+#define IMPACT_COOLDOWN_MS 3000
+#endif
+#ifndef CLIFF_TILT_DEG
+#define CLIFF_TILT_DEG 45.0f         // kalıcı büyük eğim = kenara/takılmaya maruz kalma (proxy)
+#endif
+#ifndef CLIFF_TICKS_REQUIRED
+#define CLIFF_TICKS_REQUIRED 2
+#endif
+#ifndef CLIFF_COOLDOWN_MS
+#define CLIFF_COOLDOWN_MS 5000
+#endif
+
 // Link safety & telemetry
 #define HEARTBEAT_TIMEOUT_MS 500   // hb gelmezse bu sürede estop
 #define TELEMETRY_MIN_INTERVAL_MS 20 // 50 Hz üstü riskli, altını öner
