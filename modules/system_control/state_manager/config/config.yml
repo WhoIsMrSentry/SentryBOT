@@ -6,7 +6,7 @@ defaults:
   emotions: []
 persistence:
   type: sqlite
-  path: modules/state_manager/data/state.sqlite3
+  path: data/state.sqlite3
 pubsub:
   enabled: true
   keys:
