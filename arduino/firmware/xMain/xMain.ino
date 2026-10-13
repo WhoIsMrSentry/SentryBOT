@@ -19,6 +19,10 @@ bool g_linkEverAlive = false;
 bool telemetryOn = false;
 unsigned long telemetryInterval = 100;
 unsigned long lastTelemetryMs = 0;
+// Reflex event detection state (impact/cliff) — Pi otomasyon zinciri icin
+static float g_lastPitch = 0, g_lastRoll = 0;
+static unsigned long g_lastImpactEvtMs = 0, g_lastCliffEvtMs = 0;
+static uint8_t g_cliffTicks = 0;
 // Song queue
 
 // Song queue (simple ring) with compact IDs to avoid String heap churn.
@@ -169,6 +173,60 @@ static inline void printTelemetryJson(){
   else SERIAL_IO.print(g_ultraCm, 1);
 #endif
   SERIAL_IO.println('}');
+}
+
+// Referans: PiGateway beklenen format ornegi: {"ok":true,"event":"rfid","uid":...}
+static inline void printReflexEvent(const char *name){
+  SERIAL_IO.print(F("{\"ok\":true,\"event\":\""));
+  SERIAL_IO.print(name);
+  SERIAL_IO.print(F("\",\"pitch\":"));
+  SERIAL_IO.print(robot.imu.getPitch(), 1);
+  SERIAL_IO.print(F(",\"roll\":"));
+  SERIAL_IO.print(robot.imu.getRoll(), 1);
+  SERIAL_IO.print(F(",\"ultra_cm\":"));
+#if ULTRA_ENABLED
+  if (isnan(g_ultraCm)) SERIAL_IO.print(F("null"));
+  else SERIAL_IO.print(g_ultraCm, 1);
+#else
+  SERIAL_IO.print(F("null"));
+#endif
+  SERIAL_IO.println('}');
+}
+
+// IMU tabanli refleks tespiti: impact = ani tilt/ivme artisi, cliff = kalici buyuk egim.
+// Telemetri tick'ini (100ms) doldurmak icin cagrilir, non-blocking.
+static inline void detectReflexEvents(){
+  if (!robot.imu.isReady()) return;
+  const float pitch = robot.imu.getPitch();
+  const float roll  = robot.imu.getRoll();
+  const float accX  = robot.imu.getAccX();
+  const float accY  = robot.imu.getAccY();
+  const float accZ  = robot.imu.getAccZ();
+  const float dTilt = fabs(pitch - g_lastPitch) + fabs(roll - g_lastRoll);
+  const float accMag = sqrt(accX*accX + accY*accY + accZ*accZ);
+  const unsigned long now = millis();
+
+  // Impact: sikisma ani (tilt adimi veya ivme spike) + cooldown
+  if (now - g_lastImpactEvtMs >= IMPACT_COOLDOWN_MS &&
+      (dTilt > IMPACT_TILT_DELTA_DEG || fabs(accMag - 9.81f) > IMPACT_G_FORCE_DELTA)){
+    g_lastImpactEvtMs = now;
+    printReflexEvent("impact");
+  }
+
+  // Cliff proxy: CLIFF_TILT_DEG uzeri egim N tick boyunca suruyor
+  if (fabs(pitch) > CLIFF_TILT_DEG || fabs(roll) > CLIFF_TILT_DEG){
+    if (g_cliffTicks < CLIFF_TICKS_REQUIRED) g_cliffTicks++;
+    if (g_cliffTicks >= CLIFF_TICKS_REQUIRED &&
+        now - g_lastCliffEvtMs >= CLIFF_COOLDOWN_MS){
+      g_lastCliffEvtMs = now;
+      printReflexEvent("cliff");
+    }
+  } else {
+    g_cliffTicks = 0;
+  }
+
+  g_lastPitch = pitch;
+  g_lastRoll = roll;
 }
 
 void setup(){
@@ -520,6 +578,7 @@ void loop(){
   if (telemetryOn && millis() - lastTelemetryMs >= telemetryInterval){
     lastTelemetryMs = millis(); robot.imu.read();
     printTelemetryJson();
+    detectReflexEvents();
   }
   // periodic maintenance for neopixel request retries/acks
   neopixelTick();
