@@ -200,11 +200,16 @@ vlm_bridge:
     auth_token: ""
     accept_results: true
   remote_multimodal:
-    enabled: false
-    endpoint: http://192.168.1.100:8102/vision/analyze
+    enabled: true
+    endpoint: http://192.168.1.100:8091/vision/analyze
     interval_s: 8.0
     jpeg_quality: 75
     auth_token: ''
+    onsensor_hints:
+      enabled: true
+    task_split:
+      enabled: true
+      skip: [people, faces]
   robot:
     host: localhost
   ollama:
@@ -472,6 +477,16 @@ tri_layer:
       emergency_urgency_confidence_threshold: 0.80
       sensor_boost_hz: 5.0               # Urgency high → sensor poll rate
       sensor_boost_hold_s: 8.0            # High urgency polling window after the decision
+  system1:
+    backend: cascade                     # cascade = rules → embed → laya | laya = sadece Laya | off = devre dışı
+    enabled: true
+    rules:
+      enabled: true                      # <1ms keyword/rule katmanı
+    embed:
+      enabled: true                      # e5-small kNN (~50-100ms); model yoksa otomatik atlanır
+      model_path: models/e5-small-onnx
+      threshold_module: 0.50
+      threshold_direct: 0.60
   fast_path:
     enabled: true
     max_chars: 180
