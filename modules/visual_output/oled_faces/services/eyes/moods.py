@@ -182,6 +182,19 @@ def _decor_kawaii(d, W, H, now, ox=0.0, oy=0.0):  # rosy blush hatch + twinkles 
         sparkle(d, fx * W, fy * H, s)                          # ambient twinkles stay put
 
 
+def _cat(d, x, y, w, h, r, ir):          # carve a vertical slit pupil -- feline gaze
+    sx = x + w * (0.62 if ir else 0.42)
+    d.rectangle([sx, y + h * 0.22, sx + max(2, w * 0.06), y + h * 0.78], fill=0)
+
+
+def _decor_cat(d, W, H, now, ox=0.0, oy=0.0):    # triangle ears + side whiskers -- "cat"
+    d.polygon([(int(W * 0.24), int(H * 0.30)), (int(W * 0.38), int(H * 0.30)), (int(W * 0.27) + int(math.sin(now * 1.2)), int(H * 0.04))], fill=1)
+    d.polygon([(int(W * 0.62), int(H * 0.30)), (int(W * 0.76), int(H * 0.30)), (int(W * 0.73) + int(math.sin(now * 1.5)), int(H * 0.04))], fill=1)
+    for i in range(3):
+        d.line([int(W * 0.04) - 2, H - 10 - i * 3, int(W * 0.04) + 7, H - 11 - i * 4 - (i == 1)], fill=1)
+        d.line([int(W * 0.96) + 2, H - 10 - i * 3, int(W * 0.96) - 7, H - 11 - i * 4 - (i == 1)], fill=1)
+
+
 # spec keys: dw/dh size delta, tilt per-eye y offset, bias per-eye size skew, paint lid
 # carver, decor face extras, bright panel brightness 0..255, bare draw no eyes. All optional.
 MOODS = {
@@ -217,5 +230,6 @@ MOODS = {
     "cool":        {"bare": True, "decor": _decor_cool},                  # just the aviators -- no eyes drawn
     "devil":       {"paint": _angry, "decor": _decor_devil},              # evil glare + horns & tail
     "kawaii":      {"dw": 2, "dh": 0, "decor": _decor_kawaii},            # round eyes + blush below + twinkles
+    "cat":         {"dw": -2, "paint": _cat, "decor": _decor_cat},        # slit pupils + ears + whiskers
 }
 EMOTIONS = tuple(MOODS)
