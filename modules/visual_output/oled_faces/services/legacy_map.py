@@ -22,6 +22,7 @@ _MOOD_ALIASES: Dict[str, str] = {
     "kawaii": "kawaii",
     "cool": "cool",
     "devil": "devil",
+    "cat": "cat",
     "suspicious": "suspicious",
     "awe": "awe",
     "look_down": "neutral",
