@@ -24,6 +24,31 @@ except Exception:
 logger = logging.getLogger("speech")
 
 
+def compute_voice_speaker_hint(pcm_bytes: bytes) -> Optional[dict]:
+    """Voiceprint lookup of the just-captured utterance (best-effort, never raises).
+
+    Uses the speaker_id MVP singleton; returns the identify payload when the
+    voice matches an enrolled profile, else None. Ready for Pi ECM upgrades.
+    """
+    try:
+        import numpy as np
+
+        from modules.voice.speaker_id.xSpeakerIdService import get_default
+
+        svc = get_default()
+        if svc is None or not svc.enabled or not svc.store.count():
+            return None
+        pcm = np.frombuffer(bytes(pcm_bytes or b""), dtype=np.int16).astype(np.float32) / 32768.0
+        if pcm.size < 6400:                       # <0.4 s @16k: skip, too little speech
+            return None
+        res = svc.identify(pcm, 16000)
+        if isinstance(res, dict) and res.get("known"):
+            return res
+    except Exception:
+        return None
+    return None
+
+
 class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
     """High-level facade to run audio capture and speech recognition."""
 
@@ -53,6 +78,7 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self._prefer_online_detect = bool(rec_cfg.get("prefer_online_detect", True))
         self._dual_decode_only_if_ambiguous = bool(rec_cfg.get("dual_decode_only_if_ambiguous", True))
         self._utterance_pcm = bytearray()
+        self.last_voice_speaker: Optional[dict] = None
         self._max_utterance_bytes = int(
             rec_cfg.get("utterance_buffer_sec", 20) or 20
         ) * int(rec_cfg.get("samplerate", 16000) or 16000) * 2
@@ -208,6 +234,7 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
     def finalize_stt(self, text: str) -> tuple[str, str]:
         pcm = bytes(self._utterance_pcm)
         self.clear_utterance_buffer()
+        self.last_voice_speaker = compute_voice_speaker_hint(pcm)
 
         if len(pcm) >= 1600:
             try:
