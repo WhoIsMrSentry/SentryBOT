@@ -16,7 +16,7 @@ from modules.visual_output.oled_faces.services.catalog_registry import (
 
 
 def test_motor_catalog_sizes():
-    assert len(MOTOR_MOODS) == 32
+    assert len(MOTOR_MOODS) == 33      # 32 Pip parities + local 'cat' easter egg
     assert len(MOTOR_GESTURES) == 24
     assert len(MOTOR_ACTIVITIES) == 15
 
@@ -30,7 +30,7 @@ def test_full_catalog_pool_covers_motor():
         assert ("gesture", gesture) in modes
     for activity in MOTOR_ACTIVITIES:
         assert ("animation", activity) in modes
-    assert len(pool) == 32 + 24 + 15
+    assert len(pool) == 33 + 24 + 15
 
 
 def test_expand_config_registers_every_motor_event():
@@ -48,7 +48,8 @@ def test_idle_ambient_pool_includes_full_catalog():
     cfg = load_config()
     pool = (cfg.get("idle_ambient") or {}).get("pool") or []
     modes = {(str(i.get("mode", "")).lower(), str(i.get("name", "")).lower()) for i in pool if isinstance(i, dict)}
-    assert len(modes) >= 32 + 24 + 15
+    assert len(modes) >= 33 + 24 + 15
+    assert "cat" in {m for _, m in modes}
 
 
 def test_semantic_event_overrides_motor_defaults():
