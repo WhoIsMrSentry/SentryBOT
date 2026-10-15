@@ -45,6 +45,21 @@ _TONE_PRESETS: Dict[str, Dict[str, float]] = {
     "angry": {"rate": 210, "volume": 1.0},
     "frustrated": {"rate": 165, "volume": 0.9},
     "frustration": {"rate": 165, "volume": 0.9},
+    "surprise": {"rate": 195, "volume": 1.0},
+    "surprised": {"rate": 195, "volume": 1.0},
+    "gentle": {"rate": 150, "volume": 0.8},
+    "love": {"rate": 150, "volume": 0.8},
+    "disgusted": {"rate": 160, "volume": 0.9},
+    "disgust": {"rate": 160, "volume": 0.9},
+    "confused": {"rate": 165, "volume": 0.9},
+    "confusion": {"rate": 165, "volume": 0.9},
+    "worried": {"rate": 175, "volume": 0.9},
+    "bored": {"rate": 140, "volume": 0.7},
+    "proud": {"rate": 180, "volume": 0.95},
+    "embarrassed": {"rate": 155, "volume": 0.75},
+    "awe": {"rate": 165, "volume": 0.9},
+    "suspicious": {"rate": 150, "volume": 0.85},
+    "safety": {"rate": 205, "volume": 1.0},
 }
 
 
