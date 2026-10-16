@@ -1,0 +1,14 @@
+server:
+  host: 127.0.0.1
+  port: 8087
+
+enabled: true
+sample_rate: 16000
+bands: 20
+min_energy_rms: 0.004
+enroll_min_frames: 30
+store_path: data/speaker_id.json
+max_profiles: 16
+threshold:
+  similarity: 0.75
+  margin: 0.05
