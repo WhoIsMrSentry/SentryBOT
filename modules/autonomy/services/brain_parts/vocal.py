@@ -67,14 +67,18 @@ class VocalMixin(VocalProsodyMixin):
             return True
         return False
 
-    def _process_speech_social_context(self, text: str) -> str | None:
+    def _process_speech_social_context(self, text: str, voice_speaker: str | None = None) -> str | None:
         self.mood.modify("happiness", 5)
         sentiment_event = self._sentiment_event_for_text(text)
         if sentiment_event:
             self.appraise_event(sentiment_event)
         self.memory.add_event(f"User said: {text}")
         self._log_conversation(text)
-        speaker = self._guess_active_person()
+        vs = str(voice_speaker or "").strip()
+        if vs and vs.lower() != "unknown":
+            speaker = vs                       # voice identity outranks a stale camera window
+        else:
+            speaker = self._guess_active_person()
         if speaker:
             self.state["last_speaker"] = speaker
             self._note_person_seen(speaker, emotion=str(self.state.get("last_emotion") or ""))
@@ -191,8 +195,8 @@ class VocalMixin(VocalProsodyMixin):
         self._speak_with_mood(clean_text, language=final_lang)
         self.memory.add_event(f"I replied: {clean_text}")
 
-    def _react_to_speech(self, text: str, source_lang: str | None = None) -> None:
-        from modules.voice.speech.services.wake_phrase import contains_wakeword
+    def _react_to_speech(self, text: str, source_lang: str | None = None, voice_speaker: str | None = None) -> None:
+        from modules.voice.speech.services.wake_phrase import contains_wakeword, strip_wakewords
 
         low = str(text or "").lower()
         has_wake = contains_wakeword(low)
@@ -212,7 +216,7 @@ class VocalMixin(VocalProsodyMixin):
         if self._handle_speech_command_shortcuts(text, lang, request_id):
             return
 
-        speaker = self._process_speech_social_context(text)
+        speaker = self._process_speech_social_context(text, voice_speaker=voice_speaker)
 
         if self._handle_blocked_or_special_commands(text, speaker, lang):
             return
