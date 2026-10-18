@@ -119,7 +119,7 @@ class AutonomyBrain(
 
     def handle_hardware_event(self, event_name: str, payload: dict | None = None) -> dict:
         if self.spinal_cord:
-            return self.spinal_cord.handle_event(event_name, payload)
+            return self.spinal_cord.observe_hardware_event(event_name, payload or {})
         return {"handled": False, "reason": "no_spinal_cord"}
 
     def observe_manual_action(self, action_type: str, payload: dict | None = None) -> None:
