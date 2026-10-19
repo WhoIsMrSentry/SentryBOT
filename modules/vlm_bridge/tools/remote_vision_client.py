@@ -12,15 +12,17 @@ Not:
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Dict, List
 
 import cv2
 import requests
 
-VLM_BRIDGE_URL = "http://ROBOT_IP:8099/vlm/results"  # Degistir
-AUTH_TOKEN = "changeme"  # vlm_bridge remote.auth_token ile ayni
-CAMERA_FEED = "http://ROBOT_IP:8080/camera/video"  # Gateway kamera MJPEG stream
+# Not: Yeni mimaride bu file yerine services/remote_multimodal_server kullanin.
+VLM_BRIDGE_URL = os.environ.get("SENTRYBOT_VLM_BRIDGE_URL", "http://ROBOT_IP:8099/vlm/results")
+AUTH_TOKEN = os.environ.get("MM_AUTH_TOKEN", "changeme")
+CAMERA_FEED = os.environ.get("SENTRYBOT_CAMERA_FEED", "http://ROBOT_IP:8080/camera/video")
 
 
 def open_mjpeg(url: str):
