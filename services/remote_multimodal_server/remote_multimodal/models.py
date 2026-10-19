@@ -19,6 +19,9 @@ class AnalyzeRequest(BaseModel):
     question: Optional[str] = None
     # Optional client-visible task mode: cheap | semantic | legacy.
     mode: Optional[str] = None
+    # onsensor_hints@1: robot-side IMX500 detections (person identity ground
+    # truth). See remote_multimodal.onsensor_hints for validation/merge rules.
+    onsensor_hints: Optional[Dict[str, Any]] = None
 
 
 class RegisterFaceRequest(BaseModel):
