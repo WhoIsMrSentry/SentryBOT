@@ -62,6 +62,7 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
             request_id=req.request_id or "",
             question=req.question or "",
             task_mode=req.mode or "legacy",
+            onsensor_hints=req.onsensor_hints,
         )
 
     @app.post("/vision/analyze/cheap")
@@ -73,6 +74,7 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
             semantic_reason=req.semantic_reason or "cheap_poll",
             request_id=req.request_id or "",
             question=req.question or "",
+            onsensor_hints=req.onsensor_hints,
         )
 
     @app.post("/vision/analyze/semantic")
@@ -84,6 +86,7 @@ def create_app(runtime_cfg: Optional[RuntimeConfig] = None) -> FastAPI:
             semantic_reason=req.semantic_reason or "semantic_request",
             request_id=req.request_id or "",
             question=req.question or "",
+            onsensor_hints=req.onsensor_hints,
         )
 
     @app.post("/vision/register_face")
