@@ -25,12 +25,17 @@ class QwenVlmClient:
         self.temperature = float(cfg.qwen_temperature)
         self._session = requests.Session()
 
-    def analyze_frame(self, frame: Any) -> Dict[str, Any]:
+    def analyze_frame(self, frame: Any, question: str = "", semantic_reason: str = "") -> Dict[str, Any]:
         if not self.enabled or not self.endpoint or not self.primary_model:
             return {"ok": False, "error": "qwen disabled"}
         image_b64 = self._encode_frame(frame)
         for model in self._models():
-            result = self._call_model(model=model, image_b64=image_b64)
+            result = self._call_model(
+                model=model,
+                image_b64=image_b64,
+                question=str(question or "").strip(),
+                semantic_reason=str(semantic_reason or "").strip(),
+            )
             if result.get("ok"):
                 return result
         return {"ok": False, "error": "qwen request failed"}
@@ -48,7 +53,20 @@ class QwenVlmClient:
             raise ValueError("frame encode failed")
         return base64.b64encode(buf.tobytes()).decode("ascii")
 
-    def _call_model(self, model: str, image_b64: str) -> Dict[str, Any]:
+    def _call_model(self, model: str, image_b64: str, question: str = "", semantic_reason: str = "") -> Dict[str, Any]:
+        system = (
+            "You are a robot vision co-processor. Return strict compact JSON with keys: "
+            "summary, persona_interpretation, hazards, suggested_focus, confidence. "
+            "hazards must be an array of short strings."
+        )
+        user_content = (
+            "Analyze the scene for human-robot interaction. "
+            "Focus on safety, people intent, and immediate actions."
+        )
+        if question:
+            user_content += f"\n\nUser question: {question}\nAnswer parts summary and persona_interpretation in the question's language."
+        if semantic_reason:
+            user_content += f"\nRequested because of: {semantic_reason}."
         payload = {
             "model": model,
             "stream": False,
@@ -60,22 +78,8 @@ class QwenVlmClient:
                 "num_predict": self.num_predict,
             },
             "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a robot vision co-processor. Return strict compact JSON with keys: "
-                        "summary, persona_interpretation, hazards, suggested_focus, confidence. "
-                        "hazards must be an array of short strings."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        "Analyze the scene for human-robot interaction. "
-                        "Focus on safety, people intent, and immediate actions."
-                    ),
-                    "images": [image_b64],
-                },
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_content, "images": [image_b64]},
             ],
         }
         try:
