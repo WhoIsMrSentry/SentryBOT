@@ -8,7 +8,7 @@ import threading
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[4]
 
 
 class StateStore:
@@ -37,7 +37,7 @@ class StateStore:
 
         cfg = persistence or {}
         self._persist_type = str(cfg.get("type", "memory")).strip().lower()
-        self._persist_path = self._resolve_path(str(cfg.get("path", "modules/state_manager/data/state.sqlite3")))
+        self._persist_path = self._resolve_path(str(cfg.get("path", "data/state.sqlite3")))
         self._sqlite_conn: sqlite3.Connection | None = None
 
         if self._persist_type == "sqlite":
