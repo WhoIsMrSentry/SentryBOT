@@ -19,6 +19,7 @@ include:
   piservo: true
   autonomy: true
   agent_core: true
+  mcp_client: true
   telemetry: true
   diagnostics: true
   state_manager: true
