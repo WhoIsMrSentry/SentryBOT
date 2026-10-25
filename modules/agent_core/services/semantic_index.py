@@ -17,10 +17,29 @@ from collections import Counter
 from typing import Dict, List, Sequence, Tuple
 
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+_TR_DEVOICE = str.maketrans({"ğ": "k", "d": "t", "b": "p", "c": "ç"})
+
+
+def _turkish_stem_tokens(word: str) -> List[str]:
+    """Emit root-prefix tokens so Turkish inflected words match without a heavy stemmer."""
+    extra: List[str] = []
+    if len(word) >= 5:
+        p4 = word[:4]
+        extra.append(f"#{p4}")
+    if len(word) >= 6:
+        p5 = word[:5]
+        # Normalize Turkish consonant softening at stem boundary (e.g. gözlük/gözlüğ, kitap/kitab)
+        norm5 = p5[:-1] + p5[-1].translate(_TR_DEVOICE)
+        extra.append(f"#{norm5}")
+    return extra
 
 
 def tokenize(text: str) -> List[str]:
-    return [t for t in _TOKEN_RE.findall(str(text).lower()) if len(t) > 1]
+    words = [t for t in _TOKEN_RE.findall(str(text).lower()) if len(t) > 1]
+    tokens = list(words)
+    for w in words:
+        tokens.extend(_turkish_stem_tokens(w))
+    return tokens
 
 
 def _tf(tokens: Sequence[str]) -> Dict[str, float]:
