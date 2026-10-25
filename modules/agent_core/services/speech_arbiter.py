@@ -215,12 +215,16 @@ class SpeechArbiter:
             trace_id=trace_id,
         )
 
-    def enqueue_safety(self, text: str, trace_id: str = "") -> Optional[str]:
+    def enqueue_safety(self, text: str, tone: Optional[Dict[str, Any]] = None, trace_id: str = "") -> Optional[str]:
+        # Safety speech is urgent by default; callers may pin an explicit tone.
+        if tone is None:
+            tone = {"rate": 205, "volume": 1.0}
         # Keep queued progress items; safety is higher priority when popped.
         return self.enqueue(
             text,
             priority=SpeechPriority.SAFETY,
             category="safety",
+            tone=tone,
             max_age_s=20.0,
             trace_id=trace_id,
         )
