@@ -55,12 +55,15 @@ FACTS:"""
 
 
 _SIMPLE_FACT_PATTERNS = [
-    (re.compile(r"\b(?:benim|my)\s+(?:ad[ıi]|name|isim)\s+(\w+)", re.IGNORECASE), "people", "User's name is {0}"),
+    (re.compile(r"\b(?:benim|my)\s+(?:ad[ıi]m?|name|ismim)\s+(\w+)", re.IGNORECASE), "people", "User's name is {0}"),
     (re.compile(r"\b(?:i am|i'm|ben)\s+(\w+)(?:\s|$|[.!,])", re.IGNORECASE), "people", "User introduced as {0}"),
-    (re.compile(r"\b(?:k[öo]pe[ğg]im|kedim|my dog|my cat)(?:'s name)?\s+(\w+)", re.IGNORECASE), "people", "User has a pet named {0}"),
-    (re.compile(r"\b(?:yaşiyorum|live in|oturuyorum)\s+(\w+)", re.IGNORECASE), "places", "User lives in {0}"),
-    (re.compile(r"\b(?:işim|meslegim|my job|i work as)\s+(\w+)", re.IGNORECASE), "observations", "User works as {0}"),
+    (re.compile(r"\b(?:k[öo]pe[ğg]im(?:in)?|kedim(?:in)?|my dog|my cat)(?:\s+ad[ıi]|'s name)?\s+(\w+)", re.IGNORECASE), "people", "User has a pet named {0}"),
+    (re.compile(r"\b(\w+)['’]?(?:de|da|te|ta)\s+(?:ya[şs][ıi]yorum|oturuyorum)\b", re.IGNORECASE), "places", "User lives in {0}"),
+    (re.compile(r"\b(?:live in)\s+(\w+)", re.IGNORECASE), "places", "User lives in {0}"),
+    (re.compile(r"\b(?:işim|meslegim|mesle[ğg]im|my job|i work as)\s+(\w+)", re.IGNORECASE), "observations", "User works as {0}"),
+    (re.compile(r"(?:^|[.,!?;]\s*)(?:ben\s+)?([a-zçğıöşü\s]{2,25}?)\s+(?:çok\s+)?(?:seviyorum|hoşlanıyorum)\b", re.IGNORECASE), "observations", "User likes {0}"),
     (re.compile(r"\b(?:seviyorum|i like|i love)\s+([a-zçğıöşü]{2,30})", re.IGNORECASE), "observations", "User likes {0}"),
+    (re.compile(r"(?:^|[.,!?;]\s*)(?:ben\s+)?([a-zçğıöşü\s]{2,25}?)\s+(?:hiç\s+)?(?:sevmiyorum|nefret\s+ediyorum)\b", re.IGNORECASE), "observations", "User dislikes {0}"),
     (re.compile(r"\b(?:nefret|hate|sevmiyorum|dislike)\s+([a-zçğıöşü]{2,30})", re.IGNORECASE), "observations", "User dislikes {0}"),
 ]
 
@@ -109,15 +112,16 @@ class MemoryConsolidator:
             except Exception:
                 pass
         # Fallback simple patterns
-        low = text.lower()
-        for pattern, kind, template in _SIMPLE_FACT_PATTERNS:
-            m = pattern.search(low)
-            if m:
-                val = m.group(1).strip()
-                if val and len(val) > 1:
-                    fact = template.format(val)
-                    if fact not in facts:
-                        facts.append(fact)
+        if not facts:
+            low = text.lower()
+            for pattern, kind, template in _SIMPLE_FACT_PATTERNS:
+                m = pattern.search(low)
+                if m:
+                    val = m.group(1).strip()
+                    if val and len(val) > 1:
+                        fact = template.format(val)
+                        if fact not in facts:
+                            facts.append(fact)
         return facts
 
     def extract_facts_llm(self, conversation: str, speaker: Optional[str] = None) -> List[Dict[str, Any]]:
