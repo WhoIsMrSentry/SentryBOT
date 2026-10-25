@@ -17,21 +17,28 @@ _DEFAULT_FACT_PATTERNS: List[Tuple[str, str]] = [
     (r"\bismim\s+(" + _NAME + r")", "user name is {0}"),
     (r"\bmy name is\s+(" + _NAME + r")", "user name is {0}"),
     (r"\bi am\s+(" + _NAME + r")(?:\s|$|[.!,])", "user name is {0}"),
-    (r"\b(?:k[öo]pe[ğg]im|kedim)(?:in ad[ıi])?\s+(" + _NAME + r")", "user has a pet named {0}"),
+    (r"\b(?:k[öo]pe[ğg]im(?:in)?|kedim(?:in)?)(?:\s+ad[ıi])?\s+(" + _NAME + r")", "user has a pet named {0}"),
     (r"\bmy (?:dog|cat)(?:'s name)? is\s+(" + _NAME + r")", "user has a pet named {0}"),
     (r"\b(?:işim|meslegim|mesle[ğg]im)\s+(" + _NAME + r")", "user works as {0}"),
+    (r"\b(" + _NAME + r")\s+olarak\s+[çc]al[ıi][şs][ıi]yorum", "user works as {0}"),
     (r"\bi work as (?:a |an )?(" + _NAME + r")", "user works as {0}"),
-    (r"\b(" + _NAME + r")['']?(?:de|da|te|ta)\s+(?:oturuyorum|yas[ıi]yorum)", "user lives in {0}"),
+    (r"\b(" + _NAME + r")['’]?(?:de|da|te|ta)\s+(?:oturuyorum|ya[şs][ıi]yorum)", "user lives in {0}"),
     (r"\bi live in\s+(" + _NAME + r")", "user lives in {0}"),
 ]
 
 _DEFAULT_LIKE_PATTERNS = [
-    r"\b(?:seviyorum|hoslaniyorum|bayiliyorum)\s+([a-z0-9_\-\sçğıöşü]{2,40})",
+    # Turkish SOV order: "kahveyi çok seviyorum", "caz müzikten hoşlanıyorum"
+    r"(?:^|[.,!?;]\s*)(?:ben\s+)?([a-z0-9_\-\sçğıöşü]{2,35}?)\s+(?:çok\s+|gerçekten\s+)?(?:seviyorum|hoşlanıyorum|hoslaniyorum|bayılıyorum|bayiliyorum)\b",
+    # SVO / English order
+    r"\b(?:seviyorum|hoslaniyorum|hoşlanıyorum|bayiliyorum|bayılıyorum)\s+([a-z0-9_\-\sçğıöşü]{2,40})",
     r"\b(?:i like|i love)\s+([a-z0-9_\-\s]{2,40})",
-    r"\b(?:favorim|favorite)\s+([a-z0-9_\-\s]{2,40})",
+    r"\b(?:favorim|en\s+sevdi[ğg]im\s+[şs]ey|favorite)\s+([a-z0-9_\-\sçğıöşü]{2,40})",
 ]
 
 _DEFAULT_DISLIKE_PATTERNS = [
+    # Turkish SOV order: "gürültüyü hiç sevmiyorum", "karanlıktan nefret ediyorum"
+    r"(?:^|[.,!?;]\s*)(?:ben\s+)?([a-z0-9_\-\sçğıöşü]{2,35}?)\s+(?:hiç\s+|asla\s+)?(?:sevmiyorum|nefret\s+ediyorum|hoşlanmıyorum|hoslanmiyorum)\b",
+    # SVO / English order
     r"\b(?:sevmiyorum|nefret ediyorum)\s+([a-z0-9_\-\sçğıöşü]{2,40})",
     r"\b(?:i hate|i dislike)\s+([a-z0-9_\-\s]{2,40})",
 ]
