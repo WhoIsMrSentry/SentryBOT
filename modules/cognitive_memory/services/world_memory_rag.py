@@ -10,10 +10,23 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 _TOKEN_RE = re.compile(r"[\wçğıöşüÇĞİÖŞÜ]+", re.UNICODE)
+_TR_DEVOICE = str.maketrans({"ğ": "k", "d": "t", "b": "p", "c": "ç"})
 
 
 def _tokens(text: str) -> List[str]:
     return [t.lower() for t in _TOKEN_RE.findall(str(text or "")) if len(t) > 1]
+
+
+def _stem_tokens(text: str) -> set[str]:
+    words = _tokens(text)
+    out = set(words)
+    for w in words:
+        if len(w) >= 4:
+            out.add(f"#{w[:4]}")
+        if len(w) >= 5:
+            p5 = w[:5]
+            out.add(f"#{p5[:-1] + p5[-1].translate(_TR_DEVOICE)}")
+    return out
 
 
 def _json_dumps(value: Any) -> str:
@@ -268,13 +281,14 @@ class WorldMemoryRAG:
                 rows = con.execute("SELECT * FROM memories ORDER BY salience DESC, last_seen DESC LIMIT ?", (limit * 8,)).fetchall()
         ranked = []
         now = time.time()
+        q_stems = _stem_tokens(q)
         for row in rows:
             item = self._row_to_item(row)
             if kind_set and item.get("kind") not in kind_set:
                 continue
             text = " ".join([str(item.get("kind", "")), str(item.get("name", "")), str(item.get("summary", "")), " ".join(item.get("tags", []))])
-            tks = set(_tokens(text))
-            overlap = len(q_tokens & tks) / max(1, len(q_tokens)) if q_tokens else 0.0
+            tks = _stem_tokens(text)
+            overlap = len(q_stems & tks) / max(1, len(q_stems)) if q_stems else 0.0
             age_hours = max(0.0, (now - float(item.get("last_seen", now))) / 3600.0)
             recency = 1.0 / (1.0 + math.log1p(age_hours))
             score = 0.50 * overlap + 0.25 * float(item.get("salience", 0.0)) + 0.15 * float(item.get("confidence", 0.0)) + 0.10 * recency
