@@ -289,9 +289,15 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
         )
 
         if camera_enabled and _should_autostart_services():
-            capture.start()
-            runner.attach_camera(capture.picam, capture)
-            runner.start()
+            try:
+                started_ok = capture.start()
+                if started_ok:
+                    runner.attach_camera(capture.picam, capture)
+                    runner.start()
+                else:
+                    logger.info("camera hardware capture inactive; routes available in offline/stub mode")
+            except Exception as exc:
+                logger.warning("camera service autostart degraded: %s", exc)
         elif not camera_enabled:
             logger.info("camera disabled")
         else:

@@ -112,6 +112,12 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         
         self._stream_iter = None
 
+    @property
+    def capture(self) -> Any:
+        if hasattr(self, "_audio_router") and self._audio_router:
+            return self._audio_router.get_capture()
+        return None
+
     def set_default_callback(self, cb: Optional[Callable[[RecognitionResult], None]]) -> None:
         with self._result_lock:
             self._default_result_cb = cb

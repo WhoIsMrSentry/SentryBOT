@@ -276,7 +276,9 @@ class AgentContextMixin(AgentMemorySyncMixin):
             default_modules = ["autonomy", "agent_core"]
         if not self._vision_input_available():
             default_modules = [m for m in default_modules if str(m).strip().lower() != "vlm_bridge"]
-        tri_cfg.get("profiles") if isinstance(tri_cfg.get("profiles"), dict) else None
+        profiles_override = tri_cfg.get("profiles") if isinstance(tri_cfg.get("profiles"), dict) else None
+        from .tri_layer import build_subagent_profiles
+        self.subagent_profiles = build_subagent_profiles(profiles_override)
         from .laya_engine import LayaEngine
 
         self.laya_engine = LayaEngine.get_instance(config)

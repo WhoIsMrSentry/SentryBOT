@@ -92,6 +92,16 @@ class SpeechAudioFilterMixin:
     def clear_utterance_buffer(self) -> None:
         self._utterance_pcm.clear()
 
+    def _get_capture_channels(self) -> int:
+        cap = getattr(self, "capture", None)
+        cfg = getattr(cap, "cfg", None)
+        return int(getattr(cfg, "channels", 2))
+
+    def _get_capture_dtype(self) -> str:
+        cap = getattr(self, "capture", None)
+        cfg = getattr(cap, "cfg", None)
+        return str(getattr(cfg, "dtype", "int16"))
+
     def _direction_wrapper(self, stream):
         if not self._direction:
             yield from stream
@@ -111,7 +121,7 @@ class SpeechAudioFilterMixin:
                     count = len(chunk) // 2
                     if count:
                         vals = struct.unpack("<" + "h" * count, chunk[: count * 2])
-                        step = 2 if self.capture.cfg.channels >= 2 else 1
+                        step = 2 if self._get_capture_channels() >= 2 else 1
                         acc = 0.0
                         n = 0
                         for i in range(0, len(vals), step):
@@ -149,7 +159,7 @@ class SpeechAudioFilterMixin:
                 if len(chunk) >= 2:
                     count = len(chunk) // 2
                     vals = struct.unpack("<" + "h" * count, chunk[: count * 2])
-                    step = 2 if self.capture.cfg.channels >= 2 else 1
+                    step = 2 if self._get_capture_channels() >= 2 else 1
                     acc = 0.0
                     n = 0
                     for i in range(0, len(vals), step):
@@ -160,14 +170,15 @@ class SpeechAudioFilterMixin:
                         self._last_audio_level = min(1.0, rms / 8000.0)
             except Exception:
                 pass
-            if self.capture.cfg.channels >= 2:
+            if self._get_capture_channels() >= 2:
+                dtype = self._get_capture_dtype()
                 try:
                     if audioop is not None:
                         mono = audioop.tomono(chunk, 2, 1.0, 0.0)
                     else:
-                        mono = downmix_stereo_pcm(chunk, self.capture.cfg.dtype)
+                        mono = downmix_stereo_pcm(chunk, dtype)
                 except Exception:
-                    mono = downmix_stereo_pcm(chunk, self.capture.cfg.dtype)
+                    mono = downmix_stereo_pcm(chunk, dtype)
                 mono = apply_gain_pcm16(mono, self._stt_input_gain)
                 self._append_utterance_pcm(mono)
                 yield mono
