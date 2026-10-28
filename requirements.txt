@@ -1,0 +1,7 @@
+# SentryBOT V5 - core runtime (minimal, cross-machine)
+pyyaml
+requests
+fastapi
+uvicorn
+httpx
+pytest
