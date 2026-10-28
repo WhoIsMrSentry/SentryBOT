@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 from types import SimpleNamespace
 
+import pytest
+
+pytest.importorskip("cv2")
 import cv2
 import numpy as np
 
