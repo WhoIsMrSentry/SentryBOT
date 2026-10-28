@@ -1,0 +1,22 @@
+mcp_client:
+  enabled: true
+  host: 127.0.0.1
+  port: 8088
+  client:
+    name: sentrybot-mcp-client
+    version: "0.1.0"
+    protocol_version: "2024-11-05"
+    init_timeout_s: 15.0
+    request_timeout_s: 20.0
+  servers:
+    - name: echo-demo
+      enabled: true
+      autostart: false
+      command: python
+      args: ["modules/mcp_client/examples/echo_server.py"]
+    # Örnek: SentryBOT'un kendi MCP server'ını tuket
+    # - name: sentrybot-self
+    #   enabled: true
+    #   autostart: false
+    #   command: python
+    #   args: ["-m", "modules.mcp_server"]

@@ -70,6 +70,9 @@ class FaceMapper:
         if key.startswith("gesture:"):
             name = key.split(":", 1)[1]
             return OledAction(mode="gesture", name=name)
+        if key.startswith("vibe:"):
+            name = key.split(":", 1)[1]
+            return OledAction(mode="vibe", name=name)
         if key.startswith("activity:"):
             name = key.split(":", 1)[1]
             return OledAction(mode="animation", name=name)

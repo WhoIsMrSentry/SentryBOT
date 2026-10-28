@@ -96,6 +96,14 @@ def test_speech_arbiter_queue_cancel_and_status_contract():
     assert arbiter.queue_size() == 0
 
 
+def test_safety_speech_carries_urgent_tone_by_default():
+    arbiter = SpeechArbiter(max_queue_size=3)
+    arbiter.enqueue_safety("Stop, cliff ahead")
+    item = arbiter._queue[0]
+    urgent = (item.tone or {}).get("rate", 0)
+    assert urgent >= 200, f"safety tone not urgent: {item.tone}"
+
+
 def test_laya_filler_priority_is_between_progress_and_final():
     arbiter = SpeechArbiter(max_queue_size=3)
     item_id = arbiter.enqueue_laya_filler("Hemen bakıyorum", language="tr")

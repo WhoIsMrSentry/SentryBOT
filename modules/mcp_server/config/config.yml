@@ -1,0 +1,78 @@
+mcp_server:
+  enabled: true
+  transport: stdio
+  protocol_version: "2024-11-05"
+  server_name: sentrybot
+  server_version: "1.0.0"
+  gateway_base: http://127.0.0.1:8080
+  request_timeout_s: 6.0
+  auth_token: ""
+  tools:
+    - name: robot_state
+      description: "Robotun anlik durumunu dondurur (mod, pil, hardware)."
+      method: GET
+      path: /autonomy/state
+    - name: robot_mood
+      description: "Robotun mevcut duygu durumunu dondurur."
+      method: GET
+      path: /autonomy/mood
+    - name: speak
+      description: "Robotun verilen metni sesli soylemesini ister."
+      method: POST
+      path: /speak/say
+      args:
+        text:
+          type: string
+          required: true
+          description: "Soylenecek metin"
+    - name: set_lights
+      description: "NeoPixel LED rengini ayarlar (0-255 rgb)."
+      method: POST
+      path: /neopixel/fill
+      args:
+        r:
+          type: integer
+          required: true
+          description: "Kirmizi 0-255"
+        g:
+          type: integer
+          required: true
+          description: "Yesil 0-255"
+        b:
+          type: integer
+          required: true
+          description: "Mavi 0-255"
+        segment:
+          type: string
+          required: false
+          description: "Opsiyonel segment adi"
+    - name: lights_effect
+      description: "NeoPixel animasyonu baslatir (rainbow, theater_chase, clear)."
+      method: POST
+      path: /neopixel/{effect}
+      args:
+        effect:
+          type: string
+          required: true
+          description: "rainbow | theater_chase | clear"
+        cycles:
+          type: integer
+          required: false
+          description: "Dongu sayisi"
+        wait:
+          type: number
+          required: false
+          description: "Frame bekleme saniye"
+    - name: get_vision
+      description: "Robotun gorsel sahnesini veya son VLM baglamini dondurur."
+      method: GET
+      path: /autonomy/vision-context
+    - name: arduino_send
+      description: "Dogrudan Arduino komutu gonderir (contract dogrulamasi gateway tarafinda)."
+      method: POST
+      path: /arduino/send
+      args:
+        payload:
+          type: object
+          required: true
+          description: "Arduino contract payload"

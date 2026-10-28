@@ -4,3 +4,8 @@ cache_size_kb: 4096
 busy_timeout_ms: 5000
 default_owner_name: ""
 auto_migrate: true
+chat_rag:
+  enabled: true
+  db_path: "data/chat_rag.sqlite3"
+  max_per_person: 2000
+  recall_limit: 6

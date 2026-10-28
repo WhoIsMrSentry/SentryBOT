@@ -48,6 +48,14 @@ def get_control_router(processor: Any, ardu: Optional[Any], base_url: str) -> AP
         result = processor.follow_status()
         return result if isinstance(result, dict) else {"active": False}
 
+    @r.get("/remote_mm/health", tags=["control"], summary="Remote multimodal server health + task-split state")
+    def remote_mm_health():
+        if not processor:
+            raise HTTPException(status_code=503, detail="Vision processor not initialized")
+        if not hasattr(processor, "remote_mm_health"):
+            raise HTTPException(status_code=503, detail="Vision processor missing remote multimodal interface")
+        return processor.remote_mm_health()
+
     @r.post("/follow/owner/start", tags=["vision"], summary="Start owner follow mode")
     def owner_follow_start():
         if not processor:

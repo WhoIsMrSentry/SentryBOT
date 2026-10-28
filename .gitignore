@@ -76,3 +76,14 @@ logs/runs/
 .pytest_cache/
 .mypy_cache/
 patches/
+
+# Large model weights (downloaded per-machine, never in git)
+models/
+*.onnx
+*.pt
+*.pth
+*.tflite
+# voiceprint / speaker enrollment data
+data/voiceprints.*
+data/speaker_id.json
+

@@ -16,6 +16,7 @@ class FaceRenderer:
         display_cfg = dict(cfg or {})
         self._fps = int(display_cfg.pop("fps", 24))
         self._brightness = int(display_cfg.pop("brightness", 255))
+        self._widgets = bool(display_cfg.get("widgets", True))
         self._driver = PiSsd1306Driver(display_cfg)
         self._engine: Optional[EyeEngine] = None
         self._pinned_activity: Optional[str] = None
@@ -31,6 +32,7 @@ class FaceRenderer:
             fps=self._fps,
             set_brightness=self._driver.set_brightness,
             bright=self._brightness,
+            widgets=self._widgets,
         )
         self._engine.start()
         return True
@@ -69,6 +71,9 @@ class FaceRenderer:
         n = str(name or "").strip().lower()
         if m == "test":
             return self.show_test_pattern()
+        if m == "vibe":
+            self._pinned_activity = None
+            return self._run_vibe(n)
         if m == "logo":
             self._pinned_activity = None
             return self._run(resolve_logo())
@@ -84,6 +89,16 @@ class FaceRenderer:
             return self._run(cmd)
         self._pinned_activity = None
         return self._run(resolve_bitmap(n))
+
+    def _run_vibe(self, name: str) -> bool:
+        eng = self._engine
+        if eng is None:
+            return False
+        try:
+            eng.set_vibe(name)                           # 'idle' clears a running vibe
+            return True
+        except Exception:
+            return False
 
     def _run(self, cmd: FaceCommand) -> bool:
         eng = self._engine

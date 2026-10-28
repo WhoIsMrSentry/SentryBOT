@@ -122,10 +122,97 @@ class SocialToolsMixin:
         return f"Triggered complex interaction event: {event}"
 
     def search_memory(self, query: str) -> str:
-        res = self.memory.search_memory(query, limit=5)
-        if not res:
+        q = str(query or "").strip()
+        if not q:
             return "No matching memories found."
-        return str(res)
+        results: List[str] = []
+
+        # 1. Episodic memory
+        if getattr(self, "memory", None) is not None and hasattr(self.memory, "search_memory"):
+            try:
+                episodic = self.memory.search_memory(q, limit=5) or []
+                for item in episodic:
+                    if isinstance(item, dict):
+                        results.append(f"[episodic:{item.get('type', 'log')}] {item.get('content', '')}")
+                    else:
+                        results.append(str(item))
+            except Exception:
+                pass
+
+        # 2. WorldMemoryRAG (structured facts, objects, places, people, habits)
+        try:
+            from modules.cognitive_memory.services.world_memory_rag import WorldMemoryRAG
+
+            wm = WorldMemoryRAG()
+            wm_res = wm.recall(q, limit=4)
+            for item in (wm_res.get("items") or []) if isinstance(wm_res, dict) else []:
+                if float(item.get("rank_score", 0.0)) >= 0.20:
+                    results.append(f"[world:{item.get('kind', 'fact')}:{item.get('name', '')}] {item.get('summary', '')}")
+        except Exception:
+            pass
+
+        # 3. ChatRAG (semantic long-term dialogue chunks with ONNX E5 rerank)
+        try:
+            from modules.cognitive_memory.services.chat_rag import get_default as _get_chat_rag
+
+            rag = _get_chat_rag()
+            for item in rag.recall(q, limit=4):
+                if float(item.get("score", 0.0)) >= 0.25:
+                    results.append(f"[chat_rag:{item.get('role', 'chat')}] {item.get('text', '')}")
+        except Exception:
+            pass
+
+        if not results:
+            return "No matching memories found."
+        return "\n".join(results[:10])
+
+    def remember_fact(self, fact: str, category: str = "observation", subject: str = "") -> str:
+        """Save a durable fact, preference, or object location into long-term & semantic RAG memory."""
+        cleaned_fact = str(fact or "").strip()
+        if not cleaned_fact:
+            return "Error: empty fact."
+        cat = str(category or "observation").strip().lower() or "observation"
+        subj = str(subject or cleaned_fact[:32]).strip() or cat
+        saved_to: List[str] = []
+
+        if getattr(self, "memory", None) is not None and hasattr(self.memory, "remember"):
+            try:
+                self.memory.remember("fact", f"[{cat}:{subj}] {cleaned_fact}", importance=8)
+                saved_to.append("episodic")
+            except Exception:
+                pass
+
+        try:
+            from modules.cognitive_memory.services.world_memory_rag import WorldMemoryRAG
+
+            wm = WorldMemoryRAG()
+            res = wm.observe(
+                {
+                    "kind": cat,
+                    "name": subj,
+                    "summary": cleaned_fact,
+                    "confidence": 0.90,
+                    "salience": 0.85,
+                },
+                source="agent_tool",
+            )
+            if isinstance(res, dict) and res.get("ok"):
+                saved_to.append("world_memory_rag")
+        except Exception:
+            pass
+
+        try:
+            from modules.cognitive_memory.services.chat_rag import get_default as _get_chat_rag
+
+            rag = _get_chat_rag()
+            if rag.ingest(person_id=subj, role="fact", text=cleaned_fact, kind=cat):
+                saved_to.append("chat_rag")
+        except Exception:
+            pass
+
+        if not saved_to:
+            return "Error: could not persist fact."
+        return f"Remembered ({', '.join(saved_to)}): [{cat}:{subj}] {cleaned_fact}"
 
     def search_social_memory(self, name: str, query: str = "") -> str:
         try:

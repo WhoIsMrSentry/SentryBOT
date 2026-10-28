@@ -361,6 +361,18 @@ def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:
     logger.info("module oled_faces mounted")
 
 
+def _include_mcp_client(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.mcp_client.config_loader import load_config as load_mcp_cfg  # type: ignore
+    from modules.mcp_client.xMcpClientService import McpClientService  # type: ignore
+    from modules.mcp_client.api.router import get_router as get_mcp_client_router  # type: ignore
+
+    mcfg = _merge_with_agent_section(load_mcp_cfg(None), "mcp_client")
+    svc = McpClientService(cfg=mcfg)
+    started["mcp_client"] = svc
+    app.include_router(get_mcp_client_router(svc))
+    logger.info("module mcp_client mounted")
+
+
 def _wire_head_arbiter(started: Dict[str, object]) -> None:
     arbiter = started.get("head_arbiter")
     if arbiter is None:

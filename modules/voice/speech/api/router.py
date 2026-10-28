@@ -35,7 +35,7 @@ def _barge_in_urls() -> tuple[str, ...]:
     )
 
 
-def _notify_autonomy(text: str = "", language: str = ""):
+def _notify_autonomy(text: str = "", language: str = "", voice_speaker: dict | None = None):
     # 1. Update OLED face subtitle with recognized STT text
     if text:
         try:
@@ -48,10 +48,17 @@ def _notify_autonomy(text: str = "", language: str = ""):
             pass
 
     # 2. Push final transcript so autonomy reacts immediately
+    payload: dict = {"text": text, "language": language, "final": True}
+    if voice_speaker and isinstance(voice_speaker, dict):
+        payload["voice_speaker"] = {
+            "name": str(voice_speaker.get("name") or ""),
+            "similarity": float(voice_speaker.get("similarity", 0.0) or 0.0),
+            "margin": float(voice_speaker.get("margin", 0.0) or 0.0),
+        }
     try:
         requests.post(
             _gw("/autonomy/speech"),
-            json={"text": text, "language": language, "final": True},
+            json=payload,
             timeout=0.5,
         )
         return
@@ -189,25 +196,33 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
 
         if text:
             last_nonempty_text = text
+        voice_hint = getattr(service, "last_voice_speaker", None)
         last = {
             "text": text or None,
             "final": True,
             "confidence": 1.0,
             "language": language,
+            "voice_speaker": voice_hint if isinstance(voice_hint, dict) else None,
             "ts": time.time(),
         }
         if text:
-            logger.info("STT >>> %s (lang=%s)", text, language)
+            logger.info("STT >>> %s (lang=%s voice=%s)", text, language, (voice_hint or {}).get("name", "-"))
         else:
             logger.debug("stt final empty")
-        
-        
+        last_partial_text = ""
         if text:
             final_spoken = text
-            _emit_speech_event("speech.final", {"text": final_spoken, "language": language})
+            _emit_speech_event(
+                "speech.final",
+                {
+                    "text": final_spoken,
+                    "language": language,
+                    "voice_speaker": (voice_hint or {}).get("name") if isinstance(voice_hint, dict) else None,
+                },
+            )
             threading.Thread(
                 target=_notify_autonomy,
-                args=(final_spoken, language),
+                args=(final_spoken, language, voice_hint if isinstance(voice_hint, dict) else None),
                 daemon=True,
             ).start()
             if _mark_speaking(True):

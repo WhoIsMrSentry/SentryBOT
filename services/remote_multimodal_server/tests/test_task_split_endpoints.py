@@ -21,9 +21,15 @@ def _jpeg_b64() -> str:
 class _FakeQwen:
     def __init__(self):
         self.calls = 0
+        self.questions = []
+        self.reasons = []
 
-    def analyze_frame(self, frame):
+    def analyze_frame(self, frame, question: str = "", semantic_reason: str = ""):
         self.calls += 1
+        if question:
+            self.questions.append(str(question))
+        if semantic_reason:
+            self.reasons.append(str(semantic_reason))
         return {
             "ok": True,
             "model": "fake-qwen",
@@ -73,3 +79,11 @@ def test_semantic_endpoint_calls_qwen():
     assert out["backend_info"]["semantic_vlm_requested"] is True
     assert out["backend_info"]["qwen_vlm"] is True
     assert e.qwen.calls == 1
+    assert e.qwen.reasons == ["user_question"]
+
+
+def test_semantic_endpoint_forwards_question_to_qwen():
+    e = _engine()
+    out = e.analyze_semantic(_jpeg_b64(), question="goruntude kac kisi var?", request_id="sem-q")
+    assert e.qwen.questions == ["goruntude kac kisi var?"]
+    assert out["backend_info"]["qwen_vlm"] is True

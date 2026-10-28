@@ -29,6 +29,13 @@ priority_map:
   emotion:furious: 90
   gesture:smoke: 40
   gesture:laugh: 38
+  reflex.impact: 84
+  reflex.cliff: 84
+  hardware.impact: 84
+  hardware.cliff: 84
+  emergency.stop: 92
+  user.praise: 55
+  user.rude: 60
   activity:editing: 42
   activity:glitch: 88
   activity:debugging: 42
@@ -130,9 +137,27 @@ event_map:
   owner.temp_revoked: { mode: bitmap, name: nervous }
   owner.locked: { mode: bitmap, name: scared }
 
+  # --- affect reactions (speech / laya affective events) ---
+  user.praise: { mode: gesture, name: nod }
+  user.rude: { mode: gesture, name: refuse }
+  affect.praise: { mode: gesture, name: nod }
+  affect.rude: { mode: gesture, name: refuse }
+  affect.fear: { mode: bitmap, name: scared }
+
+  # --- reflex / safety (spinal cord & hardware events) ---
+  reflex.impact: { mode: gesture, name: shiver }
+  reflex.cliff: { mode: gesture, name: pop }
+  hardware.impact: { mode: gesture, name: shiver }
+  hardware.cliff: { mode: gesture, name: pop }
+  emergency.stop: { mode: gesture, name: pop }
+
   # --- system ---
   error: { mode: gesture, name: scan_sweep }
   warning: { mode: bitmap, name: alert }
+
+  # --- retro vibes (event 'vibe:<name>' handled by the mapper; off switch below) ---
+  ambient.vibe.off: { mode: vibe, name: idle }
+  system.vibe.off: { mode: vibe, name: idle }
 
   # --- canonical emotions (autonomy mood / expression_director) ---
   emotion:neutral: { mode: bitmap, name: neutral }
