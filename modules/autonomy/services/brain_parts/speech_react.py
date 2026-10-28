@@ -37,15 +37,15 @@ class SpeechReactMixin:
         ("neutral", ("sakinleş", "normale dön", "düz dur", "nötr ol")),
     )
 
-    def on_speech_final(self, text: str, source_lang: str | None = None, ts: float = 0.0) -> None:
+    def on_speech_final(self, text: str, source_lang: str | None = None, ts: float = 0.0, voice_speaker: str | None = None) -> None:
         if not text or not text.strip():
             return
         t = text.strip()
         last_ts = float(self.state.get("last_speech_ts", 0.0) or 0.0)
-        
+
         if ts > 0.0 and ts == last_ts:
             return
-            
+
         last_text = str(self.state.get("last_speech_text") or "").strip()
         now = time.time()
         if t == last_text and (now - float(self.state.get("last_speech_time", 0.0) or 0.0)) < self._speech_min_interval_s:
@@ -54,9 +54,9 @@ class SpeechReactMixin:
         self.state["last_speech_text"] = t
         self.state["last_speech_time"] = now
         self.state["last_speech_ts"] = ts
-        self._dispatch_final_speech(t, source_lang=source_lang)
+        self._dispatch_final_speech(t, source_lang=source_lang, voice_speaker=voice_speaker)
 
-    def _dispatch_final_speech(self, text: str, source_lang: str | None = None) -> None:
+    def _dispatch_final_speech(self, text: str, source_lang: str | None = None, voice_speaker: str | None = None) -> None:
         self.interaction_occurred("speech")
         detected_lang = source_lang
         if detect_text_language:
@@ -71,7 +71,7 @@ class SpeechReactMixin:
             self.client.set_oled_stt_text(text)
         except Exception:
             pass
-        self._react_to_speech(text, source_lang=detected_lang)
+        self._react_to_speech(text, source_lang=detected_lang, voice_speaker=voice_speaker)
 
     @staticmethod
     def _sentiment_event_for_text(text: str) -> str | None:

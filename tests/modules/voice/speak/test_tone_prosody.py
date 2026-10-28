@@ -62,3 +62,32 @@ def test_non_piper_engine_does_not_inject_piper_block():
     svc.cfg = {"tts": {"engine": "dummy"}}
     svc.speak("Merhaba", tone="excited")
     assert "piper" not in (svc.tts.last_overrides or {})
+
+
+# voice_tone values emitted by modules/common/config/emotions.yml -- every one
+# must resolve to a real prosody preset (never speak in a flat default voice).
+_EMOTIONS_YML_TONES = [
+    "neutral", "happy", "sad", "angry", "fear", "surprise", "excited",
+    "gentle", "love", "disgusted", "confused", "worried", "bored",
+    "tired", "curious", "calm", "proud", "embarrassed", "awe",
+    "suspicious", "joy", "safety",
+]
+
+
+def test_every_emotions_yml_voice_tone_has_prosody_preset():
+    from modules.voice.speak.xSpeakService import _TONE_PRESETS
+    missing = [t for t in _EMOTIONS_YML_TONES if t not in _TONE_PRESETS]
+    assert not missing, f"voice_tone presets missing: {missing}"
+    for name, preset in _TONE_PRESETS.items():
+        assert 90 <= preset.get("rate", 0) <= 260, f"{name}: rate out of range"
+        assert 0.3 <= preset.get("volume", 0) <= 1.0, f"{name}: volume out of range"
+
+
+def test_bored_speaks_slower_than_excited():
+    svc = _piper_service()
+    svc.speak("Ya", tone="bored")
+    bored = svc.tts.last_overrides["piper"]["length_scale"]
+    svc2 = _piper_service()
+    svc2.speak("Ya", tone="excited")
+    excited = svc2.tts.last_overrides["piper"]["length_scale"]
+    assert bored > excited  # slower / lower energy

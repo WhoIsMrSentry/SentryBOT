@@ -49,6 +49,7 @@ class xOledFacesService:
         self._active_priority: int = 0
         self._last_event_ts: Dict[str, float] = {}
         self._last_mode: str = ""
+        self._last_widget_battery: str = ""
         self._apply_lock = Lock()
 
     def start(self) -> None:
@@ -169,6 +170,7 @@ class xOledFacesService:
 
         operational = str(state.get("operational", "idle")).strip().lower()
         emotions = [str(x).strip().lower() for x in (state.get("emotions") or []) if str(x).strip()]
+        self._maybe_feed_widgets(state)
 
         op_changed = operational != self._last_operational
         emo_changed = emotions != self._last_emotions
@@ -189,6 +191,31 @@ class xOledFacesService:
         event_key = operational if decision.source == "state" else f"emotion:{emotions[0]}" if emotions else operational
         pri = self._priority_for(source=decision.source, event_type=event_key, action=decision.action)
         self._apply(decision.action, priority=pri)
+
+    def _maybe_feed_widgets(self, state: Dict[str, Any]) -> None:
+        """Mirror the state store's battery percentage onto the top status strip."""
+        pct: Optional[float] = None
+        for key in ("battery_percent", "battery_pct", "battery"):
+            val = state.get(key)
+            if isinstance(val, dict):
+                for sub in ("percent", "pct", "level", "battery_percent"):
+                    v = val.get(sub)
+                    if isinstance(v, (int, float)):
+                        pct = float(v)
+                        break
+            elif isinstance(val, (int, float)) and val <= 100:
+                pct = float(val)
+            if pct is not None:
+                break
+        txt = f"{int(max(0.0, min(pct, 100.0)))}%" if pct is not None else ""
+        if txt == self._last_widget_battery:
+            return
+        self._last_widget_battery = txt
+        try:
+            if self.display._engine is not None:
+                self.display._engine.set_widget("battery", txt)
+        except Exception:
+            pass
 
     def _baseline_from_store(self) -> Optional[OledAction]:
         if self.state_store is None or not hasattr(self.state_store, "get"):
@@ -261,9 +288,9 @@ class xOledFacesService:
             if not force and now < self._active_hold_until and priority < self._active_priority and sent_key != self._last_sent:
                 return False
 
-            if sent_key == self._last_sent and mode != "animation":
+            if sent_key == self._last_sent and mode not in ("animation", "vibe"):
                 return True
-            if mode == "animation":
+            if mode in ("animation", "vibe"):
                 ttl_s = max(1.0, float(self.cfg.get("listen_session_hold_s", 120.0))) if (
                     self.coordinator.listen_session_active() or self.coordinator.speak_session_active()
                 ) else max(0.5, float(self.cfg.get("animation_hold_s", 1.2)))
@@ -290,7 +317,7 @@ class xOledFacesService:
                 self._last_apply_ts = now
                 self._active_priority = int(priority)
                 self._last_mode = mode
-                if mode == "animation":
+                if mode in ("animation", "vibe"):
                     hold_s = float(self.cfg.get("animation_hold_s", 1.2))
                     if self.coordinator.listen_session_active() or self.coordinator.speak_session_active():
                         hold_s = max(hold_s, float(self.cfg.get("listen_session_hold_s", 120.0)))

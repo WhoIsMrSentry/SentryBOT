@@ -4,6 +4,7 @@ import base64
 from datetime import datetime, timezone
 import logging
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 try:
@@ -171,6 +172,29 @@ class ProcessorVlmMixin(ProcessorVlmSignalsMixin):
                     pass
             self._finish_vlm_refresh()
 
+    def _remote_mm_record(self, ok: bool) -> None:
+        try:
+            if ok:
+                self.remote_mm_fail_count = 0
+                self.remote_mm_last_ok_ts = time.time()
+            else:
+                self.remote_mm_fail_count = int(getattr(self, "remote_mm_fail_count", 0)) + 1
+        except Exception:
+            pass
+
+    def _remote_mm_healthy(self) -> bool:
+        return int(getattr(self, "remote_mm_fail_count", 0)) < int(getattr(self, "remote_mm_max_fail_count", 3))
+
+    def remote_mm_health(self) -> Dict[str, Any]:
+        return {
+            "enabled": bool(self.remote_mm_enabled),
+            "healthy": bool(self.remote_mm_enabled and self._remote_mm_healthy()),
+            "consecutive_failures": int(getattr(self, "remote_mm_fail_count", 0)),
+            "max_consecutive_failures": int(getattr(self, "remote_mm_max_fail_count", 3)),
+            "last_ok_ts": float(getattr(self, "remote_mm_last_ok_ts", 0.0) or 0.0),
+            "gate_stats": self.get_vision_gate_stats() if hasattr(self, "get_vision_gate_stats") else {},
+        }
+
     def _call_remote_multimodal(
         self,
         frame: Any,
@@ -179,8 +203,11 @@ class ProcessorVlmMixin(ProcessorVlmSignalsMixin):
         semantic_reason: str = "",
         request_id: str = "",
         question: str = "",
+        onsensor_hints: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         if not self.remote_mm_enabled or not self.remote_mm_endpoint:
+            return None
+        if not self._remote_mm_healthy():
             return None
         endpoint = self._remote_multimodal_endpoint_for(bool(run_semantic_vlm))
         if not endpoint:
@@ -201,6 +228,8 @@ class ProcessorVlmMixin(ProcessorVlmSignalsMixin):
             requested = self._remote_requested_tasks(run_semantic_vlm=bool(run_semantic_vlm))
             if requested:
                 payload["requested_tasks"] = requested
+            if isinstance(onsensor_hints, dict) and onsensor_hints.get("detections") is not None:
+                payload["onsensor_hints"] = onsensor_hints
             headers = {}
             if self.remote_mm_auth_token:
                 headers["X-Auth-Token"] = self.remote_mm_auth_token
@@ -218,12 +247,15 @@ class ProcessorVlmMixin(ProcessorVlmSignalsMixin):
                     timeout=self.remote_mm_timeout_s,
                 )
             if resp.status_code != 200:
+                self._remote_mm_record(False)
                 return None
             data = resp.json()
             if isinstance(data, dict):
+                self._remote_mm_record(bool(data.get("ok", True)))
                 return data
         except Exception as exc:
             logger.debug("remote multimodal call failed: %s", exc)
+            self._remote_mm_record(False)
         return None
 
     def _context_from_remote_multimodal(self, mm: Dict[str, Any], question: str = "") -> Dict[str, Any]:
@@ -233,6 +265,9 @@ class ProcessorVlmMixin(ProcessorVlmSignalsMixin):
         summary = str(mm.get("summary", "")).strip()
         interpretation = str(mm.get("persona_interpretation", "")).strip() or summary
         importance = float(mm.get("importance_score", 0.55 if hazards else 0.4))
+        # Source-tagged merge contract: onsensor messages take precedence in
+        # robot-side reasoning; keep the per-server sources summary as-is.
+        sources = mm.get("sources") if isinstance(mm.get("sources"), dict) else {}
         return {
             "timestamp": _utc_iso(),
             "summary": summary,
@@ -244,6 +279,7 @@ class ProcessorVlmMixin(ProcessorVlmSignalsMixin):
             "importance_score": min(1.0, max(0.0, importance + (0.1 if question else 0.0))),
             "raw_vlm_observation": str(mm.get("raw_text", "")),
             "persona_interpretation": interpretation,
+            "sources": sources,
         }
 
     def get_latest_visual_context(self) -> Optional[Dict[str, Any]]:
@@ -289,7 +325,14 @@ class ProcessorVlmMixin(ProcessorVlmSignalsMixin):
                 frame = self._latest_raw_frame.copy()
 
         if frame is not None and self.remote_mm_enabled:
-            mm_result = self._call_remote_multimodal(frame)
+            hints = self._onsensor_context_hints(frame.shape)
+            mm_result = self._call_remote_multimodal(
+                frame,
+                run_semantic_vlm=bool(run_semantic_vlm),
+                question=question,
+                semantic_reason=semantic_reason,
+                onsensor_hints=hints,
+            )
             if isinstance(mm_result, dict) and mm_result.get("ok", True):
                 context = self._context_from_remote_multimodal(mm_result, question=question)
                 self.update_visual_context(context)

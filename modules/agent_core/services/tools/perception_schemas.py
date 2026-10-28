@@ -10,13 +10,38 @@ def get_perception_tool_definitions() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "search_memory",
-                "description": "Search your episodic database for past events, dialogues, or seen people.",
+                "description": "Search your episodic, world RAG, and semantic chat databases for past events, facts, object locations, dialogues, or preferences.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Search keyword"}
+                        "query": {"type": "string", "description": "Search query or question"}
                     },
                     "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "remember_fact",
+                "description": "Store a durable fact, user preference, reminder, or object location in long-term semantic memory (WorldMemoryRAG + ChatRAG + Episodic).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "fact": {
+                            "type": "string",
+                            "description": "Complete self-contained sentence describing the fact to remember",
+                        },
+                        "category": {
+                            "type": "string",
+                            "description": "Category: observation|people|places|objects|habits|events",
+                        },
+                        "subject": {
+                            "type": "string",
+                            "description": "Short key or subject name (e.g. 'yedek_anahtar', 'Emir', 'kahve')",
+                        },
+                    },
+                    "required": ["fact"],
                 },
             },
         },

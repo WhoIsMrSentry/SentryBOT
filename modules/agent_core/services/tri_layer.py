@@ -69,9 +69,10 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
         "agent_core": SubAgentProfile(
             module="agent_core",
             role="Core planner",
-            goal="Coordinate safe planning and tool usage.",
+            goal="Coordinate safe planning, long-term memory, and tool usage.",
             allowed_tools=(
                 "search_memory",
+                "remember_fact",
                 "get_sensor_data",
                 "get_location",
                 "pathfind",
@@ -79,7 +80,7 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
                 "update_location",
                 "connect_locations",
             ),
-            keywords=("plan", "reason", "agent", "cognitive", "strategy", "task"),
+            keywords=("plan", "reason", "agent", "cognitive", "strategy", "task", "hatırla", "unutma", "hafıza", "kaydet"),
         ),
         "animate": SubAgentProfile(
             module="animate",
@@ -100,11 +101,11 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             role="Behavior specialist",
             goal="Decide autonomous behavior policy and perform expressive actions.",
             allowed_tools=(
-                "search_memory", "search_social_memory", "interaction_event",
+                "search_memory", "remember_fact", "search_social_memory", "interaction_event",
                 "set_emotion", "get_sensor_data", "set_lights", "oled_face",
                 "move_head", "play_sound", "speak", "queue_action",
             ),
-            keywords=("autonomy", "idle", "bored", "follow", "behavior", "sinirlen", "mutlu", "duygu", "ifade", "companion"),
+            keywords=("autonomy", "idle", "bored", "follow", "behavior", "sinirlen", "mutlu", "duygu", "ifade", "companion", "hatırla", "unutma"),
         ),
         "calibration": SubAgentProfile(
             module="calibration",

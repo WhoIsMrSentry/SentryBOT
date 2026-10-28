@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import glob
 import logging
-import os
 import random
 import threading
 import time
@@ -307,8 +305,21 @@ class LayaEngine:
         self._last_decision: Optional["LayaDecision"] = None
 
     @classmethod
-    def get_instance(cls, config: Optional[Dict[str, Any]] = None) -> "LayaEngine":
-        """Thread-safe singleton accessor."""
+    def get_instance(cls, config: Optional[Dict[str, Any]] = None, raw: bool = False) -> "LayaEngine":
+        """Thread-safe singleton accessor.
+
+        raw=True returns the bare neural LayaEngine (used by the cascade tier).
+        Otherwise the config may redirect to a System1CascadeEngine wrapper.
+        """
+        if not raw:
+            cfg_probe = config or {}
+            tri_cfg = cfg_probe.get("tri_layer", {}) if isinstance(cfg_probe.get("tri_layer"), dict) else {}
+            s1_cfg = tri_cfg.get("system1", {}) if isinstance(tri_cfg.get("system1"), dict) else {}
+            backend = str(s1_cfg.get("backend", "")).strip().lower()
+            if backend == "cascade":
+                from modules.agent_core.services.system1_cascade import System1CascadeEngine
+
+                return System1CascadeEngine.get_instance(config)  # type: ignore[return-value]
         with cls._lock:
             if cls._instance is None:
                 cfg = config or {}
@@ -329,85 +340,66 @@ class LayaEngine:
 
     @staticmethod
     def _find_cached_snapshot() -> Optional[str]:
-        """Locates pre-downloaded Hugging Face snapshot for convaiinnovations/laya."""
-        hub_pattern = os.path.expanduser(
-            "~/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/*/multilingual"
-        )
-        matches = glob.glob(hub_pattern)
-        if matches and os.path.isdir(matches[0]):
-            return matches[0]
-
-        parent_pattern = os.path.expanduser(
-            "~/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/*"
-        )
-        parent_matches = glob.glob(parent_pattern)
-        for snapshot in parent_matches:
-            if os.path.isdir(snapshot):
-                multi = os.path.join(snapshot, "multilingual")
-                if os.path.isdir(multi):
-                    return multi
-                if os.path.isfile(os.path.join(snapshot, "model.safetensors")):
-                    return snapshot
+        """Deprecated: neural Laya model removed in favor of ONNX Semantic Router."""
         return None
 
     def _ensure_loaded(self) -> bool:
-        """Lazily loads the Laya model on first inference request."""
+        """Checks if an injected mock agent is present (neural Laya dependency removed)."""
         if not self.enabled:
             return False
-        if self._is_available and self._agent is not None:
+        if self._agent is not None:
+            self._is_available = True
             return True
-        if self._load_attempted and not self._is_available:
-            return False
-
-        with self._load_lock:
-            if self._agent is not None:
-                return True
-            self._load_attempted = True
-            try:
-                import laya  # type: ignore
-            except ImportError:
-                logger.warning(
-                    "laya library is not installed in current environment. "
-                    "System 1 neural reflexes will use fallback routing."
-                )
-                self._is_available = False
-                return False
-
-            t0 = time.perf_counter()
-            resolved_path = self._model_path or self._find_cached_snapshot()
-            try:
-                if resolved_path and os.path.exists(resolved_path):
-                    logger.info("Loading Laya model from local snapshot: %s", resolved_path)
-                    self._agent = laya.load(resolved_path)
-                else:
-                    logger.info("Loading Laya model from HF hub: convaiinnovations/laya (subfolder=%s)", self.subfolder)
-                    self._agent = laya.load("convaiinnovations/laya", subfolder=self.subfolder)
-
-                self._load_time_ms = round((time.perf_counter() - t0) * 1000.0, 2)
-                self._is_available = True
-                logger.info(
-                    "Laya System 1 loaded successfully in %.2f ms (device=%s)",
-                    self._load_time_ms,
-                    getattr(self._agent, "device", "unknown"),
-                )
-                return True
-            except Exception as exc:
-                logger.warning("Failed to initialize Laya model: %s", exc)
-                self._is_available = False
-                return False
+        self._load_attempted = True
+        self._is_available = True
+        return False
 
     @property
     def is_available(self) -> bool:
-        return self._is_available or (self.enabled and not self._load_attempted)
+        return self.enabled
+
+    def _record_telemetry(self, cleaned: str, decision: LayaDecision) -> None:
+        self._decision_count += 1
+        self._total_inference_ms += decision.inference_ms
+        self._last_decision = decision
+        if self._log_decisions:
+            self._last_decisions.append({
+                "text": cleaned[:50],
+                "target": decision.target_module,
+                "conf": round(decision.module_confidence, 3),
+                "direct": decision.is_direct_command,
+                "affect": decision.affective_event,
+                "urgency": round(decision.urgency_score, 2),
+                "ms": decision.inference_ms,
+                "timestamp": time.time(),
+            })
+            if len(self._last_decisions) > self._max_decision_log:
+                self._last_decisions = self._last_decisions[-self._max_decision_log:]
 
     def decide(self, text: str) -> Optional[LayaDecision]:
-        """Runs fast System 1 inference on user input."""
+        """Runs fast System 1 inference on user input (Rules + ONNX Semantic Router, or injected mock)."""
+        if not self.enabled:
+            return None
         cleaned = str(text or "").strip()
         if not cleaned:
             return None
 
-        if not self._ensure_loaded() or self._agent is None:
-            return None
+        if self._agent is None:
+            from modules.agent_core.services.system1_rules import classify as rules_classify
+            from modules.agent_core.services.system1_embed import System1EmbedEngine
+
+            decision = rules_classify(cleaned, action_proposal_cfg=self.action_proposal_cfg)
+            if decision is None:
+                decision = System1EmbedEngine.get_instance().decide(cleaned)
+            if decision is not None:
+                decision.emergency_threshold = self.emergency_threshold
+                decision.emergency_target_confidence_threshold = self.emergency_target_confidence_threshold
+                decision.emergency_direct_confidence_threshold = self.emergency_direct_confidence_threshold
+                decision.emergency_urgency_confidence_threshold = self.emergency_urgency_confidence_threshold
+                if decision.suggested_tool is None:
+                    decision.suggested_tool = self.MODULE_TOOL_MAP.get(decision.target_module)
+                self._record_telemetry(cleaned, decision)
+            return decision
 
         t0 = time.perf_counter()
         try:

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("cv2")
+
 from remote_multimodal.engine import MultiModalEngine
 from remote_multimodal.models import AnalyzeRequest
 

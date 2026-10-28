@@ -37,6 +37,7 @@ class MultiModalCVPipelinesMixin:
         return frame
 
     def detect_objects(self, frame: np.ndarray) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
         if self.backends.yolo is not None:
             try:
                 res = self.backends.yolo.predict(
@@ -53,7 +54,6 @@ class MultiModalCVPipelinesMixin:
                         xyxy = boxes.xyxy.cpu().numpy().astype(int)
                         conf = boxes.conf.cpu().numpy()
                         cls = boxes.cls.cpu().numpy().astype(int)
-                        out: List[Dict[str, Any]] = []
                         for i in range(len(xyxy)):
                             x1, y1, x2, y2 = [int(v) for v in xyxy[i]]
                             label = str(names.get(int(cls[i]), f"class_{int(cls[i])}"))
@@ -68,21 +68,21 @@ class MultiModalCVPipelinesMixin:
             except Exception as exc:
                 logger.debug("YOLO detect failed: %s", exc)
 
-        rects, weights = self._body_hog.detectMultiScale(
-            frame,
-            winStride=(8, 8),
-            padding=(8, 8),
-            scale=1.05,
-        )
-        out: List[Dict[str, Any]] = []
-        for i, (x, y, w, h) in enumerate(rects):
-            out.append(
-                {
-                    "label": "person",
-                    "confidence": round(float(weights[i]) if i < len(weights) else 0.4, 3),
-                    "bbox": [int(x), int(y), int(x + w), int(y + h)],
-                }
+        if self._body_hog is not None:
+            rects, weights = self._body_hog.detectMultiScale(
+                frame,
+                winStride=(8, 8),
+                padding=(8, 8),
+                scale=1.05,
             )
+            for i, (x, y, w, h) in enumerate(rects):
+                out.append(
+                    {
+                        "label": "person",
+                        "confidence": round(float(weights[i]) if i < len(weights) else 0.4, 3),
+                        "bbox": [int(x), int(y), int(x + w), int(y + h)],
+                    }
+                )
         return out
 
     def detect_faces(self, frame: np.ndarray) -> List[List[int]]:
@@ -95,6 +95,8 @@ class MultiModalCVPipelinesMixin:
             except Exception:
                 pass
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if getattr(self, "_face_cascade", None) is None:
+            return []  # cascade xml unavailable (cv2>=5 wheels): no haar faces
         faces = self._face_cascade.detectMultiScale(gray, scaleFactor=1.12, minNeighbors=5, minSize=(56, 56))
         return [[int(x), int(y), int(x + w), int(y + h)] for (x, y, w, h) in faces]
 
@@ -144,7 +146,7 @@ class MultiModalCVPipelinesMixin:
         motion = 0.0
         scene = 0.0
         with self._lock:
-            if self._prev_gray is not None:
+            if self._prev_gray is not None and self._prev_gray.shape == gray.shape:
                 diff = cv2.absdiff(gray, self._prev_gray)
                 motion = float(np.mean(diff) / 255.0)
             if self._prev_hist is not None:

@@ -12,6 +12,7 @@ from .backends import Backends
 from .config import RuntimeConfig
 from .cv_pipelines import MultiModalCVPipelinesMixin
 from .models import KnownFace, known_face_from_dict, known_face_to_dict
+from .onsensor_hints import HINTS_SCHEMA, hint_hazard_types, parse_onsensor_hints
 from .qwen_client import QwenVlmClient
 
 logger = logging.getLogger("remote_multimodal.engine")
@@ -28,9 +29,20 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
         self._prev_hist = None
         self._known_faces: List[KnownFace] = []
         self._db_path = Path(cfg.face_db_path)
-        self._face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
-        self._body_hog = cv2.HOGDescriptor()
-        self._body_hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        self._face_cascade = None
+        try:
+            cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+            self._face_cascade = cascade if not cascade.empty() else None  # cv2>=5 wheels dropped data xmls
+        except Exception:
+            pass
+        self._body_hog = None
+        try:
+            hog = getattr(cv2, "HOGDescriptor", None)
+            if hog is not None:
+                self._body_hog = hog()
+                self._body_hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        except Exception:  # cv2>=5 wheels dropped HOGDescriptor
+            self._body_hog = None
         self._load_face_db()
 
     def _apply_profile_defaults(self) -> None:
@@ -91,6 +103,7 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
         request_id: str = "",
         question: str = "",
         task_mode: str = "",
+        onsensor_hints: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         frame = self.decode_image(image_b64)
         h, w = frame.shape[:2]
@@ -102,15 +115,55 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
         run_qwen = self._should_run_qwen(allow, run_semantic_vlm)
         if mode not in {"cheap", "semantic", "legacy"}:
             mode = "semantic" if run_qwen else ("cheap" if allow else "legacy")
+        hints = parse_onsensor_hints(onsensor_hints, h, w)
+        hint_people = list(hints.get("people") or []) if hints else []
+        hint_dets = list(hints.get("detections") or []) if hints else []
+        # Task split contract (#connection): the robot's IMX500 owns person
+        # detection/identity; when fresh person hints arrive we skip our own
+        # overlapping detectors and merge at the sources level instead.
+        if hint_people:
+            run_faces = False
         objects = self.detect_objects(frame) if run_objects else []
         faces = self.detect_faces(frame) if run_faces else []
         motion, scene_change = self.motion_scene_change(frame)
-        qwen_out = self.qwen.analyze_frame(frame) if (run_qwen and self.cfg.enable_qwen_vlm) else {"ok": False}
+        qwen_out = (
+            self.qwen.analyze_frame(frame, question=question, semantic_reason=semantic_reason)
+            if (run_qwen and self.cfg.enable_qwen_vlm)
+            else {"ok": False}
+        )
         ocr_payload: Dict[str, Any] = {"ok": False}
         if run_ocr:
             ocr_payload = self.ocr_frame(frame)
 
+        objects_out: List[Dict[str, Any]] = []
+        for o in objects:
+            if not isinstance(o, dict):
+                continue
+            entry = dict(o)
+            entry.setdefault("source", "remote_cv")
+            objects_out.append(entry)
+        objects_out.extend(
+            det for det in hint_dets if str(det.get("label", "")) != "person"
+        )
+
         people: List[Dict[str, Any]] = []
+        # Identity/split priority 1: onsensor person boxes are ground truth.
+        for hp in hint_people:
+            bbox = list(hp.get("bbox_xyxy") or [])
+            people.append(
+                {
+                    "name": "Unknown",
+                    "confidence": float(hp.get("confidence", 0.0) or 0.0),
+                    "bbox": bbox,
+                    "emotion": "",
+                    "age": None,
+                    "recognition_level": 0,
+                    "relationship": "unknown",
+                    "track_id": hp.get("track_id"),
+                    "source": "onsensor",
+                }
+            )
+        # Priority 2: only when no hints carried people, fall back to our CV.
         for fb in faces:
             x1, y1, x2, y2 = fb
             x1 = max(0, min(w - 1, x1))
@@ -132,14 +185,19 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
                     "age": age,
                     "recognition_level": rec_level,
                     "relationship": "known" if rec_level >= 2 else "unknown",
+                    "source": "remote_cv",
                 }
             )
 
         hazards = []
-        for o in objects:
+        seen_hazard = {"knife", "fire", "scissors"}
+        for o in objects_out:
             lbl = str(o.get("label", "")).lower()
-            if lbl in {"knife", "fire", "scissors"}:
-                hazards.append({"type": lbl, "severity": "high", "bbox": o.get("bbox")})
+            if lbl in seen_hazard:
+                hazards.append({"type": lbl, "severity": "high", "bbox": o.get("bbox"), "source": str(o.get("source", "remote_cv"))})
+        for htype in hint_hazard_types(hint_dets):
+            if htype not in {str(x.get("type", "")).lower() for x in hazards}:
+                hazards.append({"type": htype, "severity": "high", "source": "onsensor"})
         for hz in qwen_out.get("hazards", []) if qwen_out.get("ok") else []:
             hz_name = str(hz).strip().lower()
             if hz_name and hz_name not in {str(x.get("type", "")).lower() for x in hazards}:
@@ -147,7 +205,7 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
 
         caption = self._caption(frame)
         qwen_summary = str(qwen_out.get("summary", "")).strip() if qwen_out.get("ok") else ""
-        summary = qwen_summary or caption or f"{len(people)} person, {len(objects)} objects."
+        summary = qwen_summary or caption or f"{len(people)} person, {len(objects_out)} objects."
         if scene_change > self.cfg.scene_change_threshold:
             summary += " Scene changed."
         if motion > self.cfg.motion_threshold:
@@ -173,7 +231,7 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
             "ok": True,
             "summary": summary.strip(),
             "persona_interpretation": persona_interpretation,
-            "objects": objects,
+            "objects": objects_out,
             "people": people,
             "hazards": hazards,
             "motion": {"score": round(motion, 3), "detected": motion > self.cfg.motion_threshold},
@@ -184,6 +242,14 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
             "frame_size": {"w": int(w), "h": int(h)},
             "ocr": ocr_payload,
             "requested_tasks": sorted(allow) if allow else [],
+            "sources": {
+                "onsensor_detections": len(hint_dets),
+                "onsensor_people": len(hint_people),
+                "remote_objects": len(objects_out),
+                "remote_people": sum(1 for p in people if p.get("source") == "remote_cv"),
+                "qwen": bool(qwen_out.get("ok")),
+                "hints_schema": HINTS_SCHEMA if hints else "",
+            },
             "backend_info": {
                 "yolo": bool(self.backends.yolo is not None),
                 "face_recognition": bool(self.backends.face_recognition is not None),
@@ -198,6 +264,7 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
                 "task_mode": mode,
                 "semantic_endpoint": mode == "semantic",
                 "cheap_endpoint": mode == "cheap",
+                "onsensor_hints": bool(hints),
                 "ocr": self.backends.ocr_backend_name,
             },
         }
@@ -209,6 +276,7 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
         semantic_reason: str = "",
         request_id: str = "",
         question: str = "",
+        onsensor_hints: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         tasks = requested_tasks or ["objects", "people", "faces", "hazards"]
         return self.analyze(
@@ -219,6 +287,7 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
             request_id=request_id,
             question=question,
             task_mode="cheap",
+            onsensor_hints=onsensor_hints,
         )
 
     def analyze_semantic(
@@ -228,6 +297,7 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
         semantic_reason: str = "",
         request_id: str = "",
         question: str = "",
+        onsensor_hints: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         base = list(requested_tasks or ["objects", "people", "faces", "hazards", "semantic_scene"])
         if "semantic_scene" not in {str(t).strip().lower() for t in base}:
@@ -240,4 +310,5 @@ class MultiModalEngine(MultiModalCVPipelinesMixin):
             request_id=request_id,
             question=question,
             task_mode="semantic",
+            onsensor_hints=onsensor_hints,
         )

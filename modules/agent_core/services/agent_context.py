@@ -349,10 +349,36 @@ class AgentContextMixin(AgentMemorySyncMixin):
         base_system = system_override or "You are SentryBOT, a companion robot. Help the user."
         if survival_override:
             base_system = f"{base_system}\n\n{survival_override}"
+        rag_note = self._chat_rag_note(user_prompt)
+        if rag_note:
+            base_system = f"{base_system}\n\n{rag_note}"
         messages = [{"role": "system", "content": base_system}]
         messages.extend(self.chat_history)
         messages.append({"role": "user", "content": user_prompt})
         return messages
+
+    def _chat_rag_note(self, user_prompt: str) -> str:
+        try:
+            from modules.cognitive_memory.services.chat_rag import get_default
+
+            rag = get_default()
+            if not rag.enabled:
+                return ""
+            limit = int(rag.cfg.get("recall_limit", 6) or 6)
+            built = rag.build_context(user_prompt, limit=limit)
+            items = built.get("items") or []
+            if not items:
+                return ""
+            lines = [f"- [{item.get('role', 'chat')}] {item.get('text', '')}" for item in items[:limit]]
+            joined = "\n".join(line for line in lines if line.strip())
+            if not joined:
+                return ""
+            return (
+                "[LONG-TERM CHAT MEMORY] Earlier related exchanges you may recall "
+                "(never claim certainty; use only if relevant):\n" + joined
+            )
+        except Exception:
+            return ""
 
     def check_survival_drives(self) -> Optional[str]:
         if not self.autonomy_client or not hasattr(self.autonomy_client, "get_hardware_status"):

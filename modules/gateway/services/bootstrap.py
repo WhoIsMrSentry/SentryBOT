@@ -41,6 +41,7 @@ from .bootstrap_ai import (
     _include_autonomy,
     _include_expression,
     _include_interactions,
+    _include_mcp_client,
     _include_oled_faces,
     _include_ollama,
     _include_speak,
@@ -121,6 +122,7 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         "autonomy": lambda: _include_autonomy(app, started),
         "agent_core": lambda: _include_agent_core(app, started),
         "oled_faces": lambda: _include_oled_faces(app, started),
+        "mcp_client": lambda: _include_mcp_client(app, started),
         "notifier": lambda: _include_notifier(app, started),
         "runtime_console": lambda: _include_runtime_console(app, started),
     }

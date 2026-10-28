@@ -185,10 +185,42 @@ class ProcessorVlmSignalsMixin:
         except Exception as exc:
             return {"available": False, "error": str(exc)}
 
+    def _onsensor_context_hints(self, frame_shape: Any = None) -> Optional[Any]:
+        """Fresh IMX500 snapshot -> onsensor_hints@1 payload, None when off/stale/empty."""
+        if not bool(getattr(self, "remote_mm_onsensor_hints_enabled", True)):
+            return None
+        if not bool(getattr(self, "_onsensor_active", lambda: False)()):
+            return None
+        snap = self._latest_onsensor_snapshot()
+        if snap is None:
+            return None
+        try:
+            from .onsensor_hints import build_onsensor_hints
+
+            return build_onsensor_hints(snap, frame_shape)
+        except Exception as exc:
+            logger.debug("onsensor hints build failed: %s", exc)
+            return None
+
     def _remote_requested_tasks(self, run_semantic_vlm: bool = False) -> List[str]:
         remote = self.mode_categories.get("remote", {})
+        skip: set[str] = set()
+        if bool(getattr(self, "remote_mm_task_split_enabled", True)) and bool(
+            getattr(self, "remote_mm_onsensor_hints_enabled", True)
+        ):
+            snap = self._latest_onsensor_snapshot()
+            if snap is not None:
+                for det in getattr(snap, "detections", None) or []:
+                    try:
+                        if str(getattr(det, "label", "")).strip().lower() == "person":
+                            skip.update(getattr(self, "remote_mm_task_split_skip", None) or ["people", "faces"])
+                            break
+                    except Exception:
+                        continue
         tasks: List[str] = []
         for key in ("objects", "people", "faces", "ocr", "hazards", "semantic_scene", "depth"):
+            if key in skip:
+                continue
             if key == "semantic_scene" and not run_semantic_vlm:
                 continue
             if bool(remote.get(key, False)):

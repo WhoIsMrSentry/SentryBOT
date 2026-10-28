@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip("PIL")
+
 from modules.visual_output.oled_faces.services.pi_ssd1306_driver import PiSsd1306Driver
 
 

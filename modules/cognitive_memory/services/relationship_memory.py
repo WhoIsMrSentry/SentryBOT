@@ -125,6 +125,7 @@ class RelationshipMemory(RelationshipStorageMixin):
                     role=str(role or "user"),
                     text=text_val[:240],
                 )
+                self._index_chat_rag(pid=pid, role=role, text=text_val)
                 self._social_db.chat_episodes.prune_for_person(pid, keep_last=16)
                 if str(role or "").strip().lower() == "user":
                     self._extract_preferences_db(pid, text_val)
@@ -148,6 +149,30 @@ class RelationshipMemory(RelationshipStorageMixin):
             self._extract_preferences(rec, text_val)
             self._add_moment(rec, text=f"user:{text_val}", salience=0.35)
         self._persist()
+
+    def _index_chat_rag(self, *, pid: Any, role: Any, text: str) -> None:
+        try:
+            from .chat_rag import get_default
+
+            rag = get_default()
+            rag.ingest(person_id=str(pid), role=str(role or "user"), text=text)
+            now = time.time()
+            if not hasattr(self, "_rag_last_prune") or now - float(getattr(self, "_rag_last_prune", 0.0)) > 600.0:
+                self._rag_last_prune = now
+                rag.prune()
+        except Exception:
+            pass
+
+    def recall_chat(self, name: str, query: str, limit: int = 6) -> List[Dict[str, Any]]:
+        try:
+            from .chat_rag import get_default
+
+            rec = self.get(name)
+            pid = rec.get("id") if isinstance(rec, dict) else ""
+            rag = get_default()
+            return rag.recall(str(query or ""), person_id=str(pid or ""), limit=limit)
+        except Exception:
+            return []
 
     def top_people(self, limit: int = 3) -> List[Dict[str, Any]]:
         if self._social_db is not None:

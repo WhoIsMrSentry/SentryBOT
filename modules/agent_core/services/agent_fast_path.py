@@ -111,4 +111,12 @@ class AgentFastPathMixin:
                 "briefly in one sentence in the user's language."
             )
         history = list(getattr(self, "chat_history", []))
+        dec = getattr(self, "_last_laya_fast_path_decision", None)
+        raw_ans = getattr(dec, "raw_answers", None) if dec is not None else None
+        action_hint = raw_ans.get("action_hint") if isinstance(raw_ans, dict) else None
+        if isinstance(action_hint, dict) and action_hint:
+            system_prompt = (
+                f"{system_prompt}\n\n"
+                f"[SYSTEM1 SEMANTIC HINT] Implied parameters for this indirect request: {action_hint}"
+            )
         return [{"role": "system", "content": system_prompt}] + history

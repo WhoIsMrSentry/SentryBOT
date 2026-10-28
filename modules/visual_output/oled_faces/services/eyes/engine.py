@@ -20,6 +20,7 @@ from .activities import ACT_EXPIRY, ACT_MOOD, ACTIVITIES, OVERLAYS, pose
 from .gestures import BLINKS, GESTURE_FACE, GESTURE_FX, GESTURES_FN
 from .moods import MOODS
 from .primitives import ease, rounded_rect
+from .vibes import VIBES
 
 _TAU_GAZE, _TAU_SIZE = 0.09, 0.11            # gaze / eye-size settle time-constants
 _AUTO = ({"left", "right"}, 0.20, 1, 0.5)    # spontaneous blink (eyes, dur, reps, anchor)
@@ -29,9 +30,11 @@ _MASK = ({"left", "right"}, 0.24, 1, 0.5)    # blink that hides a mood's lid swa
 class EyeEngine:
     def __init__(self, show, *, width=128, height=64, fps=30,
                  eye_w=36, eye_h=36, radius=12, gap=10,
-                 set_brightness=None, bright=255):        # bright = general panel brightness, max by default
+                 set_brightness=None, bright=255,
+                 widgets=True):        # bright = panel brightness; widgets = top status strip
         self._show = show
         self._set_brightness, self._bright = set_brightness, bright
+        self._widgets = bool(widgets)
         self._cur_bright = None                          # unset -> first frame pushes the general level
         self.W, self.H, self.fps = width, height, max(5, fps)
         self.eye_w, self.eye_h, self.radius, self.gap = eye_w, eye_h, radius, gap
@@ -51,6 +54,9 @@ class EyeEngine:
         self._activity_start = 0.0
         self._restore_mood = None                        # mood to return to after a face-swapping gesture
         self._next_blink = self._next_idle = 0.0
+        self._vibe = None                                # retro full-screen loop (eyes hidden)
+        self._widget_battery = ""                        # top-strip widget state
+        self._widget_text = ""
         self._subtitle_text: Optional[str] = None
         self._subtitle_expiry: float = 0.0
         self._stop = threading.Event()
@@ -64,6 +70,22 @@ class EyeEngine:
         with self._lock:
             self._subtitle_text = str(text).strip()
             self._subtitle_expiry = time.monotonic() + max(1.0, float(duration_s))
+
+    def set_vibe(self, name: Optional[str]) -> None:
+        """Play a retro full-screen vibe loop; 'idle'/None clears it (eyes return)."""
+        n = (name or "idle").lower()
+        with self._lock:
+            self._vibe = n if n in VIBES and n != "idle" else None
+
+    def set_widget(self, kind: str, value: str = "") -> None:
+        """Feed the top status strip: kind 'battery' (e.g. '84%') or 'text'."""
+        kind = (kind or "").lower()
+        value = str(value or "")
+        with self._lock:
+            if kind == "battery":
+                self._widget_battery = value
+            elif kind == "text":
+                self._widget_text = value
 
     def set_gaze(self, x: float, y: float, hold_s: float = 3.0) -> None:
         """Direct eye pupils towards target coordinate (gaze/face tracking)."""
@@ -117,11 +139,13 @@ class EyeEngine:
         activity also wears a fitting face (thinking -> focused, ...)."""
         name = (name or "idle").lower()
         act = name if name in ACTIVITIES and name != "idle" else None
-        if act in ACT_MOOD:
-            self.set_mood(ACT_MOOD[act])                 # takes the lock itself
         with self._lock:
+            if self._vibe is not None:                   # a vibe owns the whole screen
+                return
             self._activity = act
             self._activity_start = time.monotonic()
+        if act in ACT_MOOD:
+            self.set_mood(ACT_MOOD[act])                 # takes the lock itself
 
     # -------------------------------------------------------------- internals
     def _begin_blink(self, now, spec):
@@ -200,7 +224,7 @@ class EyeEngine:
 
     def _render(self, now):
         with self._lock:                                 # snapshot; the dicts are never mutated in place
-            mood, act, b, g = self.mood, self._activity, self._blink, self._gesture
+            mood, act, b, g, vibe = self.mood, self._activity, self._blink, self._gesture, self._vibe
 
         # blink: per-eye openness 1 -> 0 -> 1 (reps times); anchor = where the lid shuts
         ol = or_ = 1.0
@@ -229,6 +253,12 @@ class EyeEngine:
 
         d = self._draw
         d.rectangle([0, 0, self.W - 1, self.H - 1], fill=0)   # clear the reused buffer
+        if vibe is not None:                             # a vibe owns the whole canvas
+            try:
+                VIBES[vibe](d, self.W, self.H, now)
+            except Exception:
+                pass                                     # a broken vibe must not kill the face
+            return self._img                             # no widgets/eyes while a vibe runs
         slot = self.base_lx + self.gx + dx                    # left eye's slot origin
         eyes = () if spec.get("bare") else \
             ((slot, ol, False), (slot + self.eye_w + self.gap, or_, True))  # 'bare' draws no eyes
@@ -250,6 +280,17 @@ class EyeEngine:
             OVERLAYS[act](d, self.W, self.H, now)
         if gkind in GESTURE_FX:                           # gesture-time extras (e.g. a smoke cloud)
             GESTURE_FX[gkind](d, self.W, self.H, gph, genv)
+
+        # Top status strip widgets: battery + custom text left, clock right
+        if self._widgets:
+            wtxt = " ".join(x for x in (self._widget_battery, self._widget_text) if x)
+            clock = time.strftime("%H:%M")
+            try:
+                if wtxt:
+                    d.text((2, 0), wtxt[:14], fill=1)
+                d.text((self.W - d.textlength(clock) - 2, 0), clock, fill=1)
+            except Exception:
+                pass
 
         # STT recognized speech text banner overlay (128x64 bottom strip)
         if self._subtitle_text and now < self._subtitle_expiry:

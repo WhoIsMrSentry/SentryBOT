@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 try:
@@ -86,6 +88,25 @@ except Exception:
     HeadControlArbiter = None  # type: ignore
 
 logger = logging.getLogger("vlm_bridge")
+
+
+logger = logging.getLogger("vlm_bridge.processor")
+
+_REPO_DOTENV = Path(__file__).resolve().parents[3] / ".env"
+
+
+def _dotenv_value(key: str) -> str:
+    try:
+        if _REPO_DOTENV.is_file():
+            for line in _REPO_DOTENV.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    if k.strip() == key:
+                        return v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ""
 
 
 class ProcessorInitMixin:
@@ -248,7 +269,13 @@ class ProcessorInitMixin:
         self.remote_mm_cheap_endpoint = str(mm_cfg.get("cheap_endpoint", default_cheap_endpoint)).strip()
         self.remote_mm_semantic_endpoint = str(mm_cfg.get("semantic_endpoint", default_semantic_endpoint)).strip()
         self.remote_mm_timeout_s = float(mm_cfg.get("timeout_s", 6.0))
-        self.remote_mm_auth_token = str(mm_cfg.get("auth_token", "")).strip()
+        cfg_token = str(mm_cfg.get("auth_token", "")).strip()
+        env_token = (
+            str(os.environ.get("MM_AUTH_TOKEN", "")).strip()
+            or str(os.environ.get("SENTRYBOT_VLM_AUTH_TOKEN", "")).strip()
+        )
+        file_token = (_dotenv_value("SENTRYBOT_VLM_AUTH_TOKEN") or _dotenv_value("MM_AUTH_TOKEN")).strip()
+        self.remote_mm_auth_token = cfg_token or env_token or file_token
         default_ocr_endpoint = (
             self.remote_mm_endpoint.replace("/vision/analyze", "/vision/ocr") if self.remote_mm_endpoint else ""
         )
@@ -259,6 +286,19 @@ class ProcessorInitMixin:
             self.remote_mm_ocr_languages = [str(x).strip() for x in ocr_langs if str(x).strip()]
         else:
             self.remote_mm_ocr_languages = ["en", "tr"]
+        hints_cfg = mm_cfg.get("onsensor_hints", {}) if isinstance(mm_cfg.get("onsensor_hints"), dict) else {}
+        self.remote_mm_onsensor_hints_enabled = bool(hints_cfg.get("enabled", True))
+        split_cfg = mm_cfg.get("task_split", {}) if isinstance(mm_cfg.get("task_split"), dict) else {}
+        self.remote_mm_task_split_enabled = bool(split_cfg.get("enabled", True))
+        if isinstance(split_cfg.get("skip", None), (list, tuple)):
+            self.remote_mm_task_split_skip = [str(x).strip() for x in split_cfg.get("skip") if str(x).strip()]
+        else:
+            self.remote_mm_task_split_skip = ["people", "faces"]
+        # Remote health for failover: cheap polls tolerate N consecutive failures
+        # before vision falls back fully to IMX500/local context only.
+        self.remote_mm_fail_count = 0
+        self.remote_mm_max_fail_count = int(mm_cfg.get("max_consecutive_failures", 3))
+        self.remote_mm_last_ok_ts = 0.0
 
         actions_cfg = config.get("actions", {}) if isinstance(config, dict) else {}
         endpoint = str(actions_cfg.get("endpoint", "http://localhost:8080/autonomy/apply_actions"))

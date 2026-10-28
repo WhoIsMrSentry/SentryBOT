@@ -25,13 +25,19 @@ class _SafeNumPyMock(MagicMock):
 def pytest_configure(config):
     """Configure pytest before test collection.
     
-    Mock cv2 and numpy at the session level to prevent import errors
+    Mock cv2 and numpy at the session level if not installed to prevent import errors
     when VisionProcessor is imported during test collection.
     """
     if 'cv2' not in sys.modules:
-        sys.modules['cv2'] = MagicMock()
+        try:
+            import cv2  # noqa: F401
+        except Exception:
+            sys.modules['cv2'] = MagicMock()
     if 'numpy' not in sys.modules:
-        sys.modules['numpy'] = _SafeNumPyMock()
+        try:
+            import numpy  # noqa: F401
+        except Exception:
+            sys.modules['numpy'] = _SafeNumPyMock()
 
 
 def pytest_unconfigure(config):
