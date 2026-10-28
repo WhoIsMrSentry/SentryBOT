@@ -133,7 +133,8 @@ def _minimal_processor(monkeypatch_capture: Dict[str, Any], monkeypatch) -> Any:
 
     frame = SimpleNamespace(shape=(96, 128, 3))
     buf_stub = SimpleNamespace(tobytes=lambda: b"\x00\x01")
-    monkeypatch.setattr(pv_mod.cv2, "imencode", lambda *a, **k: (True, buf_stub))
+    fake_cv2 = SimpleNamespace(imencode=lambda *a, **k: (True, buf_stub), IMWRITE_JPEG_QUALITY=1)
+    monkeypatch.setattr(pv_mod, "cv2", fake_cv2)
     _mm_stub(monkeypatch, monkeypatch_capture)
     return mm, frame
 
