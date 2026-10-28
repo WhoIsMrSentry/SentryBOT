@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -76,7 +77,11 @@ class SentryBotApp(App[int]):
         if profile is not None:
             self.profile = profile
         else:
-            self.profile = "pc-test" if is_pc_test(self.root) else "robot"
+            env_profile = os.environ.get("SENTRYBOT_PROFILE", "").strip().lower()
+            if env_profile in {"pc", "pc-test", "robot"}:
+                self.profile = "pc-test" if env_profile == "pc" else env_profile
+            else:
+                self.profile = "pc-test" if is_pc_test(self.root) else "robot"
 
         # Async Services
         self.robot_manager = AsyncRobotManager(self.root, profile=self.profile)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import platform
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -45,9 +46,17 @@ def detect_runtime_target() -> RuntimeTarget:
     return RuntimeTarget(system, machine, model, ok, reason)
 
 
-def assert_raspberry_pi() -> RuntimeTarget:
+def assert_raspberry_pi(allow_pc_fallback: bool | None = None) -> RuntimeTarget:
     target = detect_runtime_target()
     if not target.is_raspberry_pi:
+        if allow_pc_fallback is None:
+            allow_pc_fallback = (
+                os.environ.get("SENTRYBOT_ALLOW_PC_FALLBACK") == "1"
+                or os.environ.get("SENTRYBOT_PC_TEST") == "1"
+                or os.environ.get("SENTRYBOT_PROFILE") in {"pc", "pc-test"}
+            )
+        if allow_pc_fallback:
+            return target
         raise RuntimeError(
             "SentryBOT robot runtime only supports Raspberry Pi 5. "
             f"system={target.system!r} machine={target.machine!r} "

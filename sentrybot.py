@@ -50,18 +50,28 @@ def _configure_logging() -> None:
         LOGGER.warning("central logging unavailable during startup: %s", exc)
 
 
-def _preflight_failures(config: dict[str, Any]) -> list[str]:
+def _preflight_failures(config: dict[str, Any], profile: str | None = None) -> list[str]:
     startup = _as_mapping(config.get("startup"))
     checks = _as_mapping(startup.get("preflight"))
     if not bool(checks.get("enabled", True)):
         return []
+
+    env_profile = os.environ.get("SENTRYBOT_PROFILE", "").strip().lower()
+    is_pc_mode = (
+        (profile in {"pc", "pc-test"})
+        or (env_profile in {"pc", "pc-test"})
+        or (os.environ.get("SENTRYBOT_ALLOW_PC_FALLBACK") == "1")
+    )
 
     failures: list[str] = []
     if bool(checks.get("require_raspberry_pi", True)):
         try:
             from modules.common.runtime_target import assert_raspberry_pi
 
-            assert_raspberry_pi()
+            try:
+                assert_raspberry_pi(allow_pc_fallback=is_pc_mode)
+            except TypeError:
+                assert_raspberry_pi()
         except Exception as exc:
             failures.append(f"runtime_target: {exc}")
 
@@ -72,12 +82,14 @@ def _preflight_failures(config: dict[str, Any]) -> list[str]:
 
     for command in checks.get("required_commands", []):
         name = str(command).strip()
+        if is_pc_mode and name in {"arecord", "bluetoothctl", "pactl"}:
+            continue
         if name and shutil.which(name) is None:
             failures.append(f"command_missing:{name}")
 
     speech = _as_mapping(config.get("speech"))
     audio = _as_mapping(speech.get("audio"))
-    if bool(checks.get("require_i2s_input", True)):
+    if bool(checks.get("require_i2s_input", True)) and not is_pc_mode:
         device = str(audio.get("device") or "").strip()
         if not device:
             failures.append("i2s_input_device_missing")
@@ -168,12 +180,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-run", action="store_true", help="show the TUI without starting robot services")
     parser.add_argument("--bluetooth", action="store_true", help="select a paired Bluetooth device for output only")
     parser.add_argument("--bluetooth-device", help="paired Bluetooth device MAC address; skips interactive selection")
+    parser.add_argument(
+        "--profile",
+        choices=["pc", "pc-test", "robot"],
+        default=None,
+        help="override detected runtime profile (pc, pc-test, robot)",
+    )
     args, unknown = parser.parse_known_args(argv)
+
+    if args.profile:
+        os.environ["SENTRYBOT_PROFILE"] = "pc-test" if args.profile == "pc" else args.profile
 
     _configure_logging()
     config = _load_startup_config()
     if not args.no_run:
-        failures = _preflight_failures(config)
+        failures = _preflight_failures(config, profile=args.profile)
         if failures:
             for failure in failures:
                 LOGGER.error("startup preflight failed: %s", failure)
@@ -201,6 +222,8 @@ def main(argv: list[str] | None = None) -> int:
             tui_args.append("--run")
         else:
             tui_args.append("--no-run")
+        if args.profile:
+            tui_args.extend(["--profile", args.profile])
         tui_args.extend(unknown)
         return tui_main(tui_args)
     except (KeyboardInterrupt, SystemExit):

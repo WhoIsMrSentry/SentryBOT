@@ -59,16 +59,23 @@ def _stop_started_services(app) -> None:
 
 
 def main() -> None:
-    from modules.common.runtime_target import assert_raspberry_pi
-
-    target = assert_raspberry_pi()
-
     try:
         from modules.runtime_console.logwrapper import init_logging  # type: ignore
 
         init_logging()
     except Exception as exc:
         logger.debug("init_logging skipped: %s", exc)
+
+    from modules.common.runtime_target import assert_raspberry_pi
+
+    target = assert_raspberry_pi()
+    if not target.is_raspberry_pi:
+        logger.warning(
+            "SentryBOT running in PC / fallback simulation mode. System=%s, Machine=%s, Reason=%s",
+            target.system,
+            target.machine,
+            target.reason,
+        )
 
     from modules.gateway.config_loader import load_config
     from modules.gateway.xGatewayService import create_app
