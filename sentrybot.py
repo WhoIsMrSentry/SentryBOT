@@ -188,13 +188,25 @@ def main(argv: list[str] | None = None) -> int:
     )
     args, unknown = parser.parse_known_args(argv)
 
-    if args.profile:
-        os.environ["SENTRYBOT_PROFILE"] = "pc-test" if args.profile == "pc" else args.profile
+    try:
+        from modules.common.runtime_target import detect_runtime_target
+
+        target = detect_runtime_target()
+        is_pi = bool(target and target.is_raspberry_pi)
+    except Exception:
+        is_pi = False
+
+    effective_profile = (
+        ("pc-test" if args.profile == "pc" else args.profile)
+        or os.environ.get("SENTRYBOT_PROFILE")
+        or ("robot" if is_pi else "pc-test")
+    )
+    os.environ["SENTRYBOT_PROFILE"] = effective_profile
 
     _configure_logging()
     config = _load_startup_config()
     if not args.no_run:
-        failures = _preflight_failures(config, profile=args.profile)
+        failures = _preflight_failures(config, profile=effective_profile)
         if failures:
             for failure in failures:
                 LOGGER.error("startup preflight failed: %s", failure)
@@ -222,8 +234,7 @@ def main(argv: list[str] | None = None) -> int:
             tui_args.append("--run")
         else:
             tui_args.append("--no-run")
-        if args.profile:
-            tui_args.extend(["--profile", args.profile])
+        tui_args.extend(["--profile", effective_profile])
         tui_args.extend(unknown)
         return tui_main(tui_args)
     except (KeyboardInterrupt, SystemExit):
