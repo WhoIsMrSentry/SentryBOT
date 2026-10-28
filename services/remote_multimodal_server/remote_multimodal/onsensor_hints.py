@@ -7,7 +7,6 @@ detections with the non-person hints detections, all source-tagged.
 """
 from __future__ import annotations
 
-import time
 from typing import Any, Dict, List, Optional, Tuple
 
 HINTS_SCHEMA = "onsensor_hints@1"

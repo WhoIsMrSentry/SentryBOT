@@ -42,7 +42,7 @@ def test_rules_passthrough_unknown_text():
 
 def test_emergency_is_fast_path_compatible():
     LayaEngine._instance = None
-    engine = LayaEngine(
+    _ = LayaEngine(
         enabled=True,
         confidence_threshold=0.60,
         laya_cfg={"fast_path": {"enabled": True}},

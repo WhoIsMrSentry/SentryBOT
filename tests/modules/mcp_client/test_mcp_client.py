@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from modules.mcp_client.services.stdio_process import (
-    RemoteError,
     RequestTimeout,
     ServerNotFound,
     StdioMcpConnection,

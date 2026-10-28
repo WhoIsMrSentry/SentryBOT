@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional, Tuple
 
 from modules.agent_core.services.laya_engine import LayaDecision
 from modules.agent_core.services.laya_action_contract import (
-    LIGHT_COLORS,
     build_laya_action_proposal,
 )
 

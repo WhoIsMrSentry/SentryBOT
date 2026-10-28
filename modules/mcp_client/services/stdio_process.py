@@ -136,7 +136,7 @@ class StdioMcpConnection:
                 },
                 timeout=self.init_timeout_s,
             )
-        except McpClientError as exc:
+        except McpClientError:
             self.stop()
             raise
         if isinstance(res, dict):

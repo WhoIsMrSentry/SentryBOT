@@ -196,7 +196,7 @@ class VocalMixin(VocalProsodyMixin):
         self.memory.add_event(f"I replied: {clean_text}")
 
     def _react_to_speech(self, text: str, source_lang: str | None = None, voice_speaker: str | None = None) -> None:
-        from modules.voice.speech.services.wake_phrase import contains_wakeword, strip_wakewords
+        from modules.voice.speech.services.wake_phrase import contains_wakeword
 
         low = str(text or "").lower()
         has_wake = contains_wakeword(low)

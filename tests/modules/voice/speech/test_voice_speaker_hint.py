@@ -4,6 +4,9 @@ from __future__ import annotations
 import os
 import time
 
+import pytest
+
+pytest.importorskip("numpy")
 import numpy as np
 
 from modules.voice.speech.xSpeechService import compute_voice_speaker_hint

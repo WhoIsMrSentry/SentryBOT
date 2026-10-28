@@ -6,13 +6,9 @@ does not change.
 """
 from __future__ import annotations
 
-import json
 import logging
 import math
-import threading
-import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Optional
 
 import numpy as np
 
@@ -105,9 +101,8 @@ class VoiceprintEmbedder:
         voiced_idx = [i for i, e in enumerate(energies) if e >= gate and e > self.min_energy_rms]
         if len(voiced_idx) < 3:
             return None
-        band_lo, band_mid, band_hi, band_means = [], [], [], []
+        band_means = []
         f0s = []
-        freqs = np.fft.rfftfreq(512, 1.0 / self.analysis_sr)
         for idx in [int(j) for j in voiced_idx]:
             offset = int(idx) * self.hop
             seg = arr[offset: offset + self.window] * win

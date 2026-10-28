@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import threading
-import time
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 from modules.agent_core.services.system1_rules import classify as rules_classify
@@ -45,7 +44,6 @@ class System1CascadeEngine:
     def get_instance(cls, config: Optional[Dict[str, Any]] = None) -> "System1CascadeEngine":
         with cls._lock:
             if cls._instance is None:
-                from modules.agent_core.services.laya_engine import LayaEngine
 
                 tri = (config or {}).get("tri_layer", {})
                 if not isinstance(tri, dict):

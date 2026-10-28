@@ -1,7 +1,6 @@
 """Server-side onsensor_hints@1 merge + task split tests."""
 from __future__ import annotations
 
-import time
 from types import SimpleNamespace
 
 import cv2

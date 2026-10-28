@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from .config_loader import load_config
-from .services.voiceprint import VoiceprintEmbedder, pcm_b64_to_f32
+from .services.voiceprint import VoiceprintEmbedder
 from .services.voiceprint_store import VoiceprintStore
 
 

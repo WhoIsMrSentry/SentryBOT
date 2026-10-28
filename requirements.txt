@@ -5,3 +5,5 @@ fastapi
 uvicorn
 httpx
 pytest
+numpy
+pillow

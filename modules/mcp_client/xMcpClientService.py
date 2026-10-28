@@ -6,8 +6,6 @@ from typing import Any, Dict, List, Mapping, Optional
 
 from modules.mcp_client.services.stdio_process import (
     McpClientError,
-    RemoteError,
-    RequestTimeout,
     ServerNotFound,
     StdioMcpConnection,
     TransportError,

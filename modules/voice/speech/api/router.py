@@ -167,7 +167,7 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
     _pending_language = ""
 
     def _execute_final():
-        nonlocal last, last_nonempty_text, _pending_text, _pending_language
+        nonlocal last, last_nonempty_text, _pending_text, _pending_language, last_partial_text
         text = _pending_text
         language = _pending_language or getattr(service, "source_language", "tr")
         _pending_text = ""

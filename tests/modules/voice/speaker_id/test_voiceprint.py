@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import os
-import sys
 
-import numpy as np
 import pytest
 
-import modules.voice.speaker_id as sid
+pytest.importorskip("numpy")
+import numpy as np
+
 from modules.voice.speaker_id.xSpeakerIdService import SpeakerIdService
-from modules.voice.speaker_id.services.voiceprint_store import VoiceprintStore
 
 SR = 16000
 
