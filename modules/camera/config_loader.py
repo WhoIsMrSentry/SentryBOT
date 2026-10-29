@@ -9,16 +9,9 @@ import yaml
 from modules.common.bind_host import apply_bind_host
 
 
+from modules.common.config_loader import _deep_update
+
 _DEFAULT_CFG_PATH = Path(__file__).parent / "config" / "config.yml"
-
-
-def _deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    for k, v in override.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            base[k] = _deep_update(base[k], v)
-        else:
-            base[k] = v
-    return base
 
 
 def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
