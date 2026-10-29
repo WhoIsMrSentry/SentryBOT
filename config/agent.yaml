@@ -27,11 +27,6 @@ ollama:
   base_url: http://whoismrsentry.local:11434
   model: qwen3.5:9b
   request_timeout: 60
-google_ai_studio:
-  api_key: ''
-  model: qwen3.5:9b
-  base_url: http://whoismrsentry.local:11434
-  request_timeout: 30
 runtime_profile:
   active: remote_ollama
   profiles:
@@ -118,7 +113,7 @@ ollama_service:
     port: 8099
   persona:
     default: sentry
-    dir: modules/ollama/config/personalities
+    dir: modules/ai_provider/config/personalities
   actions:
     endpoint: '@gateway/autonomy/apply_actions'
     default_apply: true

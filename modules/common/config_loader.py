@@ -10,9 +10,11 @@ All modules should use: `from modules.common.config_loader import load_agent_con
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
@@ -240,14 +242,38 @@ def inject_runtime_secrets(cfg: Dict[str, Any], env: Mapping[str, str] | None = 
 # Google API Key Resolution
 # =============================================================================
 
+_GOOGLE_API_KEY_PLACEHOLDERS = {
+    "your-google-api-key",
+    "your_google_api_key",
+    "your-api-key",
+    "changeme",
+    "replace_me",
+    "replace-with-your-key",
+}
+
+
 def _sanitize_google_api_key(raw: Any) -> str:
-    """Sanitize and validate Google API key."""
+    """Sanitize and validate Google API key without circular imports."""
     if not raw:
         return ""
-    key = str(raw).strip()
-    # Remove common prefixes/suffixes
-    key = key.strip('"\'')
+    key = str(raw).strip().strip('"\'')
+    lowered = key.lower()
+    if lowered in _GOOGLE_API_KEY_PLACEHOLDERS or "your-google-api-key" in lowered:
+        return ""
     return key
+
+
+def deep_update(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """Recursively merge dictionary override into base."""
+    for k, v in (override or {}).items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            base[k] = deep_update(base[k], v)
+        else:
+            base[k] = v
+    return base
+
+
+_deep_update = deep_update
 
 
 def resolve_google_api_key(cfg: Dict[str, Any]) -> str:
@@ -285,133 +311,16 @@ def inject_google_api_key(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # =============================================================================
-# URL Helpers (from gateway/url.py)
+# URL Helpers (imported from canonical modules.common.url_utils)
 # =============================================================================
-
-def gateway_base_from_agent_cfg(cfg: Mapping[str, Any], *, port: int = 8080) -> str:
-    """Read gateway base from an already-loaded agent.yaml mapping (no reload)."""
-    actions = cfg.get("actions", {}) if isinstance(cfg.get("actions", {}), dict) else {}
-    explicit = str(actions.get("gateway_base_url", "") or "").strip().rstrip("/")
-    if explicit:
-        return explicit
-
-    for section in ("gateway", "server"):
-        block = cfg.get(section, {})
-        if isinstance(block, dict):
-            try:
-                port = int(block.get("port", port))
-            except (TypeError, ValueError):
-                pass
-            host = str(block.get("host", "127.0.0.1") or "127.0.0.1").strip()
-            if host in ("0.0.0.0", "::"):
-                host = "127.0.0.1"
-            return f"http://{host}:{int(port)}"
-
-    return f"http://127.0.0.1:{int(port)}"
-
-
-def resolve_gateway_base_url(
-    cfg: Optional[Mapping[str, Any]] = None,
-    *,
-    port: int = 8080,
-    started: Optional[Mapping[str, Any]] = None,
-) -> str:
-    """Resolve the gateway base URL from various sources."""
-    if started is not None:
-        explicit = str(started.get("gateway_base_url", "") or "").strip().rstrip("/")
-        if explicit:
-            return explicit
-
-    env = str(os.environ.get("SENTRY_GATEWAY_URL", "") or "").strip().rstrip("/")
-    if env:
-        return env
-
-    if cfg is not None:
-        explicit = str(cfg.get("gateway_base_url", "") or "").strip().rstrip("/")
-        if explicit:
-            return explicit
-        return gateway_base_from_agent_cfg(cfg, port=port)
-
-    try:
-        return gateway_base_from_agent_cfg(load_agent_config())
-    except Exception:
-        pass
-
-    return f"http://127.0.0.1:{int(port)}"
-
-
-def gateway_url(base: str, path: str) -> str:
-    return f"{str(base).rstrip('/')}/{str(path).lstrip('/')}"
-
-
-def resolve_config_url(value: str, gateway_base: Optional[str] = None) -> str:
-    """Resolve @gateway/... aliases and loopback :8080 URLs to the active gateway base."""
-    raw = str(value or "").strip()
-    if not raw:
-        return raw
-    base = str(gateway_base or resolve_gateway_base_url()).rstrip("/")
-
-    if _GATEWAY_PATH_RE.match(raw):
-        path = raw[len("@gateway") :]
-        return gateway_url(base, path or "/")
-
-    for prefix in _LOOPBACK_PREFIXES:
-        if raw.lower().startswith(prefix):
-            port_match = re.match(r"^https?://(?:localhost|127\.0\.0\.1|0\.0\.0\.0):(\d+)", raw.lower())
-            if port_match:
-                port_num = int(port_match.group(1))
-                if port_num not in (8080, 8000):
-                    return raw
-            suffix = raw.split(":", 2)[-1]
-            if "/" in suffix:
-                path = "/" + suffix.split("/", 1)[1]
-            else:
-                path = ""
-            return gateway_url(base, path)
-    return raw
-
-
-def rewrite_loopback_urls(obj: Any, gateway_base: str) -> Any:
-    """Recursively rewrite @gateway/ and loopback :8080 URLs in nested config dicts."""
-    base = str(gateway_base or "").rstrip("/")
-    if isinstance(obj, str):
-        return resolve_config_url(obj, base)
-    if isinstance(obj, dict):
-        return {k: rewrite_loopback_urls(v, base) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [rewrite_loopback_urls(v, base) for v in obj]
-    return obj
-
-
-def patch_service_endpoints(endpoints: Dict[str, Any], gateway_base: str) -> Dict[str, Any]:
-    """Rewrite autonomy-style endpoint map to use a single gateway base."""
-    base = str(gateway_base or "").rstrip("/")
-    if not base:
-        return endpoints
-
-    service_paths = {
-        "arduino": "/arduino",
-        "neopixel": "/neopixel",
-        "speak": "/speak",
-        "ollama": "/ollama",
-        "speech": "/speech",
-        "interactions": "/interactions",
-        "oled_faces": "/oled_faces",
-        "state_manager": "/state",
-        "animate": "/animate",
-        "vlm": "/vlm",
-        "vision": "/vlm",
-        "camera": "/camera",
-        "notifier": "/notify",
-        "autonomy": "/autonomy",
-        "agent_core": "/agent",
-        "expression": "/expression",
-    }
-
-    out = dict(endpoints or {})
-    for key, path_suffix in service_paths.items():
-        out[key] = f"{base}{path_suffix}"
-    return out
+from .url_utils import (
+    gateway_base_from_agent_cfg,
+    gateway_url,
+    patch_service_endpoints,
+    resolve_config_url,
+    resolve_gateway_base_url,
+    rewrite_loopback_urls,
+)
 
 
 # =============================================================================
@@ -585,29 +494,63 @@ def active_runtime_profile(cfg: Dict[str, Any]) -> str:
 # Main Entry Points
 # =============================================================================
 
+_ENV_SIGNATURE_KEYS: Tuple[str, ...] = (
+    "AGENT_CFG",
+    "GOOGLE_API_KEY",
+    "SENTRYBOT_PROFILE",
+    "SENTRYBOT_AGENT_AUTH_TOKEN",
+    "SENTRYBOT_VLM_AUTH_TOKEN",
+    "SENTRYBOT_TTS_AUTH_TOKEN",
+    "OLLAMA_BASE_URL",
+    "SENTRYBOT_OLLAMA_BASE_URL",
+    "AGENT_OLLAMA_BASE_URL",
+    "SENTRY_GATEWAY_URL",
+)
+_AGENT_CFG_CACHE_LOCK = threading.Lock()
+_AGENT_CFG_CACHE: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+
+
 def load_agent_config(explicit_path: Optional[str | os.PathLike[str]] = None) -> Dict[str, Any]:
     """Load and fully process agent.yaml with all overlays.
 
     This is the main entry point for all modules needing the full config.
     """
+    load_dotenv()
     cfg_path = resolve_agent_cfg_path(explicit_path)
+    try:
+        resolved_str = str(cfg_path.resolve())
+        mtime_ns = cfg_path.stat().st_mtime_ns
+    except OSError:
+        resolved_str = str(cfg_path)
+        mtime_ns = 0
+
+    env_signature = tuple((k, os.environ.get(k, "")) for k in _ENV_SIGNATURE_KEYS)
+    cache_key = (resolved_str, mtime_ns, env_signature)
+
+    with _AGENT_CFG_CACHE_LOCK:
+        cached = _AGENT_CFG_CACHE.get(cache_key)
+        if cached is not None:
+            return copy.deepcopy(cached)
+
     with open(cfg_path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
 
     if not isinstance(raw, dict):
         raise ValueError(f"agent.yaml must be a mapping at top-level: {cfg_path}")
 
-    load_dotenv()
     cfg = apply_runtime_profile(raw)
     cfg = inject_google_api_key(cfg)
     cfg = inject_runtime_secrets(cfg)
     base = gateway_base_from_agent_cfg(cfg)
-    return rewrite_loopback_urls(cfg, base)
+    final_cfg = rewrite_loopback_urls(cfg, base)
 
+    with _AGENT_CFG_CACHE_LOCK:
+        if len(_AGENT_CFG_CACHE) >= 16:
+            _AGENT_CFG_CACHE.clear()
+        _AGENT_CFG_CACHE[cache_key] = copy.deepcopy(final_cfg)
 
-# =============================================================================
-# Public API
-# =============================================================================
+    return final_cfg
+
 
 # =============================================================================
 # Public API
@@ -620,6 +563,8 @@ __all__ = [
     "resolve_agent_cfg_path",
     # YAML utilities
     "deep_merge",
+    "deep_update",
+    "_deep_update",
     "require_dict_section",
     "apply_runtime_profile",
     # Environment & secrets
@@ -635,10 +580,7 @@ __all__ = [
     "resolve_config_url",
     "rewrite_loopback_urls",
     "patch_service_endpoints",
-    # Provider config
-    "load_ai_provider_config",
     # Runtime profile
-    "apply_runtime_profile",
     "list_runtime_profiles",
     "active_runtime_profile",
     # Constants
