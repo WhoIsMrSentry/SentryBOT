@@ -106,7 +106,40 @@ class WorldMemory:
         self._history: List[Dict[str, Any]] = []
         self._last_persist_error = ""
         self._loaded_from_disk = False
+        self._rag: Any = raw.get("rag_backing")
         self._load()
+
+    def set_rag_backing(self, rag: Any) -> None:
+        """Attach an optional WorldMemoryRAG instance for dual-write synchronization."""
+        self._rag = rag
+
+    def _sync_to_rag(self, item: Dict[str, Any], *, source: str = "api") -> None:
+        rag = self._rag
+        if rag is None and bool(self.cfg.get("sync_to_rag", False)):
+            try:
+                from .world_memory_rag import WorldMemoryRAG
+
+                rag = WorldMemoryRAG()
+                self._rag = rag
+            except Exception:
+                rag = None
+        if rag is not None and hasattr(rag, "observe"):
+            try:
+                rag.observe(
+                    {
+                        "id": item.get("id"),
+                        "kind": item.get("kind"),
+                        "name": item.get("name"),
+                        "summary": item.get("summary"),
+                        "confidence": item.get("confidence"),
+                        "salience": item.get("salience"),
+                        "tags": item.get("tags", []),
+                        "details": item.get("properties", {}),
+                    },
+                    source=source,
+                )
+            except Exception:
+                pass
 
     def schema(self) -> Dict[str, Any]:
         return {
@@ -211,6 +244,7 @@ class WorldMemory:
         self._history.append(history_item)
         self._history = self._history[-100:]
         self._save()
+        self._sync_to_rag(item, source=src)
         return {"ok": True, "available": True, "created": created, "item": dict(item), "timestamp": ts}
 
     def recent(self, *, kind: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
