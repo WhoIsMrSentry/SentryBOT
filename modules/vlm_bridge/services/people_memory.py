@@ -1,14 +1,14 @@
+"""Deprecated shim — PeopleMemory has moved to modules.cognitive_memory."""
 from __future__ import annotations
 
-try:
-    from modules.cognitive_memory.services.people_memory import PeopleMemory
-except Exception:  # pragma: no cover
-    class PeopleMemory:  # type: ignore
-        def __init__(self, *args, **kwargs):
-            self.args = args
-            self.kwargs = kwargs
+import warnings
 
-        def __getattr__(self, name):
-            raise AttributeError(name)
+warnings.warn(
+    "modules.vlm_bridge.services.people_memory is deprecated; use modules.cognitive_memory.services.people_memory instead",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from modules.cognitive_memory.services.people_memory import PeopleMemory
 
 __all__ = ["PeopleMemory"]

@@ -18,7 +18,7 @@ def camera_live_available(base_url: str, *, timeout_s: float = 0.5) -> bool:
     try:
         import requests
 
-        from modules.gateway.url import gateway_url
+        from .url_utils import gateway_url
 
         resp = requests.get(gateway_url(base_url, "/camera/healthz"), timeout=timeout_s)
         if resp.status_code != 200:
@@ -34,7 +34,7 @@ def remote_vision_cache_available(base_url: str, *, timeout_s: float = 0.6) -> b
     try:
         import requests
 
-        from modules.gateway.url import gateway_url
+        from .url_utils import gateway_url
 
         ctx = requests.get(gateway_url(base_url, "/vlm/context/latest"), timeout=timeout_s)
         if ctx.status_code == 200:
