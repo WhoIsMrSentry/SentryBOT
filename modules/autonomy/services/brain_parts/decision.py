@@ -5,7 +5,7 @@ import logging
 import random
 import threading
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("autonomy")
 
@@ -48,35 +48,7 @@ class DecisionMixin:
             if random.random() < 0.1:
                 self.client.set_neopixel("breathe", emotions=["neutral"], duration=2.0)
 
-            last_prune = self.state.get("last_memory_prune_ts", 0)
-            if now - last_prune > 3600:
-                logger.info("Dream Cycle: Pruning and consolidating memories...")
-                mem_lock = getattr(self, "_memory_write_lock", None)
-                try:
-                    if mem_lock is not None:
-                        with mem_lock:
-                            prune_res = self.world_memory.prune_unimportant_memories()
-                            cons_res = self.world_memory.consolidate_memories()
-                    else:
-                        prune_res = self.world_memory.prune_unimportant_memories()
-                        cons_res = self.world_memory.consolidate_memories()
-                    logger.info(
-                        f"Dream Cycle complete. Pruned: {prune_res.get('deleted', 0)}, "
-                        f"Consolidated: {cons_res.get('consolidated', 0)}"
-                    )
-                except Exception as exc:
-                    logger.error(f"Dream cycle failed: {exc}")
-
-                try:
-                    social_db = getattr(self, "social_db", None)
-                    if social_db is not None and hasattr(social_db, "purge_old_data"):
-                        p_res = social_db.purge_old_data(max_age_days=7.0)
-                        logger.info("Dream Cycle: Purged SocialDB events: %s", p_res)
-                except Exception as p_exc:
-                    logger.debug("SocialDB purge skipped in dream cycle: %s", p_exc)
-
-                self.state["last_memory_prune_ts"] = now
-
+            self._check_dream_cycle(now)
             return
 
         self.mood.update()
@@ -153,6 +125,12 @@ class DecisionMixin:
             decision = laya.decide_with_context(last_speech, visual_context=visual_ctx)
             if decision is None:
                 return
+            self.state["laya_last_decision"] = decision
+            if getattr(self, "agent", None) is not None:
+                try:
+                    self.agent._precomputed_laya_decision = (last_speech, decision)
+                except Exception:
+                    pass
 
             # 1. Emergency → SpinalCord reflex
             if laya.is_emergency_decision(decision):
@@ -507,6 +485,165 @@ class DecisionMixin:
                 self.appraise_event("command_failed", emit=False)
         finally:
             self._finish_agentic_decision()
+    def _check_dream_cycle(self, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+        """Run nightly memory pruning, consolidation, and episodic dream reflection."""
+        now_ts = float(now if now is not None else time.time())
+        last_prune = float(self.state.get("last_memory_prune_ts", 0) or 0)
+        if now_ts - last_prune <= 3600:
+            return None
+
+        logger.info("Dream Cycle: Pruning and consolidating memories...")
+        mem_lock = getattr(self, "_memory_write_lock", None)
+        prune_res: Dict[str, Any] = {}
+        cons_res: Dict[str, Any] = {}
+        reflection_res: Optional[Dict[str, Any]] = None
+        try:
+            if mem_lock is not None:
+                with mem_lock:
+                    prune_res = self.world_memory.prune_unimportant_memories() or {}
+                    cons_res = self.world_memory.consolidate_memories() or {}
+            else:
+                prune_res = self.world_memory.prune_unimportant_memories() or {}
+                cons_res = self.world_memory.consolidate_memories() or {}
+            logger.info(
+                f"Dream Cycle complete. Pruned: {prune_res.get('deleted', 0)}, "
+                f"Consolidated: {cons_res.get('consolidated', 0)}"
+            )
+        except Exception as exc:
+            logger.error(f"Dream cycle failed: {exc}")
+
+        try:
+            reflection_res = self._run_dream_reflection(prune_res=prune_res, cons_res=cons_res)
+        except Exception as r_exc:
+            logger.debug("Dream reflection skipped in dream cycle: %s", r_exc)
+
+        try:
+            social_db = getattr(self, "social_db", None)
+            if social_db is not None and hasattr(social_db, "purge_old_data"):
+                p_res = social_db.purge_old_data(max_age_days=7.0)
+                logger.info("Dream Cycle: Purged SocialDB events: %s", p_res)
+        except Exception as p_exc:
+            logger.debug("SocialDB purge skipped in dream cycle: %s", p_exc)
+
+        self.state["last_memory_prune_ts"] = now_ts
+        return {
+            "pruned": prune_res.get("deleted", 0) if isinstance(prune_res, dict) else 0,
+            "consolidated": cons_res.get("consolidated", 0) if isinstance(cons_res, dict) else 0,
+            "reflection": reflection_res,
+        }
+
+    def _run_dream_reflection(
+        self,
+        prune_res: Optional[Dict[str, Any]] = None,
+        cons_res: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Synthesize recent interactions and mood into an episodic dream reflection."""
+        recent_events = []
+        mem = getattr(self, "memory", None)
+        if mem is not None and hasattr(mem, "get_recent_events"):
+            try:
+                recent_events = [str(e).strip() for e in (mem.get_recent_events() or []) if str(e).strip()]
+            except Exception:
+                recent_events = []
+
+        mood_obj = getattr(self, "mood", None)
+        mood_state = getattr(mood_obj, "state", {}) if mood_obj is not None else {}
+        happiness = int(float(mood_state.get("happiness", 50) if isinstance(mood_state, dict) else 50))
+        energy = int(float(mood_state.get("energy", 50) if isinstance(mood_state, dict) else 50))
+        curiosity = int(float(mood_state.get("curiosity", 50) if isinstance(mood_state, dict) else 50))
+
+        pruned_cnt = int((prune_res or {}).get("deleted", 0)) if isinstance(prune_res, dict) else 0
+        cons_cnt = int((cons_res or {}).get("consolidated", 0)) if isinstance(cons_res, dict) else 0
+        highlights = "; ".join(recent_events[-3:]) if recent_events else "quiet cycle with restful homeostasis"
+        
+        # ── LLM Episodic Reflection (Sleep Consolidation) ───────────────
+        llm_reflection: Optional[str] = None
+        agent_svc = getattr(self, "agent", None)
+        if agent_svc is not None and recent_events:
+            try:
+                events_text = "\n".join(f"- {ev}" for ev in recent_events[-6:])
+                prompt = (
+                    "Sen SentryBOT robotunun bilişsel hafızasısın. Robot şu an gece uyku modunda "
+                    "ve günün olaylarını sindiriyor (Episodic Reflection). Aşağıdaki son etkileşim "
+                    "ve olayları inceleyerek kullanıcı alışkanlıkları, ilgi alanları ve robotun öğrendiği "
+                    f"dersler hakkında 1-2 cümlelik kalıcı bir hafıza özeti yaz:\n\n{events_text}"
+                )
+                if hasattr(agent_svc, "generate_reflection"):
+                    llm_reflection = agent_svc.generate_reflection(prompt)
+                elif hasattr(agent_svc, "client") and hasattr(agent_svc.client, "generate_text"):
+                    llm_reflection = agent_svc.client.generate_text(prompt)
+            except Exception as exc:
+                logger.debug("LLM dream reflection synthesis skipped: %s", exc)
+                llm_reflection = None
+
+        if llm_reflection and str(llm_reflection).strip():
+            summary = (
+                f"Dream reflection (LLM): {str(llm_reflection).strip()} "
+                f"[homeostasis: happiness={happiness}, energy={energy}, curiosity={curiosity}]"
+            )
+        else:
+            summary = (
+                f"Dream cycle reflection: reviewed {len(recent_events)} events "
+                f"(pruned={pruned_cnt}, consolidated={cons_cnt}), "
+                f"homeostasis[happiness={happiness}, energy={energy}, curiosity={curiosity}]. "
+                f"Highlights: {highlights}"
+            )
+
+        record: Dict[str, Any] = {
+            "kind": "episode",
+            "name": "dream_reflection",
+            "summary": summary,
+            "tags": ["dream_cycle", "reflection"],
+            "events_reviewed": len(recent_events),
+            "llm_synthesized": bool(llm_reflection),
+        }
+        self.state["last_dream_reflection"] = record
+
+        # Persist reflection to SocialDB moments if available
+        social_db = getattr(self, "social_db", None)
+        if social_db is not None and hasattr(social_db, "moments"):
+            try:
+                owner_id = getattr(self, "owner_id", "owner") or "owner"
+                social_db.moments.add_or_boost(
+                    person_id=str(owner_id),
+                    text=summary[:210],
+                    salience=0.85,
+                    kind="dream_reflection",
+                )
+            except Exception as exc:
+                logger.debug("SocialDB dream reflection moment save skipped: %s", exc)
+
+        wm = getattr(self, "world_memory", None)
+        if wm is not None and hasattr(wm, "observe"):
+            mem_lock = getattr(self, "_memory_write_lock", None)
+            try:
+                if mem_lock is not None:
+                    with mem_lock:
+                        wm.observe(
+                            kind="episode",
+                            name="dream_reflection",
+                            summary=summary,
+                            confidence=0.85,
+                            source="dream_cycle",
+                            tags=["dream_cycle", "reflection"],
+                        )
+                else:
+                    wm.observe(
+                        kind="episode",
+                        name="dream_reflection",
+                        summary=summary,
+                        confidence=0.85,
+                        source="dream_cycle",
+                        tags=["dream_cycle", "reflection"],
+                    )
+            except TypeError:
+                wm.observe("episode", "dream_reflection", summary)
+            except Exception as exc:
+                logger.debug("world_memory.observe failed in dream reflection: %s", exc)
+        return record
+
+    run_dream_reflection = _run_dream_reflection
+
     def _check_sleep_cycle(self) -> None:
         sleep_cfg = self.config.get("behaviors", {}).get("sleep", {})
         if not sleep_cfg.get("enabled", False):
