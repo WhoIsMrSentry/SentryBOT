@@ -159,17 +159,5 @@ class SceneMixin:
 
     @staticmethod
     def _parse_color(raw: Any) -> tuple[int, int, int] | None:
-        if isinstance(raw, (list, tuple)) and len(raw) == 3:
-            try:
-                return (int(raw[0]) & 255, int(raw[1]) & 255, int(raw[2]) & 255)
-            except Exception:
-                return None
-        if isinstance(raw, str):
-            s = raw.strip()
-            if s.startswith("#") and len(s) >= 7:
-                try:
-                    v = int(s[1:7], 16)
-                    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
-                except Exception:
-                    return None
-        return None
+        from modules.common.color_utils import parse_color
+        return parse_color(raw)
