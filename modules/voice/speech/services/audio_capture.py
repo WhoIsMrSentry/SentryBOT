@@ -7,10 +7,14 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Iterable, Any
 
-try:
-    import audioop
-except Exception:
-    audioop = None
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", DeprecationWarning)
+    try:
+        import audioop
+    except Exception:
+        audioop = None
 
 try:
     import sounddevice as sd

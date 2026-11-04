@@ -7,11 +7,6 @@ import time
 from threading import Event, Lock, Thread
 from typing import Optional
 
-try:
-    import audioop
-except Exception:
-    audioop = None
-
 from fastapi import FastAPI
 
 from modules.voice.wakeword.config_loader import load_config, load_audio_router_config
@@ -24,7 +19,7 @@ from modules.voice.audio_router import (
 )
 
 try:
-    from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
+    from modules.common.logger import init_logging as _init_global_logging  # type: ignore
     _init_global_logging()
 except Exception:
     pass
