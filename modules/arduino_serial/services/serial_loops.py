@@ -99,6 +99,11 @@ class SerialLoopsMixin:
     def _ingest_message(self, msg: Any) -> None:
         if not isinstance(msg, dict):
             return
+        if getattr(self, "watchdog", None) is not None:
+            try:
+                self.watchdog.feed(source=str(msg.get("event") or msg.get("cmd") or "rx"))
+            except Exception:
+                pass
         self._metrics["rx_count"] += 1
         event_name = msg.get("event")
         if event_name == "neopixel_request":
