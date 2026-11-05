@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -184,6 +186,106 @@ _ANCHOR_ACTION_HINTS: Dict[str, Dict[str, Any]] = {
     "yere bak aşağıda ne düştü": {"tool": "move_head", "direction": "down"},
 }
 
+_LIGHT_COLOR_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("off", ("kapat", "söndür", "sondur", "kapansın", "turn off", "shut off", "lights off", "ışıkları kapat", "isiklari kapat")),
+    ("red", ("kırmızı", "kirmizi", "kızıl", "kizil", "red")),
+    ("blue", ("mavi", "lacivert", "blue")),
+    ("green", ("yeşil", "yesil", "green")),
+    ("yellow", ("sarı", "sari", "altın", "yellow", "gold")),
+    ("purple", ("mor", "eflatun", "lila", "purple", "violet")),
+    ("cyan", ("turkuaz", "camgöbeği", "cyan", "aqua")),
+    ("orange", ("turuncu", "kehribar", "gece lambası", "gece lambasi", "orange", "amber")),
+    ("pink", ("pembe", "pink", "magenta")),
+    ("white", ("beyaz", "aydınlat", "aydinlat", "karanlık", "karanlik", "white", "bright")),
+)
+
+_LIGHT_EFFECT_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("OFF", ("kapat", "söndür", "sondur", "kapansın", "turn off", "shut off", "lights off")),
+    ("RAINBOW", ("gökkuşağı", "gokkusagi", "rengarenk", "rainbow")),
+    ("TWINKLE", ("twinkle", "parılda", "parilda", "yıldız", "yildiz", "parti", "yanıp sön", "yanip son", "blink")),
+    ("BREATHE", ("nefes", "breathe", "breathing", "loş", "los", "gece lambası", "gece lambasi", "kıs", "azalt", "dim")),
+    ("PULSE", ("nabız", "nabiz", "pulse", "kalp")),
+    ("SOLID", ("sabit", "solid", "düz", "duz")),
+)
+
+_HEAD_DIRECTION_KEYWORDS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("left", ("sola", "sol tarafa", "sol taraftan", "sol ", "left")),
+    ("right", ("sağa", "saga", "sağ tarafa", "sağ tarafta", "sağ ", "sag ", "right")),
+    ("up", ("yukarı", "yukari", "tavana", "tavan", "kaldır", "kaldir", "up")),
+    ("down", ("aşağı", "asagi", "yere", "indir", "down")),
+    ("center", ("ortala", "orta", "merkez", "ileri", "karşıya", "karsiya", "önüne", "center", "forward", "front")),
+)
+
+_DEGREE_RE = re.compile(r"\b(\d{1,3})\s*(?:derece|deg|degree|degrees|°)?\b", re.IGNORECASE)
+
+
+def extract_action_slots(text: str, target_module: str) -> Optional[Dict[str, Any]]:
+    """Extract structured tool parameters from Turkish/English natural language commands."""
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    low = f" {raw.lower()} "
+    mod = str(target_module or "").strip().lower()
+
+    if mod in {"neopixel", "lights", "led", "visual_output"}:
+        color: Optional[str] = None
+        effect: Optional[str] = None
+        for canonical_color, keywords in _LIGHT_COLOR_KEYWORDS:
+            if any(kw in low for kw in keywords):
+                color = canonical_color
+                break
+        for canonical_effect, keywords in _LIGHT_EFFECT_KEYWORDS:
+            if any(kw in low for kw in keywords):
+                effect = canonical_effect
+                break
+        if color is None and effect is None:
+            if any(kw in low for kw in ("ışık", "isik", "ışığı", "isigi", "led", "light", "lambayı", "lambayi", "aç", "yak")):
+                color = "white"
+                effect = "SOLID"
+            else:
+                return None
+        if color == "off" or effect == "OFF":
+            return {"tool": "set_lights", "color": "off", "effect": "OFF"}
+        if color is None:
+            if effect == "BREATHE" and any(kw in low for kw in ("loş", "los")):
+                color = "purple"
+            elif effect == "BREATHE" and any(kw in low for kw in ("kıs", "azalt", "dim", "gece")):
+                color = "orange"
+            elif effect in {"TWINKLE", "RAINBOW"}:
+                color = "cyan"
+            else:
+                color = "white"
+        if effect is None:
+            effect = "SOLID"
+        return {"tool": "set_lights", "color": color, "effect": effect}
+
+    if mod in {"arduino_serial", "arduino", "piservo", "head", "hardware"}:
+        direction: Optional[str] = None
+        for canonical_dir, keywords in _HEAD_DIRECTION_KEYWORDS:
+            if any(kw in low for kw in keywords):
+                direction = canonical_dir
+                break
+        if direction is None:
+            tokens = set(re.findall(r"\w+", low))
+            if "sol" in tokens:
+                direction = "left"
+            elif "sağ" in tokens or "sag" in tokens:
+                direction = "right"
+        if direction is None:
+            return None
+        slots: Dict[str, Any] = {"tool": "move_head", "direction": direction}
+        match = _DEGREE_RE.search(low)
+        if match:
+            try:
+                deg = int(match.group(1))
+                if 0 <= deg <= 180:
+                    slots["angle"] = deg
+            except (TypeError, ValueError):
+                pass
+        return slots
+
+    return None
+
 
 class System1EmbedEngine:
     """ONNX INT8 Semantic Router for System 1 (multilingual-e5-small, ~15-50ms on Pi 5).
@@ -242,9 +344,10 @@ class System1EmbedEngine:
             if matrix is None:
                 return False
             self._matrix = matrix
-            self._affect_matrix = self._embed_passages_onnx(
-                [sample for _, sample in _AFFECT_SAMPLES], np
-            )
+            if self._affect_matrix is None:
+                self._affect_matrix = self._embed_passages_onnx(
+                    [sample for _, sample in _AFFECT_SAMPLES], np
+                )
             self._is_available = True
             elapsed_ms = (time.perf_counter() - t0) * 1000.0
             logger.info(
@@ -256,15 +359,58 @@ class System1EmbedEngine:
             )
             return True
 
+    @staticmethod
+    def _compute_corpus_hash() -> str:
+        hasher = hashlib.sha256()
+        for target, is_direct, sample in _INTENT_CORPUS:
+            hasher.update(f"intent|{target}|{int(is_direct)}|{sample}\n".encode("utf-8"))
+        for affect, sample in _AFFECT_SAMPLES:
+            hasher.update(f"affect|{affect}|{sample}\n".encode("utf-8"))
+        return hasher.hexdigest()
+
     def _load_vectors(self, np: Any) -> Any:
         onnx_file = os.path.join(self.model_path, "model.onnx")
         if os.path.isdir(self.model_path) and os.path.isfile(onnx_file):
             self._session = self._load_onnx(onnx_file)
             if self._session is not None:
                 self._backend_name = "onnxruntime"
-                return self._embed_passages_onnx(
+                cache_file = os.path.join(self.model_path, "anchors_cache.npz")
+                expected_hash = self._compute_corpus_hash()
+                if os.path.isfile(cache_file):
+                    try:
+                        with np.load(cache_file, allow_pickle=False) as cached:
+                            cached_hash = str(cached["corpus_hash"].item()) if "corpus_hash" in cached else ""
+                            intent_mat = cached["intent_matrix"] if "intent_matrix" in cached else None
+                            affect_mat = cached["affect_matrix"] if "affect_matrix" in cached else None
+                            if (
+                                cached_hash == expected_hash
+                                and intent_mat is not None
+                                and affect_mat is not None
+                                and intent_mat.shape[0] == len(_INTENT_CORPUS)
+                                and affect_mat.shape[0] == len(_AFFECT_SAMPLES)
+                            ):
+                                self._affect_matrix = np.asarray(affect_mat, dtype="float32")
+                                return np.asarray(intent_mat, dtype="float32")
+                    except Exception as exc:
+                        logger.debug("anchors_cache.npz load skipped: %s", exc)
+
+                intent_matrix = self._embed_passages_onnx(
                     [sample for _, _, sample in _INTENT_CORPUS], np
                 )
+                affect_matrix = self._embed_passages_onnx(
+                    [sample for _, sample in _AFFECT_SAMPLES], np
+                )
+                self._affect_matrix = affect_matrix
+                try:
+                    np.savez(
+                        cache_file,
+                        corpus_hash=np.array(expected_hash),
+                        intent_matrix=intent_matrix,
+                        affect_matrix=affect_matrix,
+                    )
+                except Exception as exc:
+                    logger.debug("anchors_cache.npz save skipped: %s", exc)
+                return intent_matrix
         logger.info(
             "ONNX embedding model not found at %s (backend=%s); semantic router disabled",
             self.model_path,
@@ -303,10 +449,18 @@ class System1EmbedEngine:
         return vecs / norms
 
     def _embed_passages_onnx(self, samples: List[str], np: Any) -> Any:
+        if not samples:
+            return np.zeros((0, 1), dtype="float32")
+        prefixed = [f"passage: {sample}" for sample in samples]
+        feed = self._tok_onnx(prefixed)
+        if feed.get("input_ids") and len(feed["input_ids"]) == len(samples):
+            batch_vecs = np.asarray(self._onnx_vecs(feed, np), dtype="float32")
+            if batch_vecs.ndim == 2 and batch_vecs.shape[0] == len(samples):
+                return batch_vecs
         vecs = []
         for sample in samples:
-            feed = self._tok_onnx([f"passage: {sample}"])
-            vecs.append(self._onnx_vecs(feed, np)[0])
+            single_feed = self._tok_onnx([f"passage: {sample}"])
+            vecs.append(self._onnx_vecs(single_feed, np)[0])
         return np.stack(vecs).astype("float32")
 
     def _tok_onnx(self, texts: List[str]) -> Dict[str, Any]:
@@ -321,15 +475,27 @@ class System1EmbedEngine:
                 logger.warning("tokenizer load failed: %s", exc)
                 return {"input_ids": [], "attention_mask": []}
         enc = self._tokenizer.encode_batch(texts)
-        ids = [list(t.ids) for t in enc]
-        masks = [[1] * len(row) for row in ids]
+        raw_ids = [list(t.ids) for t in enc]
+        max_len = max((len(row) for row in raw_ids), default=0)
+        pad_id = 0
+        if hasattr(self._tokenizer, "token_to_id"):
+            try:
+                resolved_pad = self._tokenizer.token_to_id("<pad>")
+                if resolved_pad is None:
+                    resolved_pad = self._tokenizer.token_to_id("[PAD]")
+                if resolved_pad is not None:
+                    pad_id = int(resolved_pad)
+            except Exception:
+                pad_id = 0
+        ids = [row + [pad_id] * (max_len - len(row)) for row in raw_ids]
+        masks = [[1] * len(row) + [0] * (max_len - len(row)) for row in raw_ids]
         feed: Dict[str, Any] = {"input_ids": ids, "attention_mask": masks}
         try:
             required = {str(i.name) for i in self._session.get_inputs()}
         except Exception:
             return feed
         if "token_type_ids" in required:
-            feed["token_type_ids"] = [[0] * len(row) for row in ids]
+            feed["token_type_ids"] = [[0] * max_len for _ in raw_ids]
         return feed
 
     def _onnx_vecs(self, feed: Dict[str, Any], np: Any) -> Any:
@@ -409,6 +575,8 @@ class System1EmbedEngine:
         reason = "embedding_direct" if is_direct else "embedding_conversation"
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 2)
         action_hint = _ANCHOR_ACTION_HINTS.get(matched_sample) if is_direct else None
+        if action_hint is None and is_direct:
+            action_hint = extract_action_slots(cleaned, target)
         raw_answers: Dict[str, Any] = {
             "backend": "embed",
             "rule": reason,
@@ -454,6 +622,17 @@ class System1EmbedEngine:
             elapsed_ms,
         )
         return decision
+
+    def route_intent(self, text: str) -> Optional[LayaDecision]:
+        """Route user utterance to a LayaDecision with semantic action slot hints."""
+        decision = self.decide(text)
+        if decision is not None:
+            if decision.is_direct_command and "action_hint" not in decision.raw_answers:
+                hint = extract_action_slots(text, decision.target_module)
+                if hint:
+                    decision.raw_answers["action_hint"] = dict(hint)
+            return decision
+        return None
 
     def _calibrate(self, sim: float, mean_sim: float = 0.78) -> float:
         # E5 cosine similarities live in [0.74, 0.94]; combine absolute score and margin over mean
@@ -533,4 +712,4 @@ class System1EmbedEngine:
         }
 
 
-__all__ = ["System1EmbedEngine"]
+__all__ = ["System1EmbedEngine", "extract_action_slots"]
