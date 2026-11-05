@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .agent_context import AgentContextMixin
 from .agent_turn import AgentTurnMixin
@@ -58,6 +58,14 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
 
     def _try_enter_turn(self, prompt: str, *, bypass_cooldown: bool = False) -> bool:
         """Enter one agent turn if no other turn is active."""
+        if getattr(self, "_turn_lock", None) is None:
+            self._turn_lock = threading.Lock()
+        if not hasattr(self, "is_busy"):
+            self.is_busy = False
+        if not hasattr(self, "last_run"):
+            self.last_run = 0.0
+        if not hasattr(self, "cooldown"):
+            self.cooldown = 0.0
         if not prompt:
             return False
         if not self._turn_lock.acquire(blocking=False):
@@ -73,6 +81,8 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
 
     def _exit_turn(self) -> None:
         """Leave the active agent turn and release the turn lock."""
+        if getattr(self, "_turn_lock", None) is None:
+            self._turn_lock = threading.Lock()
         self.is_busy = False
         try:
             self._turn_lock.release()
@@ -118,14 +128,6 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             return
         decision.suggested_action = bind_laya_action_proposal(proposal, request_id)
 
-    def check_survival_drives(self) -> Optional[str]:
-        """Overrides logic if critical limits are reached."""
-        bat = self.world_state.get_state().get("battery_percent", 100)
-        if bat < 15:
-            logger.warning("SURVIVAL DRIVE: Low Battery (%s%%)!", bat)
-            return "[CRITICAL] Battery is severely low. Do not engage in lengthy tasks. Find a charger or warn the user."
-        return None
-
     def _append_history(self, role: str, content: str, tool_calls=None, tool_name=None) -> None:
         msg = {"role": role, "content": content}
         if tool_calls is not None:
@@ -146,11 +148,92 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             "available": sorted(self.subagent_profiles.keys()),
         }
 
+    def generate_reflection(self, prompt: str) -> Optional[str]:
+        """Generate an episodic dream reflection using the configured LLM client."""
+        try:
+            if getattr(self, "provider_client", None) is not None and hasattr(self.provider_client, "generate_text"):
+                return self.provider_client.generate_text(prompt)
+            if getattr(self, "ollama_client", None) is not None:
+                resp = self.ollama_client.chat(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    options={"temperature": 0.4},
+                )
+                if isinstance(resp, dict):
+                    msg = resp.get("message") or {}
+                    return str(msg.get("content", "")).strip() or None
+                if hasattr(resp, "message") and hasattr(resp.message, "content"):
+                    return str(resp.message.content).strip() or None
+        except Exception as exc:
+            logger.debug("generate_reflection failed: %s", exc)
+        return None
+
     def _get_active_persona_model(self) -> str:
         """Resolve the model for the native tool loop using centralized model policy."""
         policy = get_model_policy()
         resolved = policy.resolve_model(self.config)
         return str(resolved.get("model", self.model))
+
+    def _resolve_turn_laya_decision(self, user_prompt: str, laya_eng: Any) -> Any:
+        """Reuse an existing System 1 decision for the current prompt when available."""
+        laya_dec = getattr(self, "_last_laya_fast_path_decision", None)
+        if laya_dec is not None:
+            return laya_dec
+        precomputed = getattr(self, "_precomputed_laya_decision", None)
+        if isinstance(precomputed, tuple) and len(precomputed) == 2 and precomputed[0] == user_prompt:
+            self._last_laya_fast_path_decision = precomputed[1]
+            return precomputed[1]
+        if (
+            getattr(laya_eng, "_last_decision_text", None) == user_prompt
+            and getattr(laya_eng, "_last_decision", None) is not None
+        ):
+            laya_dec = getattr(laya_eng, "_last_decision", None)
+            self._last_laya_fast_path_decision = laya_dec
+            return laya_dec
+        try:
+            laya_dec = laya_eng.decide_with_context(
+                user_prompt,
+                world_state=self.world_state.get_state(),
+                visual_context=self.world_state.get_laya_scene_summary(),
+            )
+        except (AttributeError, TypeError):
+            laya_dec = laya_eng.decide(user_prompt)
+        self._last_laya_fast_path_decision = laya_dec
+        return laya_dec
+
+    def _prepare_turn_context(
+        self,
+        prompt: str,
+        session_language: str,
+        trace_id: str,
+    ) -> Tuple[Optional[str], str, str]:
+        """Build world/memory context, append user prompt to history, and resolve active model."""
+        latency_trace.mark(trace_id, "agent.context_start")
+        survival_override = self.check_survival_drives()
+        world_context = self.world_state.inject_world_state("")
+        memory_context = self._get_world_memory_context(prompt)
+        if memory_context:
+            world_context = f"{world_context}\n\n[World Memory]\n{memory_context}"
+        language_rule = self._language_directive(session_language)
+        full_prompt = f"{prompt}\n\n[{language_rule}]\n\n[World State]\n{world_context}"
+        if survival_override:
+            full_prompt += f"\n\n{survival_override}"
+        self._append_history("user", full_prompt)
+        active_model = self._get_active_persona_model()
+        latency_trace.mark(trace_id, "agent.context_done", {"model": active_model})
+        return survival_override, world_context, active_model
+
+    def _finalize_turn_memory(self, prompt: str, final_text: str, dialogue_entry: str) -> None:
+        """Record episodic dialogue and trigger world/social memory consolidation."""
+        self.memory.remember("dialogue", dialogue_entry)
+        try:
+            self._observe_world_memory_dialogue(prompt, final_text)
+        except Exception:
+            logger.debug("world memory dialogue observation failed", exc_info=True)
+        try:
+            self.memory_consolidator.consolidate(prompt, speaker=self._current_speaker())
+        except Exception:
+            logger.debug("memory consolidation failed", exc_info=True)
 
     def step(
         self,
@@ -161,14 +244,26 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         native_tools: bool = False,
         trace_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if not self._try_enter_turn(user_prompt, bypass_cooldown=False):
-            return None
+        if speaker is None and isinstance(progress_cb, str):
+            speaker = progress_cb
+            progress_cb = None
 
-        if speaker and str(speaker).strip().lower() not in {"unknown", "none", ""}:
+        if speaker:
             try:
-                self.world_state.update_state({"speaker": str(speaker).strip()})
+                world_state = getattr(self, "world_state", None)
+                if world_state is not None:
+                    state = getattr(world_state, "state", None)
+                    if isinstance(state, dict):
+                        state["speaker"] = speaker
+                    elif hasattr(world_state, "set"):
+                        world_state.set("speaker", speaker)
+                    if hasattr(world_state, "update_state") and str(speaker).strip().lower() not in {"unknown", "none", ""}:
+                        world_state.update_state({"speaker": str(speaker).strip()})
             except Exception:
                 pass
+
+        if not self._try_enter_turn(user_prompt, bypass_cooldown=False):
+            return None
 
         previous_hook = self.tool_registry.status_hook
         trace_id = latency_trace.ensure(trace_id, {"component": "agent_core", "language": language or ""})
@@ -199,16 +294,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     if not use_fast_path:
                         custom_ack = laya_eng.get_instant_filler(language=session_language)
                     # Trigger immediate affective body language if praise/rudeness detected
-                    laya_dec = getattr(self, "_last_laya_fast_path_decision", None)
-                    if laya_dec is None:
-                        try:
-                            laya_dec = laya_eng.decide_with_context(
-                                user_prompt,
-                                world_state=self.world_state.get_state(),
-                                visual_context=self.world_state.get_laya_scene_summary(),
-                            )
-                        except (AttributeError, TypeError):
-                            laya_dec = laya_eng.decide(user_prompt)
+                    laya_dec = self._resolve_turn_laya_decision(user_prompt, laya_eng)
                     if laya_dec is not None:
                         self._bind_laya_action_request(laya_dec, request_id)
                     if laya_dec and hasattr(self.world_state, "update_laya_state"):
@@ -226,19 +312,9 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     pass
 
             self.progress_manager.emit_ack(progress_token, custom_text=custom_ack, speak=not use_fast_path)
-            latency_trace.mark(trace_id, "agent.context_start")
-            survival_override = self.check_survival_drives()
-            world_context = self.world_state.inject_world_state("")
-            memory_context = self._get_world_memory_context(user_prompt)
-            if memory_context:
-                world_context = f"{world_context}\n\n[World Memory]\n{memory_context}"
-            language_rule = self._language_directive(session_language)
-            full_prompt = f"{user_prompt}\n\n[{language_rule}]\n\n[World State]\n{world_context}"
-            if survival_override:
-                full_prompt += f"\n\n{survival_override}"
-            self._append_history("user", full_prompt)
-            active_model = self._get_active_persona_model()
-            latency_trace.mark(trace_id, "agent.context_done", {"model": active_model})
+            survival_override, world_context, active_model = self._prepare_turn_context(
+                user_prompt, session_language, trace_id
+            )
 
             provider_error = self._check_provider_availability()
             if provider_error:
@@ -299,15 +375,11 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     trace_id=trace_id,
                 )
 
-            self.memory.remember("dialogue", f"User: {user_prompt} | Bot: {final_text}")
-            try:
-                self._observe_world_memory_dialogue(user_prompt, final_text)
-            except Exception:
-                logger.debug("world memory dialogue observation failed", exc_info=True)
-            try:
-                self.memory_consolidator.consolidate(user_prompt, speaker=self._current_speaker())
-            except Exception:
-                logger.debug("memory consolidation failed", exc_info=True)
+            self._finalize_turn_memory(
+                user_prompt,
+                final_text,
+                f"User: {user_prompt} | Bot: {final_text}",
+            )
 
             latency_trace.mark(
                 trace_id,
@@ -370,19 +442,9 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             use_fast_path = self._should_fast_path(event_prompt, native_tools=True)
             self._record_laya_latency(trace_id)
             self.progress_manager.emit_ack(progress_token, speak=not use_fast_path)
-            latency_trace.mark(trace_id, "agent.context_start")
-            survival_override = self.check_survival_drives()
-            world_context = self.world_state.inject_world_state("")
-            memory_context = self._get_world_memory_context(event_prompt)
-            if memory_context:
-                world_context = f"{world_context}\n\n[World Memory]\n{memory_context}"
-            language_rule = self._language_directive(session_language)
-            full_prompt = f"{event_prompt}\n\n[{language_rule}]\n\n[World State]\n{world_context}"
-            if survival_override:
-                full_prompt += f"\n\n{survival_override}"
-            self._append_history("user", full_prompt)
-            active_model = self._get_active_persona_model()
-            latency_trace.mark(trace_id, "agent.context_done", {"model": active_model})
+            survival_override, world_context, active_model = self._prepare_turn_context(
+                event_prompt, session_language, trace_id
+            )
 
             provider_error = self._check_provider_availability()
             if provider_error:
@@ -437,15 +499,11 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     trace_id=trace_id,
                 )
 
-            self.memory.remember("dialogue", f"Event({event_type}): {event_prompt} | Bot: {final_text}")
-            try:
-                self._observe_world_memory_dialogue(event_prompt, final_text)
-            except Exception:
-                logger.debug("world memory dialogue observation failed", exc_info=True)
-            try:
-                self.memory_consolidator.consolidate(event_prompt, speaker=self._current_speaker())
-            except Exception:
-                logger.debug("memory consolidation failed", exc_info=True)
+            self._finalize_turn_memory(
+                event_prompt,
+                final_text,
+                f"Event({event_type}): {event_prompt} | Bot: {final_text}",
+            )
 
             latency_trace.mark(
                 trace_id,
@@ -474,85 +532,3 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             self._active_progress_token = ""
             self._exit_turn()
 
-
-# sentrybot_batch06g_agent_step_speaker_bridge_guard
-try:
-    _sentrybot_batch06g_prev_agent_step = AgentOrchestrator.step
-
-    def _sentrybot_batch06g_agent_step(self, *args, **kwargs):
-        speaker = kwargs.get("speaker")
-
-        if speaker is None and len(args) >= 2:
-            speaker = args[1]
-
-        if speaker:
-            try:
-                world_state = getattr(self, "world_state", None)
-
-                if world_state is not None:
-                    state = getattr(world_state, "state", None)
-
-                    if isinstance(state, dict):
-                        state["speaker"] = speaker
-                    elif hasattr(world_state, "set"):
-                        world_state.set("speaker", speaker)
-
-            except Exception:
-                pass
-
-        return _sentrybot_batch06g_prev_agent_step(self, *args, **kwargs)
-
-    AgentOrchestrator.step = _sentrybot_batch06g_agent_step
-
-except NameError:
-    pass
-
-
-# sentrybot_batch06j_agent_turn_lock_lazy_guard
-try:
-    _sentrybot_batch06j_prev_try_enter_turn = AgentOrchestrator._try_enter_turn
-
-    def _sentrybot_batch06j_try_enter_turn(self, *args, **kwargs):
-        try:
-            if getattr(self, "_turn_lock", None) is None:
-                import threading
-                self._turn_lock = threading.Lock()
-
-            if not hasattr(self, "is_busy"):
-                self.is_busy = False
-
-            if not hasattr(self, "last_run"):
-                self.last_run = 0
-
-            if not hasattr(self, "cooldown"):
-                self.cooldown = 0
-
-        except Exception:
-            pass
-
-        return _sentrybot_batch06j_prev_try_enter_turn(self, *args, **kwargs)
-
-    AgentOrchestrator._try_enter_turn = _sentrybot_batch06j_try_enter_turn
-
-except NameError:
-    pass
-
-try:
-    _sentrybot_batch06j_prev_exit_turn = AgentOrchestrator._exit_turn
-
-    def _sentrybot_batch06j_exit_turn(self, *args, **kwargs):
-        try:
-            if getattr(self, "_turn_lock", None) is None:
-                import threading
-                self._turn_lock = threading.Lock()
-        except Exception:
-            pass
-
-        return _sentrybot_batch06j_prev_exit_turn(self, *args, **kwargs)
-
-    AgentOrchestrator._exit_turn = _sentrybot_batch06j_exit_turn
-
-except NameError:
-    pass
-except AttributeError:
-    pass
