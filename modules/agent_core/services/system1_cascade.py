@@ -95,6 +95,13 @@ class System1CascadeEngine:
             if decision is not None:
                 if decision.suggested_tool is None:
                     decision.suggested_tool = self.MODULE_TOOL_MAP.get(decision.target_module)
+                if decision.is_direct_command and isinstance(decision.raw_answers, dict) and "action_hint" not in decision.raw_answers:
+                    from modules.agent_core.services.system1_embed import extract_action_slots
+                    hint = extract_action_slots(cleaned, decision.target_module)
+                    if hint:
+                        decision.raw_answers["action_hint"] = dict(hint)
+                self._last_decision_text = cleaned
+                self._laya._last_decision_text = cleaned
                 self._laya._record_telemetry(cleaned, decision)
                 self._record("rules")
                 return decision
@@ -105,6 +112,8 @@ class System1CascadeEngine:
             if decision is not None:
                 if decision.suggested_tool is None:
                     decision.suggested_tool = self.MODULE_TOOL_MAP.get(decision.target_module)
+                self._last_decision_text = cleaned
+                self._laya._last_decision_text = cleaned
                 self._laya._record_telemetry(cleaned, decision)
                 self._record("embed")
                 return decision
@@ -112,6 +121,8 @@ class System1CascadeEngine:
         if getattr(self._laya, "_agent", None) is not None:
             decision = self._laya.decide(cleaned)
             if decision is not None:
+                self._last_decision_text = cleaned
+                self._laya._last_decision_text = cleaned
                 self._record("laya")
                 return decision
 
