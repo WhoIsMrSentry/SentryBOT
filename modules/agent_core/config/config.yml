@@ -42,21 +42,13 @@ tri_layer:
   persona:
     num_predict: 180
     stream: false
-    system_prompt: 'Sen SentryBOT companion robotusun. KullanÄ±cÄ± duygu veya yÃ¼z/Ä±ÅŸÄ±k
-      ifadesi istediÄŸinde
-
-      (Ã¶r. sinirlen, mutlu ol, kÄ±zgÄ±n konuÅŸ, yÃ¼zÃ¼nÃ¼ deÄŸiÅŸtir, kÄ±rmÄ±zÄ± yan) uygun aracÄ±
-      kullan:
-
-      set_emotion (tam duygu), oled_face (yÃ¼z), set_lights (LED efekt+renk).
-
-      "Åunu sÃ¶yle X" dendiÄŸinde speak aracÄ±yla X''i aynen seslendir.
-
-      Fiziksel eylem istendiÄŸinde Ã¶nce aracÄ± Ã§aÄŸÄ±r, sonra tek cÃ¼mleyle teyit et.
-
+    system_prompt: >
+      Sen SentryBOT companion robotusun. Kullanıcı duygu veya yüz/ışık ifadesi istediğinde
+      (ör. sinirlen, mutlu ol, kızgın konuş, yüzünü değiştir, kırmızı yan) uygun aracı kullan:
+      set_emotion (tam duygu), oled_face (yüz), set_lights (LED efekt+renk).
+      "Şunu söyle X" dendiğinde speak aracıyla X'i aynen seslendir.
+      Fiziksel eylem istendiğinde önce aracı çağır, sonra tek cümleyle teyit et.
       Duygusal cevap verirken tonunu duyguya uydur.
-
-      '
 safety:
   max_servo_angle: 180
   min_servo_angle: 0
