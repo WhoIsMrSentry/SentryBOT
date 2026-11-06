@@ -14,8 +14,8 @@
 
 Modülün temel sorumlulukları şunlardır:
 
-1. **Merkezi Günlük Altyapısı (`logwrapper`):**
-   - 14 modülün tamamında `from modules.runtime_console.logwrapper import init_logging` ile çağrılan tekil log yapılandırmasını yönetir.
+1. **Merkezi Günlük Altyapısı (`logwrapper` & `common.logger`):**
+   - Modüllerin `from modules.common.logger import init_logging` (veya logwrapper üzerinden) ile çağırdığı tekil log yapılandırmasını yönetir.
    - **Ayrık Dosya Yönlendirmesi (`SeparateFileRouting`):** Logları önem derecesine göre otomatik olarak `logs/system.log`, `logs/warnings.log`, `logs/errors.log` ve `logs/tui.log` dosyalarına dağıtır.
    - **Oturum Döndürücüsü (`RunRotator`):** Robot her yeniden başladığında önceki oturumun loglarını arşivler (`logs/runs/run_YYYYMMDD_HHMMSS/`) ve 5'ten eski oturumları disk şişmesini önlemek için otomatik temizler (`pruning`).
 2. **Textual Tabanlı İnteraktif Terminal Konsolu (`tui_app.py`):**
