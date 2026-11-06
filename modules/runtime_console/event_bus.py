@@ -41,6 +41,10 @@ class RuntimeEventBus:
         with self._lock:
             return tuple(self._events)
 
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._events)
+
 
 _BUS = RuntimeEventBus()
 

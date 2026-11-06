@@ -6,9 +6,11 @@ capture samplerate; on the Pi the brain can pipe VAD speech segments into
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+import threading
+from typing import Any, Dict, List, Optional
 
 from .config_loader import load_config
+from .services.identity_fusion import ActiveSpeakerResolver
 from .services.voiceprint import VoiceprintEmbedder
 from .services.voiceprint_store import VoiceprintStore
 
@@ -33,6 +35,7 @@ class SpeakerIdService:
             str(self.cfg.get("store_path", "data/speaker_id.json")),
             max_profiles=int(self.cfg.get("max_profiles", 16)),
         )
+        self.identity_resolver = ActiveSpeakerResolver()
 
     # ------------------------------------------------------------------ API
     def enroll_speaker(self, name: str, speaker_pcm: Any, samplerate: int, replace: bool = False) -> Dict[str, Any]:
@@ -71,11 +74,54 @@ class SpeakerIdService:
                 "similarity": round(best_sim, 4), "margin": round(margin, 4),
                 "backend": "voiceprint_mvp",
             }
+        try:
+            self.identity_resolver.observe_voice(best_name, float(best_sim))
+        except Exception:
+            pass
         return {
             "ok": True, "known": True, "name": best_name,
             "similarity": round(best_sim, 4), "margin": round(margin, 4),
             "backend": "voiceprint_mvp",
         }
+
+    def identify_pcm(self, speaker_pcm: Any, samplerate: int = 16000) -> Dict[str, Any]:
+        return self.identify(speaker_pcm, samplerate)
+
+    def list_profiles(self) -> List[str]:
+        return self.store.names()
+
+    def resolve_active_identity(self) -> Dict[str, Any]:
+        return self.identity_resolver.resolve()
+
+    def record_identity_signal(
+        self,
+        modality: str,
+        person_id: str,
+        confidence: float = 0.75,
+        ttl_s: Optional[float] = None,
+        uid: str = "",
+    ) -> Dict[str, Any]:
+        mod = str(modality or "").strip().lower()
+        if mod == "face":
+            return self.identity_resolver.observe_face(
+                person_id,
+                confidence=float(confidence),
+                ttl_s=float(ttl_s if ttl_s is not None else 15.0),
+            )
+        if mod == "voice":
+            return self.identity_resolver.observe_voice(
+                person_id,
+                confidence=float(confidence),
+                ttl_s=float(ttl_s if ttl_s is not None else 20.0),
+            )
+        if mod == "rfid":
+            return self.identity_resolver.observe_rfid(
+                person_id,
+                uid=str(uid or ""),
+                confidence=float(confidence),
+                ttl_s=float(ttl_s if ttl_s is not None else 60.0),
+            )
+        return {"ok": False, "reason": "unsupported_modality"}
 
     def forget(self, name: str) -> Dict[str, Any]:
         if not self.enabled:
@@ -83,7 +129,7 @@ class SpeakerIdService:
         return self.store.forget(name)
 
     def status(self) -> Dict[str, Any]:
-        return {
+        st: Dict[str, Any] = {
             "ok": True,
             "enabled": self.enabled,
             "backend": "voiceprint_mvp",
@@ -91,6 +137,9 @@ class SpeakerIdService:
             "profile_count": self.store.count(),
             "threshold": {"similarity": self.sim_min, "margin": self.margin_min},
         }
+        if hasattr(self, "identity_resolver") and self.identity_resolver is not None:
+            st["identity_fusion"] = self.identity_resolver.status()
+        return st
 
     def health(self) -> Dict[str, Any]:
         st = self.status()
@@ -111,11 +160,31 @@ class SpeakerIdService:
         return float(np.dot(va, vb) / (na * nb))
 
 
+_DEFAULT: Optional[SpeakerIdService] = None
+_DEFAULT_LOCK = threading.Lock()
+
+
 def get_default() -> Optional[SpeakerIdService]:
     """Singleton helper so callers share one store file handle lifecycle."""
-    global _DEFAULT          # type: ignore[name-defined]
-    try:
-        _DEFAULT             # noqa: F821
-    except NameError:
-        globals()["_DEFAULT"] = SpeakerIdService()
-    return globals()["_DEFAULT"]
+    global _DEFAULT
+    if _DEFAULT is None:
+        with _DEFAULT_LOCK:
+            if _DEFAULT is None:
+                _DEFAULT = SpeakerIdService()
+    return _DEFAULT
+
+
+def get_router(service: Optional[SpeakerIdService] = None) -> Any:
+    from .api.router import get_router as _get_router
+
+    return _get_router(service or get_default())
+
+
+def create_app(service: Optional[SpeakerIdService] = None) -> Any:
+    from fastapi import FastAPI
+
+    app = FastAPI(title="Speaker ID Service")
+    app.include_router(get_router(service))
+    return app
+
+

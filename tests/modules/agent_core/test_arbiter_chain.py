@@ -138,5 +138,5 @@ def test_expression_arbiter_respects_policy_priority_and_expiry():
     assert arbiter.claim_lights("autonomy") is False
     assert arbiter.claim_lights("emergency", force=True, semantic="safety_attention")
     assert arbiter.detailed_status()["leases"]["lights"]["semantic"] == "safety_attention"
-    time.sleep(0.02)
+    time.sleep(0.05)
     assert arbiter.status()["lights_owner"] == ""

@@ -49,7 +49,8 @@ class xAnimateService:
         ears: Any = None,
     ):
         self.cfg = load_config(overrides=config_overrides)
-        self.serial = serial or xArduinoSerialService()
+        self._owns_serial = serial is None
+        self.serial = serial if serial is not None else xArduinoSerialService()
         self._ears = ears
         self._oled = None
         self._neopixel = None
@@ -72,7 +73,9 @@ class xAnimateService:
         self.serial.start()
 
     def stop(self) -> None:
-        self.serial.stop()
+        self._running = False
+        if self._owns_serial and self.serial is not None:
+            self.serial.stop()
 
     # API
     def list(self) -> List[str]:

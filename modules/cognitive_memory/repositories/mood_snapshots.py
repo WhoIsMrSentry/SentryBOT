@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+from .base import BaseSqliteRepo
 
 if TYPE_CHECKING:
     from ..db import SocialDB
 
 
-class MoodSnapshotsRepo:
+class MoodSnapshotsRepo(BaseSqliteRepo):
     """Periodic snapshots of the MoodManager state."""
 
-    def __init__(self, db: "SocialDB") -> None:
-        self.db = db
+    table_name = "mood_snapshots"
+    ts_field = "ts"
 
     def record(
         self,
@@ -42,16 +44,3 @@ class MoodSnapshotsRepo:
     def latest(self) -> Optional[Dict[str, Any]]:
         row = self.db.fetchone("SELECT * FROM mood_snapshots ORDER BY ts DESC LIMIT 1")
         return {k: row[k] for k in row.keys()} if row else None
-
-    def recent(self, limit: int = 30) -> List[Dict[str, Any]]:
-        rows = self.db.fetchall(
-            "SELECT * FROM mood_snapshots ORDER BY ts DESC LIMIT ?",
-            (max(1, int(limit)),),
-        )
-        return [{k: r[k] for k in r.keys()} for r in rows]
-
-    def prune_older_than(self, days: float = 14.0) -> int:
-        cutoff = time.time() - max(0.0, float(days)) * 86400.0
-        with self.db.transaction() as conn:
-            cur = conn.execute("DELETE FROM mood_snapshots WHERE ts < ?", (cutoff,))
-            return int(cur.rowcount or 0)

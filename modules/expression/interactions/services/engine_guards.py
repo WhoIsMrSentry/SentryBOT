@@ -73,18 +73,8 @@ class EngineGuardsMixin:
 
     @staticmethod
     def _parse_hhmm(value: str) -> Optional[Tuple[int, int]]:
-        text = str(value or "").strip()
-        parts = text.split(":")
-        if len(parts) != 2:
-            return None
-        try:
-            hh = int(parts[0])
-            mm = int(parts[1])
-        except Exception:
-            return None
-        if hh < 0 or hh > 23 or mm < 0 or mm > 59:
-            return None
-        return hh, mm
+        from modules.common.time_utils import parse_hhmm
+        return parse_hhmm(value)
 
     def _is_quiet_hours_active(self) -> bool:
         if not bool(self.quiet_hours_cfg.get("enabled", False)):

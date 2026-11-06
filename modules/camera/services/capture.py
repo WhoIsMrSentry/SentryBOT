@@ -238,6 +238,11 @@ class CameraCapture(CaptureLoopsMixin):
             except Exception as exc:
                 logger.warning("OpenCV VideoCapture start failed: %s", exc)
 
+        if os.environ.get("SENTRYBOT_ALLOW_PC_FALLBACK") == "1" or os.environ.get("SENTRYBOT_PROFILE") in {"pc", "pc-test"}:
+            self._last_error = str(PICAM_IMPORT_ERROR or "No suitable camera backend")
+            logger.warning("Camera hardware unavailable (PC/WSL fallback mode): %s", self._last_error)
+            return False
+
         raise RuntimeError(f"Picamera2 unavailable: {PICAM_IMPORT_ERROR or 'No suitable camera backend'}")
 
     def stop(self) -> None:

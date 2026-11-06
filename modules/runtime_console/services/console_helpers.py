@@ -52,6 +52,11 @@ def parse_log_line(line: str) -> LogEvent | None:
 
 
 def is_pc_test(root: Path) -> bool:
+    env_profile = os.environ.get("SENTRYBOT_PROFILE", "").strip().lower()
+    if env_profile == "robot":
+        return False
+    if env_profile in {"pc", "pc-test"}:
+        return True
     if os.name == "nt":
         return True
     model = Path("/proc/device-tree/model")

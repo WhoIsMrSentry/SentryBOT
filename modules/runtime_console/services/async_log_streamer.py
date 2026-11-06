@@ -8,6 +8,10 @@ from typing import Callable, NamedTuple
 from rich.text import Text
 
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+PIPE_LOG_RE = re.compile(
+    r"^(?P<time>\d{2}:\d{2}:\d{2})\s*\|\s*(?P<level>DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\s*\|\s*(?P<logger>[^|]+?)\s*\|\s*(?P<message>.*)$",
+    re.IGNORECASE,
+)
 LOG_PARSE_RE = re.compile(
     r"^(?P<time>\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}(?:,\d+)?|\d{2}:\d{2}:\d{2})?\s*"
     r"(?:\[(?P<level>[A-Z]+)\]|(?P<level2>DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL))\s*"
@@ -26,6 +30,16 @@ class ParsedLogEntry(NamedTuple):
 
 def parse_log_line(raw_line: str) -> ParsedLogEntry:
     clean = ANSI_ESCAPE_RE.sub("", raw_line).strip()
+    match_pipe = PIPE_LOG_RE.match(clean)
+    if match_pipe:
+        timestamp = match_pipe.group("time")
+        level = match_pipe.group("level").upper()
+        if level == "WARNING":
+            level = "WARN"
+        logger_name = match_pipe.group("logger").strip()
+        msg = match_pipe.group("message").strip()
+        return ParsedLogEntry(timestamp=timestamp, level=level, logger=logger_name, message=msg, raw=clean)
+
     match = LOG_PARSE_RE.match(clean)
     if match:
         timestamp = match.group("time") or time.strftime("%H:%M:%S")

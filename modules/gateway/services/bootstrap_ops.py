@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any, Dict
 
@@ -41,7 +42,7 @@ def _include_social_db(app: FastAPI, started: Dict[str, object]) -> None:
 
 
 def _include_logs(app: FastAPI, started: Dict[str, object]) -> None:
-    from modules.runtime_console.logwrapper import get_router as get_logs_router  # type: ignore
+    from modules.common.logger import get_router as get_logs_router  # type: ignore
 
     logs_router = get_logs_router()
     if logs_router is not None:
@@ -79,12 +80,12 @@ def _include_runtime_console(app: FastAPI, started: Dict[str, object]) -> None:
 
 
 def _mount_import_module(app: FastAPI, name: str, cfg: Dict[str, Any]) -> None:
-    router_path = f"modules.{name}.api.router"
-    config_path = f"modules.{name}.config_loader"
+    router_mod = importlib.import_module(f"modules.{name}.api.router")
+    config_mod = importlib.import_module(f"modules.{name}.config_loader")
     app.include_router(
-        __import__(router_path, fromlist=["get_router"]).get_router(
+        router_mod.get_router(
             _merge_with_agent_section(
-                __import__(config_path, fromlist=["load_config"]).load_config(None),
+                config_mod.load_config(None),
                 name,
             )
         )
@@ -92,12 +93,11 @@ def _mount_import_module(app: FastAPI, name: str, cfg: Dict[str, Any]) -> None:
 
 
 def _mount_state_manager(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
-    cfg_sm = _merge_with_agent_section(
-        __import__("modules.system_control.state_manager.config_loader", fromlist=["load_config"]).load_config(None),
-        "state_manager",
-    )
-    StateStore = __import__("modules.system_control.state_manager.services.store", fromlist=["StateStore"]).StateStore
-    get_router = __import__("modules.system_control.state_manager.api.router", fromlist=["get_router"]).get_router
+    from modules.system_control.state_manager.api.router import get_router
+    from modules.system_control.state_manager.config_loader import load_config as load_sm_cfg
+    from modules.system_control.state_manager.services.store import StateStore
+
+    cfg_sm = _merge_with_agent_section(load_sm_cfg(None), "state_manager")
     store = StateStore(
         defaults=cfg_sm.get("defaults", {}),
         persistence=cfg_sm.get("persistence", {}),
@@ -108,12 +108,11 @@ def _mount_state_manager(app: FastAPI, started: Dict[str, object], cfg: Dict[str
 
 
 def _mount_scheduler(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
-    cfg_sc = _merge_with_agent_section(
-        __import__("modules.system_control.scheduler.config_loader", fromlist=["load_config"]).load_config(None),
-        "scheduler",
-    )
-    Scheduler = __import__("modules.system_control.scheduler.services.runner", fromlist=["Scheduler"]).Scheduler
-    get_router = __import__("modules.system_control.scheduler.api.router", fromlist=["get_router"]).get_router
+    from modules.system_control.scheduler.api.router import get_router
+    from modules.system_control.scheduler.config_loader import load_config as load_sc_cfg
+    from modules.system_control.scheduler.services.runner import Scheduler
+
+    cfg_sc = _merge_with_agent_section(load_sc_cfg(None), "scheduler")
     gw_base = str(
         cfg_sc.get("gateway_base_url")
         or started.get("gateway_base_url")

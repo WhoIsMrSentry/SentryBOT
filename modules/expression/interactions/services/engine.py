@@ -33,12 +33,17 @@ class InteractionEngine(EngineGuardsMixin, EngineRenderMixin):
                 social_db = None
         self._social_db = social_db
         self.metrics = MetricsCollector(window_s=int(cfg.get("thresholds", {}).get("cpu_load", {}).get("window_s", 60)))
+        self._restore_timer: Optional[threading.Timer] = None
+        self._effect_gen: int = 0
+        self._restore_timer_lock = threading.Lock()
         provided = neo_client
         if provided is not None:
             class _LocalNeoAdapter:
                 def __init__(self, runner, engine_ref):
                     self._runner = runner
                     self._engine = engine_ref
+                    self._restore_timer: Optional[threading.Timer] = None
+                    self._effect_gen: int = 0
 
                 def clear(self) -> None:
                     try:
@@ -102,9 +107,21 @@ class InteractionEngine(EngineGuardsMixin, EngineRenderMixin):
                             kwargs["emotions"] = emotions
                         self._runner.animate(name, **kwargs)
 
+                        with self._engine._restore_timer_lock:
+                            if self._restore_timer is not None:
+                                try:
+                                    self._restore_timer.cancel()
+                                except Exception:
+                                    pass
+                            self._effect_gen += 1
+                            self._engine._effect_gen = self._effect_gen
+                            current_gen = self._effect_gen
+
                         def _restore_idle():
                             try:
-                                time.sleep(max(0.0, duration_ms / 1000.0))
+                                with self._engine._restore_timer_lock:
+                                    if current_gen != self._effect_gen:
+                                        return
                                 if hasattr(self._runner, "companion_is_active") and self._runner.companion_is_active():
                                     return
                                 idle = (self._engine.defaults or {}).get("idle", {}).get("base", {})
@@ -114,7 +131,13 @@ class InteractionEngine(EngineGuardsMixin, EngineRenderMixin):
                             except Exception:
                                 pass
 
-                        threading.Thread(target=_restore_idle, daemon=True).start()
+                        delay_s = max(0.0, duration_ms / 1000.0)
+                        timer = threading.Timer(delay_s, _restore_idle)
+                        timer.daemon = True
+                        with self._engine._restore_timer_lock:
+                            self._restore_timer = timer
+                            self._engine._restore_timer = timer
+                        timer.start()
                     except Exception:
                         pass
 
@@ -182,6 +205,13 @@ class InteractionEngine(EngineGuardsMixin, EngineRenderMixin):
 
     def stop(self) -> None:
         self._stop.set()
+        with self._restore_timer_lock:
+            if self._restore_timer is not None:
+                try:
+                    self._restore_timer.cancel()
+                except Exception:
+                    pass
+                self._restore_timer = None
         if self._thread:
             self._thread.join(timeout=1.0)
 
@@ -219,20 +249,8 @@ class InteractionEngine(EngineGuardsMixin, EngineRenderMixin):
 
     @staticmethod
     def _normalize_color(color: Any) -> Optional[tuple[int, int, int]]:
-        if isinstance(color, (list, tuple)) and len(color) >= 3:
-            try:
-                return (int(color[0]) & 255, int(color[1]) & 255, int(color[2]) & 255)
-            except (TypeError, ValueError):
-                return None
-        if isinstance(color, str):
-            s = color.strip()
-            if s.startswith("#") and len(s) >= 7:
-                try:
-                    v = int(s[1:7], 16)
-                    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
-                except ValueError:
-                    return None
-        return None
+        from modules.common.color_utils import normalize_color
+        return normalize_color(color)
 
     def trigger_effect(
         self,

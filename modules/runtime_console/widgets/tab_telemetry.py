@@ -7,6 +7,84 @@ from textual.widget import Widget
 from textual.widgets import Label, Sparkline, Static
 
 
+def format_servo_bar(deg: float, min_deg: float = 0.0, max_deg: float = 180.0, width: int = 10) -> str:
+    """ASCII bar showing servo deflection from neutral."""
+    deg_clamped = max(min_deg, min(max_deg, float(deg)))
+    ratio = (deg_clamped - min_deg) / (max_deg - min_deg) if max_deg > min_deg else 0.5
+    pos = int(round(ratio * (width - 1)))
+    chars = ["─"] * width
+    chars[pos] = "█"
+    return f"[{''.join(chars)}]"
+
+
+def format_vu_meter(level_pct: float, width: int = 12, vad_active: bool = False) -> str:
+    """ASCII Audio VU-Meter showing input loudness & VAD speech flag."""
+    clamped = max(0.0, min(100.0, float(level_pct)))
+    filled = int(round((clamped / 100.0) * width))
+    bar = "█" * filled + "░" * (width - filled)
+    vad_tag = "[VAD: VOICE]" if vad_active else "[VAD: SILENCE]"
+    db_est = -60.0 + (clamped / 100.0) * 60.0
+    return f"[{bar}] {db_est:4.0f} dBFS {vad_tag}"
+
+
+def format_doa_radar(angle_deg: float) -> str:
+    """Direction of Arrival 180-degree radar compass pointing to audio origin."""
+    angle = max(0.0, min(180.0, float(angle_deg)))
+    # Map 0..180 onto 20 characters
+    pos = int(round((angle / 180.0) * 19))
+    arrow_line = [" "] * 20
+    arrow_line[pos] = "▲"
+    arrow_str = "".join(arrow_line)
+    return (
+        f"  0° ── 45° ── 90° ── 135° ── 180° ({angle:.0f}°)\n"
+        f"  {arrow_str}"
+    )
+
+
+def format_range_radar(dist_cm: float, width: int = 14) -> str:
+    """Visual obstacle range meter bar."""
+    if dist_cm <= 0:
+        return "[STANDBY / ECHO]"
+    if dist_cm > 200:
+        return "[██████████████] >200cm [CLEAR]"
+    clamped = max(0.0, min(200.0, dist_cm))
+    filled = int(round((clamped / 200.0) * width))
+    bar = "█" * filled + "░" * (width - filled)
+    stat = "OBSTACLE!" if dist_cm < 25 else ("CAUTION" if dist_cm < 60 else "CLEAR")
+    return f"[{bar}] {dist_cm:.0f}cm [{stat}]"
+
+
+def format_ascii_viewfinder(faces: int, driver: str = "PiCamera2", has_frame: bool = True) -> str:
+    """ASCII viewfinder canvas simulating camera FOV with active object/human trackers."""
+    if not has_frame:
+        return (
+            "  ┌───────────────── VIEWPORT ─────────────────┐\n"
+            "  │                                            │\n"
+            "  │          [ CAMERA STREAM STANDBY ]         │\n"
+            "  │          Sensor waiting for frame...       │\n"
+            "  │                                            │\n"
+            "  └────────────────────────────────────────────┘"
+        )
+    if faces > 0:
+        count_str = f"PERSON ({faces} TRACKED)"
+        return (
+            "  ┌───────────────── VIEWPORT ─────────────────┐\n"
+            f"  │  [{count_str:<22}]              │\n"
+            "  │       (o o)                                │\n"
+            "  │       / | \\              [TARGET LOCK]     │\n"
+            "  │        / \\                    [OK]         │\n"
+            "  └────────────────────────────────────────────┘"
+        )
+    return (
+        "  ┌───────────────── VIEWPORT ─────────────────┐\n"
+        "  │                                            │\n"
+        "  │             [ NO TARGET IN FOV ]           │\n"
+        "  │             Tracking mode: PATROL          │\n"
+        "  │                                            │\n"
+        "  └────────────────────────────────────────────┘"
+    )
+
+
 class TabTelemetry(Widget):
     """Deep SentryBOT Subsystem, Hardware Sensors, Actuators & Contract Telemetry Tab."""
 
@@ -57,29 +135,28 @@ class TabTelemetry(Widget):
                         id="telem_bridge_content",
                     )
 
-                # Quad 3: Camera, IMX500 & Face Recognition
+                # Quad 3: Camera, IMX500 & Face Recognition Viewport
                 with Vertical(classes="telemetry_card"):
                     yield Label("■ VISION & IMX500 SENSOR PIPELINE", classes="telemetry_card_title", markup=False)
                     yield Static(
                         "• Device Driver    : PiCamera2 / IMX500\n"
                         "• Camera Stream    : RUNNING (15 FPS)\n"
-                        "• Processing Mode  : Hybrid Edge / Remote VLM\n"
-                        "• Active Tracks    : 0 Human Trackers\n"
-                        "• Visual Buffer    : Shared Memory Frame Ring\n"
-                        "• VLM Remote Bridge: Online (whoismrsentry.local:11434)",
+                        "• Viewport Canvas  :\n"
+                        + format_ascii_viewfinder(0, has_frame=True)
+                        + "\n• Processing Mode  : Hybrid Edge / Remote VLM",
                         id="telem_vision_content",
                     )
 
                 # Quad 4: Voice Audio & Living Needs
                 with Vertical(classes="telemetry_card"):
-                    yield Label("■ VOICE I2S & LIVING NEEDS MODEL", classes="telemetry_card_title", markup=False)
+                    yield Label("■ VOICE I2S, AUDITORY RADAR & LIVING NEEDS", classes="telemetry_card_title", markup=False)
                     yield Static(
-                        "• I2S Mic Array    : Stereo 16kHz PCM (Energy VAD)\n"
+                        "• I2S Mic Level    : " + format_vu_meter(0.0) + "\n"
+                        "• Voice DoA Radar  :\n"
+                        + format_doa_radar(90.0) + "\n"
                         "• Wakeword Engine  : openWakeWord (\"hey sentry\")\n"
                         "• STT / TTS Voice  : Google Multi-Lingual & Piper Neural\n"
-                        "• Living Needs     : Curiosity: 65% | Boredom: 20%\n"
-                        "• Social / Rest    : Social: 45% | Rest: 80%\n"
-                        "• Homeostasis      : Batt: 100% | Core Temp: 45°C",
+                        "• Living Needs     : Curiosity: 65% | Boredom: 20%",
                         id="telem_ai_content",
                     )
 

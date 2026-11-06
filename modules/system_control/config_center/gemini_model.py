@@ -1,6 +1,9 @@
-"""Default Gemini model id for Google AI Studio (Generative Language API)."""
+"""Backward-compatibility shim for default Gemini model id.
 
+Delegates directly to modules.common.config_loader as the single source of truth.
+"""
 from __future__ import annotations
 
-# https://ai.google.dev/gemini-api/docs/models — Gemini 3 Flash Preview
-DEFAULT_GEMINI_MODEL = "gemma-4-31b-it"
+from modules.common.config_loader import DEFAULT_GEMINI_MODEL
+
+__all__ = ["DEFAULT_GEMINI_MODEL"]

@@ -16,7 +16,7 @@ from .services.audio_filters import SpeechAudioFilterMixin
 from .services.sound_tracking import SpeechSoundTrackingMixin
 
 try:
-    from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
+    from modules.common.logger import init_logging as _init_global_logging  # type: ignore
     _init_global_logging()
 except Exception:
     pass
@@ -111,6 +111,12 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self._head_arbiter = None
         
         self._stream_iter = None
+
+    @property
+    def capture(self) -> Any:
+        if hasattr(self, "_audio_router") and self._audio_router:
+            return self._audio_router.get_capture()
+        return None
 
     def set_default_callback(self, cb: Optional[Callable[[RecognitionResult], None]]) -> None:
         with self._result_lock:

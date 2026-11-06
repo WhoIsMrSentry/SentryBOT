@@ -1,32 +1,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import sqlite3
 import time
 from contextlib import closing
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
-_TOKEN_RE = re.compile(r"[\wçğıöşüÇĞİÖŞÜ]+", re.UNICODE)
-_TR_DEVOICE = str.maketrans({"ğ": "k", "d": "t", "b": "p", "c": "ç"})
+from .text_utils import _TOKEN_RE, _TR_DEVOICE, _stem_tokens, _tokens
 
+logger = logging.getLogger("cognitive_memory.world_memory_rag")
 
-def _tokens(text: str) -> List[str]:
-    return [t.lower() for t in _TOKEN_RE.findall(str(text or "")) if len(t) > 1]
-
-
-def _stem_tokens(text: str) -> set[str]:
-    words = _tokens(text)
-    out = set(words)
-    for w in words:
-        if len(w) >= 4:
-            out.add(f"#{w[:4]}")
-        if len(w) >= 5:
-            p5 = w[:5]
-            out.add(f"#{p5[:-1] + p5[-1].translate(_TR_DEVOICE)}")
-    return out
+EmbedFn = Callable[[str], Any]
 
 
 def _json_dumps(value: Any) -> str:
@@ -93,7 +81,12 @@ class WorldMemoryRAG:
             self.path = Path.cwd() / self.path
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fts_available = False
+        self._embed_fn: Optional[EmbedFn] = None
         self._init_db()
+        _hook_embedding_provider(self)
+
+    def set_embedding_provider(self, fn: Optional[EmbedFn]) -> None:
+        self._embed_fn = fn
 
     def _connect(self) -> sqlite3.Connection:
         con = sqlite3.connect(str(self.path), timeout=10.0)
@@ -119,10 +112,15 @@ class WorldMemoryRAG:
                     first_seen REAL NOT NULL,
                     last_seen REAL NOT NULL,
                     location TEXT NOT NULL DEFAULT '',
-                    tags_json TEXT NOT NULL DEFAULT '[]'
+                    tags_json TEXT NOT NULL DEFAULT '[]',
+                    embedding BLOB
                 )
                 """
             )
+            try:
+                con.execute("ALTER TABLE memories ADD COLUMN embedding BLOB")
+            except sqlite3.OperationalError:
+                pass
             con.execute("CREATE INDEX IF NOT EXISTS idx_memories_kind ON memories(kind)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_memories_last_seen ON memories(last_seen DESC)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_memories_name ON memories(name)")
@@ -179,6 +177,16 @@ class WorldMemoryRAG:
         details = body.get("details") if isinstance(body.get("details"), dict) else dict(body)
         now = time.time()
         memory_id = str(body.get("id") or self.memory_id(kind, name))
+        embedding = None
+        try:
+            if self._embed_fn is not None:
+                raw_vec = self._embed_fn(f"passage: {kind} {name} {summary}")
+                if raw_vec is not None:
+                    import numpy as np
+
+                    embedding = np.asarray(raw_vec, dtype="float32").tobytes()
+        except Exception:
+            embedding = None
         with closing(self._connect()) as con:
             old = con.execute("SELECT * FROM memories WHERE id=?", (memory_id,)).fetchone()
             created = old is None
@@ -186,10 +194,10 @@ class WorldMemoryRAG:
                 con.execute(
                     """
                     INSERT INTO memories(id, kind, name, summary, details_json, source, confidence, salience,
-                                         observation_count, first_seen, last_seen, location, tags_json)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+                                         observation_count, first_seen, last_seen, location, tags_json, embedding)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)
                     """,
-                    (memory_id, kind, name, summary, _json_dumps(details), source, confidence, salience, now, now, location, _json_dumps(tags)),
+                    (memory_id, kind, name, summary, _json_dumps(details), source, confidence, salience, now, now, location, _json_dumps(tags), embedding),
                 )
             else:
                 old_count = int(old["observation_count"] or 1)
@@ -205,11 +213,12 @@ class WorldMemoryRAG:
                     merged_details.update(details)
                 else:
                     merged_details = details
+                final_embedding = embedding if embedding is not None else old["embedding"]
                 con.execute(
                     """
                     UPDATE memories
                     SET summary=?, details_json=?, source=?, confidence=?, salience=?, observation_count=?,
-                        last_seen=?, location=CASE WHEN ? != '' THEN ? ELSE location END, tags_json=?
+                        last_seen=?, location=CASE WHEN ? != '' THEN ? ELSE location END, tags_json=?, embedding=?
                     WHERE id=?
                     """,
                     (
@@ -223,6 +232,7 @@ class WorldMemoryRAG:
                         location,
                         location,
                         _json_dumps(merged_tags),
+                        final_embedding,
                         memory_id,
                     ),
                 )
@@ -277,8 +287,16 @@ class WorldMemoryRAG:
                     rows = con.execute(sql, (fts_query, limit * 3)).fetchall()
                 except Exception:
                     rows = []
-            if not rows:
-                rows = con.execute("SELECT * FROM memories ORDER BY salience DESC, last_seen DESC LIMIT ?", (limit * 8,)).fetchall()
+            if not rows or self._embed_fn is not None:
+                extra_rows = con.execute(
+                    "SELECT * FROM memories ORDER BY salience DESC, last_seen DESC LIMIT ?",
+                    (limit * 8,),
+                ).fetchall()
+                seen_ids = {str(r["id"]) for r in rows}
+                for r in extra_rows:
+                    if str(r["id"]) not in seen_ids:
+                        rows.append(r)
+                        seen_ids.add(str(r["id"]))
         ranked = []
         now = time.time()
         q_stems = _stem_tokens(q)
@@ -294,8 +312,58 @@ class WorldMemoryRAG:
             score = 0.50 * overlap + 0.25 * float(item.get("salience", 0.0)) + 0.15 * float(item.get("confidence", 0.0)) + 0.10 * recency
             item["rank_score"] = round(score, 4)
             ranked.append(item)
+        semantic = self._semantic_rerank(q, ranked)
+        if semantic is not None:
+            for item in ranked:
+                sem = round(float(semantic.get(str(item["id"]), 0.0)), 4)
+                item["semantic"] = sem
+                item["rank_score"] = round(
+                    max(0.0, min(1.0, 0.40 * float(item.get("rank_score", 0.0)) + 0.60 * max(0.0, sem))),
+                    4,
+                )
         ranked.sort(key=lambda item: (float(item.get("rank_score", 0.0)), float(item.get("last_seen", 0.0))), reverse=True)
         return {"ok": True, "available": True, "query": q, "items": ranked[:limit]}
+
+    def _semantic_rerank(
+        self, query: str, ranked: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, float]]:
+        if self._embed_fn is None or not ranked or not str(query or "").strip():
+            return None
+        try:
+            import numpy as np
+
+            q_vec = np.asarray(self._embed_fn(f"query: {query}"), dtype="float32")
+            q_norm = max(1e-9, float(np.linalg.norm(q_vec)))
+            q_vec = q_vec / q_norm
+            ids: List[str] = []
+            vecs: List[Any] = []
+            with closing(self._connect()) as con:
+                placeholders = ",".join(["?"] * len(ranked))
+                rows = con.execute(
+                    f"SELECT id, embedding FROM memories WHERE id IN ({placeholders})",
+                    [str(item["id"]) for item in ranked],
+                ).fetchall()
+            for row in rows:
+                blob = row["embedding"]
+                if not blob:
+                    continue
+                vec = np.frombuffer(blob, dtype="float32")
+                if vec.shape != q_vec.shape:
+                    continue
+                vecs.append(vec / max(1e-9, float(np.linalg.norm(vec))))
+                ids.append(str(row["id"]))
+            if not vecs:
+                return None
+            sim = np.asarray(vecs, dtype="float32") @ q_vec
+            out_scores: Dict[str, float] = {}
+            for mid, raw_s in zip(ids, sim):
+                s = float(raw_s)
+                calibrated = max(0.0, min(1.0, (s - 0.72) / 0.18)) if s > 0.65 else max(0.0, s)
+                out_scores[mid] = calibrated
+            return out_scores
+        except Exception as exc:
+            logger.debug("world_memory_rag semantic rerank failed: %s", exc)
+            return None
 
     def build_context(self, query: str, *, limit: int = 8) -> Dict[str, Any]:
         recalled = self.recall(query, limit=limit)
@@ -418,6 +486,11 @@ class WorldMemoryRAG:
             "location": row["location"],
             "tags": _json_loads(row["tags_json"], []),
         }
+
+
+def _hook_embedding_provider(rag: WorldMemoryRAG) -> None:
+    from .embedding_hook import hook_embedding_provider
+    hook_embedding_provider(rag, name="world_memory_rag")
 
 
 __all__ = ["WorldMemoryRAG"]

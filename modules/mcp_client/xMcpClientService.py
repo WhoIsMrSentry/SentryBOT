@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import threading
 from typing import Any, Dict, List, Mapping, Optional
 
 from modules.mcp_client.services.stdio_process import (
@@ -30,6 +32,7 @@ class McpClientService:
             if isinstance(spec, dict) and str(spec.get("name", "")).strip():
                 self._server_specs[str(spec["name"]).strip()] = spec
         self._conns: Dict[str, StdioMcpConnection] = {}
+        self._lock = threading.RLock()
 
     # ---- management -----------------------------------------------------
 
@@ -44,27 +47,28 @@ class McpClientService:
         spec = self._spec(name)
         if not bool(spec.get("enabled", True)):
             raise TransportError(f"disabled:{name}")
-        conn = self._conns.get(name)
-        if conn is not None and conn.alive:
+        with self._lock:
+            conn = self._conns.get(name)
+            if conn is not None and conn.alive:
+                return conn
+            if conn is not None:
+                self._conns.pop(name, None)
+            conn = StdioMcpConnection(
+                name=name,
+                command=list(spec.get("command") or []),
+                args=list(spec.get("args") or []),
+                cwd=spec.get("cwd") or None,
+                env=spec.get("env") or None,
+                protocol_version=self.protocol_version,
+                client_name=self.client_name,
+                client_version=self.client_version,
+                init_timeout_s=float(spec.get("init_timeout_s", self.init_timeout_s)),
+                request_timeout_s=float(spec.get("request_timeout_s", self.request_timeout_s)),
+            )
+            conn.start()
+            conn.handshake()
+            self._conns[name] = conn
             return conn
-        if conn is not None:
-            self._conns.pop(name, None)
-        conn = StdioMcpConnection(
-            name=name,
-            command=list(spec.get("command") or []),
-            args=list(spec.get("args") or []),
-            cwd=spec.get("cwd") or None,
-            env=spec.get("env") or None,
-            protocol_version=self.protocol_version,
-            client_name=self.client_name,
-            client_version=self.client_version,
-            init_timeout_s=float(spec.get("init_timeout_s", self.init_timeout_s)),
-            request_timeout_s=float(spec.get("request_timeout_s", self.request_timeout_s)),
-        )
-        conn.start()
-        conn.handshake()
-        self._conns[name] = conn
-        return conn
 
     def connect_all_autostart(self) -> Dict[str, Any]:
         started, failed = [], []
@@ -79,10 +83,11 @@ class McpClientService:
         return {"started": started, "failed": failed}
 
     def stop(self, name: Optional[str] = None) -> Dict[str, Any]:
-        names = [str(name)] if name else list(self._conns)
+        with self._lock:
+            names = [str(name)] if name else list(self._conns)
+            conns_to_stop = [(n, self._conns.pop(n, None)) for n in names]
         stopped = []
-        for n in names:
-            conn = self._conns.pop(n, None)
+        for n, conn in conns_to_stop:
             if conn is not None:
                 conn.stop()
                 stopped.append(n)
@@ -108,6 +113,110 @@ class McpClientService:
                 errors.append({"server": server, "error": str(exc)})
         return {"ok": True, "servers": agg, "errors": errors}
 
+    def select_relevant_tools(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """Rank and select the most relevant MCP tools across connected servers using System 1 embeddings or keyword overlap."""
+        limit = int(top_k or 0)
+        if limit <= 0:
+            return []
+
+        candidates: List[Dict[str, Any]] = []
+        seen_keys = set()
+
+        try:
+            all_res = self.tools(refresh=False)
+            servers_map = all_res.get("servers", {}) if isinstance(all_res, dict) else {}
+        except Exception:
+            servers_map = {}
+
+        if isinstance(servers_map, dict):
+            for server_name, tool_list in servers_map.items():
+                if not isinstance(tool_list, list):
+                    continue
+                for item in tool_list:
+                    if not isinstance(item, dict):
+                        continue
+                    t_name = str(item.get("name", "")).strip()
+                    key = (str(server_name), t_name)
+                    if t_name and key not in seen_keys:
+                        seen_keys.add(key)
+                        entry = dict(item)
+                        entry.setdefault("server", str(server_name))
+                        candidates.append(entry)
+
+        with self._lock:
+            conns_snapshot = dict(self._conns)
+        for server_name, conn in conns_snapshot.items():
+            raw_tools = getattr(conn, "tools_cache", None)
+            if not raw_tools and hasattr(conn, "tools"):
+                try:
+                    raw_tools = conn.tools(refresh=False)
+                except Exception:
+                    raw_tools = []
+            for item in raw_tools or []:
+                if not isinstance(item, dict):
+                    continue
+                t_name = str(item.get("name", "")).strip()
+                key = (str(server_name), t_name)
+                if t_name and key not in seen_keys:
+                    seen_keys.add(key)
+                    entry = dict(item)
+                    entry.setdefault("server", str(server_name))
+                    candidates.append(entry)
+
+        if not candidates:
+            return []
+
+        cleaned_query = str(query or "").strip()
+        if not cleaned_query:
+            return candidates[:limit]
+
+        q_tokens = set(re.findall(r"\w+", cleaned_query.lower()))
+
+        embed_engine = None
+        query_vec = None
+        try:
+            from modules.agent_core.services.system1_embed import System1EmbedEngine
+
+            eng = System1EmbedEngine.get_instance()
+            if eng is not None and getattr(eng, "is_available", False):
+                embed_engine = eng
+                query_vec = eng.embed_vector(cleaned_query)
+        except Exception:
+            embed_engine = None
+            query_vec = None
+
+        scored: List[ tuple[float, int, Dict[str, Any]] ] = []
+        for idx, tool in enumerate(candidates):
+            t_name = str(tool.get("name", "")).strip()
+            t_desc = str(tool.get("description", "")).strip()
+            doc_text = f"{t_name} {t_desc}".strip()
+
+            doc_tokens = set(re.findall(r"\w+", doc_text.lower()))
+            overlap = len(q_tokens & doc_tokens) / max(1, len(q_tokens)) if q_tokens else 0.0
+            if t_name.lower() in cleaned_query.lower():
+                overlap += 0.5
+
+            sem_score = 0.0
+            if embed_engine is not None and query_vec is not None:
+                try:
+                    import numpy as np
+
+                    t_vec = embed_engine.embed_passage(doc_text)
+                    if t_vec is None:
+                        t_vec = embed_engine.embed_vector(doc_text)
+                    if t_vec is not None:
+                        sem_score = float(np.dot(query_vec, t_vec))
+                except Exception:
+                    sem_score = 0.0
+
+            total_score = (0.75 * sem_score + 0.25 * overlap) if sem_score > 0.0 else overlap
+            enriched = dict(tool)
+            enriched["score"] = round(float(total_score), 4)
+            scored.append((total_score, -idx, enriched))
+
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [item[2] for item in scored[:limit]]
+
     def call(self, server: str, tool: str, arguments: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
         conn = self._connection_for(server)
         res = conn.call(tool, arguments)
@@ -131,8 +240,10 @@ class McpClientService:
 
     def status(self) -> Dict[str, Any]:
         servers = []
+        with self._lock:
+            conns_snapshot = dict(self._conns)
         for name, spec in self._server_specs.items():
-            conn = self._conns.get(name)
+            conn = conns_snapshot.get(name)
             state: Dict[str, Any] = {
                 "name": name,
                 "enabled": bool(spec.get("enabled", True)),

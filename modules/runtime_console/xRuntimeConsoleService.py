@@ -13,8 +13,13 @@ class RuntimeConsoleService:
         publish_event("CORE", "Runtime console service ready", status="READY")
 
     def health(self) -> dict:
+        event_count = (
+            len(self.bus)
+            if hasattr(self.bus, "__len__")
+            else len(list(self.bus.iter()))
+        )
         return {
             "ok": True,
             "mode": self.config.get("mode", "dashboard"),
-            "events": len(list(self.bus.iter())),
+            "events": event_count,
         }

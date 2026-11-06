@@ -15,22 +15,7 @@ logger = logging.getLogger("interactions.neopixel_client")
 NEOPIXEL_SAFE_DEGRADED_CLIENT_CONTRACT = True
 NOOP_NEOPIXEL_CLIENT_ROLE = "safe_degraded_output_adapter"
 
-
-def _normalize_color(color: Any) -> Optional[tuple[int, int, int]]:
-    if isinstance(color, (list, tuple)) and len(color) >= 3:
-        try:
-            return (int(color[0]) & 255, int(color[1]) & 255, int(color[2]) & 255)
-        except (TypeError, ValueError):
-            return None
-    if isinstance(color, str):
-        s = color.strip()
-        if s.startswith("#") and len(s) >= 7:
-            try:
-                v = int(s[1:7], 16)
-                return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
-            except ValueError:
-                return None
-    return None
+from modules.common.color_utils import normalize_color as _normalize_color
 
 
 class NeoHttpClient:

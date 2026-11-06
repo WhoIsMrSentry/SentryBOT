@@ -13,25 +13,11 @@ def _now() -> float:
     return float(time())
 
 
-def _as_mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def _as_list(value: Any, limit: int = 12) -> List[Any]:
-    if value is None:
-        return []
-    if isinstance(value, (str, bytes)):
-        return [str(value)]
-    if isinstance(value, Sequence):
-        return list(value[:limit])
-    return [value]
-
-
-def _compact_text(value: Any, limit: int = 180) -> str:
-    text = str(value or "").strip()
-    if len(text) > limit:
-        return text[: limit - 3].rstrip() + "..."
-    return text
+from .perception_bridge_base import (
+    as_dict as _as_mapping,
+    as_list as _as_list,
+    compact_text as _compact_text,
+)
 
 
 def _merge_bias(target: Dict[str, float], key: str, value: float) -> None:

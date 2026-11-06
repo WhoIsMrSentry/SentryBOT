@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
-import re
 import sqlite3
 import threading
 import time
@@ -11,28 +10,11 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from .text_utils import _TOKEN_RE, _TR_DEVOICE, _stem_tokens, _tokens
+
 logger = logging.getLogger("cognitive_memory.chat_rag")
 
-_TOKEN_RE = re.compile(r"[\wçğıöşüÇĞİÖŞÜ]+", re.UNICODE)
-_TR_DEVOICE = str.maketrans({"ğ": "k", "d": "t", "b": "p", "c": "ç"})
-
 EmbedFn = Callable[[str], Any]
-
-
-def _tokens(text: str) -> List[str]:
-    return [t.lower() for t in _TOKEN_RE.findall(str(text or "")) if len(t) > 1]
-
-
-def _stem_tokens(text: str) -> set[str]:
-    words = _tokens(text)
-    out = set(words)
-    for w in words:
-        if len(w) >= 4:
-            out.add(f"#{w[:4]}")
-        if len(w) >= 5:
-            p5 = w[:5]
-            out.add(f"#{p5[:-1] + p5[-1].translate(_TR_DEVOICE)}")
-    return out
 
 
 class ChatRAG:
@@ -244,8 +226,6 @@ class ChatRAG:
                         ORDER BY bm25(chat_fts), c.ts DESC
                         LIMIT 200
                     """
-                    if person_id:
-                        sql = sql.replace("LIMIT 200", "LIMIT 200")
                     rows = con.execute(sql, (fts_query,)).fetchall()
                 except Exception:
                     rows = []
@@ -437,12 +417,5 @@ def get_default(cfg: Optional[Dict[str, Any]] = None) -> ChatRAG:
 
 
 def _hook_embedding_provider(rag: ChatRAG) -> None:
-    try:
-        from modules.agent_core.services.system1_embed import System1EmbedEngine
-
-        engine = System1EmbedEngine.get_instance()
-        if engine.enabled:
-            rag.set_embedding_provider(engine.embed_vector)
-            logger.info("chat_rag semantic rerank hooked (shared System1EmbedEngine singleton)")
-    except Exception:
-        pass
+    from .embedding_hook import hook_embedding_provider
+    hook_embedding_provider(rag, name="chat_rag")

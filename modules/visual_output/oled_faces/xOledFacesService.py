@@ -52,6 +52,18 @@ class xOledFacesService:
         self._last_widget_battery: str = ""
         self._apply_lock = Lock()
 
+    def attach_state_store(self, state_store: Any) -> None:
+        self.state_store = state_store
+
+    def _read_state_snapshot(self) -> Dict[str, Any]:
+        if self.state_store is None or not hasattr(self.state_store, "get"):
+            return {}
+        try:
+            state = self.state_store.get(deep=False)
+        except TypeError:
+            state = self.state_store.get()
+        return state if isinstance(state, dict) else {}
+
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
@@ -164,7 +176,7 @@ class xOledFacesService:
         if self.state_store is None or not hasattr(self.state_store, "get"):
             return
         try:
-            state = self.state_store.get() or {}
+            state = self._read_state_snapshot()
         except Exception:
             return
 
@@ -221,7 +233,7 @@ class xOledFacesService:
         if self.state_store is None or not hasattr(self.state_store, "get"):
             return None
         try:
-            state = self.state_store.get() or {}
+            state = self._read_state_snapshot()
         except Exception:
             return None
         emotions = [str(x).strip().lower() for x in (state.get("emotions") or []) if str(x).strip()]

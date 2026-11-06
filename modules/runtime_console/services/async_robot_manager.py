@@ -20,6 +20,7 @@ class AsyncRobotManager:
         self.started_at: Optional[float] = None
         self.last_status = "STOPPED"
         self.last_error = ""
+        self._stdout_file = None
 
     @property
     def is_running(self) -> bool:
@@ -65,6 +66,20 @@ class AsyncRobotManager:
             env["SENTRYBOT_ALLOW_PC_FALLBACK"] = "1"
         else:
             env["SENTRYBOT_PROFILE"] = "robot"
+            # WSL or x86 host fallback fallback safety
+            if os.name == "nt" or not Path("/proc/device-tree/model").exists():
+                env["SENTRYBOT_ALLOW_PC_FALLBACK"] = "1"
+
+        logs_dir = self.root / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_file_path = logs_dir / "sentry.log"
+        try:
+            self._stdout_file = open(log_file_path, "a", encoding="utf-8")
+        except Exception:
+            self._stdout_file = None
+
+        stdout_target = self._stdout_file if self._stdout_file else subprocess.DEVNULL
+        stderr_target = subprocess.STDOUT if self._stdout_file else subprocess.DEVNULL
 
         python_bin = sys.executable
         try:
@@ -72,8 +87,8 @@ class AsyncRobotManager:
                 [python_bin, str(runner)],
                 cwd=str(self.root),
                 env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=stdout_target,
+                stderr=stderr_target,
                 stdin=subprocess.DEVNULL,
             )
             self.started_at = time.time()
@@ -83,12 +98,24 @@ class AsyncRobotManager:
         except Exception as exc:
             self.last_error = str(exc)
             self.last_status = "CRASHED"
+            if self._stdout_file:
+                try:
+                    self._stdout_file.close()
+                except Exception:
+                    pass
+                self._stdout_file = None
             return False
 
     async def stop(self, timeout_s: float = 3.0) -> bool:
         if not self.is_running or not self.process:
             self.last_status = "STOPPED"
             self.started_at = None
+            if self._stdout_file:
+                try:
+                    self._stdout_file.close()
+                except Exception:
+                    pass
+                self._stdout_file = None
             return True
 
         try:
@@ -111,6 +138,12 @@ class AsyncRobotManager:
 
             self.last_status = "STOPPED"
             self.started_at = None
+            if self._stdout_file:
+                try:
+                    self._stdout_file.close()
+                except Exception:
+                    pass
+                self._stdout_file = None
             return True
         except Exception as exc:
             self.last_error = str(exc)

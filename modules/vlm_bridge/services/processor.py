@@ -14,27 +14,18 @@ except ImportError:
 try:
     from .face_manager import FaceManager
 except Exception:
-    try:
-        from modules.vlm_bridge.services.face_manager import FaceManager
-    except Exception:
-        FaceManager = None  # type: ignore
+    FaceManager = None  # type: ignore
 
 try:
     from .person_identity import PersonIdentityManager
 except Exception:
-    try:
-        from modules.vlm_bridge.services.person_identity import PersonIdentityManager
-    except Exception:
-        PersonIdentityManager = None  # type: ignore
+    PersonIdentityManager = None  # type: ignore
 
 try:
     from .visual_context import VisionFrameContext, VisualContextCache
 except Exception:
-    try:
-        from modules.vlm_bridge.services.visual_context import VisionFrameContext, VisualContextCache
-    except Exception:
-        VisionFrameContext = None  # type: ignore
-        VisualContextCache = None  # type: ignore
+    VisionFrameContext = None  # type: ignore
+    VisualContextCache = None  # type: ignore
 
 try:
     from .vision_sampler import VisionSampler
@@ -44,18 +35,12 @@ except Exception:
 try:
     from .vision_request_gate import VisionRequestGate
 except Exception:
-    try:
-        from modules.vlm_bridge.services.vision_request_gate import VisionRequestGate
-    except Exception:
-        VisionRequestGate = None  # type: ignore
+    VisionRequestGate = None  # type: ignore
 
 try:
     from .face_emotion import FaceEmotionEstimator
 except Exception:
-    try:
-        from modules.vlm_bridge.services.face_emotion import FaceEmotionEstimator
-    except Exception:
-        FaceEmotionEstimator = None  # type: ignore
+    FaceEmotionEstimator = None  # type: ignore
 
 try:
     from .vision_event_bus import VisionEventBus
