@@ -56,7 +56,7 @@ modules/runtime_console/
 
 ### 1. Merkezi Log Sistemini Başlatma (Tüm Modüller İçin Standart)
 ```python
-from modules.runtime_console.logwrapper import init_logging
+from modules.common.logger import init_logging
 import logging
 
 # Log altyapısını başlat ve önceki oturumu arşivle
