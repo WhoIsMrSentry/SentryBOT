@@ -32,13 +32,17 @@ def _get_remote_ollama_url(root: Path) -> str:
 
 
 class TabControls(Widget):
-    """Interactive Mission Controls & Diagnostics for Real SentryBOT Hardware and AI."""
+    """Interactive Mission Controls, Diagnostics & Teleoperation for Real SentryBOT Hardware and AI."""
 
     def __init__(self, root: Path, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.root = root
         self.gateway_url = resolve_base_url()
         self.ollama_url = _get_remote_ollama_url(root)
+        self.current_pan: float = 90.0
+        self.current_tilt: float = 90.0
+        self.current_ear_l: float = 90.0
+        self.current_ear_r: float = 90.0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="controls_container"):
@@ -46,15 +50,29 @@ class TabControls(Widget):
             yield Label("SENTRYBOT SUBSYSTEM PROCEDURES & MISSION CONTROLS", id="controls_title", markup=False)
 
             with Horizontal(id="controls_split"):
-                # Left side: Action Button Matrix
+                # Left side: Action Button Matrix & Teleop Controls
                 with Vertical(id="controls_action_panel"):
-                    yield Label("■ SUBSYSTEM CONTROLS", classes="controls_section_title", markup=False)
+                    yield Label("■ SUBSYSTEM PROCESSES", classes="controls_section_title", markup=False)
                     yield Button("🚀 Start Subsystems", id="btn_start_robot", classes="ctrl_action_btn", variant="success")
                     yield Button("⏹️ Stop Subsystems", id="btn_stop_robot", classes="ctrl_action_btn", variant="error")
                     yield Button("🔄 Restart Subsystems", id="btn_restart_robot", classes="ctrl_action_btn", variant="warning")
 
-                    yield Label("■ HARDWARE & AI DIAGNOSTICS", classes="controls_section_title", markup=False)
+                    yield Label("■ MANUAL TELEOP & JOG", classes="controls_section_title", markup=False)
+                    with Horizontal(classes="jog_row"):
+                        yield Button("◀ Pan -15°", id="btn_jog_pan_left", classes="jog_btn")
+                        yield Button("▶ Pan +15°", id="btn_jog_pan_right", classes="jog_btn")
+                    with Horizontal(classes="jog_row"):
+                        yield Button("▲ Tilt +10°", id="btn_jog_tilt_up", classes="jog_btn")
+                        yield Button("▼ Tilt -10°", id="btn_jog_tilt_down", classes="jog_btn")
+                    yield Button("🎯 Center Head (90°/90°)", id="btn_jog_center", classes="ctrl_action_btn", variant="primary")
+                    with Horizontal(classes="jog_row"):
+                        yield Button("👂 Ears Alert (120°)", id="btn_jog_ears_alert", classes="jog_btn")
+                        yield Button("👂 Ears Rest (45°)", id="btn_jog_ears_rest", classes="jog_btn")
+                    with Horizontal(classes="jog_row"):
+                        yield Button("▲ Step Fwd +100", id="btn_jog_step_fwd", classes="jog_btn")
+                        yield Button("▼ Step Rev -100", id="btn_jog_step_rev", classes="jog_btn")
 
+                    yield Label("■ HARDWARE & AI DIAGNOSTICS", classes="controls_section_title", markup=False)
                     yield Button("⚡ Run Preflight Check", id="btn_ctrl_preflight", classes="ctrl_action_btn", variant="primary")
                     yield Button("🧪 Run Full Smoke Suite", id="btn_ctrl_smoke", classes="ctrl_action_btn", variant="warning")
                     yield Button("📷 Probe Camera / IMX500", id="btn_ctrl_cam_test", classes="ctrl_action_btn")
@@ -69,7 +87,7 @@ class TabControls(Widget):
                 # Right side: Diagnostic Console Output & Interactive Prompt
                 with Vertical(id="controls_log_panel"):
                     with Horizontal(id="controls_log_header"):
-                        yield Label("■ PROCEDURE EXECUTION & DIAGNOSTIC LOG", classes="controls_section_title", markup=False)
+                        yield Label("■ AGENT CHAT, REASONING STREAM & MISSION LOG", classes="controls_section_title", markup=False)
                         yield Button("Clear Log", id="btn_ctrl_clear_log", variant="default")
 
                     yield RichLog(
@@ -80,9 +98,15 @@ class TabControls(Widget):
                         wrap=True,
                     )
 
+                    with Horizontal(id="controls_prompt_chips"):
+                        yield Button("🎯 Current Goal", id="btn_chip_goal", classes="chip_btn")
+                        yield Button("🔋 Battery & Temp", id="btn_chip_batt", classes="chip_btn")
+                        yield Button("👤 Human FOV", id="btn_chip_people", classes="chip_btn")
+                        yield Button("🔍 Self-Test", id="btn_chip_status", classes="chip_btn")
+
                     with Horizontal(id="controls_quick_cmd_bar"):
                         yield Input(
-                            placeholder="Type command prompt or question for SentryBOT agent...",
+                            placeholder="Type command prompt or question for SentryBOT agent (Press ENTER to send)...",
                             id="controls_cmd_input",
                         )
                         yield Button("Send Prompt", id="btn_ctrl_send_cmd", variant="primary")
@@ -92,6 +116,10 @@ class TabControls(Widget):
         log.write("SentryBOT Mission Controller Ready.")
         log.write(f"Target Gateway: {self.gateway_url} | Remote Ollama: {self.ollama_url}")
         log.write("All procedure buttons trigger live hardware actions and AI inference on the robot.")
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "controls_cmd_input":
+            self.send_quick_prompt()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         btn_id = event.button.id
@@ -106,6 +134,45 @@ class TabControls(Widget):
         elif btn_id == "btn_ctrl_clear_log":
             log.clear()
             log.write("Diagnostic log cleared.")
+        elif btn_id == "btn_jog_pan_left":
+            self.current_pan = max(0.0, self.current_pan - 15.0)
+            self.run_servo_jog_worker(0, self.current_pan, f"Pan Left ({self.current_pan:.0f}°)")
+        elif btn_id == "btn_jog_pan_right":
+            self.current_pan = min(180.0, self.current_pan + 15.0)
+            self.run_servo_jog_worker(0, self.current_pan, f"Pan Right ({self.current_pan:.0f}°)")
+        elif btn_id == "btn_jog_tilt_up":
+            self.current_tilt = min(180.0, self.current_tilt + 10.0)
+            self.run_servo_jog_worker(1, self.current_tilt, f"Tilt Up ({self.current_tilt:.0f}°)")
+        elif btn_id == "btn_jog_tilt_down":
+            self.current_tilt = max(0.0, self.current_tilt - 10.0)
+            self.run_servo_jog_worker(1, self.current_tilt, f"Tilt Down ({self.current_tilt:.0f}°)")
+        elif btn_id == "btn_jog_center":
+            self.current_pan = 90.0
+            self.current_tilt = 90.0
+            self.run_servo_jog_worker(0, 90.0, "Center Pan (90°)")
+            self.run_servo_jog_worker(1, 90.0, "Center Tilt (90°)")
+        elif btn_id == "btn_jog_ears_alert":
+            self.current_ear_l = 120.0
+            self.current_ear_r = 120.0
+            self.run_servo_jog_worker(2, 120.0, "Left Ear Alert")
+            self.run_servo_jog_worker(3, 120.0, "Right Ear Alert")
+        elif btn_id == "btn_jog_ears_rest":
+            self.current_ear_l = 45.0
+            self.current_ear_r = 45.0
+            self.run_servo_jog_worker(2, 45.0, "Left Ear Rest")
+            self.run_servo_jog_worker(3, 45.0, "Right Ear Rest")
+        elif btn_id == "btn_jog_step_fwd":
+            self.run_stepper_jog_worker(100)
+        elif btn_id == "btn_jog_step_rev":
+            self.run_stepper_jog_worker(-100)
+        elif btn_id == "btn_chip_goal":
+            self._fill_and_send_prompt("What is your current active autonomous goal and living need?")
+        elif btn_id == "btn_chip_batt":
+            self._fill_and_send_prompt("Report your current battery level and hardware temperatures.")
+        elif btn_id == "btn_chip_people":
+            self._fill_and_send_prompt("How many people are currently detected in camera view?")
+        elif btn_id == "btn_chip_status":
+            self._fill_and_send_prompt("Run an agent self-check on all sensor and actuation buses.")
         elif btn_id == "btn_ctrl_preflight":
             self.run_preflight_worker()
         elif btn_id == "btn_ctrl_smoke":
@@ -129,6 +196,11 @@ class TabControls(Widget):
         elif btn_id == "btn_ctrl_send_cmd":
             self.send_quick_prompt()
 
+    def _fill_and_send_prompt(self, text: str) -> None:
+        inp = self.query_one("#controls_cmd_input", Input)
+        inp.value = text
+        self.send_quick_prompt()
+
     def send_quick_prompt(self) -> None:
         inp = self.query_one("#controls_cmd_input", Input)
         text = inp.value.strip()
@@ -136,8 +208,32 @@ class TabControls(Widget):
             return
         inp.value = ""
         log = self.query_one("#controls_rich_log", RichLog)
-        log.write(f">> Input Prompt: '{text}'")
+        log.write(f"\n[bold cyan]👤 OPERATOR[/bold cyan] > {text}")
         self.run_custom_prompt_worker(text)
+
+    @work(thread=True)
+    def run_servo_jog_worker(self, index: int, deg: float, label: str) -> None:
+        log = self.query_one("#controls_rich_log", RichLog)
+        self.app.call_from_thread(log.write, f"🎮 [TELEOP JOG] {label}")
+        try:
+            from modules.arduino_serial.contract import build_set_servo_cmd
+            payload = build_set_servo_cmd(index, deg)
+            r = httpx.post(f"{self.gateway_url}/arduino/request", json=payload, timeout=1.5)
+            self.app.call_from_thread(log.write, f"• Servo command ACK: HTTP {r.status_code}")
+        except Exception as e:
+            self.app.call_from_thread(log.write, f"• Teleop servo error: {e}")
+
+    @work(thread=True)
+    def run_stepper_jog_worker(self, steps: int) -> None:
+        log = self.query_one("#controls_rich_log", RichLog)
+        self.app.call_from_thread(log.write, f"🎮 [TELEOP DRIVE] Steppers {steps:+d} steps")
+        try:
+            from modules.arduino_serial.contract import build_stepper_cmd
+            payload = build_stepper_cmd(0, "jog", steps)
+            r = httpx.post(f"{self.gateway_url}/arduino/request", json=payload, timeout=1.5)
+            self.app.call_from_thread(log.write, f"• Stepper command ACK: HTTP {r.status_code}")
+        except Exception as e:
+            self.app.call_from_thread(log.write, f"• Teleop stepper error: {e}")
 
     @work(thread=True)
     def run_preflight_worker(self) -> None:
@@ -202,7 +298,8 @@ class TabControls(Widget):
         log = self.query_one("#controls_rich_log", RichLog)
         self.app.call_from_thread(log.write, f"--> Sending live contract command to Arduino/ESP bridge via {self.gateway_url}/arduino/request...")
         try:
-            r = httpx.post(f"{self.gateway_url}/arduino/request", json={"cmd": "get_state"}, timeout=2.0)
+            from modules.arduino_serial.contract import build_simple_cmd
+            r = httpx.post(f"{self.gateway_url}/arduino/request", json=build_simple_cmd("get_state"), timeout=2.0)
             if r.status_code == 200:
                 self.app.call_from_thread(log.write, f"✔ Live Bridge Response (HTTP 200): {r.json()}")
             else:
@@ -312,7 +409,8 @@ class TabControls(Widget):
         log = self.query_one("#controls_rich_log", RichLog)
         self.app.call_from_thread(log.write, "[EMERGENCY STOP TRIGGERED] Sending zero-velocity halt frame to motors...")
         try:
-            r1 = httpx.post(f"{self.gateway_url}/arduino/request", json={"cmd": "estop"}, timeout=1.5)
+            from modules.arduino_serial.contract import build_simple_cmd
+            r1 = httpx.post(f"{self.gateway_url}/arduino/request", json=build_simple_cmd("estop"), timeout=1.5)
             self.app.call_from_thread(log.write, f"• Arduino hardware estop: HTTP {r1.status_code}")
         except Exception as e:
             self.app.call_from_thread(log.write, f"• Arduino estop network error: {e}")
@@ -327,24 +425,35 @@ class TabControls(Widget):
     @work(thread=True)
     def run_custom_prompt_worker(self, text: str) -> None:
         log = self.query_one("#controls_rich_log", RichLog)
+
+        def _log_bot_reply(raw_reply: str) -> None:
+            if "<think>" in raw_reply and "</think>" in raw_reply:
+                parts = raw_reply.split("</think>")
+                think_txt = parts[0].replace("<think>", "").strip()
+                ans_txt = parts[1].strip()
+                self.app.call_from_thread(log.write, f"⚡ [THINKING PROCESS]\n{think_txt}")
+                self.app.call_from_thread(log.write, f"🤖 [SENTRYBOT AGENT] > {ans_txt}")
+            else:
+                self.app.call_from_thread(log.write, f"🤖 [SENTRYBOT AGENT] > {raw_reply}")
+
         try:
-            r = httpx.post(f"{self.gateway_url}/agent/step", json={"query": text}, timeout=8.0)
+            r = httpx.post(f"{self.gateway_url}/agent/step", json={"query": text}, timeout=10.0)
             if r.status_code == 200:
                 data = r.json()
                 reply = data.get("text") or data.get("response") or str(data)
-                self.app.call_from_thread(log.write, f"Bot: {reply}")
+                _log_bot_reply(str(reply))
                 return
         except Exception:
             pass
 
         try:
             # Fallback to agent/chat compatibility endpoint
-            r_chat = httpx.post(f"{self.gateway_url}/agent/chat", json={"prompt": text}, timeout=8.0)
+            r_chat = httpx.post(f"{self.gateway_url}/agent/chat", json={"prompt": text}, timeout=10.0)
             if r_chat.status_code == 200:
                 data = r_chat.json()
                 reply = data.get("response") or str(data)
-                self.app.call_from_thread(log.write, f"Bot: {reply}")
+                _log_bot_reply(str(reply))
             else:
                 self.app.call_from_thread(log.write, f"• Gateway agent HTTP {r_chat.status_code}: {r_chat.text[:120]}")
         except Exception as exc:
-            self.app.call_from_thread(log.write, f"⚠ Agent query error ({exc}). Ensure gateway is running on {self.gateway_url}.")
+            self.app.call_from_thread(log.write, f"⚠ Agent communication error: {exc}")
