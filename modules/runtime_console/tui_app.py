@@ -20,11 +20,19 @@ from .services.console_helpers import is_pc_test
 from .themes import THEMES
 from .widgets.modal_sysinfo import SysInfoModal
 from .widgets.modal_theme import ThemeSelectorModal
+from .widgets.modal_memory import MemoryExplorerModal
 from .widgets.tab_config import TabConfig
 from .widgets.tab_controls import TabControls
 from .widgets.tab_logs import TabLogs
 from .widgets.tab_main import TabMain, _progress_bar
-from .widgets.tab_telemetry import TabTelemetry
+from .widgets.tab_telemetry import (
+    TabTelemetry,
+    format_ascii_viewfinder,
+    format_doa_radar,
+    format_range_radar,
+    format_servo_bar,
+    format_vu_meter,
+)
 
 # Log sources to suppress from the UI (noisy HTTP connection internals)
 _SUPPRESSED_LOG_SOURCES = (
@@ -55,6 +63,8 @@ class SentryBotApp(App[int]):
         ("ctrl+p", "action_theme_select", "Theme"),
         ("f7", "action_sysinfo", "SysInfo"),
         ("i", "action_sysinfo", "SysInfo"),
+        ("f8", "action_memory", "Memory"),
+        ("m", "action_memory", "Memory"),
         ("ctrl+r", "action_restart_robot", "Restart"),
         ("ctrl+k", "action_stop_robot", "Stop"),
         ("ctrl+l", "action_clear_logs", "Clear Logs"),
@@ -108,6 +118,9 @@ class SentryBotApp(App[int]):
             yield Label(f"■ {APP} CONTROL CENTER", id="header_title", markup=False)
             yield Label(status_badge, id="header_status_badge", markup=False)
             yield Label(f"{VERSION} | THEME: {theme_label} | Subsystems Active", id="header_info_bar", markup=False)
+
+        # Global System Alert / Emergency HUD
+        yield Label("", id="app_alert_banner", classes="alert_hidden", markup=False)
 
         # 5 High-Utility Dense Tabs
         with TabbedContent(initial="tab_main", id="app_tabs"):
@@ -267,38 +280,52 @@ class SentryBotApp(App[int]):
             )
 
             # Update Subsystem Matrix directly from Gateway live status
+            failed_modules = set(status_data.get("failed", []))
+            modules_dict = status_data.get("modules", {}) if isinstance(status_data.get("modules"), dict) else {}
+
             if gateway_online and started_modules:
                 tab_main.update_service_card("CORE", "OK", f"Gateway active ({len(started_modules)} services mounted)")
                 
                 # AI
-                if "ollama" in started_modules or "agent_core" in started_modules:
+                if "agent_core" in failed_modules or "ollama" in failed_modules:
+                    tab_main.update_service_card("AI", "ERR", "LLM inference failure reported")
+                elif "ollama" in started_modules or "agent_core" in started_modules:
                     tab_main.update_service_card("AI", "OK", "LLM reasoning loop ready")
                 else:
                     tab_main.update_service_card("AI", "STANDBY", "Rule-based companion autonomy", is_pc_expected=is_pc)
 
                 # VISION
                 faces_cnt = int(cam_data.get("faces_detected", 0))
-                if cam_data.get("capture", {}).get("running") or cam_data.get("ok"):
+                cam_ok = cam_data.get("capture", {}).get("running") or cam_data.get("ok")
+                if "camera" in failed_modules:
+                    tab_main.update_service_card("VISION", "ERR", "Camera pipeline failure", is_pc_expected=is_pc)
+                elif cam_ok:
                     tab_main.update_service_card("VISION", "OK", f"Camera active ({faces_cnt} face{'s' if faces_cnt != 1 else ''})")
                 elif "camera" in started_modules:
                     tab_main.update_service_card("VISION", "OK" if not is_pc else "PC-SIM", "Camera module mounted", is_pc_expected=is_pc)
 
                 # AUDIO
-                if "wakeword" in started_modules or "speech" in started_modules:
+                if "speech" in failed_modules or "wakeword" in failed_modules:
+                    tab_main.update_service_card("AUDIO", "WARN", "Audio hardware degraded")
+                elif "wakeword" in started_modules or "speech" in started_modules:
                     tab_main.update_service_card("AUDIO", "OK", "Stereo I2S & WakeWord active")
                 else:
                     tab_main.update_service_card("AUDIO", "STANDBY", "Microphone pipeline ready", is_pc_expected=is_pc)
 
                 # TTS
-                if "speak" in started_modules:
+                if "speak" in failed_modules:
+                    tab_main.update_service_card("TTS", "WARN", "TTS speech synthesizer degraded")
+                elif "speak" in started_modules:
                     tab_main.update_service_card("TTS", "OK", "Piper TTS speech synthesis online")
                 else:
                     tab_main.update_service_card("TTS", "STANDBY", "TTS voice ready", is_pc_expected=is_pc)
 
                 # MOVE
-                pan_now = state_data.get("servo_pan", 90.0)
-                ear_now = state_data.get("ear_l", 90.0)
-                if "arduino" in started_modules or "piservo" in started_modules:
+                pan_now = float(state_data.get("servo_pan", 90.0))
+                ear_now = float(state_data.get("ear_l", 90.0))
+                if "arduino" in failed_modules or "piservo" in failed_modules:
+                    tab_main.update_service_card("MOVE", "ERR", "Motion bridge disconnected", is_pc_expected=is_pc)
+                elif "arduino" in started_modules or "piservo" in started_modules:
                     tab_main.update_service_card("MOVE", "OK", f"Head {pan_now:.0f}° | Ears {ear_now:.0f}° (Arbiter Armed)")
                 else:
                     tab_main.update_service_card("MOVE", "STANDBY", "Motion arbiter standby", is_pc_expected=is_pc)
@@ -417,61 +444,67 @@ class SentryBotApp(App[int]):
         try:
             tab_telem = self.query_one("#view_telemetry", TabTelemetry)
 
-            # Quad 1: IMU / Distance / Spatial
+            # Quad 1: IMU / Distance / Spatial Pose & Range Radar
             pose = str(state_data.get("current_pose") or "Normal Standby")
             motion = str(state_data.get("motion_state") or ("Stationary" if gateway_online else "Standby"))
+            radar_range = format_range_radar(dist)
 
             imu_info = (
-                f"• IMU Pitch / Roll : {pitch:+5.1f}° / {roll:+5.1f}° (Calibrated)\n"
+                f"• IMU Pitch / Roll : {pitch:+5.1f}° / {roll:+5.1f}° (Stable Pose)\n"
                 f"• Ultrasonic Range : {dist_badge}\n"
+                f"• Obstacle Radar   : {radar_range}\n"
                 f"• Current Pose     : '{pose}'\n"
-                f"• DoA Voice Angle  : {doa:.0f}° (I2S Stereo GCC-PHAT)\n"
-                f"• Motion State     : {motion}\n"
-                f"• Safety Brake     : {brake_stat}"
+                f"• Motion State     : {motion} | Safety Brake: {brake_stat}"
             )
 
-            # Quad 2: ESP32 bridge / servos
+            # Quad 2: ESP32 bridge / servos & deflection bars
             serial_port = str(state_data.get("serial_port") or ("/dev/ttyUSB0" if not is_pc else "SIM_PORT"))
             protocol = str(state_data.get("protocol") or "strict_ndjson_contract_v2")
             stepper_speed = int(state_data.get("stepper_speed", 0))
+            pan_bar = format_servo_bar(pan)
+            tilt_bar = format_servo_bar(tilt)
 
             bridge_info = (
                 f"• Serial Device    : {serial_port} (115200 baud)\n"
                 f"• Protocol Schema  : {protocol}\n"
-                f"• Pan / Tilt Servos: Pan: {pan:4.1f}° | Tilt: {tilt:4.1f}°\n"
+                f"• Pan / Tilt Servos: Pan: {pan:4.1f}° {pan_bar} | Tilt: {tilt:4.1f}° {tilt_bar}\n"
                 f"• Ear Servos (L/R) : L: {ear_l:3.0f}° | R: {ear_r:3.0f}° (Pi GPIO 12/13)\n"
-                f"• Stepper Motors   : PID Speed: {stepper_speed} steps/s\n"
+                f"• Stepper Motors   : PID Speed: {stepper_speed} steps/s [IDLE]\n"
                 f"• Lasers / Buzzer  : Laser: {laser_stat} | Buzzer: Ready"
             )
 
-            # Quad 3: Vision pipeline
+            # Quad 3: Vision pipeline with ASCII Viewfinder
             cam_driver = str(cam_data.get("driver") or ("PiCamera2 / IMX500" if not is_pc else "OpenCV Virtual Capture"))
             cam_enabled = bool(cam_data.get("enabled", gateway_online))
             proc_mode = str(cam_data.get("processing_mode") or "Hybrid Edge / Remote")
             vlm_status = "Online (Bridge Ready)" if gateway_online else "Standby"
+            ascii_canvas = format_ascii_viewfinder(faces, driver=cam_driver, has_frame=cam_enabled)
 
             vision_info = (
                 f"• Device Driver    : {cam_driver}\n"
-                f"• Camera Enabled   : {'YES' if cam_enabled else 'NO'}\n"
-                f"• Processing Mode  : {proc_mode}\n"
-                f"• Active Tracks    : {faces} Human Trackers\n"
-                f"• Visual Buffer    : Shared Memory Frame Ring\n"
+                f"• Camera Stream    : {'RUNNING [LIVE]' if cam_enabled else 'STANDBY'} ({proc_mode})\n"
+                f"• Active Tracks    : {faces} Human Target(s) Locked\n"
+                f"• Viewport Canvas  :\n"
+                f"{ascii_canvas}\n"
                 f"• VLM Remote Bridge: {vlm_status}"
             )
 
-            # Quad 4: Voice / AI / Needs
+            # Quad 4: Voice Audio Level (VU-Meter), DoA Radar & Living Needs
             wakeword = str(state_data.get("wakeword_engine") or "openWakeWord (hey sentry)")
             stt = str(state_data.get("stt_backend") or "Google Multi-Lingual STT")
             tts = str(state_data.get("tts_backend") or "Piper Neural Voice (tr_TR)")
             batt_val = float(state_data.get("battery", 100.0))
             temp_val = float(state_data.get("temp_c", 45.0))
+            mic_energy = float(state_data.get("mic_energy", 35.0 if gateway_online else 0.0))
+            vad_speaking = bool(state_data.get("vad_speaking", False))
+            vu_bar = format_vu_meter(mic_energy, vad_active=vad_speaking)
+            doa_compass = format_doa_radar(doa)
 
             ai_info = (
-                f"• I2S Mic Array    : Stereo 16kHz PCM (Energy VAD)\n"
-                f"• Wakeword Engine  : {wakeword}\n"
-                f"• STT / TTS Voice  : {stt} & {tts}\n"
+                f"• I2S Mic Level    : {vu_bar}\n"
+                f"• Direction of Arrival (DoA Radar):\n"
+                f"{doa_compass}\n"
                 f"• Living Needs     : Curiosity: {c_val:.0f}% | Boredom: {b_val:.0f}%\n"
-                f"• Social / Rest    : Social: {s_val:.0f}% | Rest: {r_val:.0f}%\n"
                 f"• Homeostasis      : Batt: {batt_val:.0f}% | Core Temp: {temp_val:.0f}°C"
             )
 
@@ -483,6 +516,21 @@ class SentryBotApp(App[int]):
                 curiosity_val=c_val,
                 ping_val=latency_ms if gateway_online else 0.0,
             )
+        except Exception:
+            pass
+
+        # ---- GLOBAL ALERT BANNER CHECK ----
+        try:
+            banner = self.query_one("#app_alert_banner", Label)
+            is_estop = state_data.get("operational") == "estop" or brake_stat == "Disarmed"
+            if is_estop:
+                banner.update("🛑 [EMERGENCY STOP ACTIVE] HARDWARE INTERLOCK ENGAGED — MOTOR CHANNELS HALTED")
+                banner.remove_class("alert_hidden")
+                banner.add_class("alert_visible")
+            else:
+                banner.update("")
+                banner.remove_class("alert_visible")
+                banner.add_class("alert_hidden")
         except Exception:
             pass
 
@@ -509,6 +557,9 @@ class SentryBotApp(App[int]):
 
     def action_sysinfo(self) -> None:
         self.push_screen(SysInfoModal(self.root))
+
+    def action_memory(self) -> None:
+        self.push_screen(MemoryExplorerModal(self.root))
 
     async def action_restart_robot(self) -> None:
         await self.robot_manager.restart()
@@ -576,6 +627,10 @@ class SentryBotApp(App[int]):
 
     async def on_unmount(self) -> None:
         self.log_streamer.stop()
+        try:
+            await self.gateway_probe.aclose()
+        except Exception:
+            pass
         if self.robot_manager.is_running:
             await self.robot_manager.stop()
 
