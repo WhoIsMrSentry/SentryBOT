@@ -65,6 +65,22 @@ class LedWritePolicy:
         self._oled_owner = ""
         self._leases: Dict[str, Dict[str, Any]] = {"lights": {}, "oled": {}}
 
+    def configure(self, policy: Optional[Mapping[str, Any]] = None) -> None:
+        """Update policy configuration in place without losing active leases."""
+        if not isinstance(policy, Mapping) or not policy:
+            return
+        with self._lock:
+            merged = dict(self._policy)
+            for key, value in policy.items():
+                if key in ("priorities", "channels") and isinstance(value, Mapping):
+                    existing = merged.get(key)
+                    base_map = dict(existing) if isinstance(existing, Mapping) else {}
+                    base_map.update(value)
+                    merged[key] = base_map
+                else:
+                    merged[key] = value
+            self._policy = merged
+
     # ── configuration helpers ────────────────────────────────────────────
     def _priority_for(self, source: str, requested: Optional[float]) -> float:
         if requested is not None:
@@ -243,6 +259,8 @@ def get_shared_policy(policy_cfg: Optional[Mapping[str, Any]] = None) -> LedWrit
             if not cfg.get("force_sources"):
                 cfg["force_sources"] = list(FORCE_SOURCES)
             _SHARED_POLICY = LedWritePolicy(cfg)
+        elif isinstance(policy_cfg, Mapping) and bool(policy_cfg):
+            _SHARED_POLICY.configure(dict(policy_cfg))
         return _SHARED_POLICY
 
 

@@ -3,15 +3,17 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+from .base import BaseSqliteRepo
+
 if TYPE_CHECKING:
     from ..db import SocialDB
 
 
-class SightingsRepo:
+class SightingsRepo(BaseSqliteRepo):
     """Append-only sighting log per person."""
 
-    def __init__(self, db: "SocialDB") -> None:
-        self.db = db
+    table_name = "sightings"
+    ts_field = "ts"
 
     def record(
         self,
@@ -43,15 +45,5 @@ class SightingsRepo:
         )
         return [{k: r[k] for k in r.keys()} for r in rows]
 
-    def recent(self, limit: int = 20) -> List[Dict[str, Any]]:
-        rows = self.db.fetchall(
-            "SELECT * FROM sightings ORDER BY ts DESC LIMIT ?",
-            (max(1, int(limit)),),
-        )
-        return [{k: r[k] for k in r.keys()} for r in rows]
-
     def purge_older_than(self, max_age_days: float = 7.0) -> int:
-        cutoff = time.time() - (max_age_days * 86400.0)
-        with self.db.transaction() as conn:
-            cur = conn.execute("DELETE FROM sightings WHERE ts < ?", (cutoff,))
-            return int(cur.rowcount or 0)
+        return self.prune_older_than(days=max_age_days)

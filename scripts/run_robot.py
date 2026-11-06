@@ -60,7 +60,7 @@ def _stop_started_services(app) -> None:
 
 def main() -> None:
     try:
-        from modules.runtime_console.logwrapper import init_logging  # type: ignore
+        from modules.common.logger import init_logging  # type: ignore
 
         init_logging()
     except Exception as exc:

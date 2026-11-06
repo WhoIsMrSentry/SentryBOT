@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
+
+from .base import BaseSqliteRepo
 
 if TYPE_CHECKING:
     from ..db import SocialDB
 
 
-class OwnerSessionsRepo:
+class OwnerSessionsRepo(BaseSqliteRepo):
     """Tracks owner presence windows for the owner_guard layer."""
 
-    def __init__(self, db: "SocialDB") -> None:
-        self.db = db
+    table_name = "owner_sessions"
+    ts_field = "start_ts"
 
     def start(self, *, source: str = "", authority_level: int = 5, notes: str = "") -> int:
         with self.db.transaction() as conn:
@@ -45,10 +47,3 @@ class OwnerSessionsRepo:
             "SELECT * FROM owner_sessions WHERE end_ts IS NULL ORDER BY start_ts DESC LIMIT 1"
         )
         return {k: row[k] for k in row.keys()} if row else None
-
-    def recent(self, limit: int = 20) -> List[Dict[str, Any]]:
-        rows = self.db.fetchall(
-            "SELECT * FROM owner_sessions ORDER BY start_ts DESC LIMIT ?",
-            (max(1, int(limit)),),
-        )
-        return [{k: r[k] for k in r.keys()} for r in rows]

@@ -783,6 +783,130 @@ SysInfoModal, ThemeSelectorModal {
     text-style: bold;
 }
 
+/* =========================================================================
+   GLOBAL SYSTEM ALERT / EMERGENCY HUD
+   ========================================================================= */
+
+#app_alert_banner {
+    dock: top;
+    width: 100%;
+    height: 1;
+    content-align: center middle;
+    text-style: bold;
+    color: #ffffff;
+    background: #e60000;
+}
+
+.alert_hidden {
+    display: none;
+}
+
+.alert_visible {
+    display: block;
+}
+
+/* =========================================================================
+   TELEOP JOG & PROMPT CHIPS
+   ========================================================================= */
+
+.jog_row {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 1;
+    align: center middle;
+}
+
+.jog_btn {
+    width: 1fr;
+    margin: 0 1;
+    text-style: bold;
+    min-width: 12;
+}
+
+#controls_prompt_chips {
+    layout: horizontal;
+    height: 3;
+    margin-top: 1;
+    align: center middle;
+}
+
+.chip_btn {
+    width: 1fr;
+    margin-right: 1;
+    text-style: bold;
+    background: $secondary;
+    color: #ffffff;
+}
+
+.chip_btn:hover {
+    background: $primary;
+    color: #000000;
+}
+
+/* =========================================================================
+   COGNITIVE MEMORY / SOCIAL DB EXPLORER MODAL
+   ========================================================================= */
+
+#memory_dialog {
+    width: 86;
+    height: 36;
+    background: $surface;
+    border: heavy $primary;
+    padding: 1 2;
+    layout: vertical;
+    align: center middle;
+}
+
+#memory_title {
+    color: #FA1E4E;
+    text-style: bold;
+    margin-bottom: 1;
+    content-align: center middle;
+    width: 100%;
+}
+
+#memory_search_bar {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 1;
+    align: center middle;
+}
+
+#memory_query_input {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#memory_search_btn {
+    min-width: 12;
+    margin-right: 1;
+}
+
+#memory_refresh_btn {
+    min-width: 12;
+}
+
+#memory_scroll {
+    height: 1fr;
+    background: $background;
+    border: solid $secondary;
+    padding: 1;
+    overflow-y: auto;
+}
+
+#memory_content {
+    color: #cccccc;
+}
+
+#memory_close_btn {
+    dock: bottom;
+    margin-top: 1;
+    width: 100%;
+    background: $primary;
+    color: #000000;
+    text-style: bold;
+}
+
 /* Global Footer */
 Footer {
     background: $surface;

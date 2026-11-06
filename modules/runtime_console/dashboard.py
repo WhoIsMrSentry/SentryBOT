@@ -241,5 +241,16 @@ class RuntimeConsoleLogHandler(logging.Handler):
 
     def _write(self, text: str) -> None:
         with self._lock:
-            sys.stdout.write(text.rstrip() + "\n")
-            sys.stdout.flush()
+            try:
+                sys.stdout.write(text.rstrip() + "\n")
+            except (UnicodeEncodeError, UnicodeError):
+                encoding = getattr(sys.stdout, "encoding", "utf-8") or "utf-8"
+                cleaned = text.rstrip().encode(encoding, errors="replace").decode(encoding)
+                try:
+                    sys.stdout.write(cleaned + "\n")
+                except Exception:
+                    pass
+            try:
+                sys.stdout.flush()
+            except Exception:
+                pass

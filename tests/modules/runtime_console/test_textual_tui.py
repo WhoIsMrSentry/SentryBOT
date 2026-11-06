@@ -255,8 +255,85 @@ def test_tab_controls_subsystem_process_buttons(tmp_path: Path) -> None:
             assert "btn_start_robot" in buttons
             assert "btn_stop_robot" in buttons
             assert "btn_restart_robot" in buttons
+            # Teleop jog buttons
+            assert "btn_jog_pan_left" in buttons
+            assert "btn_jog_pan_right" in buttons
+            assert "btn_jog_tilt_up" in buttons
+            assert "btn_jog_tilt_down" in buttons
+            assert "btn_jog_center" in buttons
+            # Quick prompt chips
+            assert "btn_chip_goal" in buttons
+            assert "btn_chip_batt" in buttons
 
     asyncio.run(_async_runner())
+
+
+def test_telemetry_ascii_visualizers() -> None:
+    from modules.runtime_console.widgets.tab_telemetry import (
+        format_ascii_viewfinder,
+        format_vu_meter,
+        format_doa_radar,
+        format_range_radar,
+        format_servo_bar,
+    )
+
+    # ASCII Viewfinder
+    canvas_empty = format_ascii_viewfinder(0, has_frame=True)
+    assert "VIEWPORT" in canvas_empty
+    assert "NO TARGET IN FOV" in canvas_empty
+
+    canvas_tracked = format_ascii_viewfinder(2, has_frame=True)
+    assert "PERSON (2 TRACKED)" in canvas_tracked
+    assert "(o o)" in canvas_tracked
+
+    canvas_off = format_ascii_viewfinder(0, has_frame=False)
+    assert "STANDBY" in canvas_off
+
+    # VU-Meter
+    vu = format_vu_meter(50.0, vad_active=True)
+    assert "dBFS" in vu
+    assert "VAD: VOICE" in vu
+
+    vu_silence = format_vu_meter(0.0, vad_active=False)
+    assert "VAD: SILENCE" in vu_silence
+
+    # DoA Radar
+    radar = format_doa_radar(90.0)
+    assert "0°" in radar and "180°" in radar
+    assert "▲" in radar
+
+    # Range Radar
+    rng_clear = format_range_radar(120.0)
+    assert "CLEAR" in rng_clear
+    rng_obs = format_range_radar(15.0)
+    assert "OBSTACLE" in rng_obs
+
+    # Servo Bar
+    s_bar = format_servo_bar(90.0)
+    assert "█" in s_bar
+
+
+def test_memory_explorer_modal(tmp_path: Path) -> None:
+    from modules.runtime_console.widgets.modal_memory import MemoryExplorerModal
+
+    modal = MemoryExplorerModal(root=tmp_path)
+    assert modal.root == tmp_path
+    assert modal.db_path == tmp_path / "data" / "social.sqlite3"
+
+
+def test_async_gateway_probe_client_lifecycle() -> None:
+    probe = AsyncGatewayProbe("http://127.0.0.1:8080")
+    client1 = probe._get_client()
+    assert client1 is not None
+    client2 = probe._get_client()
+    assert client1 is client2  # Connection reuse
+
+    async def _close():
+        await probe.aclose()
+        assert probe._client is None
+
+    asyncio.run(_close())
+
 
 
 

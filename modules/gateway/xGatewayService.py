@@ -15,7 +15,7 @@ logger = logging.getLogger("gateway.service")
 
 # Optional central logging
 try:
-    from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
+    from modules.common.logger import init_logging as _init_global_logging  # type: ignore
 
     _init_global_logging()
 except Exception as exc:

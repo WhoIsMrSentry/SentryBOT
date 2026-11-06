@@ -10,7 +10,7 @@ from .services.runner import NeoRunner
 from .services.driver import NeoDriverConfig
 
 try:
-    from modules.runtime_console.logwrapper import init_logging as _init_global_logging  # type: ignore
+    from modules.common.logger import init_logging as _init_global_logging  # type: ignore
     _init_global_logging()
 except Exception:
     pass

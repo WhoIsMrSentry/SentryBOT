@@ -134,9 +134,10 @@ class CompanionLedRenderMixin:
         self._driver.show()
 
     def _render_face_frame(self) -> None:
+        now = time.monotonic()
         with self._lock:
             frame = dict(self._face_frame)
-            expired = bool(frame) and time.monotonic() >= self._face_frame_expires_at
+            expired = bool(frame) and now >= self._face_frame_expires_at
             if expired:
                 self._face_frame = {}
                 self._mode = "eye"
@@ -147,7 +148,7 @@ class CompanionLedRenderMixin:
         eye_color = _parse_hex_color(eye.get("color"), self._eye_color)
         eye_brightness = self._bounded(eye.get("brightness", 0.75), 0.75)
         pulse_hz = max(0.0, float(eye.get("pulse_hz", 0.0) or 0.0))
-        pulse = 1.0 if pulse_hz <= 0.0 else 0.70 + 0.30 * (0.5 + 0.5 * math.sin(time.monotonic() * pulse_hz * 2.0 * math.pi))
+        pulse = 1.0 if pulse_hz <= 0.0 else 0.70 + 0.30 * (0.5 + 0.5 * math.sin(now * pulse_hz * 2.0 * math.pi))
         for rel in range(self._jewel_count):
             idx = self._jewel_start + rel
             if idx >= self._driver.num_leds:
@@ -174,7 +175,7 @@ class CompanionLedRenderMixin:
                 progress = logical_rel / max(1, stick.count - 1)
                 arch_factor = 1.0 - arch + arch * math.sin(progress * math.pi)
                 level = self._bounded(intensity + slope * (progress - 0.5), intensity) * arch_factor
-                level *= 0.82 + 0.18 * math.sin((time.monotonic() + phase) * 2.0 * math.pi)
+                level *= 0.82 + 0.18 * math.sin((now + phase) * 2.0 * math.pi)
                 self._driver.set(idx, int(color[0] * level), int(color[1] * level), int(color[2] * level))
         self._driver.show()
 

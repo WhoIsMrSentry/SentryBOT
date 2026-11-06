@@ -86,6 +86,8 @@ class xArduinoSerialService(RfidHandlerMixin, SerialLoopsMixin, EspTransportMixi
         self._ser: Optional[SerialTransport] = None
         self._rx_thread: Optional[threading.Thread] = None
         self._rx_queue: "Queue[Dict[str, Any]]" = Queue(maxsize=100)
+        self._unmatched_responses: Dict[int, Dict[str, Any]] = {}
+        self._unmatched_max_size: int = 32
         self._stop = threading.Event()
         self._hb_thread: Optional[threading.Thread] = None
         self._last_hb = 0.0
@@ -114,7 +116,26 @@ class xArduinoSerialService(RfidHandlerMixin, SerialLoopsMixin, EspTransportMixi
         self._request_seq = 0
         self._request_seq_lock = threading.Lock()
         self._started = False
+
+        watchdog_cfg = self.cfg.get("watchdog", {}) or {}
+        watchdog_enabled = bool(watchdog_cfg.get("enabled", True))
+        watchdog_timeout = float(watchdog_cfg.get("timeout_s", 3.0))
+        self.watchdog: Optional[Any] = None
+        if watchdog_enabled:
+            from .services.safety_watchdog import HardwareSafetyWatchdog
+            self.watchdog = HardwareSafetyWatchdog(
+                timeout_s=watchdog_timeout,
+                on_estop_callback=self._on_watchdog_estop,
+            )
+
         self._start_writer_thread()
+
+    def _on_watchdog_estop(self, reason: str) -> None:
+        self._logger.warning("Emergency Stop dispatched by Safety Watchdog: %s", reason)
+        try:
+            self.send({"cmd": "estop", "reason": reason}, bypass_arbiter=True)
+        except Exception:
+            pass
 
     def _attach_head_arbiter_wrapper(self, head_arbiter: Any, bypass_for_testing: bool = False) -> None:
         from .head_arbiter_integration import HeadArbiterTransportWrapper
@@ -206,11 +227,15 @@ class xArduinoSerialService(RfidHandlerMixin, SerialLoopsMixin, EspTransportMixi
                 target=self._heartbeat_loop, name="arduino-hb", daemon=True
             )
             self._hb_thread.start()
+        if self.watchdog is not None:
+            self.watchdog.start()
         self._started = True
 
     def stop(self) -> None:
         self._started = False
         self._stop.set()
+        if self.watchdog is not None:
+            self.watchdog.stop()
         try:
             self._write_queue.put(None)
         except Exception:
@@ -296,9 +321,13 @@ class xArduinoSerialService(RfidHandlerMixin, SerialLoopsMixin, EspTransportMixi
         echo_samples: List[str] = []
         for attempt in range(0, max_retries + 1):
             self.send(obj, bypass_arbiter=True)
+            if want_seq is not None and want_seq in self._unmatched_responses:
+                return self._unmatched_responses.pop(want_seq)
             t0 = time.time()
             try:
                 while True:
+                    if want_seq is not None and want_seq in self._unmatched_responses:
+                        return self._unmatched_responses.pop(want_seq)
                     elapsed = time.time() - t0
                     remaining = timeout - elapsed
                     if remaining <= 0:
@@ -334,6 +363,15 @@ class xArduinoSerialService(RfidHandlerMixin, SerialLoopsMixin, EspTransportMixi
                             continue
                         if isinstance(msg, dict) and ("ok" in msg or "err" in msg):
                             if not self._response_matches_request(msg, want_seq):
+                                got_seq = self._response_seq(msg)
+                                if got_seq is not None:
+                                    if (
+                                        len(self._unmatched_responses) >= self._unmatched_max_size
+                                        and got_seq not in self._unmatched_responses
+                                    ):
+                                        oldest_seq = next(iter(self._unmatched_responses))
+                                        self._unmatched_responses.pop(oldest_seq, None)
+                                    self._unmatched_responses[int(got_seq)] = msg
                                 continue
                             return msg
                         continue

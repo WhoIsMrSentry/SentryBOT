@@ -30,9 +30,11 @@ except Exception:
     from modules.vlm_bridge.services.semantic_describer import SemanticDescriber  # type: ignore
 
 try:
-    from .people_memory import PeopleMemory
+    from modules.cognitive_memory.services.people_memory import PeopleMemory
 except Exception:
-    from modules.cognitive_memory.services.people_memory import PeopleMemory  # type: ignore
+    class PeopleMemory:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            pass
 
 try:
     from .action_dispatcher import VisionActionDispatcher

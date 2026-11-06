@@ -191,7 +191,22 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
         return parsed, annotated
 
     def _detect_face_boxes(self, frame: Any) -> List[Tuple[int, int, int, int]]:
-        if cv2 is None or self._face_cascade is None or self._face_cascade.empty():
+        if cv2 is None or frame is None or not getattr(frame, "size", 0):
+            return []
+
+        # 1. Try YuNet deep learning detector first (<15ms, landmark-aware)
+        try:
+            from .yunet_detector import get_yunet_detector
+            yunet = get_yunet_detector()
+            if yunet is not None and yunet.is_available:
+                detections = yunet.detect(frame)
+                if detections:
+                    return [tuple(d["bbox"]) for d in detections if len(d.get("bbox", [])) == 4]  # type: ignore
+        except Exception as exc:
+            logger.debug("YuNet face detection fallback: %s", exc)
+
+        # 2. Fallback to Haar Cascade
+        if self._face_cascade is None or self._face_cascade.empty():
             return []
         try:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)

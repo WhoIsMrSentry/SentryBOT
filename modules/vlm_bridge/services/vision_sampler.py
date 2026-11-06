@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 logger = logging.getLogger("vlm_bridge.vision_sampler")
 
@@ -24,6 +24,31 @@ class VisionSampler:
         self._last_call_time: float = 0.0
         self._call_count: int = 0
         self._pending_user_question: bool = False
+        self._last_scene_labels: Optional[frozenset[str]] = None
+
+    def note_scene_signature(self, labels: Iterable[str]) -> float:
+        """Compute normalized Jaccard distance against the previous label signature and update state."""
+        current = frozenset(str(x).strip().lower() for x in (labels or []) if str(x).strip())
+        prev = self._last_scene_labels
+        self._last_scene_labels = current
+        if prev is None:
+            return 1.0 if current else 0.0
+        if prev == current:
+            return 0.0
+        union = prev | current
+        if not union:
+            return 0.0
+        return len(prev ^ current) / len(union)
+
+    def should_sample_on_scene_change(self, labels: List[str], *, follow_mode_active: bool = False) -> bool:
+        """Differential keyframe trigger when detected object label signature changes."""
+        delta = self.note_scene_signature(labels)
+        if delta <= 0.0:
+            return False
+        return self.should_call_vlm(
+            scene_change_score=max(delta, self.scene_change_threshold),
+            follow_mode_active=follow_mode_active,
+        )
 
     def should_call_vlm(
         self, *, new_person: bool = False, owner_seen: bool = False,

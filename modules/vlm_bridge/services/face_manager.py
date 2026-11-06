@@ -16,6 +16,12 @@ try:
 except Exception:
     from modules.vlm_bridge.services.cascade_loader import load_frontal_face_cascade  # type: ignore
 
+try:
+    from .yunet_detector import get_sface_recognizer, get_yunet_detector
+except Exception:
+    get_yunet_detector = lambda: None  # type: ignore
+    get_sface_recognizer = lambda: None  # type: ignore
+
 logger = logging.getLogger("vlm_bridge.face_manager")
 
 
@@ -57,15 +63,19 @@ class FaceManager:
             try:
                 from modules.cognitive_memory.services.repositories import SocialDb
                 db_path = os.path.join(self.data_dir, "social.sqlite3")
-                social_db = SocialDb(db_path=db_path)
+                social_db = SocialDb(path=db_path)
             except Exception:
                 social_db = None
         self._social_db = social_db
 
         self.known_face_names: List[str] = []
         self._known_descriptors: Dict[str, np.ndarray] = {}
+        self._known_embeddings: Dict[str, np.ndarray] = {}
+        self._last_detected_raw_face: Optional[np.ndarray] = None
 
         self._ensure_data_dir()
+        self._yunet = get_yunet_detector()
+        self._sface = get_sface_recognizer()
         self._cascade = load_frontal_face_cascade(logger)
         self._orb = cv2.ORB_create(nfeatures=700)
         self._flann = cv2.FlannBasedMatcher(
@@ -93,6 +103,23 @@ class FaceManager:
             return None
 
     def _extract_largest_face_roi(self, image: np.ndarray) -> Optional[np.ndarray]:
+        if image is None or not hasattr(image, "shape"):
+            return None
+
+        # 1. Try YuNet (Deep Learning, robust against angles/lighting)
+        if self._yunet is not None and getattr(self._yunet, "is_available", False):
+            try:
+                yfaces = self._yunet.detect(image)
+                if yfaces:
+                    best_yface = max(yfaces, key=lambda f: (f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1]))
+                    x1, y1, x2, y2 = best_yface["bbox"]
+                    self._last_detected_raw_face = best_yface.get("raw_face")
+                    if x2 > x1 and y2 > y1:
+                        return image[y1:y2, x1:x2].copy()
+            except Exception as exc:
+                logger.debug("YuNet face extraction failed, falling back to Haar: %s", exc)
+
+        # 2. Fallback to Haar Cascade
         gray = self._to_gray(image)
         if gray is None:
             return None
@@ -172,11 +199,31 @@ class FaceManager:
         return best_name, best_score, best_good
 
     def _load_faces_from_social_db(self) -> bool:
+        loaded = False
+        try:
+            sface_rows = self._social_db.face_descriptors.list_all_by_kind("sface")
+            for _pid, row in sface_rows:
+                try:
+                    blob = bytes(row.get("blob") or b"")
+                    if not blob or len(blob) < 128 * 4:
+                        continue
+                    arr = np.frombuffer(blob, dtype=np.float32)
+                    if arr.size == 128:
+                        name = str(row.get("display_name") or row.get("canonical_name") or "").strip()
+                        if name:
+                            self._known_embeddings[name] = arr / max(1e-9, float(np.linalg.norm(arr)))
+                            loaded = True
+                except Exception:
+                    continue
+        except Exception as exc:
+            logger.debug("sface descriptors load from social_db skipped: %s", exc)
+
         try:
             rows = self._social_db.face_descriptors.list_all_by_kind("orb")
         except Exception as exc:
             logger.warning("face_descriptors load from social_db failed: %s", exc)
-            return False
+            return loaded
+
         for _pid, row in rows:
             try:
                 rows_n = int(row.get("rows") or 0)
@@ -194,11 +241,14 @@ class FaceManager:
                 if not name:
                     continue
                 self._known_descriptors[name] = arr
+                loaded = True
             except Exception:
                 continue
-        self.known_face_names = sorted(self._known_descriptors.keys())
-        logger.info("Loaded %d known faces from social_db.", len(self.known_face_names))
-        return True
+
+        all_names = sorted(set(self._known_descriptors.keys()) | set(self._known_embeddings.keys()))
+        self.known_face_names = all_names
+        logger.info("Loaded %d known faces (%d sface, %d orb) from social_db.", len(all_names), len(self._known_embeddings), len(self._known_descriptors))
+        return loaded
 
     def _load_faces_from_json(self) -> bool:
         if not os.path.exists(self.faces_file):
@@ -214,41 +264,69 @@ class FaceManager:
             logger.warning("Faces file format invalid, expected dict.")
             return False
         for name, item in raw.items():
+            name_str = str(name).strip()
+            if not name_str:
+                continue
             desc_list = None
+            emb_list = None
             if isinstance(item, dict):
                 desc_list = item.get("descriptors")
+                emb_list = item.get("embedding")
             elif isinstance(item, list):
                 desc_list = item
-            if not isinstance(desc_list, list) or not desc_list:
-                continue
-            try:
-                arr = np.array(desc_list, dtype=np.uint8)
-                if arr.ndim != 2 or arr.shape[1] != 32:
-                    continue
-                self._known_descriptors[str(name)] = arr
-                self.known_face_names.append(str(name))
-            except Exception:
-                continue
-        logger.info("Loaded %d known faces.", len(self.known_face_names))
+
+            if isinstance(emb_list, list):
+                try:
+                    arr_emb = np.array(emb_list, dtype=np.float32).flatten()
+                    if arr_emb.size == 128:
+                        self._known_embeddings[name_str] = arr_emb / max(1e-9, float(np.linalg.norm(arr_emb)))
+                except Exception:
+                    pass
+
+            if isinstance(desc_list, list) and desc_list:
+                try:
+                    arr = np.array(desc_list, dtype=np.uint8)
+                    if arr.ndim == 2 and arr.shape[1] == 32:
+                        self._known_descriptors[name_str] = arr
+                except Exception:
+                    pass
+
+        self.known_face_names = sorted(set(self._known_descriptors.keys()) | set(self._known_embeddings.keys()))
+        logger.info("Loaded %d known faces from json.", len(self.known_face_names))
         return True
 
     def load_faces(self) -> None:
         self.known_face_names = []
         self._known_descriptors = {}
+        self._known_embeddings = {}
         if self._social_db is not None:
             try:
                 self._load_faces_from_social_db()
             except Exception:
                 pass
-        if not self._known_descriptors:
+        if not self._known_descriptors and not self._known_embeddings:
             self._load_faces_from_json()
-        self.known_face_names = sorted(self._known_descriptors.keys())
+        self.known_face_names = sorted(set(self._known_descriptors.keys()) | set(self._known_embeddings.keys()))
         logger.info("Total %d known faces registered in FaceManager.", len(self.known_face_names))
 
     def save_faces(self) -> None:
         persisted = False
         if self._social_db is not None:
             try:
+                for name, emb in self._known_embeddings.items():
+                    arr = emb.astype(np.float32)
+                    rec = self._social_db.persons.upsert(name=name)
+                    pid = str(rec.get("id") or "")
+                    if not pid:
+                        continue
+                    self._social_db.face_descriptors.replace_for_person(
+                        person_id=pid,
+                        kind="sface",
+                        blob=arr.tobytes(),
+                        rows=1,
+                        cols=128,
+                        score=1.0,
+                    )
                 for name, desc in self._known_descriptors.items():
                     arr = desc.astype(np.uint8)
                     rec = self._social_db.persons.upsert(name=name)
@@ -270,9 +348,15 @@ class FaceManager:
         if persisted:
             return
 
-        data: Dict[str, Dict[str, List[List[int]]]] = {}
-        for name, desc in self._known_descriptors.items():
-            data[name] = {"descriptors": desc.astype(np.uint8).tolist()}
+        data: Dict[str, Dict[str, Any]] = {}
+        all_names = set(self._known_descriptors.keys()) | set(self._known_embeddings.keys())
+        for name in all_names:
+            entry: Dict[str, Any] = {}
+            if name in self._known_descriptors:
+                entry["descriptors"] = self._known_descriptors[name].astype(np.uint8).tolist()
+            if name in self._known_embeddings:
+                entry["embedding"] = self._known_embeddings[name].astype(np.float32).flatten().tolist()
+            data[name] = entry
 
         try:
             with open(self.faces_file, "w", encoding="utf-8") as f:
@@ -285,27 +369,72 @@ class FaceManager:
         if not name or not str(name).strip():
             return False
 
+        person = str(name).strip()
         roi = self._extract_largest_face_roi(image)
-        if roi is None:
+        if roi is None and (self._yunet is None or not self._yunet.is_available):
             logger.warning("No face found in image.")
             return False
 
-        desc = self._extract_descriptor(roi)
-        if desc is None:
-            logger.warning("Could not extract ORB descriptor for face.")
+        registered = False
+
+        # 1. SFace embedding (YuNet + SFace)
+        if self._sface is not None and getattr(self._sface, "is_available", False):
+            raw_face = getattr(self, "_last_detected_raw_face", None)
+            if raw_face is None and self._yunet is not None and getattr(self._yunet, "is_available", False):
+                yfaces = self._yunet.detect(image)
+                if yfaces:
+                    raw_face = yfaces[0].get("raw_face")
+            if raw_face is not None:
+                feat = self._sface.extract_feature(image, raw_face)
+                if feat is not None:
+                    self._known_embeddings[person] = feat
+                    registered = True
+
+        # 2. ORB descriptor (classical fallback)
+        if roi is not None:
+            desc = self._extract_descriptor(roi)
+            if desc is not None:
+                self._known_descriptors[person] = desc
+                registered = True
+
+        if not registered:
+            logger.warning("Could not extract any face descriptor or embedding for %s", person)
             return False
 
-        person = str(name).strip()
-        self._known_descriptors[person] = desc
-        self.known_face_names = sorted(self._known_descriptors.keys())
+        self.known_face_names = sorted(set(self._known_descriptors.keys()) | set(self._known_embeddings.keys()))
         self.save_faces()
-        logger.info("Registered/updated face: %s", person)
+        logger.info("Registered/updated face: %s (sface=%s, orb=%s)", person, person in self._known_embeddings, person in self._known_descriptors)
         return True
 
     def identify_face_with_score(self, image: np.ndarray) -> Tuple[str, float]:
-        if not self._known_descriptors:
+        if not self._known_descriptors and not self._known_embeddings:
             return "Unknown", 0.0
 
+        # 1. High-accuracy YuNet + SFace recognition
+        if self._known_embeddings and self._sface is not None and getattr(self._sface, "is_available", False) and self._yunet is not None and getattr(self._yunet, "is_available", False):
+            try:
+                yfaces = self._yunet.detect(image)
+                if yfaces:
+                    best_yface = max(yfaces, key=lambda f: (f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1]))
+                    raw_face = best_yface.get("raw_face")
+                    if raw_face is not None:
+                        feat = self._sface.extract_feature(image, raw_face)
+                        if feat is not None:
+                            best_name = "Unknown"
+                            best_score = -1.0
+                            for name, known_feat in self._known_embeddings.items():
+                                score = float(self._sface.match(feat, known_feat))
+                                if score > best_score:
+                                    best_score = score
+                                    best_name = name
+                            if best_score >= self._sface.COSINE_MATCH_THRESHOLD:
+                                calibrated = min(1.0, 0.5 + 0.5 * ((best_score - self._sface.COSINE_MATCH_THRESHOLD) / (1.0 - self._sface.COSINE_MATCH_THRESHOLD)))
+                                return best_name, float(round(calibrated, 3))
+                            return "Unknown", float(round(max(0.0, best_score), 3))
+            except Exception as exc:
+                logger.debug("YuNet+SFace identification failed, trying ORB: %s", exc)
+
+        # 2. Classical ORB + FLANN fallback
         roi = self._extract_largest_face_roi(image)
         if roi is None:
             roi = image
@@ -322,3 +451,11 @@ class FaceManager:
     def identify_face(self, image: np.ndarray) -> str:
         name, _score = self.identify_face_with_score(image)
         return name
+
+    def close(self) -> None:
+        """Close any open database connections."""
+        if self._social_db is not None and hasattr(self._social_db, "close"):
+            try:
+                self._social_db.close()
+            except Exception:
+                pass

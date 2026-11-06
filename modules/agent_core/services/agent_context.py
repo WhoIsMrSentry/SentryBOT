@@ -383,10 +383,28 @@ class AgentContextMixin(AgentMemorySyncMixin):
             return ""
 
     def check_survival_drives(self) -> Optional[str]:
-        if not self.autonomy_client or not hasattr(self.autonomy_client, "get_hardware_status"):
+        """Overrides logic if critical battery or temperature limits are reached."""
+        world_state = getattr(self, "world_state", None)
+        if world_state is not None and hasattr(world_state, "get_state"):
+            try:
+                state = world_state.get_state() or {}
+                if isinstance(state, dict):
+                    bat = state.get("battery_percent", 100)
+                    if bat is not None and float(bat) < 15.0:
+                        logger.warning("SURVIVAL DRIVE: Low Battery (%s%%)!", bat)
+                        return "[CRITICAL] Battery is severely low. Do not engage in lengthy tasks. Find a charger or warn the user."
+                    ws_temp = state.get("cpu_temp")
+                    if ws_temp is not None and float(ws_temp) > 80.0:
+                        logger.warning("SURVIVAL DRIVE: High CPU Temp (%s°C)!", ws_temp)
+                        return f"[SURVIVAL OVERRIDE] Core temperature high ({ws_temp}°C). Reduce heavy computation."
+            except Exception:
+                pass
+
+        autonomy_client = getattr(self, "autonomy_client", None)
+        if not autonomy_client or not hasattr(autonomy_client, "get_hardware_status"):
             return None
         try:
-            status = self.autonomy_client.get_hardware_status()
+            status = autonomy_client.get_hardware_status()
             if not isinstance(status, dict):
                 return None
             battery = status.get("battery_level")

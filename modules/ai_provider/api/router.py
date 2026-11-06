@@ -58,7 +58,7 @@ def get_router(cfg: dict) -> APIRouter:
     )
 
     _persona_cache: Dict[str, str] = {}
-    base_persona_dir = str(cfg.get("persona", {}).get("dir", "modules/ollama/config/personalities"))
+    base_persona_dir = str(cfg.get("persona", {}).get("dir", "modules/ai_provider/config/personalities"))
     if os.path.exists(base_persona_dir):
         for name in os.listdir(base_persona_dir):
             pdir = os.path.join(base_persona_dir, name)

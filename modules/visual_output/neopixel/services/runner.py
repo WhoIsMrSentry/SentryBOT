@@ -164,12 +164,11 @@ class NeoRunner(RunnerPresetsMixin, RunnerCompanionMixin):
     def show_color(self, r: int, g: int, b: int, duration: float = 0.3, clear_after: bool = False) -> bool:
         if not self.fill(r, g, b):
             return False
-        if duration > 0:
+        if clear_after and duration > 0:
             def _clear_after():
                 try:
                     time.sleep(duration)
-                    if clear_after:
-                        self.clear()
+                    self.clear()
                 except Exception:
                     pass
 

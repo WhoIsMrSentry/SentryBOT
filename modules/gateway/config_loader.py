@@ -44,12 +44,5 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
     if overrides:
         cfg = _deep_update(cfg, overrides)
     return cfg
+from modules.common.config_loader import _deep_update
 
-def _deep_update(base: Dict[str, Any], up: Dict[str, Any]) -> Dict[str, Any]:
-    out = dict(base)
-    for k, v in up.items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _deep_update(out[k], v)  # type: ignore
-        else:
-            out[k] = v
-    return out

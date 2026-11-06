@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Mapping, Optional
+import urllib.parse
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 import requests
 
@@ -91,13 +92,27 @@ class xMcpServerService:
             return {"isError": True, "content": [{"type": "text", "text": f"tool_error:{exc}"}]}
 
     @staticmethod
-    def _resolve_path(path_spec: str, args: Dict[str, Any]) -> str:
-        path = path_spec
-        for key, value in list(args.items()):
-            token = "{" + key + "}"
+    def resolve_path_pure(
+        path_spec: str,
+        args: Optional[Mapping[str, Any]] = None,
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Resolve {key} placeholders without mutating the caller's mapping."""
+        path = str(path_spec or "")
+        remaining: Dict[str, Any] = dict(args or {})
+        for key, value in list(remaining.items()):
+            token = "{" + str(key) + "}"
             if token in path:
-                path = path.replace(token, str(value))
-                args.pop(key)
+                path = path.replace(token, urllib.parse.quote(str(value), safe=""))
+                remaining.pop(key, None)
+        return path, remaining
+
+    @staticmethod
+    def _resolve_path(path_spec: str, args: Dict[str, Any]) -> str:
+        path, remaining = xMcpServerService.resolve_path_pure(path_spec, args)
+        if isinstance(args, dict):
+            for key in list(args.keys()):
+                if key not in remaining:
+                    args.pop(key, None)
         return path
 
     def status(self) -> Dict[str, Any]:

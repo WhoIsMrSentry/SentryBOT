@@ -13,31 +13,12 @@ def _now() -> float:
     return float(time())
 
 
-def _as_mapping(value: Any) -> Mapping[str, Any]:
-    return value if isinstance(value, Mapping) else {}
-
-
-def _compact_text(value: Any, limit: int = 240) -> str:
-    text = str(value or "").strip()
-    if len(text) > limit:
-        return text[: limit - 1].rstrip() + "..."
-    return text
-
-
-def _compact_list(value: Any, limit: int = 8) -> List[Any]:
-    if value is None:
-        return []
-    if isinstance(value, (str, bytes)):
-        return [_compact_text(value)]
-    if isinstance(value, Sequence):
-        return list(value[:limit])
-    return [value]
-
-
-def _truthy(value: Any) -> bool:
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on", "running", "ready", "ok"}
-    return bool(value)
+from .perception_bridge_base import (
+    as_bool as _truthy,
+    as_dict as _as_mapping,
+    as_list as _compact_list,
+    compact_text as _compact_text,
+)
 
 
 @dataclass

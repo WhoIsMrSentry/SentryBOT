@@ -42,7 +42,7 @@ def _command(command: list[str], timeout_s: float) -> subprocess.CompletedProces
 
 def _configure_logging() -> None:
     try:
-        from modules.runtime_console.logwrapper import init_logging
+        from modules.common.logger import init_logging
 
         init_logging()
     except Exception as exc:

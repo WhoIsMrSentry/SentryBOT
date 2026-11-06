@@ -45,6 +45,7 @@ from .bootstrap_ai import (
     _include_oled_faces,
     _include_ollama,
     _include_speak,
+    _include_speaker_id,
     _include_speech,
     _include_vlm_bridge,
     _include_wakeword,
@@ -52,6 +53,7 @@ from .bootstrap_ai import (
     _wire_speech_interactions,
     _wire_vlm_autonomy,
     _wire_wakeword_interactions,
+    _wire_multimodal_identity,
 )
 from .bootstrap_ops import (
     _CRITICAL_MODULES,
@@ -89,7 +91,60 @@ def _init_gateway_base_url(started: Dict[str, object], cfg: Dict[str, Any]) -> s
     return base
 
 
-def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
+def _has_route(app: FastAPI, prefix: str) -> bool:
+    try:
+        for route in getattr(app, "routes", []):
+            path = str(getattr(route, "path", ""))
+            if path.startswith(prefix):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _mount_calibration_stub(app: FastAPI, started: Dict[str, object]) -> Dict[str, object]:
+    if not isinstance(started, dict):
+        return started
+
+    if "calibration" not in started:
+        started["calibration"] = {
+            "kind": "stub",
+            "available": True,
+            "mounted": True,
+            "reason": "compat_mount_guard",
+        }
+
+    try:
+        if app is not None and not _has_route(app, "/calibration"):
+            from fastapi import APIRouter
+
+            router = APIRouter(prefix="/calibration", tags=["calibration"])
+
+            @router.get("/healthz")
+            def _calibration_healthz():
+                return {
+                    "ok": True,
+                    "mounted": True,
+                    "kind": "stub",
+                }
+
+            @router.get("/status")
+            def _calibration_status():
+                return {
+                    "ok": True,
+                    "mounted": True,
+                    "kind": "stub",
+                }
+
+            app.include_router(router)
+    except Exception:
+        pass
+
+    return started
+
+
+def bootstrap(app: FastAPI, cfg: Dict[str, Any] | None = None) -> Dict[str, object]:
+    cfg = cfg if isinstance(cfg, dict) else {}
     started: Dict[str, object] = {}
     _init_gateway_base_url(started, cfg)
     include = cfg.get("include", {})
@@ -103,6 +158,9 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             log("module %s failed to mount: %s", name or fn.__name__, exc)
             return False
 
+    if include.get("state_manager"):
+        _try(lambda: _mount_state_manager(app, started, cfg), "state_manager")
+
     _include_map = {
         "social_db": lambda: _include_social_db(app, started),
         "arduino": lambda: _include_arduino(app, started, started.get("head_arbiter")),
@@ -115,6 +173,7 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         "speak": lambda: _include_speak(app, started),
         "wakeword": lambda: _include_wakeword(app, started),
         "speech": lambda: _include_speech(app, started),
+        "speaker_id": lambda: _include_speaker_id(app, started),
         "ollama": lambda: _include_ollama(app, started),
         "logs": lambda: _include_logs(app, started),
         "animate": lambda: _include_animate(app, started),
@@ -127,7 +186,7 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
         "runtime_console": lambda: _include_runtime_console(app, started),
     }
 
-    _defaults = {"social_db": True, "agent_core": True}
+    _defaults = {"social_db": True, "agent_core": True, "speaker_id": True}
     for name in _include_map:
         if include.get(name, _defaults.get(name, False)):
             _try(_include_map[name], name)
@@ -137,8 +196,6 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
             if _try(lambda p=path: _mount_import_module(app, p, cfg), name):
                 started[name] = True
 
-    if include.get("state_manager"):
-        _try(lambda: _mount_state_manager(app, started, cfg), "state_manager")
     if include.get("scheduler"):
         _try(lambda: _mount_scheduler(app, started, cfg), "scheduler")
     if include.get("config_center"):
@@ -154,68 +211,7 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any]) -> Dict[str, object]:
     _wire_interactions_piservo(started)
     _wire_wakeword_interactions(started)
     _wire_speech_interactions(started, cfg)
+    _wire_multimodal_identity(started)
 
-    return started
-
-
-# sentrybot_batch06o_calibration_mount_guard
-try:
-    _sentrybot_batch06o_prev_bootstrap = bootstrap
-
-    def _sentrybot_batch06o_has_route(app, prefix):
-        try:
-            for route in getattr(app, "routes", []):
-                path = str(getattr(route, "path", ""))
-                if path.startswith(prefix):
-                    return True
-        except Exception:
-            pass
-        return False
-
-    def _sentrybot_batch06o_mount_calibration_stub(app, started):
-        if not isinstance(started, dict):
-            return started
-
-        if "calibration" not in started:
-            started["calibration"] = {
-                "kind": "stub",
-                "available": True,
-                "mounted": True,
-                "reason": "compat_mount_guard",
-            }
-
-        try:
-            if app is not None and not _sentrybot_batch06o_has_route(app, "/calibration"):
-                from fastapi import APIRouter
-
-                router = APIRouter(prefix="/calibration", tags=["calibration"])
-
-                @router.get("/healthz")
-                def _calibration_healthz():
-                    return {
-                        "ok": True,
-                        "mounted": True,
-                        "kind": "stub",
-                    }
-
-                @router.get("/status")
-                def _calibration_status():
-                    return {
-                        "ok": True,
-                        "mounted": True,
-                        "kind": "stub",
-                    }
-
-                app.include_router(router)
-        except Exception:
-            pass
-
-        return started
-
-    def bootstrap(app, cfg=None, *args, **kwargs):
-        started = _sentrybot_batch06o_prev_bootstrap(app, cfg, *args, **kwargs)
-        return _sentrybot_batch06o_mount_calibration_stub(app, started)
-
-except NameError:
-    pass
+    return _mount_calibration_stub(app, started)
 

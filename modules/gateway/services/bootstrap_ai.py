@@ -189,30 +189,28 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
     logger.info("module speech mounted")
 
 
-def _include_wakeword(app: FastAPI, started: Dict[str, object]) -> None:
-    # sentrybot_batch06c_no_hardware_wakeword_stub
-    import os as _sentrybot_batch06c_os
+def _create_wakeword_offline_stub(started: Dict[str, object]) -> bool:
+    import os
 
     if (
-        str(_sentrybot_batch06c_os.getenv("SENTRYBOT_NO_HARDWARE", "")).lower() in {"1", "true", "yes", "on"}
-        or str(_sentrybot_batch06c_os.getenv("SENTRYBOT_SKIP_WAKEWORD_AUTOSTART", "")).lower() in {"1", "true", "yes", "on"}
+        str(os.getenv("SENTRYBOT_NO_HARDWARE", "")).lower() in {"1", "true", "yes", "on"}
+        or str(os.getenv("SENTRYBOT_SKIP_WAKEWORD_AUTOSTART", "")).lower() in {"1", "true", "yes", "on"}
     ):
-        _started = locals().get("started") or locals().get("started_services")
-
-        if isinstance(_started, dict):
-            _started["wakeword"] = {
+        if isinstance(started, dict):
+            started["wakeword"] = {
                 "kind": "stub",
                 "available": False,
                 "skipped": True,
                 "reason": "hardware_disabled",
             }
-            _started["wakeword_handle"] = None
+            started["wakeword_handle"] = None
+        logger.info("module wakeword mounted as no-hardware stub")
+        return True
+    return False
 
-        try:
-            logger.info("module wakeword mounted as no-hardware stub")
-        except Exception:
-            pass
 
+def _include_wakeword(app: FastAPI, started: Dict[str, object]) -> None:
+    if _create_wakeword_offline_stub(started):
         return
 
     from modules.gateway.url import gateway_url  # type: ignore
@@ -238,6 +236,22 @@ def _include_wakeword(app: FastAPI, started: Dict[str, object]) -> None:
     started["wakeword"] = svc
     app.include_router(get_wakeword_router(svc))
     logger.info("module wakeword mounted")
+
+
+def _include_speaker_id(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.voice.speaker_id.xSpeakerIdService import get_default as get_speaker_id_default  # type: ignore
+
+    svc = get_speaker_id_default()
+    if svc is None:
+        return
+    started["speaker_id"] = svc
+    try:
+        from modules.voice.speaker_id.api.router import get_router as get_speaker_id_router  # type: ignore
+
+        app.include_router(get_speaker_id_router(svc))
+    except Exception as exc:
+        logger.debug("speaker_id router mount skipped: %s", exc)
+    logger.info("module speaker_id mounted")
 
 
 def _include_ollama(app: FastAPI, started: Dict[str, object]) -> None:
@@ -350,7 +364,11 @@ def _include_oled_faces(app: FastAPI, started: Dict[str, object]) -> None:
     ocfg = _merge_with_agent_section(load_oled_cfg(None), "oled_faces")
     from modules.common.led_write_policy import get_shared_policy  # type: ignore
 
-    svc = xOledFacesService(config_overrides=ocfg, expression_arbiter=get_shared_policy())
+    svc = xOledFacesService(
+        state_store=started.get("state_manager"),
+        config_overrides=ocfg,
+        expression_arbiter=get_shared_policy(),
+    )
     try:
         svc.start()
     except Exception as exc:
@@ -457,3 +475,48 @@ def _wire_vlm_autonomy(started: Dict[str, object]) -> None:
             logger.info("vlm event bus -> agent event bridge mounted")
     except Exception as exc:
         logger.warning("vlm/autonomy event bridge mount failed: %s", exc)
+
+
+def _wire_multimodal_identity(started: Dict[str, object]) -> None:
+    """Wire face, voiceprint, and RFID signals into unified ActiveSpeakerResolver."""
+    speaker_id = started.get("speaker_id")
+    if speaker_id is None:
+        return
+    resolver = getattr(speaker_id, "identity_resolver", None)
+    if resolver is None:
+        return
+
+    # 1. Wire to AutonomyBrain
+    autonomy = started.get("autonomy")
+    brain = getattr(autonomy, "brain", None) if autonomy else None
+    if brain is not None:
+        setattr(brain, "identity_resolver", resolver)
+        logger.info("ActiveSpeakerResolver attached to AutonomyBrain")
+
+    # 2. Wire VLM face detections -> resolver
+    vlm_bridge = started.get("vlm_bridge")
+    if vlm_bridge is not None and hasattr(vlm_bridge, "event_bus") and vlm_bridge.event_bus:
+        def _on_vlm_face(event_type: str, data: Dict[str, Any]) -> None:
+            if event_type in ("person_seen", "owner_seen"):
+                name = str(data.get("name") or "").strip()
+                if name and name.lower() != "unknown":
+                    conf = float(data.get("confidence") or 0.8)
+                    resolver.observe_face(person_id=name, confidence=conf)
+
+        try:
+            vlm_bridge.event_bus.subscribe_all(_on_vlm_face)
+            logger.info("vlm_bridge face events wired to ActiveSpeakerResolver")
+        except Exception as exc:
+            logger.debug("vlm_bridge face wiring to resolver failed: %s", exc)
+
+    # 3. Wire Arduino RFID scans -> resolver
+    arduino = started.get("arduino")
+    if arduino is not None and hasattr(arduino, "_event_handlers"):
+        def _on_arduino_rfid(msg: Dict[str, Any]) -> None:
+            if msg.get("event") == "rfid" or (msg.get("telemetry") and msg.get("rfid")):
+                uid = str(msg.get("uid") or msg.get("rfid") or "").strip()
+                if uid:
+                    resolver.observe_rfid(person_id=uid, uid=uid, confidence=0.98)
+
+        getattr(arduino, "_event_handlers", []).append(_on_arduino_rfid)
+        logger.info("arduino rfid events wired to ActiveSpeakerResolver")

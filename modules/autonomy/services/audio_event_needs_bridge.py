@@ -5,23 +5,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 
-def _as_bool(value: Any, default: bool = False) -> bool:
-    if isinstance(value, bool):
-        return value
-    if value is None:
-        return default
-    return str(value).strip().lower() in {"1", "true", "yes", "on", "enabled", "detected", "present", "active"}
-
-
-def _as_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _as_dict(value: Any) -> Dict[str, Any]:
-    return value if isinstance(value, dict) else {}
+from .perception_bridge_base import as_bool as _as_bool, as_dict as _as_dict, as_float as _as_float
 
 
 class AudioEventNeedsBridge:
