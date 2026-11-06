@@ -1,6 +1,4 @@
-import time
 import numpy as np
-import pytest
 
 from modules.voice.speech.services.audio_filters import SoftwareEchoGate, SpeechAudioFilterMixin
 

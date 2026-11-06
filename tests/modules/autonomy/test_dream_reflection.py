@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import MagicMock
 
 from modules.autonomy.services.brain_parts.decision import DecisionMixin

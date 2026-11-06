@@ -218,21 +218,17 @@ _DETECTOR_SINGLETON: Optional[YuNetDetector] = None
 _RECOGNIZER_SINGLETON: Optional[SFaceRecognizer] = None
 
 
-def get_yunet_detector() -> Optional[YuNetDetector]:
+def get_yunet_detector() -> YuNetDetector:
     global _DETECTOR_SINGLETON
     if _DETECTOR_SINGLETON is None:
-        det = YuNetDetector()
-        if det.is_available:
-            _DETECTOR_SINGLETON = det
+        _DETECTOR_SINGLETON = YuNetDetector()
     return _DETECTOR_SINGLETON
 
 
-def get_sface_recognizer() -> Optional[SFaceRecognizer]:
+def get_sface_recognizer() -> SFaceRecognizer:
     global _RECOGNIZER_SINGLETON
     if _RECOGNIZER_SINGLETON is None:
-        rec = SFaceRecognizer()
-        if rec.is_available:
-            _RECOGNIZER_SINGLETON = rec
+        _RECOGNIZER_SINGLETON = SFaceRecognizer()
     return _RECOGNIZER_SINGLETON
 
 

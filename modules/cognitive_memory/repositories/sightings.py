@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional
 
 from .base import BaseSqliteRepo
-
-if TYPE_CHECKING:
-    from ..db import SocialDB
 
 
 class SightingsRepo(BaseSqliteRepo):

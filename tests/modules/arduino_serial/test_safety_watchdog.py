@@ -1,5 +1,4 @@
 import time
-import pytest
 
 from modules.arduino_serial.services.safety_watchdog import HardwareSafetyWatchdog
 

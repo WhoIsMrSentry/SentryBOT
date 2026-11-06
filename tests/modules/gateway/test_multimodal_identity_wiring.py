@@ -1,4 +1,3 @@
-import pytest
 from unittest.mock import MagicMock
 
 from modules.gateway.services.bootstrap_ai import _wire_multimodal_identity

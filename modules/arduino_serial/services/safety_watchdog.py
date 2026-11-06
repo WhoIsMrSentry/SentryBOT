@@ -97,7 +97,6 @@ class HardwareSafetyWatchdog:
             with self._lock:
                 elapsed = now - self._last_feed_ts
                 tripped = self._is_tripped
-                moving = self._is_moving
 
             if not tripped and elapsed > self.timeout_s:
                 reason = f"Watchdog timeout: no heartbeat received for {elapsed:.2f}s (threshold={self.timeout_s:.1f}s)"

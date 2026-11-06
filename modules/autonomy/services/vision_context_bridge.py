@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from time import time
-from typing import Any, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional
 
 VISION_CONTEXT_BRIDGE_CONTRACT = True
 VISION_CONTEXT_BRIDGE_ROLE = "camera_vlm_to_autonomy_semantic_context_adapter"

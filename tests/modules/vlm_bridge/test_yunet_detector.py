@@ -1,10 +1,7 @@
 import tempfile
 import numpy as np
-import pytest
 
 from modules.vlm_bridge.services.yunet_detector import (
-    YuNetDetector,
-    SFaceRecognizer,
     get_yunet_detector,
     get_sface_recognizer,
 )
@@ -36,10 +33,9 @@ def test_yunet_detector_invalid_input():
 
 def test_sface_recognizer_synthetic_matching():
     sface = get_sface_recognizer()
-    if not sface.is_available:
-        pytest.skip("SFace model or cv2.FaceRecognizerSF not available")
+    assert sface is not None
 
-    # Test dummy 128D embeddings matching
+    # Test dummy 128D embeddings matching (uses numpy fallback if model weights missing)
     vec1 = np.ones((1, 128), dtype=np.float32)
     vec2 = np.ones((1, 128), dtype=np.float32)
     score = sface.match(vec1, vec2)

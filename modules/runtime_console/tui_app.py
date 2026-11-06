@@ -281,7 +281,6 @@ class SentryBotApp(App[int]):
 
             # Update Subsystem Matrix directly from Gateway live status
             failed_modules = set(status_data.get("failed", []))
-            modules_dict = status_data.get("modules", {}) if isinstance(status_data.get("modules"), dict) else {}
 
             if gateway_online and started_modules:
                 tab_main.update_service_card("CORE", "OK", f"Gateway active ({len(started_modules)} services mounted)")
@@ -490,9 +489,6 @@ class SentryBotApp(App[int]):
             )
 
             # Quad 4: Voice Audio Level (VU-Meter), DoA Radar & Living Needs
-            wakeword = str(state_data.get("wakeword_engine") or "openWakeWord (hey sentry)")
-            stt = str(state_data.get("stt_backend") or "Google Multi-Lingual STT")
-            tts = str(state_data.get("tts_backend") or "Piper Neural Voice (tr_TR)")
             batt_val = float(state_data.get("battery", 100.0))
             temp_val = float(state_data.get("temp_c", 45.0))
             mic_energy = float(state_data.get("mic_energy", 35.0 if gateway_online else 0.0))

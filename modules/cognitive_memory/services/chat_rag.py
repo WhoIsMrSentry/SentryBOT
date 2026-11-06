@@ -10,7 +10,7 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from .text_utils import _TOKEN_RE, _TR_DEVOICE, _stem_tokens, _tokens
+from .text_utils import _stem_tokens, _tokens
 
 logger = logging.getLogger("cognitive_memory.chat_rag")
 
