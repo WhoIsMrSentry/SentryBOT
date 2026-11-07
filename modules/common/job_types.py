@@ -6,8 +6,9 @@ in scheduler with extensible registry pattern.
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 import logging
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -177,23 +178,35 @@ class HTTPJobHandler(JobHandler):
         self._default_session = default_session
     
     async def execute(self, context: JobContext) -> Any:
-        import aiohttp
-        
+        import aiohttp  # type: ignore[import-not-found]
+
         params = context.job.params
         method = params.get("method", "GET").upper()
-        url = params.get("url") or context.services.get("gateway_base_url", "") + params.get("path", "")
-        
+        url = params.get("url")
+        if not url:
+            base = str(context.services.get("gateway_base_url", "")).rstrip("/")
+            path = str(params.get("path", ""))
+            if base and path:
+                url = f"{base}/{path.lstrip('/')}"
+            else:
+                url = path
+
         if not url:
             raise ValueError("HTTP job requires 'url' or 'path' parameter")
-        
+
         headers = params.get("headers", {})
         body = params.get("body")
         json_body = params.get("json")
         timeout = context.job.timeout_s
-        
-        async with aiohttp.ClientSession() as session:
+
+        session = context.services.get("_aiohttp_session") or self._default_session
+        owns_session = session is None
+        if owns_session:
+            session = aiohttp.ClientSession()
+        try:
             async with session.request(
-                method, url,
+                method,
+                url,
                 headers=headers,
                 data=body,
                 json=json_body,
@@ -209,6 +222,9 @@ class HTTPJobHandler(JobHandler):
                 else:
                     result["text"] = await resp.text()
                 return result
+        finally:
+            if owns_session:
+                await session.close()
     
     def validate_params(self, params: Dict[str, Any]) -> tuple[bool, Optional[str]]:
         if not params.get("url") and not params.get("path"):
@@ -306,8 +322,15 @@ class StateSetHandler(JobHandler):
         
         if not key:
             raise ValueError("State set job requires 'key' parameter")
-        
-        await state_manager.set(key, value)
+
+        if hasattr(state_manager, "set_value"):
+            res = state_manager.set_value(key, value)
+        elif hasattr(state_manager, "set"):
+            res = state_manager.set(key, value)
+        else:
+            raise RuntimeError("State manager does not implement set_value or set")
+        if inspect.isawaitable(res):
+            await res
         return {"key": key, "value": value, "set": True}
 
 
@@ -390,7 +413,7 @@ class JobRegistry:
 
 # Global registry instance
 _global_registry: Optional[JobRegistry] = None
-_registry_lock = asyncio.Lock()
+_registry_lock = threading.RLock()
 
 
 def get_job_registry() -> JobRegistry:
@@ -399,30 +422,21 @@ def get_job_registry() -> JobRegistry:
     if _global_registry is None:
         with _registry_lock:
             if _global_registry is None:
-                _global_registry = JobRegistry()
+                registry = JobRegistry()
                 # Register built-in handlers
-                _global_registry.register(HTTPJobHandler)
-                _global_registry.register(SpeakJobHandler)
-                _global_registry.register(InteractionEventHandler)
-                _global_registry.register(DiagnosticsJobHandler)
-                _global_registry.register(StateSetHandler)
-                _global_registry.register(NotifyHandler)
+                registry.register(HTTPJobHandler)
+                registry.register(SpeakJobHandler)
+                registry.register(InteractionEventHandler)
+                registry.register(DiagnosticsJobHandler)
+                registry.register(StateSetHandler)
+                registry.register(NotifyHandler)
+                _global_registry = registry
     return _global_registry
 
 
 async def get_job_registry_async() -> JobRegistry:
     """Async version for async contexts."""
-    global _global_registry
-    async with _registry_lock:
-        if _global_registry is None:
-            _global_registry = JobRegistry()
-            _global_registry.register(HTTPJobHandler)
-            _global_registry.register(SpeakJobHandler)
-            _global_registry.register(InteractionEventHandler)
-            _global_registry.register(DiagnosticsJobHandler)
-            _global_registry.register(StateSetHandler)
-            _global_registry.register(NotifyHandler)
-    return _global_registry
+    return get_job_registry()
 
 
 def register_job_handler(handler_class: Type[JobHandler], **kwargs) -> None:
