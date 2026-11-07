@@ -18,8 +18,12 @@ from __future__ import annotations
 import os
 
 
+DEFAULT_LOCAL_OLLAMA_URL = "http://127.0.0.1:11434"
+DEFAULT_REMOTE_OLLAMA_URL = "http://whoismrsentry.local:11434"
+
+
 def default_ollama_base_url() -> str:
-    return "http://127.0.0.1:11434"
+    return DEFAULT_LOCAL_OLLAMA_URL
 
 
 def unwrap_url(value):
@@ -71,8 +75,20 @@ def normalize_ollama_url(value):
     return value.rstrip("/")
 
 
+def _seed_ollama_host_env(base_url: str, *, set_sentrybot_url: bool) -> None:
+    normalized = unwrap_url(base_url)
+    if not normalized:
+        return
+    os.environ["OLLAMA_HOST"] = normalized
+    os.environ["OLLAMA_BASE_URL"] = normalized
+    os.environ.setdefault("SENTRYBOT_OLLAMA_BASE_URL", normalized)
+    os.environ.setdefault("SENTRYBOT_REMOTE_OLLAMA_URL", normalized)
+    if set_sentrybot_url:
+        os.environ.setdefault("SENTRYBOT_OLLAMA_URL", normalized)
+
+
 def ensure_ollama_host_env(
-    default: str = "http://whoismrsentry.local:11434",
+    default: str = DEFAULT_REMOTE_OLLAMA_URL,
 ) -> None:
     """Seed OLLAMA_HOST / OLLAMA_BASE_URL style env vars from first set."""
     base_url = (
@@ -83,12 +99,7 @@ def ensure_ollama_host_env(
         or default
     )
     if base_url:
-        base_url = str(base_url).rstrip("/")
-        os.environ["OLLAMA_HOST"] = base_url
-        os.environ["OLLAMA_BASE_URL"] = base_url
-        os.environ.setdefault("SENTRYBOT_OLLAMA_BASE_URL", base_url)
-        os.environ.setdefault("SENTRYBOT_REMOTE_OLLAMA_URL", base_url)
-        os.environ.setdefault("SENTRYBOT_OLLAMA_URL", base_url)
+        _seed_ollama_host_env(str(base_url), set_sentrybot_url=True)
 
 
 def ensure_sentrybot_ollama_host_env() -> None:
@@ -99,17 +110,14 @@ def ensure_sentrybot_ollama_host_env() -> None:
         or os.environ.get("SENTRYBOT_REMOTE_OLLAMA_URL")
         or os.environ.get("SENTRYBOT_OLLAMA_URL")
         or os.environ.get("OLLAMA_HOST")
-        or "http://whoismrsentry.local:11434"
+        or DEFAULT_REMOTE_OLLAMA_URL
     )
-    base_url = str(base_url).strip().rstrip("/")
-    if base_url:
-        os.environ["OLLAMA_HOST"] = base_url
-        os.environ["OLLAMA_BASE_URL"] = base_url
-        os.environ.setdefault("SENTRYBOT_OLLAMA_BASE_URL", base_url)
-        os.environ.setdefault("SENTRYBOT_REMOTE_OLLAMA_URL", base_url)
+    _seed_ollama_host_env(str(base_url), set_sentrybot_url=False)
 
 
 __all__ = [
+    "DEFAULT_LOCAL_OLLAMA_URL",
+    "DEFAULT_REMOTE_OLLAMA_URL",
     "default_ollama_base_url",
     "unwrap_url",
     "is_bad_ollama_url",
