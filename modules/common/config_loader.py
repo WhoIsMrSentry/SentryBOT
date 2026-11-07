@@ -20,6 +20,15 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 import yaml
 
+from .url_utils import (
+    gateway_base_from_agent_cfg,
+    gateway_url,
+    patch_service_endpoints,
+    resolve_config_url,
+    resolve_gateway_base_url,
+    rewrite_loopback_urls,
+)
+
 logger = logging.getLogger("common.config_loader")
 
 # =============================================================================
@@ -78,13 +87,6 @@ _ENV_PATHS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("SENTRYBOT_VLM_AUTH_TOKEN", ("vlm_bridge", "remote_multimodal", "auth_token")),
     ("SENTRYBOT_TTS_AUTH_TOKEN", ("speak", "tts", "remote", "auth_token")),
 )
-
-_LOOPBACK_PREFIXES = (
-    "http://localhost:",
-    "http://127.0.0.1:",
-    "http://0.0.0.0:",
-)
-_GATEWAY_PATH_RE = re.compile(r"^@gateway(?=/|$)")
 
 # =============================================================================
 # Path Resolution
@@ -295,7 +297,7 @@ def inject_google_api_key(cfg: Dict[str, Any]) -> Dict[str, Any]:
         provider = str(llm.get("provider", "")).strip().lower()
         if provider in _GOOGLE_PROVIDERS:
             logger.warning(
-                "runtime_profile uses Google but no API key found â€” set google_ai_studio.api_key "
+                "runtime_profile uses Google but no API key found — set google_ai_studio.api_key "
                 "in config/agent.yaml or export GOOGLE_API_KEY before starting the robot"
             )
         return cfg
@@ -310,17 +312,7 @@ def inject_google_api_key(cfg: Dict[str, Any]) -> Dict[str, Any]:
     return cfg
 
 
-# =============================================================================
-# URL Helpers (imported from canonical modules.common.url_utils)
-# =============================================================================
-from .url_utils import (
-    gateway_base_from_agent_cfg,
-    gateway_url,
-    patch_service_endpoints,
-    resolve_config_url,
-    resolve_gateway_base_url,
-    rewrite_loopback_urls,
-)
+# URL Helpers are imported at module top and re-exported via __all__.
 
 
 # =============================================================================
@@ -350,7 +342,7 @@ def _pick_model(agent_cfg: Dict[str, Any], llm_cfg: Dict[str, Any], ollama_cfg: 
 def _normalize_base_url(raw: Any) -> str:
     """Normalize an Ollama daemon base URL (canonical single implementation).
 
-    Delegates to ``modules.common.ollama_url`` â€” the consolidated batch06
+    Delegates to ``modules.common.ollama_url`` — the consolidated batch06
     helper family. Explicit valid URLs win; gateway/self URLs and malformed
     values map back to the local daemon.
     """
@@ -366,7 +358,16 @@ def load_ai_provider_config(config_path: str | None = None) -> Dict[str, Any]:
     agent_cfg = require_dict_section(root_cfg, "agent")
     llm_cfg = require_dict_section(root_cfg, "llm")
     ollama_global = require_dict_section(root_cfg, "ollama")
-    service_cfg = require_dict_section(root_cfg, "ai_provider")  # renamed from ollama_service
+    ollama_service_cfg = root_cfg.get("ollama_service", {})
+    if not isinstance(ollama_service_cfg, dict):
+        ollama_service_cfg = {}
+    ai_provider_cfg = root_cfg.get("ai_provider", {})
+    if isinstance(ai_provider_cfg, dict) and ai_provider_cfg:
+        service_cfg = deep_merge(ollama_service_cfg, ai_provider_cfg)
+    elif ollama_service_cfg:
+        service_cfg = ollama_service_cfg
+    else:
+        service_cfg = require_dict_section(root_cfg, "ollama_service")
     google_global = root_cfg.get("google_ai_studio", {})
     if not isinstance(google_global, dict):
         google_global = {}
@@ -403,18 +404,36 @@ def load_ai_provider_config(config_path: str | None = None) -> Dict[str, Any]:
                     or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
                     or os.getenv("OLLAMA_BASE_URL")
                     or os.getenv("AGENT_OLLAMA_BASE_URL")
-                    or "http:"
+                    or ""
                 ),
                 "model": _REQUIRED_MODEL,
                 "request_timeout": request_timeout,
             },
         }
     else:
+        single_model_mode = bool(llm_cfg.get("single_model_mode", True))
+        required_model = str(llm_cfg.get("required_model", _REQUIRED_MODEL)).strip() or _REQUIRED_MODEL
+        raw_allowed = llm_cfg.get("allowed_models")
+        allowed_models = (
+            [str(m).strip() for m in raw_allowed if str(m).strip()]
+            if isinstance(raw_allowed, (list, tuple))
+            else []
+        )
         model = _pick_model(agent_cfg, llm_cfg, ollama_global)
-        if model != _REQUIRED_MODEL:
-            raise ValueError(
-                f"Ollama profile requires model '{_REQUIRED_MODEL}', got '{model or '<empty>'}'"
-            )
+        if allowed_models:
+            if model not in allowed_models:
+                raise ValueError(
+                    f"Ollama profile requires model in {allowed_models}, got '{model or '<empty>'}'"
+                )
+            active_model = model
+        elif single_model_mode:
+            if model != required_model:
+                raise ValueError(
+                    f"Ollama profile requires model '{required_model}', got '{model or '<empty>'}'"
+                )
+            active_model = required_model
+        else:
+            active_model = model or required_model
 
         base_url = _normalize_base_url(
             agent_cfg.get("ollama_base_url")
@@ -423,7 +442,7 @@ def load_ai_provider_config(config_path: str | None = None) -> Dict[str, Any]:
             or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
             or os.getenv("OLLAMA_BASE_URL")
             or os.getenv("AGENT_OLLAMA_BASE_URL")
-            or "http:"
+            or ""
         )
         if not base_url:
             raise ValueError("agent.ollama_base_url is required")
@@ -431,14 +450,16 @@ def load_ai_provider_config(config_path: str | None = None) -> Dict[str, Any]:
         core_cfg = {
             "llm": {
                 "provider": "ollama",
-                "single_model_mode": True,
-                "model": _REQUIRED_MODEL,
-                "primary_model": _REQUIRED_MODEL,
+                "single_model_mode": single_model_mode,
+                "required_model": required_model,
+                "allowed_models": allowed_models,
+                "model": active_model,
+                "primary_model": active_model,
                 "base_url": base_url,
             },
             "ollama": {
                 "base_url": base_url,
-                "model": _REQUIRED_MODEL,
+                "model": active_model,
                 "request_timeout": request_timeout,
             },
             "google_ai_studio": google_global,
@@ -446,6 +467,15 @@ def load_ai_provider_config(config_path: str | None = None) -> Dict[str, Any]:
 
     merged = deep_merge(_DEFAULT_CFG, service_cfg)
     merged = deep_merge(merged, core_cfg)
+
+    actions_cfg = merged.get("actions", {})
+    if isinstance(actions_cfg, dict) and actions_cfg.get("endpoint"):
+        actions_copy = dict(actions_cfg)
+        actions_copy["endpoint"] = resolve_config_url(
+            str(actions_cfg["endpoint"]),
+            resolve_gateway_base_url(root_cfg),
+        )
+        merged["actions"] = actions_copy
 
     if provider in _GOOGLE_PROVIDERS:
         trans = merged.get("translation", {})
@@ -552,6 +582,67 @@ def load_agent_config(explicit_path: Optional[str | os.PathLike[str]] = None) ->
     return final_cfg
 
 
+_KEY_IN_URL_RE = re.compile(r"(key=)([^&\s\"']+)", re.IGNORECASE)
+_BEARER_RE = re.compile(r"(Bearer\s+)([A-Za-z0-9._\-]+)", re.IGNORECASE)
+
+
+def redact_secrets(text: object) -> str:
+    """Remove API keys and Bearer tokens from log-safe strings."""
+    msg = str(text or "")
+    msg = _KEY_IN_URL_RE.sub(r"\1***", msg)
+    msg = _BEARER_RE.sub(r"\1***", msg)
+    return msg
+
+
+def load_module_config(
+    default_path: Path,
+    path: Optional[str | os.PathLike[str]] = None,
+    *,
+    section: Optional[str] = None,
+    bind_env: Optional[str] = None,
+    resolve_urls: bool = False,
+) -> Dict[str, Any]:
+    """Load a module-local config.yml with optional agent.yaml merge, URL resolution, and bind host."""
+    p = Path(path) if path else default_path
+    if not p.exists():
+        p = default_path
+    with open(p, "r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+
+    if not isinstance(cfg, dict):
+        cfg = {}
+
+    if section:
+        try:
+            agent_cfg = load_agent_config() or {}
+            override = agent_cfg.get(section)
+            if isinstance(override, dict) and override:
+                base_sec = cfg.get(section, {}) if isinstance(cfg.get(section), dict) else {}
+                cfg[section] = deep_merge(base_sec, override)
+        except Exception:
+            pass
+
+        if resolve_urls and isinstance(cfg.get(section), dict):
+            try:
+                gw_base = resolve_gateway_base_url()
+                cfg[section] = rewrite_loopback_urls(cfg[section], gw_base)
+            except Exception:
+                pass
+
+        if bind_env and isinstance(cfg.get(section), dict):
+            from modules.common.bind_host import apply_bind_host
+
+            cfg[section] = apply_bind_host(cfg[section], bind_env)
+
+    return cfg
+
+
+def clear_agent_config_cache() -> None:
+    """Clear the cached agent.yaml dictionary."""
+    with _AGENT_CFG_CACHE_LOCK:
+        _AGENT_CFG_CACHE.clear()
+
+
 # =============================================================================
 # Public API
 # =============================================================================
@@ -560,6 +651,8 @@ __all__ = [
     # Main entry points
     "load_agent_config",
     "load_ai_provider_config",
+    "load_module_config",
+    "clear_agent_config_cache",
     "resolve_agent_cfg_path",
     # YAML utilities
     "deep_merge",
@@ -570,6 +663,7 @@ __all__ = [
     # Environment & secrets
     "load_dotenv",
     "inject_runtime_secrets",
+    "redact_secrets",
     # Google API key
     "resolve_google_api_key",
     "inject_google_api_key",
