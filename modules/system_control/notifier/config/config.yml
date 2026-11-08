@@ -8,20 +8,15 @@ telegram:
   bot_token: ""
   chat_id: ""
   allowed_user_ids: []
+  allow_public: false
   polling:
     enabled: false
     interval_sec: 2.5
-whatsapp_web:
-  enabled: false
-  recipient: ""
-  send_mode: "instant"   # instant | schedule
-  schedule_delay_sec: 90
-  wait_time_sec: 15
-  close_time_sec: 5
-  tab_close: false
 discord:
   webhook: ""
 quiet_hours:
   enabled: false
   start: "23:00"
   end: "08:00"
+send:
+  cooldown_sec: 10.0
