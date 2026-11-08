@@ -48,6 +48,34 @@ checks:
     timeout_ms: 900
     latency_warn_ms: 500
     critical: true
+  wakeword:
+    enabled: true
+    method: GET
+    path: /wakeword/status
+    timeout_ms: 900
+    latency_warn_ms: 500
+    critical: false
+  oled_faces:
+    enabled: true
+    method: GET
+    path: /oled_faces/healthz
+    timeout_ms: 900
+    latency_warn_ms: 500
+    critical: false
+  agent_core:
+    enabled: true
+    method: GET
+    path: /agent/healthz
+    timeout_ms: 900
+    latency_warn_ms: 500
+    critical: false
+  autonomy:
+    enabled: true
+    method: GET
+    path: /autonomy/state
+    timeout_ms: 900
+    latency_warn_ms: 500
+    critical: false
 
 thresholds:
   default_timeout_ms: 1000
@@ -55,7 +83,14 @@ thresholds:
 
 self_heal:
   enabled: true
+  hard_heal_cooldown_s: 60.0
+
+system_checks:
+  enabled: true
+  disk_path: "."
+  min_free_gb: 0.5
+  min_free_mb: 100.0
 
 notify:
   enabled: false
-  endpoint: /notify/test
+  endpoint: /notify/telegram
