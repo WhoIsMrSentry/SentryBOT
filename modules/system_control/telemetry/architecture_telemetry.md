@@ -1,48 +1,48 @@
 # Telemetry Modülü Mimarisi
 
-Telemetry modülü (`modules/telemetry`), robotun çalışma zamanı sensör verilerini (IMU pitch/roll, ultrasonik mesafe, RAM, CPU durumu) Promethus tarzı grafik araçları veya canlı grafiker ekranlar için toplayan (aggregator) ve dışarı yayınlayan motor modülüdür.
+Telemetry modülü (`modules/system_control/telemetry`), çalışma zamanı olay sayaçlarını, kayan pencereli gecikme özetlerini (`Summary`) ve Raspberry Pi 5 host durumunu (CPU sıcaklık, load, boş RAM, disk kullanımı) thread-safe `Registry` üzerinde toplayıp Prometheus (`/telemetry/metrics`) ve JSON (`/telemetry/snapshot`) olarak sunan gözlemlenebilirlik servisidir.
 
-## 🏗️ İş Akışı ve Karar Mekanizmaları (Flowchart)
+## İş Akışı ve Karar Mekanizmaları (Flowchart)
 
 ```mermaid
 flowchart TD
-    %% Telemetri Kayıt Alma
-    EVT_IN("Herhangi bir olay (Event)<br>(Örn: arduino.telemetry)") --> TELEM_RECORD("Değişkeni Hafızaya Kaydet")
-    
-    TELEM_RECORD --> CHK_KEY{"Gelen Veri<br>Tipi?"}
-    
-    CHK_KEY -- "Sensör Verisi" --> SET_SENS("telemetry['imu_pitch'] = 45")
-    CHK_KEY -- "Robot Pozu" --> SET_POSE("telemetry['current_pose'] = 'stand'")
-    CHK_KEY -- "Ping" --> SET_PING("Ping Gecikmesini (ms) Yaz")
-    
-    %% Prometheus Formatına Çevrilme
-    HTTP_GET("GET /telemetry/metrics") --> LOOP_VARS("Tüm Hafızayı Gez")
-    
-    LOOP_VARS --> FMT_PROM("SentryBOT_metric type imu 45 SentryBOT_metric type ram 1024")
-    
-    FMT_PROM --> RET_TXT("Düz Metin (Plaintext)<br>Döndür")
+    EVT_IN["POST /telemetry/events (type, latency_ms?)"] --> LOCK_IN["Registry RLock"]
+    LOCK_IN --> CAP{"Benzersiz olay tipi < 64 veya kayitli mi?"}
+    CAP -- "Evet" --> INC_TYPE["event_<type>_total +1 (+ opsiyonel Summary)"]
+    CAP -- "Hayir (OOM Korumasi)" --> INC_OTHER["event_other_total +1"]
+
+    EXP_REQ["GET /telemetry/metrics"] --> CHK_EXP{"exporter.type == none?"}
+    CHK_EXP -- "Evet" --> RET_503["HTTP 503 exporter disabled"]
+    CHK_EXP -- "Hayir (builtin)" --> HOST_SNAP["read_system_snapshot (CPU, RAM, Disk)"]
+    HOST_SNAP --> FMT_PROM["Prometheus Gauge/Counter/Summary cikti (200)"]
+
+    SNAP_REQ["GET /telemetry/snapshot"] --> HOST_JSON["read_system_snapshot + Registry.snapshot()"]
+    HOST_JSON --> RET_JSON["JSON host + gauges/counters/summaries"]
 ```
 
-## 🔄 İlişkisel Etkileşimler (Veri Akışı)
+## İlişkisel Etkileşimler (Veri Akışı)
 
 ```mermaid
 erDiagram
-    TelemetryService ||--o{ StateManager : reads
-    TelemetryService ||--o{ ArduinoSerial : listens_events
-    PrometheusServer ||--|| TelemetryService : scrapes
+    RuntimeTarget ||--|| TelemetryMetrics : provides_pressure_snapshot
+    ModulesOrGateway ||--o{ TelemetryRouter : posts_events
+    PrometheusServer ||--|| TelemetryRouter : scrapes_metrics
+    RuntimeConsole ||--|| TelemetryRouter : reads_json_snapshot
 
-    TelemetryService {
-        string metric_name
-        float metric_value
+    Registry {
+        RLock lock
+        dict counters
+        dict gauges
+        dict summaries
+        int max_event_types
     }
 ```
 
-## ⚙️ Detaylı Karar Mantığı (if/else)
+## Detaylı Karar Mantığı
 
-1. **Sürekli Dinleme (Event Listener)**
-   - Telemetry saniyede bir Arduino'ya gidip "IMU verin kaç?" diye sormaz (Bu çok fazla trafik yaratır).
-   - Onun yerine Arduino tarafı (eğer aktifse) seri porttan `<TLM> ...` formatında JSON fırlatır. Gateway veya Interactions bunu yakalayıp global Event atar (`arduino.telemetry.tick`).
-   - Bu modül arka planda bu event gelince `telemetry_dict` değişkenini günceller.
-2. **Prometheus Tip Çeviricisi**
-   - Prometheus metrikleri sadece "Sayı" (Float/Int) kabul eder.
-   - **`if`** hafızadaki değer metin ise (`current_pose = 'sit'`), onu metrik olarak çeviremeyeceği için Prometheus'a eklemez.
+1. **Kardinalite ve Bellek Koruması (OOM Guard)**
+   - Sınırsız farklı `ev["type"]` değeri RPi 5 belleğini doldurmasın diye `Registry.record_event` en fazla 64 benzersiz olay tipini ayrı sayaç/özet olarak tutar; taşan tüm olaylar `event_other_total` altında toplanır.
+2. **Thread Güvenliği (`RLock`) ve Gecikme Özeti (`Summary`)**
+   - `Registry` tüm `counter`/`gauge`/`summary` ekleme, `render_prometheus()` ve `snapshot()` kopyalama işlemlerini `threading.RLock` altında yapar; `Summary` ise son 256 örneklik kayan pencerede ek kütüphanesiz `avg`, `p50`, `p95`, `max` hesaplar.
+3. **Exporter Modu ve Hata Kaydı**
+   - `exporter.type: none` ayarında `/telemetry/metrics` HTTP `503` döner; host ölçümü okumalarındaki istisnalar sessiz yutulmaz, `debug` seviyesinde loglanır.
