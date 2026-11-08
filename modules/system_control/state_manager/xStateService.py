@@ -1,4 +1,5 @@
 from __future__ import annotations
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .config_loader import load_config
@@ -13,7 +14,15 @@ def create_app(config_path: str | None = None) -> FastAPI:
         persistence=cfg.get("persistence", {}),
         pubsub=cfg.get("pubsub", {}),
     )
-    app = FastAPI(title="State Manager")
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        try:
+            yield
+        finally:
+            store.close()
+
+    app = FastAPI(title="State Manager", lifespan=lifespan)
     app.state.store = store  # type: ignore[attr-defined]
     app.include_router(get_router(store))
     return app
