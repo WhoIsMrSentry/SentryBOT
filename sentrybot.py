@@ -13,11 +13,47 @@ import time
 from pathlib import Path
 from typing import Any
 
-from modules.runtime_console.system_info_tui import main as sysinfo_main
-from modules.runtime_console.tui_v2 import main as tui_main
-
 ROOT = Path(__file__).resolve().parent
 LOGGER = logging.getLogger("sentrybot.launcher")
+
+
+def _run_sysinfo_once() -> None:
+    from modules.runtime_console.system_info_tui import main as sysinfo_main
+
+    sysinfo_main(["--once"])
+
+
+def _run_tui(tui_args: list[str]) -> int:
+    from modules.runtime_console.tui_v2 import main as tui_main
+
+    return tui_main(tui_args)
+
+
+def _wait_for_ready_signal(ready_url: str | None = None, timeout_s: float = 5.0) -> bool:
+    """Wait briefly only when an explicit /readyz URL or non-zero startup delay is requested."""
+    target = (ready_url or os.environ.get("SENTRYBOT_READY_URL") or "").strip()
+    if target:
+        import urllib.request
+
+        deadline = time.monotonic() + max(0.1, timeout_s)
+        while time.monotonic() < deadline:
+            try:
+                with urllib.request.urlopen(target, timeout=0.5) as resp:
+                    if resp.status == 200:
+                        return True
+            except Exception:
+                time.sleep(0.05)
+        LOGGER.warning("readiness signal timed out for %s", target)
+        return False
+
+    delay_raw = str(os.environ.get("SENTRYBOT_TUI_DELAY_S", "0") or "0").strip()
+    try:
+        delay = max(0.0, min(5.0, float(delay_raw)))
+    except ValueError:
+        delay = 0.0
+    if delay > 0.0:
+        time.sleep(delay)
+    return True
 
 
 def _as_mapping(value: Any) -> dict[str, Any]:
@@ -181,6 +217,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bluetooth", action="store_true", help="select a paired Bluetooth device for output only")
     parser.add_argument("--bluetooth-device", help="paired Bluetooth device MAC address; skips interactive selection")
     parser.add_argument(
+        "--no-delay",
+        action="store_true",
+        help="skip any optional startup readiness/TUI delay",
+    )
+    parser.add_argument(
         "--profile",
         choices=["pc", "pc-test", "robot"],
         default=None,
@@ -222,12 +263,13 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n\x1b[1;36m--- SENTRYBOT SYSTEM INITIALIZING ---\x1b[0m\n")
     try:
-        sysinfo_main(["--once"])
+        _run_sysinfo_once()
     except Exception as exc:
         LOGGER.warning("system information display failed: %s", exc)
     try:
         print("\n\x1b[2mLoading Control Center...\x1b[0m")
-        time.sleep(1.0)
+        if not args.no_delay:
+            _wait_for_ready_signal()
 
         tui_args = ["--alt"]
         if not args.no_run:
@@ -236,13 +278,17 @@ def main(argv: list[str] | None = None) -> int:
             tui_args.append("--no-run")
         tui_args.extend(["--profile", effective_profile])
         tui_args.extend(unknown)
-        return tui_main(tui_args)
-    except (KeyboardInterrupt, SystemExit):
-        return 0
+        return _run_tui(tui_args)
+    except KeyboardInterrupt:
+        return 130
+    except SystemExit as exc:
+        if exc.code is None:
+            return 0
+        return exc.code if isinstance(exc.code, int) else 1
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (KeyboardInterrupt, SystemExit):
-        sys.exit(0)
+    except KeyboardInterrupt:
+        sys.exit(130)
