@@ -1,70 +1,128 @@
 from __future__ import annotations
-from typing import Dict, Any
-from fastapi import APIRouter
 
+import logging
+from typing import Any, Dict
+
+from fastapi import APIRouter
+from fastapi.responses import JSONResponse
+
+logger = logging.getLogger("gateway.router")
 
 # Core gateway routes are intentionally read-only; no route bypasses e-stop or
 # owner authorization because hardware commands are owned by module APIs.
 ROUTE_MANIFEST = (
     {"path": "/healthz", "method": "GET", "auth": "none", "estop_required": False},
+    {"path": "/readyz", "method": "GET", "auth": "none", "estop_required": False},
     {"path": "/status", "method": "GET", "auth": "none", "estop_required": False},
     {"path": "/health", "method": "GET", "auth": "none", "estop_required": False},
 )
+
+_INTERNAL_STARTED_KEYS = frozenset(
+    {
+        "gateway_base_url",
+        "expression_arbiter",
+        "head_arbiter",
+        "camera_handle",
+        "onsensor_bus",
+        "imx500_runner",
+        "device_manager",
+        "wakeword_handle",
+        "autonomy_started",
+        "notifier_bot",
+        "notifier_polling_enabled",
+        "runtime_registry",
+    }
+)
+
+
+def _probe_service(name: str, svc: object) -> Dict[str, Any]:
+    if isinstance(svc, dict):
+        info = dict(svc)
+        info["ok"] = bool(info.get("ok", True))
+        return info
+
+    if isinstance(svc, bool):
+        return {"ok": svc}
+
+    for method_name in ("health", "status"):
+        probe = getattr(svc, method_name, None)
+        if callable(probe):
+            try:
+                res = probe()
+                if isinstance(res, dict):
+                    ok = bool(res.get("ok", True))
+                    return {"ok": ok, "body": res} if method_name == "health" else {"ok": ok, "status": res}
+                return {"ok": bool(res) if method_name == "health" else True, method_name: res}
+            except Exception as exc:
+                logger.debug("in-memory %s probe failed for %s: %s", method_name, name, exc)
+                return {"ok": False, "error": str(exc)}
+
+    for running_attr in ("is_running", "running"):
+        probe = getattr(svc, running_attr, None)
+        if callable(probe):
+            try:
+                return {"ok": True, "running": bool(probe())}
+            except Exception as exc:
+                logger.debug("in-memory running probe failed for %s: %s", name, exc)
+                return {"ok": False, "error": str(exc)}
+
+    return {"ok": True}
+
+
+def _collect_module_health(started: Dict[str, object]) -> tuple[bool, Dict[str, Dict[str, Any]]]:
+    modules: Dict[str, Dict[str, Any]] = {}
+    all_ok = True
+    for name, svc in list(started.items()):
+        if str(name).startswith("_") or name in _INTERNAL_STARTED_KEYS:
+            continue
+        info = _probe_service(str(name), svc)
+        modules[str(name)] = info
+        if not info.get("ok", False):
+            all_ok = False
+    return all_ok, modules
 
 
 def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
     r = APIRouter()
 
     @r.get("/healthz")
-    def healthz():
+    def healthz() -> Dict[str, Any]:
         startup = started.get("_startup_health", {"ok": True, "stage": "unknown"})
-        startup = startup if isinstance(startup, dict) else {"ok": False, "stage": "invalid"}
-        out: Dict[str, Any] = {"ok": bool(startup.get("ok", False)), "startup": startup, "modules": {}}
-        # Try to call each module's health if known, else mark as started
-        try:
-            import httpx  # type: ignore
-        except Exception:
-            httpx = None  # type: ignore
-        port = int(cfg.get("server", {}).get("port", 8080))
-        client = None
-        if httpx:
-            client = httpx.Client(base_url=f"http://127.0.0.1:{port}")
-        try:
-            for name in started.keys():
-                if name.startswith("_"):
-                    continue
-                path = None
-                if name == "notifier":
-                    path = "/notify/healthz"
-                elif name == "state_manager":
-                    path = "/state/healthz"
-                elif name in ("arduino", "esp_link", "neopixel", "piservo", "telemetry", "diagnostics", "scheduler", "calibration", "config_center"):
-                    path = f"/{name}/healthz"
-                elif name == "camera":
-                    path = "/camera/healthz"
-                elif name in ("speak", "speech", "wakeword"):
-                    path = f"/{name}/status"
-                if client and path:
-                    try:
-                        resp = client.get(path, timeout=0.5)
-                        ok = resp.status_code == 200
-                        out["modules"][name] = {"ok": ok}
-                        if not ok:
-                            out["ok"] = False
-                    except Exception as e:
-                        out["modules"][name] = {"ok": False, "error": str(e)}
-                        out["ok"] = False
-                else:
-                    out["modules"][name] = {"ok": True}
-        finally:
-            if client:
-                client.close()
-        return out
+        startup_dict = dict(startup) if isinstance(startup, dict) else {"ok": False, "stage": "invalid"}
+        modules_ok, modules = _collect_module_health(started)
+        overall_ok = bool(startup_dict.get("ok", False)) and modules_ok
+        return {"ok": overall_ok, "startup": startup_dict, "modules": modules}
+
+    @r.get("/readyz")
+    def readyz() -> JSONResponse:
+        startup = started.get("_startup_health", {"ok": False, "stage": "starting"})
+        startup_dict = dict(startup) if isinstance(startup, dict) else {"ok": False, "stage": "invalid"}
+        manifest = started.get("_boot_manifest", [])
+        boot_list = list(manifest) if isinstance(manifest, list) else []
+        ready = bool(startup_dict.get("ok", False)) and startup_dict.get("stage") == "ready"
+        slowest = max(
+            boot_list,
+            key=lambda item: float(item.get("duration_ms", 0.0)) if isinstance(item, dict) else 0.0,
+            default=None,
+        )
+        payload = {
+            "ok": ready,
+            "ready": ready,
+            "stage": startup_dict.get("stage", "unknown"),
+            "total_boot_ms": started.get("_boot_total_ms", 0.0),
+            "slowest_module": slowest,
+            "boot_manifest": boot_list,
+        }
+        return JSONResponse(status_code=200 if ready else 503, content=payload)
 
     @r.get("/status")
-    def status():
+    def status() -> Dict[str, Any]:
         include_cfg = dict(cfg.get("include", {}))
-        started_names = list(started.keys())
+        started_names = [
+            str(k)
+            for k in started.keys()
+            if not str(k).startswith("_") and k not in _INTERNAL_STARTED_KEYS
+        ]
         configured_on = [k for k, v in include_cfg.items() if bool(v)]
         not_started = [k for k in configured_on if k not in started_names]
         return {
@@ -72,53 +130,14 @@ def get_router(cfg: Dict[str, Any], started: Dict[str, object]) -> APIRouter:
             "configured": include_cfg,
             "started": started_names,
             "not_started": not_started,
+            "boot_total_ms": started.get("_boot_total_ms"),
         }
 
     @r.get("/health")
-    def health():
-        try:
-            import httpx  # type: ignore
-        except Exception:
-            return {"ok": True, "note": "httpx not installed; basic status only", "included": list(started.keys())}
-
-        summary: Dict[str, Any] = {"ok": True}
-        checks = {
-            "arduino": ("GET", "/arduino/healthz"),
-            "esp_link": ("GET", "/esp/healthz"),
-            "neopixel": ("GET", "/neopixel/healthz"),
-            "piservo": ("GET", "/piservo/healthz"),
-            "speech": ("GET", "/speech/status"),
-            "speak": ("GET", "/speak/status"),
-            "wakeword": ("GET", "/wakeword/status"),
-            "vlm_bridge": None,
-            "interactions": None,
-            "ollama": ("GET", "/ollama/healthz"),
-        }
-        mounted_checks = {
-            "camera": ("GET", "/camera/healthz"),
-        }
-        port = int(cfg.get("server", {}).get("port", 8080))
-        client = httpx.Client(base_url=f"http://127.0.0.1:{port}")
-        try:
-            for name, _ in started.items():
-                check = checks.get(name) or mounted_checks.get(name)
-                if check is not None:
-                    method, path = check
-                    try:
-                        resp = client.request(method, path, timeout=0.5)
-                        summary[name] = {
-                            "ok": resp.status_code == 200,
-                            "body": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None,
-                        }
-                        if not summary[name]["ok"]:
-                            summary["ok"] = False
-                    except Exception as e:
-                        summary[name] = {"ok": False, "error": str(e)}
-                        summary["ok"] = False
-                else:
-                    summary[name] = {"ok": True}
-        finally:
-            client.close()
-        return summary
+    def health() -> Dict[str, Any]:
+        modules_ok, modules = _collect_module_health(started)
+        startup = started.get("_startup_health", {"ok": True})
+        startup_ok = bool(startup.get("ok", True)) if isinstance(startup, dict) else False
+        return {"ok": startup_ok and modules_ok, **modules}
 
     return r
