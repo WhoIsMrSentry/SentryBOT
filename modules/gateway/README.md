@@ -35,15 +35,22 @@ modules/gateway/
 ├── README.md                         # Bu doküman
 ├── api/
 │   └── router.py                     # Kök Sağlık ve Durum Uç Noktaları (/healthz, /status)
-└── services/                         # Modüler Önyükleme (Bootstrapper) Katmanı
-    ├── bootstrap.py                  # Ana Orkestrasyon ve Yaşam Döngüsü
-    ├── bootstrap_config.py           # agent.yaml ve Bayrak Değerlendirici
-    ├── bootstrap_hardware.py         # Donanım Modülleri Montajı (/arduino, /camera, /visual_output)
-    ├── bootstrap_ai.py               # Yapay Zeka Modülleri Montajı (/ollama, /vlm, /memory)
-    ├── bootstrap_ops.py              # Platform Modülleri Montajı (/system, /console)
-    ├── agent_core_binding.py         # Agent Core Orkestratör Bağlantısı (/agent, /chat)
-    └── agent_api_compat.py           # Geriye Dönük Uyumluluk Şimleri (/speak, /speech, /events)
+├── services/                         # Modüler Önyükleme (Bootstrapper) Katmanı
+│   ├── bootstrap.py                  # Ana Orkestrasyon, Zamanlı boot_manifest ve Yaşam Döngüsü
+│   ├── bootstrap_config.py           # mtime_ns Destekli agent.yaml Önbelleği ve Ortak Stub Yardımcısı
+│   ├── bootstrap_hardware.py         # Donanım Modülleri Montajı (/arduino, /camera, /neopixel, /piservo)
+│   ├── bootstrap_ai.py               # Yapay Zeka Modülleri Montajı (/ollama, /vlm, /speak, /speech, /wakeword)
+│   ├── bootstrap_ops.py              # Platform Modülleri Montajı (/state, /scheduler, /config, /telemetry, /diagnostics)
+│   ├── agent_core_binding.py         # from_config & İmza Tabanlı Agent Core Bağlantısı
+│   └── agent_api_compat.py           # Asenkron Ollama Araç Köprüsü & Uyumluluk Şimi (/agent/*, /api/agent/*)
 ```
+
+---
+
+## Güvenlik ve Gözlemlenebilirlik
+
+- **Yetki Kontrolü (`X-API-Key`):** `/config`, `/ota`, `/scheduler/jobs` ön ekleri yalnızca `security.admin_keys` içindeki anahtarlarla yetkilendirilir (`X-Role: admin` başlığı tek başına yetki yükseltmez).
+- **Bellek-İçi Sağlık & Hazırlık (`/health`, `/healthz`, `/readyz`):** Modüllerden doğrudan bellek içi `.health()` / `.status()` / `.is_running()` probu okunur (döngüsel loopback HTTP yok). `GET /readyz` her modülün açılış süresini (`duration_ms`), durumunu (`active` / `stub` / `disabled` / `error`) ve en yavaş modülü (`slowest_module`) döner.
 
 ---
 
