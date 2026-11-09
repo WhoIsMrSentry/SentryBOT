@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
+import threading
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI
@@ -10,6 +13,7 @@ from .bootstrap_config import (
     _agent_section,
     _merge_with_agent_section,
     _should_autostart_services,
+    mount_module_stub,
 )
 
 logger = logging.getLogger("gateway.bootstrap.hardware")
@@ -85,7 +89,11 @@ def _include_esp_link(app: FastAPI, started: Dict[str, object]) -> None:
             "paused": bool(pause_remaining > 0.0),
             "pause_remaining_s": round(pause_remaining, 3),
             "fail_streak": int(getattr(svc, "_esp_fail_streak", 0) or 0),
-            "note": "ESP HTTP transport is active" if esp_mode else "Arduino transport is not esp_http; /esp routes are compatibility status/proxy routes",
+            "note": (
+                "ESP HTTP transport is active"
+                if esp_mode
+                else "Arduino transport is not esp_http; /esp routes are compatibility status/proxy routes"
+            ),
         }
 
     def _require_service() -> Any:
@@ -145,7 +153,7 @@ def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
         order=str(hw.get("order", "GRB")),
     )
     preset_meta = ncfg.get("presets_meta", {}) if isinstance(ncfg.get("presets_meta", {}), dict) else {}
-    preset_store = Path(__file__).resolve().parents[2] / "neopixel" / "config" / "config.yml"
+    preset_store = Path(__file__).resolve().parents[2] / "visual_output" / "neopixel" / "config" / "config.yml"
     runner = NeoRunner(
         cfg_obj,
         segments=hw.get("segments", []),
@@ -162,68 +170,26 @@ def _include_neopixel(app: FastAPI, started: Dict[str, object]) -> None:
     logger.info("module neopixel mounted")
 
 
-def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
-    # sentrybot_windows_no_hardware_camera_stub
-    import os
+def _env_truthy(name: str) -> bool:
+    return str(os.getenv(name, "")).strip().lower() in {"1", "true", "yes", "on"}
 
-    if str(os.getenv("SENTRYBOT_NO_HARDWARE", "")).lower() in {"1", "true", "yes", "on"} or str(os.getenv("SENTRYBOT_SKIP_CAMERA_AUTOSTART", "")).lower() in {"1", "true", "yes", "on"}:
-        from fastapi import APIRouter
 
-        router = APIRouter(prefix="/camera", tags=["camera"])
+def _camera_mode_from_cfg(ccfg: Dict[str, Any], CameraMode: Any) -> Any:
+    mode = ccfg.get("processing_mode")
+    if mode == "onsensor":
+        return CameraMode.ONSENSOR
+    if ccfg.get("hybrid_local_capture"):
+        return CameraMode.HYBRID
+    if mode == "remote":
+        return CameraMode.REMOTE
+    return CameraMode.LOCAL
 
-        @router.get("/healthz")
-        def _camera_stub_healthz():
-            return {
-                "ok": True,
-                "available": False,
-                "skipped": True,
-                "reason": "hardware_disabled",
-            }
 
-        @router.get("/status")
-        def _camera_stub_status():
-            return {
-                "ok": True,
-                "available": False,
-                "skipped": True,
-                "reason": "hardware_disabled",
-            }
-
-        started["camera"] = {
-            "kind": "stub",
-            "available": False,
-            "skipped": True,
-            "reason": "hardware_disabled",
-        }
-        started["camera_handle"] = None
-        started["onsensor_bus"] = None
-        started["imx500_runner"] = None
-        started["device_manager"] = None
-
-        try:
-            app.include_router(router)
-        except Exception:
-            pass
-
-        logger.info("module camera mounted as no-hardware stub")
-        return
-    from modules.camera.api import get_router as get_cam_router  # type: ignore
-    from modules.camera.config_loader import load_config as load_cam_cfg  # type: ignore
-    from modules.camera.services.capture import CameraCapture, CaptureConfig, FramePublisher  # type: ignore
-    from modules.camera.services.imx500_runner import Imx500Config, Imx500Runner  # type: ignore
-    from modules.camera.services.onsensor_bus import get_default_bus  # type: ignore
-    from modules.camera.device_manager import get_camera_manager, CameraConfig, CameraMode  # type: ignore
-
-    ccfg = _merge_with_agent_section(load_cam_cfg(None), "camera")
-    camera_enabled = bool(ccfg.get("enabled", True))
-    picam_raw = ccfg.get("picamera2", {}) if isinstance(ccfg.get("picamera2"), dict) else {}
-    size_raw = picam_raw.get("size", {}) if isinstance(picam_raw.get("size"), dict) else {}
+def _build_imx500_runner(ccfg: Dict[str, Any], Imx500Config: Any, Imx500Runner: Any, bus: Any) -> Any:
     imx_raw = ccfg.get("imx500", {}) if isinstance(ccfg.get("imx500"), dict) else {}
     tracker_raw = imx_raw.get("tracker", {}) if isinstance(imx_raw.get("tracker"), dict) else {}
     target_raw = imx_raw.get("target", {}) if isinstance(imx_raw.get("target"), dict) else {}
-
-    bus = get_default_bus()
-    runner = Imx500Runner(
+    return Imx500Runner(
         Imx500Config(
             enabled=bool(imx_raw.get("enabled", True)),
             model_path=str(
@@ -247,80 +213,115 @@ def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
         ),
         bus=bus,
     )
-    if camera_enabled:
-        runner.prepare()
 
-    # Initialize device manager
-    cam_mode = CameraMode.LOCAL
-    if ccfg.get("processing_mode") == "onsensor":
-        cam_mode = CameraMode.ONSENSOR
-    elif ccfg.get("hybrid_local_capture"):
-        cam_mode = CameraMode.HYBRID
-    elif ccfg.get("processing_mode") == "remote":
-        cam_mode = CameraMode.REMOTE
 
-    cam_config = CameraConfig(
-        device="/dev/video0",
-        width=int(size_raw.get("width", 1280)),
-        height=int(size_raw.get("height", 720)),
-        fps=int(picam_raw.get("frame_rate", ccfg.get("fps_target", 30))),
-        format=str(picam_raw.get("format", "RGB888")),
-        mode=cam_mode,
-        imx500_enabled=bool(imx_raw.get("enabled", True)),
+def _mount_camera_stub(app: FastAPI, started: Dict[str, object], *, reason: str) -> None:
+    mount_module_stub(
+        app,
+        started,
+        "camera",
+        prefix="/camera",
+        reason=reason,
+        extra_started={
+            "camera_handle": None,
+            "onsensor_bus": None,
+            "imx500_runner": None,
+            "device_manager": None,
+        },
     )
+    logger.info("module camera mounted as stub (%s)", reason)
+
+
+def _include_camera(app: FastAPI, started: Dict[str, object]) -> None:
+    if _env_truthy("SENTRYBOT_NO_HARDWARE") or _env_truthy("SENTRYBOT_SKIP_CAMERA_AUTOSTART"):
+        _mount_camera_stub(app, started, reason="hardware_disabled")
+        return
+
+    from modules.camera.config_loader import load_config as load_cam_cfg  # type: ignore
+
+    ccfg = _merge_with_agent_section(load_cam_cfg(None), "camera")
+    if not bool(ccfg.get("enabled", True)):
+        _mount_camera_stub(app, started, reason="disabled_in_config")
+        return
+
+    from modules.camera.api import get_router as get_cam_router  # type: ignore
+    from modules.camera.services.capture import CameraCapture, CaptureConfig, FramePublisher  # type: ignore
+    from modules.camera.services.imx500_runner import Imx500Config, Imx500Runner  # type: ignore
+    from modules.camera.services.onsensor_bus import get_default_bus  # type: ignore
+    from modules.camera.device_manager import get_camera_manager, CameraConfig, CameraMode  # type: ignore
+
+    picam_raw = ccfg.get("picamera2", {}) if isinstance(ccfg.get("picamera2"), dict) else {}
+    size_raw = picam_raw.get("size", {}) if isinstance(picam_raw.get("size"), dict) else {}
+    imx_raw = ccfg.get("imx500", {}) if isinstance(ccfg.get("imx500"), dict) else {}
+
+    bus = get_default_bus()
+    runner = _build_imx500_runner(ccfg, Imx500Config, Imx500Runner, bus)
+    runner.prepare()
+
+    cam_mode = _camera_mode_from_cfg(ccfg, CameraMode)
+    width = int(size_raw.get("width", 1280))
+    height = int(size_raw.get("height", 720))
+    fps_val = int(picam_raw.get("frame_rate", ccfg.get("fps_target", 30)))
+    fmt = str(picam_raw.get("format", "RGB888"))
 
     device_manager = get_camera_manager()
-    device_manager.configure(cam_config)
-
-    if camera_enabled:
-        # Acquire device reference for camera capture
-        cam_handle = device_manager.acquire("camera_capture", cam_mode)
-        
-        capture = CameraCapture(
-            CaptureConfig(
-                size=(int(size_raw.get("width", 1280)), int(size_raw.get("height", 720))),
-                pixel_format=str(picam_raw.get("format", "RGB888")),
-                frame_rate=int(picam_raw.get("frame_rate", ccfg.get("fps_target", 30))),
-                jpeg_quality=int(ccfg.get("jpeg_quality", 80)),
-                flip=str(ccfg.get("flip", "none")),
-                camera_num=runner.camera_num,
-            ),
-            FramePublisher(),
+    device_manager.configure(
+        CameraConfig(
+            device="/dev/video0",
+            width=width,
+            height=height,
+            fps=fps_val,
+            format=fmt,
+            mode=cam_mode,
+            imx500_enabled=bool(imx_raw.get("enabled", True)),
         )
+    )
+    cam_handle = device_manager.acquire("camera_capture", cam_mode)
+    capture = CameraCapture(
+        CaptureConfig(
+            size=(width, height),
+            pixel_format=fmt,
+            frame_rate=fps_val,
+            jpeg_quality=int(ccfg.get("jpeg_quality", 80)),
+            flip=str(ccfg.get("flip", "none")),
+            camera_num=runner.camera_num,
+        ),
+        FramePublisher(),
+    )
 
-        if _should_autostart_services():
-            try:
-                started_ok = capture.start()
-                if started_ok:
-                    runner.attach_camera(capture.picam, capture)
-                    runner.start()
-                else:
-                    logger.info("camera hardware capture inactive; routes available in offline/stub mode")
-            except Exception as exc:
-                logger.warning("camera service autostart degraded: %s", exc)
-        else:
-            logger.info("camera auto-start skipped")
-
-        started["camera"] = capture
-        started["camera_handle"] = cam_handle
-        started["onsensor_bus"] = bus
-        started["imx500_runner"] = runner
-        fps_val = int(picam_raw.get("frame_rate", ccfg.get("fps_target", 30)))
+    if _should_autostart_services():
         try:
-            app.include_router(
-                get_cam_router(
-                    capture,
-                    fps_val,
-                    enabled=camera_enabled,
-                    imx500_runner=runner,
-                    onsensor_bus=bus,
-                ),
-                prefix="/camera",
-                tags=["camera"],
-            )
+            if capture.start():
+                runner.attach_camera(capture.picam, capture)
+                runner.start()
+            else:
+                logger.info("camera hardware capture inactive; routes available in offline/stub mode")
         except Exception as exc:
-            logger.error("failed to mount camera router: %s", exc)
-        logger.info("module camera mounted")
+            logger.warning("camera service autostart degraded: %s", exc)
+    else:
+        logger.info("camera auto-start skipped")
+
+    started["camera"] = capture
+    started["camera_handle"] = cam_handle
+    started["onsensor_bus"] = bus
+    started["imx500_runner"] = runner
+    device_manager.attach_capture(capture)
+    started["device_manager"] = device_manager
+    try:
+        app.include_router(
+            get_cam_router(
+                capture,
+                fps_val,
+                enabled=True,
+                imx500_runner=runner,
+                onsensor_bus=bus,
+            ),
+            prefix="/camera",
+            tags=["camera"],
+        )
+    except Exception as exc:
+        logger.error("failed to mount camera router: %s", exc)
+    logger.info("module camera mounted")
 
 
 def _include_piservo(app: FastAPI, started: Dict[str, object]) -> None:
@@ -348,7 +349,6 @@ def _wire_arduino_neopixel(app: FastAPI, started: Dict[str, object], cfg: Dict[s
     neopixel = started.get("neopixel")
     if arduino is None or neopixel is None or not hasattr(arduino, "register_event_handler"):
         return
-    import threading
 
     bridge_cfg = cfg.get("arduino_neopixel_bridge", {})
     bridge_cfg = bridge_cfg if isinstance(bridge_cfg, dict) else {}
@@ -363,25 +363,53 @@ def _wire_arduino_neopixel(app: FastAPI, started: Dict[str, object], cfg: Dict[s
     _np_lock = threading.Lock()
     _np_queue: list[Dict[str, Any]] = []
     _np_last_ms = 0
-    _np_min_interval_ms = int(cfg.get("neopixel", {}).get("min_interval_ms", 100))
-    _np_max_queue = int(cfg.get("neopixel", {}).get("max_queue", 32))
+    _np_timer: threading.Timer | None = None
+    _np_closed = False
+    _np_min_interval_ms = max(1, int(cfg.get("neopixel", {}).get("min_interval_ms", 100)))
+    _np_max_queue = max(1, int(cfg.get("neopixel", {}).get("max_queue", 32)))
+
+    def _schedule_flush(delay_ms: int) -> None:
+        nonlocal _np_timer
+        if _np_closed or _np_timer is not None:
+            return
+        timer = threading.Timer(max(0.005, delay_ms / 1000.0), _flush_queue)
+        timer.daemon = True
+        _np_timer = timer
+        timer.start()
+
+    def _cancel_timer() -> None:
+        nonlocal _np_timer, _np_closed
+        with _np_lock:
+            _np_closed = True
+            timer = _np_timer
+            _np_timer = None
+            _np_queue.clear()
+        if timer is not None:
+            timer.cancel()
 
     def _enqueue_np(req: Dict[str, Any]) -> None:
-        nonlocal _np_queue
         with _np_lock:
+            if _np_closed:
+                return
             if len(_np_queue) >= _np_max_queue:
                 _np_queue.pop(0)
             _np_queue.append(req)
 
     def _flush_queue() -> None:
-        nonlocal _np_last_ms
-        now_ms = int(__import__("time").time() * 1000)
+        nonlocal _np_last_ms, _np_timer
         with _np_lock:
-            if not _np_queue:
+            _np_timer = None
+            if _np_closed or not _np_queue:
                 return
-            if now_ms - _np_last_ms < _np_min_interval_ms:
+            now_ms = int(time.time() * 1000)
+            elapsed = now_ms - _np_last_ms
+            if elapsed < _np_min_interval_ms:
+                _schedule_flush(_np_min_interval_ms - elapsed)
                 return
             req = _np_queue.pop(0)
+            _np_last_ms = now_ms
+            more_pending = bool(_np_queue)
+
         if lease_enabled:
             arbiter = started.get("expression_arbiter")
             if arbiter is None or not lease_source or not hasattr(arbiter, "claim_lights"):
@@ -395,13 +423,10 @@ def _wire_arduino_neopixel(app: FastAPI, started: Dict[str, object], cfg: Dict[s
             ):
                 logger.debug("arduino neopixel request rejected by expression lease")
                 return
+
         try:
             name = str(req.get("name", "")).strip()
-            iterations = int(req.get("iterations", 1) or 1)
-            if iterations < 1:
-                iterations = 1
-            if iterations > 10:
-                iterations = 10
+            iterations = min(10, max(1, int(req.get("iterations", 1) or 1)))
             color = None
             if isinstance(req.get("color"), str):
                 parts = [p.strip() for p in str(req.get("color")).split(",")]
@@ -417,18 +442,23 @@ def _wire_arduino_neopixel(app: FastAPI, started: Dict[str, object], cfg: Dict[s
                     neopixel.fill(*color)
         except Exception as exc:
             logger.debug("neopixel request handling failed during flush: %s", exc)
-        _np_last_ms = int(__import__("time").time() * 1000)
+        finally:
+            if more_pending:
+                with _np_lock:
+                    _schedule_flush(_np_min_interval_ms)
 
     def _on_arduino_event(msg: Dict[str, Any]) -> None:
-        if not isinstance(msg, dict):
-            return
-        if msg.get("event") != "neopixel_request":
+        if not isinstance(msg, dict) or msg.get("event") != "neopixel_request":
             return
         try:
             _enqueue_np(msg)
             _flush_queue()
         except Exception as exc:
             logger.debug("neopixel request handling failed: %s", exc)
+
+    hooks = started.setdefault("_cleanup_hooks", [])
+    if isinstance(hooks, list):
+        hooks.append(_cancel_timer)
 
     try:
         arduino.register_event_handler(_on_arduino_event)
