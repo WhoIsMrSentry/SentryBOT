@@ -3,18 +3,29 @@
 
 #include <Arduino.h>
 
-// WiFi Credentials — override via platformio.ini build_flags or env vars
-//   build_flags = -DWIFI_SSID='"MySSID"' -DWIFI_PASS='"MyPass"'
-// Do NOT commit real credentials; use a config/local_config.h pattern.
-#ifndef WIFI_SSID
-#define WIFI_SSID "SentryBOT"
+// Optional untracked local configuration (WIFI_SSID, WIFI_PASS, BRIDGE_AUTH_TOKEN)
+#if defined(__has_include)
+#if __has_include("local_config.h")
+#include "local_config.h"
 #endif
-#ifndef WIFI_PASS
-#define WIFI_PASS "SentryBOT"
 #endif
 
-// mDNS hostname (accessible as "sentrybot.local")
-#define MDNS_HOSTNAME "sentrybot"
+// WiFi Credentials — set in local_config.h or build_flags:
+//   -DWIFI_SSID='"MySSID"' -DWIFI_PASS='"MyPass"'
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
+#ifndef WIFI_PASS
+#define WIFI_PASS ""
+#endif
+
+// Optional shared API token protecting POST /send and POST /request (empty disables token check)
+#ifndef BRIDGE_AUTH_TOKEN
+#define BRIDGE_AUTH_TOKEN ""
+#endif
+
+// mDNS hostname (accessible as "sentrybot-2.local", matching Pi config.yml)
+#define MDNS_HOSTNAME "sentrybot-2"
 
 // HTTP server port
 #define HTTP_PORT 8080
@@ -29,10 +40,9 @@
 #define TELEMETRY_INTERVAL_MS  200
 #define LINK_TIMEOUT_MS        1000
 
-// Task Priorities
+// Task Priorities & Queue Sizing
 #define PRIORITY_UART   5
-#define PRIORITY_WEB    4
-#define PRIORITY_WIFI   2
+#define RX_QUEUE_DEPTH  12
 
 // Buffers
 #define SERIAL_BUF_SIZE 1024
