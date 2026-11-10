@@ -21,7 +21,11 @@ def test_default_serial_device_pi_linux_fallback_order(monkeypatch):
     monkeypatch.delenv("SENTRYBOT_SERIAL_DEVICE", raising=False)
     monkeypatch.delenv("SENTRYBOT_ARDUINO_DEVICE", raising=False)
     monkeypatch.setattr(serial_module.os, "name", "posix", raising=False)
-    monkeypatch.setattr(serial_module, "_existing_device_from_globs", lambda patterns=serial_module._PI_SERIAL_CANDIDATE_GLOBS: "/dev/ttyACM0")
+    monkeypatch.setattr(
+        serial_module,
+        "_existing_device_from_globs",
+        lambda patterns=serial_module._PI_SERIAL_CANDIDATE_GLOBS: "/dev/ttyACM0",
+    )
     assert serial_module._default_serial_device() == "/dev/ttyACM0"
 
 
@@ -29,7 +33,11 @@ def test_default_serial_device_pi_linux_last_resort(monkeypatch):
     monkeypatch.delenv("SENTRYBOT_SERIAL_DEVICE", raising=False)
     monkeypatch.delenv("SENTRYBOT_ARDUINO_DEVICE", raising=False)
     monkeypatch.setattr(serial_module.os, "name", "posix", raising=False)
-    monkeypatch.setattr(serial_module, "_existing_device_from_globs", lambda patterns=serial_module._PI_SERIAL_CANDIDATE_GLOBS: None)
+    monkeypatch.setattr(
+        serial_module,
+        "_existing_device_from_globs",
+        lambda patterns=serial_module._PI_SERIAL_CANDIDATE_GLOBS: None,
+    )
     assert serial_module._default_serial_device() == "/dev/serial0"
 
 
