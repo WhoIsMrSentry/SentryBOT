@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Optional
 
 LIVELINESS_MODES = ("breathe", "idle", "micro")
@@ -10,6 +11,10 @@ SERVO_MAX_DEG = 180.0
 
 
 def _as_int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and (not math.isfinite(value) or not value.is_integer()):
+        return None
     try:
         return int(value)
     except Exception:
@@ -17,10 +22,15 @@ def _as_int(value: Any) -> Optional[int]:
 
 
 def _as_float(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
     try:
-        return float(value)
+        parsed = float(value)
     except Exception:
         return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
 
 
 def _is_bool(value: Any) -> bool:
