@@ -18,8 +18,15 @@ extern unsigned long lastTelemetryMs;
 // Last brain speech text (set via NDJSON cmd)
 extern String g_lastSpeech;
 
-// IR menu instance (defined in xMain.ino)
+// Forward declarations for safety/calibration helpers owned by xMain.ino
+void triggerSafetyEstop(const __FlashStringHelper *reason);
+void clearSafetyEstop();
+void startEncoderCalibration(unsigned long durMs, bool updateLcd);
+
+#if VIRTUAL_MENU_ENABLED
+// IR virtual menu instance (defined in xMain.ino)
 extern IrMenuController g_irMenu;
+#endif
 
 #if RFID_ENABLED
 #include "../xPeripherals.h"
@@ -72,7 +79,7 @@ static inline bool isIrKeyStr(const String &k){
 // ── Idle liveliness (firmware-native breathing / micro-motion) ───────────
 // Owned here; driven by livelinessTick() from the main loop. Keeps subtle
 // head motion alive even if the Pi bridge briefly stalls.
-static bool          g_livOn       = false;
+bool                 g_livOn       = false;
 static float         g_livAmp      = 4.0f;    // degrees
 static float         g_livPanC     = 90.0f;   // pan center
 static float         g_livTiltC    = 90.0f;   // tilt center
@@ -80,7 +87,7 @@ static unsigned long g_livPeriodMs = 4500;    // full cycle period
 static bool          g_livMicro    = false;   // micro mode adds a faster pan flutter
 
 static inline void livelinessTick(){
-  if (!g_livOn) return;
+  if (!g_livOn || robot.isEstopped()) return;
   unsigned long period = g_livPeriodMs < 200 ? 200 : g_livPeriodMs;
   float phase = (float)(millis() % period) / (float)period;  // 0..1
   float s = sinf(phase * 6.2831853f);                        // breathing on tilt
@@ -98,116 +105,169 @@ static inline void handleJson(const String &line){
   // Trim and check for bare IR key (no JSON structure)
   String trimmed = line;
   trimmed.trim();
-  
-  // If line doesn't start with { and looks like a bare key
+
+  // If line doesn't start with { and looks like a bare shortcut/IR key
   if (trimmed.length() > 0 && trimmed[0] != '{'){
+    if (trimmed.equalsIgnoreCase(F("cal"))){
+      if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+      robot.calibrateNeutral();
+      Protocol::sendOk(F("calibrated"));
+      return;
+    }
     trimmed.toUpperCase();
     if (isIrKeyStr(trimmed)){
+#if VIRTUAL_MENU_ENABLED
       g_irMenu.onKey(trimmed, robot);
-      Protocol::sendOk("ir_key");
+      Protocol::sendOk(F("ir_key"));
+#else
+      Protocol::sendErr(F("menu_disabled"));
+#endif
       return;
     }
   }
 
+  // Extract optional correlation sequence id and echo it automatically in replies.
+  bool hasSeq = false;
+  long reqSeq = Protocol::parseJsonLongAfter(line, F("\"seq\":"), -1L, &hasSeq);
+  Protocol::SeqScope _seqScope(hasSeq, reqSeq);
+
   // Handle ACKs for neopixel requests (from Pi): {"ok":true,"ack_seq":<num>}
-  int _ackp = line.indexOf("\"ack_seq\":");
-  if (_ackp >= 0){
-    int sval = line.substring(_ackp+10).toInt();
-    if (sval > 0) markNeopixelAck((uint16_t)sval);
-    // continue processing other commands
+  bool hasAckSeq = false;
+  long sval = Protocol::parseJsonLongAfter(line, F("\"ack_seq\":"), 0L, &hasAckSeq);
+  if (hasAckSeq && sval > 0){
+    markNeopixelAck((uint16_t)sval);
   }
-  // Very small manual parse for known keys to avoid heavy JSON libs on AVR
-  if (line.indexOf("\"cmd\":\"hello\"")>=0){
-    SERIAL_IO.print(F("{\"ok\":true,\"msg\":\"hello\",\"fw\":\"xMain\",\"fw_ver\":\"2026.03\",\"servo_count\":"));
-    SERIAL_IO.print((int)SERVO_COUNT_TOTAL);
-    SERIAL_IO.print(F(",\"features\":[\"set_servo_index_deg\",\"set_pose\",\"stepper\",\"pid_enable\",\"pid_set\",\"track\",\"telemetry\",\"rfid\",\"ultra\",\"laser\",\"buzzer\",\"cute\"]}"));
-    SERIAL_IO.println();
+
+  String cmd = Protocol::parseJsonStringAfter(line, F("\"cmd\":"));
+  if (cmd.length() == 0){
+    if (hasAckSeq){
+      if (hasSeq) Protocol::sendOk(F("ack"));
+      return;
+    }
+    Protocol::sendErr(F("missing_cmd"));
     return;
   }
-  if (line.indexOf("\"cmd\":\"hb\"")>=0){ lastHeartbeatMs = millis(); Protocol::sendOk("hb"); return; }
 
-  if (line.indexOf("\"cmd\":\"ir_key\"")>=0){
-    String key = parseJsonStringAfter(line, "\"key\":\"");
+  if (cmd == F("hello")){
+    SERIAL_IO.print(F("{\"ok\":true,\"msg\":\"hello\",\"fw\":\"xMain\",\"fw_ver\":\"2026.03\",\"servo_count\":"));
+    SERIAL_IO.print((int)SERVO_COUNT_TOTAL);
+    SERIAL_IO.print(F(",\"estop\":"));
+    SERIAL_IO.print(robot.isEstopped() ? F("true") : F("false"));
+    SERIAL_IO.print(F(",\"features\":[\"set_servo_index_deg\",\"set_pose\",\"stepper\",\"pid_enable\",\"pid_set\",\"track\",\"telemetry\",\"rfid\",\"ultra\",\"laser\",\"buzzer\",\"cute\",\"estop_clear\"]"));
+    Protocol::endJsonReply(SERIAL_IO);
+    return;
+  }
+
+  if (cmd == F("hb")){
+    lastHeartbeatMs = millis();
+    Protocol::sendOk(F("hb"));
+    return;
+  }
+
+  if (cmd == F("estop")){
+    triggerSafetyEstop(F("cmd"));
+#if BUZZER_ENABLED
+    g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 150);
+#endif
+    Protocol::sendOk(F("estopped"));
+    return;
+  }
+
+  if (cmd == F("estop_clear")){
+    clearSafetyEstop();
+    Protocol::sendOk(F("estop_cleared"));
+    return;
+  }
+
+  if (cmd == F("ir_key")){
+#if VIRTUAL_MENU_ENABLED
+    String key = Protocol::parseJsonStringAfter(line, F("\"key\":"));
     key.trim();
     key.toUpperCase();
     if (isIrKeyStr(key)){
       g_irMenu.onKey(key, robot);
-      Protocol::sendOk("ir_key");
+      Protocol::sendOk(F("ir_key"));
     } else {
-      Protocol::sendErr("bad_key");
+      Protocol::sendErr(F("bad_key"));
     }
+#else
+    Protocol::sendErr(F("menu_disabled"));
+#endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"menu_goto\"")>=0){
-    String menu = parseJsonStringAfter(line, "\"menu\":\"");
-    if (menu.length() == 0) menu = parseJsonStringAfter(line, "\"target\":\"");
+  if (cmd == F("menu_goto")){
+#if VIRTUAL_MENU_ENABLED
+    String menu = Protocol::parseJsonStringAfter(line, F("\"menu\":"));
+    if (menu.length() == 0) menu = Protocol::parseJsonStringAfter(line, F("\"target\":"));
     menu.trim();
     menu.toLowerCase();
 
-    if (menu == "home") { g_irMenu.gotoHome(); Protocol::sendOk("menu_home"); return; }
-    // Resolve via enum names to stay correct when items are added/removed.
-    if (menu == "servo")     { g_irMenu.gotoMenu(IrMenuController::MENU_SERVO,     robot); Protocol::sendOk("menu_servo");     return; }
-    if (menu == "laser")     { g_irMenu.gotoMenu(IrMenuController::MENU_LASER,     robot); Protocol::sendOk("menu_laser");     return; }
-    if (menu == "ultra")     { g_irMenu.gotoMenu(IrMenuController::MENU_ULTRA,     robot); Protocol::sendOk("menu_ultra");     return; }
-    if (menu == "imu")       { g_irMenu.gotoMenu(IrMenuController::MENU_IMU,       robot); Protocol::sendOk("menu_imu");       return; }
-    if (menu == "rfid")      { g_irMenu.gotoMenu(IrMenuController::MENU_RFID,      robot); Protocol::sendOk("menu_rfid");      return; }
-    if (menu == "sound")     { g_irMenu.gotoMenu(IrMenuController::MENU_SOUND,     robot); Protocol::sendOk("menu_sound");     return; }
-    if (menu == "calibrate") { g_irMenu.gotoMenu(IrMenuController::MENU_CALIBRATE, robot); Protocol::sendOk("menu_calibrate"); return; }
-    if (menu == "system")    { g_irMenu.gotoMenu(IrMenuController::MENU_SYSTEM,    robot); Protocol::sendOk("menu_system");    return; }
-    if (menu == "temps")     { g_irMenu.gotoMenu(IrMenuController::MENU_TEMPS,     robot); Protocol::sendOk("menu_temps");     return; }
-    if (menu == "alerts")    { g_irMenu.gotoMenu(IrMenuController::MENU_ALERTS,    robot); Protocol::sendOk("menu_alerts");    return; }
-    if (menu == "stats")     { g_irMenu.gotoMenu(IrMenuController::MENU_STATS,     robot); Protocol::sendOk("menu_stats");     return; }
+    if (menu == F("home"))      { g_irMenu.gotoHome(); Protocol::sendOk(F("menu_home")); return; }
+    if (menu == F("servo"))     { g_irMenu.gotoMenu(IrMenuController::MENU_SERVO,     robot); Protocol::sendOk(F("menu_servo"));     return; }
+    if (menu == F("laser"))     { g_irMenu.gotoMenu(IrMenuController::MENU_LASER,     robot); Protocol::sendOk(F("menu_laser"));     return; }
+    if (menu == F("ultra"))     { g_irMenu.gotoMenu(IrMenuController::MENU_ULTRA,     robot); Protocol::sendOk(F("menu_ultra"));     return; }
+    if (menu == F("imu"))       { g_irMenu.gotoMenu(IrMenuController::MENU_IMU,       robot); Protocol::sendOk(F("menu_imu"));       return; }
+    if (menu == F("rfid"))      { g_irMenu.gotoMenu(IrMenuController::MENU_RFID,      robot); Protocol::sendOk(F("menu_rfid"));      return; }
+    if (menu == F("sound"))     { g_irMenu.gotoMenu(IrMenuController::MENU_SOUND,     robot); Protocol::sendOk(F("menu_sound"));     return; }
+    if (menu == F("calibrate")) { g_irMenu.gotoMenu(IrMenuController::MENU_CALIBRATE, robot); Protocol::sendOk(F("menu_calibrate")); return; }
+    if (menu == F("system"))    { g_irMenu.gotoMenu(IrMenuController::MENU_SYSTEM,    robot); Protocol::sendOk(F("menu_system"));    return; }
+    if (menu == F("temps"))     { g_irMenu.gotoMenu(IrMenuController::MENU_TEMPS,     robot); Protocol::sendOk(F("menu_temps"));     return; }
+    if (menu == F("alerts"))    { g_irMenu.gotoMenu(IrMenuController::MENU_ALERTS,    robot); Protocol::sendOk(F("menu_alerts"));    return; }
+    if (menu == F("stats"))     { g_irMenu.gotoMenu(IrMenuController::MENU_STATS,     robot); Protocol::sendOk(F("menu_stats"));     return; }
 
-    Protocol::sendErr("bad_menu");
-    return;
-  }
-
-  if (line.indexOf("\"cmd\":\"lcd\"")>=0){
-#if LCD_ENABLED
-    uint8_t tgt = lcdTargetMaskFromLine(line);
-    String top = parseJsonStringAfter(line, "\"top\":\"");
-    String bottom = parseJsonStringAfter(line, "\"bottom\":\"");
-    if (top.length()==0){
-      int p=line.indexOf("\"msg\":\"");
-      if (p>=0){ int e=line.indexOf('"', p+7); top = (e>p? line.substring(p+7,e):""); }
-    }
-    if (top.length()>0){
-      g_lcdStatus.showTo(tgt, top, bottom, true);
-      Protocol::sendOk("lcd_ok");
-    } else {
-      Protocol::sendErr("no_msg");
-    }
+    Protocol::sendErr(F("bad_menu"));
 #else
-    Protocol::sendErr("lcd_disabled");
+    Protocol::sendErr(F("menu_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"rfid_last\"")>=0){
+  if (cmd == F("lcd")){
+#if LCD_ENABLED
+    uint8_t tgt = lcdTargetMaskFromLine(line);
+    String top = Protocol::parseJsonStringAfter(line, F("\"top\":"));
+    String bottom = Protocol::parseJsonStringAfter(line, F("\"bottom\":"));
+    if (top.length() == 0){
+      top = Protocol::parseJsonStringAfter(line, F("\"msg\":"));
+    }
+    if (top.length() > 0){
+      g_lcdStatus.showTo(tgt, top, bottom, true);
+      Protocol::sendOk(F("lcd_ok"));
+    } else {
+      Protocol::sendErr(F("no_msg"));
+    }
+#else
+    Protocol::sendErr(F("lcd_disabled"));
+#endif
+    return;
+  }
+
+  if (cmd == F("rfid_last")){
 #if RFID_ENABLED
     SERIAL_IO.print(F("{\"ok\":true,\"rfid\":\""));
     Protocol::printEscaped(SERIAL_IO, g_lastRfid);
-    SERIAL_IO.println(F("\"}"));
+    SERIAL_IO.print('"');
+    Protocol::endJsonReply(SERIAL_IO);
 #else
-    Protocol::sendErr("rfid_disabled");
+    Protocol::sendErr(F("rfid_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"ultra_read\"")>=0){
+  if (cmd == F("ultra_read")){
 #if ULTRA_ENABLED
     SERIAL_IO.print(F("{\"ok\":true,\"cm\":"));
     if (isnan(g_ultraCm)) SERIAL_IO.print(F("null"));
     else SERIAL_IO.print(g_ultraCm, 1);
-    SERIAL_IO.println('}');
+    Protocol::endJsonReply(SERIAL_IO);
 #else
-    Protocol::sendErr("ultra_disabled");
+    Protocol::sendErr(F("ultra_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"temp_read\"")>=0){
+  if (cmd == F("temp_read")){
 #if DS18_ENABLED
     g_ds18.forceRead();
     SERIAL_IO.print(F("{\"ok\":true,\"temps\":["));
@@ -217,174 +277,164 @@ static inline void handleJson(const String &line){
       if (isnan(t)) SERIAL_IO.print(F("null"));
       else SERIAL_IO.print(t, 1);
     }
-    SERIAL_IO.println(F("]}"));
+    SERIAL_IO.print(']');
+    Protocol::endJsonReply(SERIAL_IO);
 #else
-    Protocol::sendErr("ds18_disabled");
+    Protocol::sendErr(F("ds18_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"avoid\"")>=0){
+  if (cmd == F("avoid")){
 #if ULTRA_ENABLED
-    g_avoidEnable = (line.indexOf("\"enable\":true")>=0);
-    Protocol::sendOk(g_avoidEnable?"avoid_on":"avoid_off");
+    g_avoidEnable = Protocol::parseJsonBoolAfter(line, F("\"enable\":"), false);
+    Protocol::sendOk(g_avoidEnable ? F("avoid_on") : F("avoid_off"));
 #else
-    Protocol::sendErr("ultra_disabled");
+    Protocol::sendErr(F("ultra_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"laser\"")>=0){
+  if (cmd == F("laser")){
 #if LASER_ENABLED
-    bool both = (line.indexOf("\"both\":true")>=0);
-    int p = line.indexOf("\"id\":");
-    int id = 0;
-    if (p>=0) id = line.substring(p+5).toInt();
-    if (line.indexOf("\"on\":true")>=0){
-      if (both){ g_lasers.bothOn(); Protocol::sendOk("laser_both_on"); }
-      else if (id==1 || id==2){ g_lasers.oneOn((uint8_t)id); Protocol::sendOk("laser_on"); }
-      else { Protocol::sendErr("bad_id"); }
+    if (robot.isEstopped() && Protocol::parseJsonBoolAfter(line, F("\"on\":"), false)){
+      Protocol::sendErr(F("estopped"));
+      return;
+    }
+    bool both = Protocol::parseJsonBoolAfter(line, F("\"both\":"), false);
+    int id = (int)Protocol::parseJsonLongAfter(line, F("\"id\":"), 0L);
+    if (Protocol::parseJsonBoolAfter(line, F("\"on\":"), false)){
+      if (both){ g_lasers.bothOn(); Protocol::sendOk(F("laser_both_on")); }
+      else if (id==1 || id==2){ g_lasers.oneOn((uint8_t)id); Protocol::sendOk(F("laser_on")); }
+      else { Protocol::sendErr(F("bad_id")); }
     } else {
       g_lasers.off();
-      Protocol::sendOk("laser_off");
+      Protocol::sendOk(F("laser_off"));
     }
 #else
-    Protocol::sendErr("laser_disabled");
+    Protocol::sendErr(F("laser_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"sound\"")>=0){
+  if (cmd == F("sound")){
 #if BUZZER_ENABLED
-    // Select default physical buzzer output
-    if (line.indexOf("\"out\":\"loud\"")>=0 || line.indexOf("\"mode\":\"loud\"")>=0){
+    String outMode = Protocol::parseJsonStringAfter(line, F("\"out\":"));
+    if (outMode.length() == 0) outMode = Protocol::parseJsonStringAfter(line, F("\"mode\":"));
+    if (outMode == F("loud")){
       g_buzzerDefaultOut = BUZZER_OUT_LOUD;
       g_song.setDefaultOut(g_buzzerDefaultOut);
       cuteBuzzerInit();
-      Protocol::sendOk("sound_out_loud");
+      Protocol::sendOk(F("sound_out_loud"));
       return;
     }
-    if (line.indexOf("\"out\":\"quiet\"")>=0 || line.indexOf("\"mode\":\"quiet\"")>=0){
+    if (outMode == F("quiet")){
       g_buzzerDefaultOut = BUZZER_OUT_QUIET;
       g_song.setDefaultOut(g_buzzerDefaultOut);
       cuteBuzzerInit();
-      Protocol::sendOk("sound_out_quiet");
+      Protocol::sendOk(F("sound_out_quiet"));
       return;
     }
-    // Optional: enable both buzzers simultaneously via JSON: {"cmd":"sound","both":true}
-    if (line.indexOf("\"both\":true")>=0){
-      g_buzzerBothEnabled = true;
-      Protocol::sendOk("sound_both_on");
+    bool hasBoth = false;
+    bool bothEn = Protocol::parseJsonBoolAfter(line, F("\"both\":"), false, &hasBoth);
+    if (hasBoth){
+      g_buzzerBothEnabled = bothEn;
+      Protocol::sendOk(bothEn ? F("sound_both_on") : F("sound_both_off"));
       return;
     }
-    if (line.indexOf("\"both\":false")>=0){
-      g_buzzerBothEnabled = false;
-      Protocol::sendOk("sound_both_off");
-      return;
-    }
-    Protocol::sendErr("bad_out");
+    Protocol::sendErr(F("bad_out"));
 #else
-    Protocol::sendErr("buzzer_disabled");
+    Protocol::sendErr(F("buzzer_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"buzzer\"")>=0){
+  if (cmd == F("buzzer")){
 #if BUZZER_ENABLED
-    int p=line.indexOf("\"freq\":");
-    int freq=2200;
-    if(p>=0) freq=line.substring(p+7).toInt();
-    // clamp safe frequency range
-    if (freq < 200) freq = 200;
-    if (freq > 4000) freq = 4000;
-
-    p=line.indexOf("\"ms\":");
-    int ms=60;
-    if(p>=0) ms=line.substring(p+5).toInt();
-    // clamp duration
-    if (ms < 1) ms = 1;
-    if (ms > 60000) ms = 60000;
+    int freq = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"freq\":"), 2200L), 200L, 4000L);
+    int ms   = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"ms\":"), 60L), 1L, 60000L);
 
     BuzzerOut out = g_buzzerDefaultOut;
-    if (line.indexOf("\"out\":\"loud\"")>=0) out = BUZZER_OUT_LOUD;
-    if (line.indexOf("\"out\":\"quiet\"")>=0) out = BUZZER_OUT_QUIET;
+    String outName = Protocol::parseJsonStringAfter(line, F("\"out\":"));
+    if (outName == F("loud")) out = BUZZER_OUT_LOUD;
+    else if (outName == F("quiet")) out = BUZZER_OUT_QUIET;
 
     g_buzzer.beepOn(out, (uint16_t)freq, (uint16_t)ms);
-    Protocol::sendOk("beep");
+    Protocol::sendOk(F("beep"));
 #else
-    Protocol::sendErr("buzzer_disabled");
+    Protocol::sendErr(F("buzzer_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"sound_play\"")>=0){
+  if (cmd == F("sound_play")){
 #if BUZZER_ENABLED
-    // {"cmd":"sound_play","name":"walle|bb8","out":"loud|quiet"}
-    int p=line.indexOf("\"name\":\"");
-    String name = "";
-    if (p>=0){ int e=line.indexOf('"', p+8); if (e>p) name = line.substring(p+8, e); }
-
+    String name = Protocol::parseJsonStringAfter(line, F("\"name\":"));
     BuzzerOut out = g_buzzerDefaultOut;
-    if (line.indexOf("\"out\":\"loud\"")>=0) out = BUZZER_OUT_LOUD;
-    if (line.indexOf("\"out\":\"quiet\"")>=0) out = BUZZER_OUT_QUIET;
+    String outName = Protocol::parseJsonStringAfter(line, F("\"out\":"));
+    if (outName == F("loud")) out = BUZZER_OUT_LOUD;
+    else if (outName == F("quiet")) out = BUZZER_OUT_QUIET;
 
-    if (name.length()==0){ Protocol::sendErr("no_name"); return; }
+    if (name.length()==0){ Protocol::sendErr(F("no_name")); return; }
     // Prevent overlap with any continuous warning tone before melody starts.
     g_buzzer.stop();
     g_song.play(name, out);
-    Protocol::sendOk("sound_play");
+    Protocol::sendOk(F("sound_play"));
 #else
-    Protocol::sendErr("buzzer_disabled");
+    Protocol::sendErr(F("buzzer_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"speech\"")>=0){
-    int p=line.indexOf("\"text\":\"");
-    String txt="";
-    if (p>=0){ int e=line.indexOf('"', p+8); if (e>p) txt = line.substring(p+8,e); }
-    if (txt.length()==0){ Protocol::sendErr("no_text"); }
-    else { g_lastSpeech = txt; Protocol::sendOk("speech_ok"); }
+  if (cmd == F("speech")){
+    String txt = Protocol::parseJsonStringAfter(line, F("\"text\":"));
+    if (txt.length()==0){ Protocol::sendErr(F("no_text")); }
+    else { g_lastSpeech = txt; Protocol::sendOk(F("speech_ok")); }
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"speech_play\"")>=0){
-    if (g_lastSpeech.length()==0){ Protocol::sendErr("no_speech"); return; }
+  if (cmd == F("speech_play")){
+#if VIRTUAL_MENU_ENABLED
+    if (g_lastSpeech.length()==0){ Protocol::sendErr(F("no_speech")); return; }
     String pat = g_irMenu.textToMorse(g_lastSpeech);
-    if (pat.length()==0){ Protocol::sendErr("bad_text"); return; }
+    if (pat.length()==0){ Protocol::sendErr(F("bad_text")); return; }
     g_irMenu.startMorse(pat);
-    Protocol::sendOk("speech_playing");
-    return;
-  }
-
-  if (line.indexOf("\"cmd\":\"cute\"")>=0){
-#if BUZZER_ENABLED
-    int p=line.indexOf("\"name\":\"");
-    String name = "";
-    if (p>=0){ int e=line.indexOf('"', p+8); if (e>p) name = line.substring(p+8, e); }
-    if (name.length()==0){ Protocol::sendErr("no_name"); return; }
-    bool ok = playCuteSoundByName(name, true);
-    if (ok) Protocol::sendOk("cute_played");
-    else Protocol::sendErr("unknown_cute_name");
+    Protocol::sendOk(F("speech_playing"));
 #else
-    Protocol::sendErr("buzzer_disabled");
+    Protocol::sendErr(F("menu_disabled"));
 #endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"set_servo\"")>=0){
-    int idx=-1; float deg=90;
-    int p=line.indexOf("\"index\":"); if(p>=0){ idx=line.substring(p+8).toInt(); }
-    p=line.indexOf("\"deg\":"); if(p>=0){ deg=line.substring(p+6).toFloat(); }
-    if (idx>=0 && idx<SERVO_COUNT_TOTAL){ robot.writeServoLimited(idx,deg); Protocol::sendOk(); }
-    else Protocol::sendErr("bad_index");
+  if (cmd == F("cute")){
+#if BUZZER_ENABLED
+    String name = Protocol::parseJsonStringAfter(line, F("\"name\":"));
+    if (name.length()==0){ Protocol::sendErr(F("no_name")); return; }
+    bool ok = playCuteSoundByName(name, true);
+    if (ok) Protocol::sendOk(F("cute_played"));
+    else Protocol::sendErr(F("unknown_cute_name"));
+#else
+    Protocol::sendErr(F("buzzer_disabled"));
+#endif
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"set_pose\"")>=0){
-    // Expect pose as SERVO_COUNT_TOTAL ints [..]; optional duration_ms for time-based easing
-    int lb=line.indexOf('['); int rb=line.indexOf(']');
-    if (lb>0 && rb>lb){
+  if (cmd == F("set_servo")){
+    if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+    bool hasIdx = false;
+    int idx = (int)Protocol::parseJsonLongAfter(line, F("\"index\":"), -1L, &hasIdx);
+    float deg = Protocol::parseJsonFloatAfter(line, F("\"deg\":"), 90.0f);
+    if (hasIdx && idx>=0 && idx<SERVO_COUNT_TOTAL){ robot.writeServoLimited(idx,deg); Protocol::sendOk(); }
+    else Protocol::sendErr(F("bad_index"));
+    return;
+  }
+
+  if (cmd == F("set_pose")){
+    if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+    int pk = Protocol::findKey(line, F("\"pose\":"));
+    int lb = (pk >= 0) ? line.indexOf('[', pk) : line.indexOf('[');
+    int rb = (lb >= 0) ? line.indexOf(']', lb + 1) : -1;
+    if (lb > 0 && rb > lb){
       uint8_t pose[SERVO_COUNT_TOTAL];
       int i=0;
       String nums=line.substring(lb+1,rb);
@@ -394,21 +444,18 @@ static inline void handleJson(const String &line){
         pose[i++] = (uint8_t) constrain(nums.substring(s,k).toInt(),0,180);
         s=k+1;
       }
-      // duration_ms
-      long durMs = 0;
-      int p=line.indexOf("\"duration_ms\":");
-      if(p>=0) durMs = line.substring(p+14).toInt();
+      long durMs = Protocol::parseJsonLongAfter(line, F("\"duration_ms\":"), 0L);
       if (i==SERVO_COUNT_TOTAL){
         if (durMs>0){
-          // Compute max delta and set speed so that worst joint arrives in durMs
+          // Use temporary easing speed so global speed is automatically restored once settled.
           float maxDelta = 0.0f;
           for (int j=0;j<SERVO_COUNT_TOTAL;j++){
             float d = fabs((float)pose[j] - robot.servos.get(j));
             if (d>maxDelta) maxDelta=d;
           }
           if (maxDelta>0){
-            float speed = (maxDelta / (durMs/1000.0f));
-            robot.servos.setSpeed(speed);
+            float speed = (maxDelta / ((float)durMs / 1000.0f));
+            robot.servos.setTemporarySpeed(speed);
           }
         }
         robot.writePoseLimited(pose);
@@ -416,69 +463,80 @@ static inline void handleJson(const String &line){
         return;
       }
     }
-    Protocol::sendErr("bad_pose");
+    Protocol::sendErr(F("bad_pose"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"stepper\"")>=0){
-    // modes: pos, vel
-    bool vel = line.indexOf("\"mode\":\"vel\"")>=0;
-    int id = (line.indexOf("\"id\":1")>=0)?1:0;
-    long val=0;
-    int p=line.indexOf("\"value\":");
-    if(p>=0){ val=line.substring(p+8).toInt(); }
+  if (cmd == F("stepper")){
+    if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+    bool vel = (Protocol::parseJsonStringAfter(line, F("\"mode\":")) == F("vel"));
+    int id = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"id\":"), 0L), 0L, 1L);
+    long val = Protocol::parseJsonLongAfter(line, F("\"value\":"), 0L);
     if (vel){ robot.steppers.setSpeedOne(id, (float)val); }
     else { robot.steppers.moveToOne(id, val); }
-    // Optional: global drive override for sit/skate balance blending
-    int pd=line.indexOf("\"drive\":");
-    if(pd>=0){ long d=line.substring(pd+8).toInt(); robot.setDriveCmd((float)d); }
+    bool hasDrive = false;
+    long d = Protocol::parseJsonLongAfter(line, F("\"drive\":"), 0L, &hasDrive);
+    if (hasDrive){ robot.setDriveCmd((float)d); }
     Protocol::sendOk();
     return;
   }
 
+  if (cmd == F("home")){
+    if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+    StepperPair::HomeResult hr = robot.steppers.homeBoth();
+    if (hr == StepperPair::HOME_OK) Protocol::sendOk(F("homed"));
+    else if (hr == StepperPair::HOME_NO_LIMITS) Protocol::sendErr(F("no_limit_switches"));
+    else Protocol::sendErr(F("home_timeout"));
+    return;
+  }
+  if (cmd == F("zero_now")){ robot.steppers.zeroNow(); Protocol::sendOk(F("zeroed_now")); return; }
 
-
-  if (line.indexOf("\"cmd\":\"home\"")>=0){ robot.steppers.homeBoth(); Protocol::sendOk("homed"); return; }
-  if (line.indexOf("\"cmd\":\"zero_now\"")>=0){ robot.steppers.zeroNow(); Protocol::sendOk("zeroed_now"); return; }
-
-  if (line.indexOf("\"cmd\":\"zero_set\"")>=0){
-    long p1=0,p2=0;
-    int p=line.indexOf("\"p1\":"); if(p>=0) p1=line.substring(p+5).toInt();
-    p=line.indexOf("\"p2\":"); if(p>=0) p2=line.substring(p+5).toInt();
+  if (cmd == F("zero_set")){
+    long p1 = Protocol::parseJsonLongAfter(line, F("\"p1\":"), 0L);
+    long p2 = Protocol::parseJsonLongAfter(line, F("\"p2\":"), 0L);
     robot.steppers.zeroSet(p1,p2);
-    Protocol::sendOk("zero_set");
+    Protocol::sendOk(F("zero_set"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"stepper_cfg\"")>=0){
-    int p=line.indexOf("\"maxSpeed\":"); if(p>=0){ float v=line.substring(p+11).toFloat(); robot.steppers.setMaxSpeed(v); }
-    p=line.indexOf("\"accel\":"); if(p>=0){ float a=line.substring(p+8).toFloat(); robot.steppers.setAcceleration(a); }
-    Protocol::sendOk("stepper_cfg");
+  if (cmd == F("stepper_cfg")){
+    bool hasMax = false, hasAcc = false;
+    float v = Protocol::parseJsonFloatAfter(line, F("\"maxSpeed\":"), 0.0f, &hasMax);
+    float a = Protocol::parseJsonFloatAfter(line, F("\"accel\":"), 0.0f, &hasAcc);
+    if (hasMax) robot.steppers.setMaxSpeed(v);
+    if (hasAcc) robot.steppers.setAcceleration(a);
+    Protocol::sendOk(F("stepper_cfg"));
     return;
   }
 
   // PID commands for closed-loop stepper control
-  if (line.indexOf("\"cmd\":\"pid_enable\"")>=0){
-    int id = (line.indexOf("\"id\":1")>=0)?1:0;
-    bool en = (line.indexOf("\"enable\":true")>=0);
+  if (cmd == F("pid_enable")){
+    int id = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"id\":"), 0L), 0L, 1L);
+    bool en = Protocol::parseJsonBoolAfter(line, F("\"enable\":"), false);
     robot.steppers.enablePid(id, en);
-    Protocol::sendOk(en?"pid_enabled":"pid_disabled");
+    Protocol::sendOk(en ? F("pid_enabled") : F("pid_disabled"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"pid_set\"")>=0){
-    int id = (line.indexOf("\"id\":1")>=0)?1:0;
-    int p=line.indexOf("\"kp\":"); float curKp=0, curKi=0, curKd=0; robot.steppers.getPidGains(id, curKp, curKi, curKd);
-    if(p>=0){ float v=line.substring(p+5).toFloat(); curKp = v; robot.steppers.configurePid(id, curKp, curKi, curKd); }
-    p=line.indexOf("\"ki\":"); if(p>=0){ float v=line.substring(p+5).toFloat(); curKi = v; robot.steppers.configurePid(id, curKp, curKi, curKd); }
-    p=line.indexOf("\"kd\":"); if(p>=0){ float v=line.substring(p+5).toFloat(); curKd = v; robot.steppers.configurePid(id, curKp, curKi, curKd); }
-    p=line.indexOf("\"target\":"); if(p>=0){ float t=line.substring(p+9).toFloat(); robot.steppers.setTargetSpeed(id, t); }
-    Protocol::sendOk("pid_set");
+  if (cmd == F("pid_set")){
+    int id = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"id\":"), 0L), 0L, 1L);
+    float curKp=0, curKi=0, curKd=0;
+    robot.steppers.getPidGains(id, curKp, curKi, curKd);
+    bool hasKp=false, hasKi=false, hasKd=false, hasTgt=false;
+    float nKp = Protocol::parseJsonFloatAfter(line, F("\"kp\":"), curKp, &hasKp);
+    float nKi = Protocol::parseJsonFloatAfter(line, F("\"ki\":"), curKi, &hasKi);
+    float nKd = Protocol::parseJsonFloatAfter(line, F("\"kd\":"), curKd, &hasKd);
+    if (hasKp || hasKi || hasKd){
+      robot.steppers.configurePid(id, hasKp?nKp:curKp, hasKi?nKi:curKi, hasKd?nKd:curKd);
+    }
+    float t = Protocol::parseJsonFloatAfter(line, F("\"target\":"), 0.0f, &hasTgt);
+    if (hasTgt){ robot.steppers.setTargetSpeed(id, t); }
+    Protocol::sendOk(F("pid_set"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"pid_status\"")>=0){
-    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+  if (cmd == F("pid_status")){
+    int id = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"id\":"), 0L), 0L, 1L);
     float measured = robot.steppers.getMeasuredSpeed(id);
     float target = robot.steppers.getPidTarget(id);
     bool stalled = robot.steppers.isStalled(id);
@@ -490,193 +548,179 @@ static inline void handleJson(const String &line){
     SERIAL_IO.print(target, 1);
     SERIAL_IO.print(F(",\"stalled\":"));
     SERIAL_IO.print(stalled ? F("true") : F("false"));
-    SERIAL_IO.println('}');
+    Protocol::endJsonReply(SERIAL_IO);
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"pid_save\"")>=0){
-    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+  if (cmd == F("pid_save")){
+    int id = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"id\":"), 0L), 0L, 1L);
     robot.steppers.savePidToEeprom(id);
-    Protocol::sendOk("pid_saved");
+    Protocol::sendOk(F("pid_saved"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"pid_load\"")>=0){
-    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+  if (cmd == F("pid_load")){
+    int id = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"id\":"), 0L), 0L, 1L);
     bool ok = robot.steppers.loadPidFromEeprom(id);
-    if (ok) Protocol::sendOk("pid_loaded"); else Protocol::sendErr("pid_not_saved");
+    if (ok) Protocol::sendOk(F("pid_loaded")); else Protocol::sendErr(F("pid_not_saved"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"pid_clear_stall\"")>=0){
-    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+  if (cmd == F("pid_clear_stall")){
+    int id = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"id\":"), 0L), 0L, 1L);
     robot.steppers.clearStall(id);
-    Protocol::sendOk("stall_cleared");
+    Protocol::sendOk(F("stall_cleared"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"pid_reset\"")>=0){
-    int id = (line.indexOf("\"id\":1")>=0)?1:0;
+  if (cmd == F("pid_reset")){
+    int id = (int)constrain(Protocol::parseJsonLongAfter(line, F("\"id\":"), 0L), 0L, 1L);
     robot.steppers.resetPidIntegrator(id);
-    Protocol::sendOk("pid_reset");
+    Protocol::sendOk(F("pid_reset"));
     return;
   }
 
+  if (cmd == F("calibrate") || cmd == F("cal")){
+    if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+    robot.calibrateNeutral();
+    Protocol::sendOk(F("calibrated"));
+    return;
+  }
+  if (cmd == F("stand")){ robot.setModeStand(); Protocol::sendOk(F("stand")); return; }
+  if (cmd == F("sit")){ robot.setModeSit(); Protocol::sendOk(F("sit")); return; }
 
-
-  if (line.indexOf("\"cmd\":\"calibrate\"")>=0){ robot.calibrateNeutral(); Protocol::sendOk("calibrated"); return; }
-  if (line.indexOf("\"cmd\":\"stand\"")>=0){ robot.setModeStand(); Protocol::sendOk("stand"); return; }
-  if (line.indexOf("\"cmd\":\"sit\"")>=0){ robot.setModeSit(); Protocol::sendOk("sit"); return; }
-
-  if (line.indexOf("\"cmd\":\"imu_read\"")>=0){
+  if (cmd == F("imu_read")){
     robot.imu.read();
-    SERIAL_IO.print(F("{\"ok\":true,\"msg\":\"pitch="));
+    SERIAL_IO.print(F("{\"ok\":true,\"pitch\":"));
+    SERIAL_IO.print(robot.imu.getPitch(), 2);
+    SERIAL_IO.print(F(",\"roll\":"));
+    SERIAL_IO.print(robot.imu.getRoll(), 2);
+    SERIAL_IO.print(F(",\"msg\":\"pitch="));
     SERIAL_IO.print(robot.imu.getPitch(), 2);
     SERIAL_IO.print(F(",roll="));
     SERIAL_IO.print(robot.imu.getRoll(), 2);
-    SERIAL_IO.println(F("\"}"));
+    SERIAL_IO.print('"');
+    Protocol::endJsonReply(SERIAL_IO);
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"imu_cal\"")>=0){ robot.imu.calibrateLevel(); Protocol::sendOk("imu_calibrated"); return; }
+  if (cmd == F("imu_cal")){ robot.imu.calibrateLevel(); Protocol::sendOk(F("imu_calibrated")); return; }
 
-  if (line.indexOf("\"cmd\":\"drive\"")>=0){
-    long v=0;
-    int p=line.indexOf("\"value\":");
-    if(p>=0){ v=line.substring(p+8).toInt(); }
+  if (cmd == F("drive")){
+    if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+    long v = Protocol::parseJsonLongAfter(line, F("\"value\":"), 0L);
     robot.setDriveCmd((float)v);
-    Protocol::sendOk("drive_set");
+    Protocol::sendOk(F("drive_set"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"eeprom_save\"")>=0){
+  if (cmd == F("eeprom_save")){
     float p,r;
     robot.imu.getOffsets(p,r);
     EEPROM.update(EEPROM_ADDR_MAGIC, EEPROM_MAGIC);
     EEPROM.put(EEPROM_ADDR_IMU_OFF, p);
     EEPROM.put(EEPROM_ADDR_IMU_OFF+sizeof(float), r);
-    Protocol::sendOk("saved");
+    Protocol::sendOk(F("saved"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"eeprom_load\"")>=0){
+  if (cmd == F("eeprom_load")){
     if (EEPROM.read(EEPROM_ADDR_MAGIC)==EEPROM_MAGIC){
       float p,r;
       EEPROM.get(EEPROM_ADDR_IMU_OFF,p);
       EEPROM.get(EEPROM_ADDR_IMU_OFF+sizeof(float),r);
       robot.imu.setOffsets(p,r);
-      Protocol::sendOk("loaded");
+      Protocol::sendOk(F("loaded"));
     } else {
-      Protocol::sendErr("no_data");
+      Protocol::sendErr(F("no_data"));
     }
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"encoder_calibrate\"")>=0){
+  if (cmd == F("encoder_calibrate")){
 #if HALL_ENCODER_ENABLED
-    int p = line.indexOf("\"duration_ms\":");
-    unsigned long dur = 5000UL;
-    if (p>=0) dur = (unsigned long)line.substring(p+14).toInt();
-    // Reset counts
-    g_hall0.reset(); g_hall1.reset();
-    unsigned long t0 = millis();
-    while (millis() - t0 < dur){
-      g_hall0.update(); g_hall1.update();
-      delay(5);
-    }
-    unsigned long c0 = g_hall0.getCount();
-    unsigned long c1 = g_hall1.getCount();
-    // Store as uint16_t (sane for typical pulse counts)
-    uint16_t v0 = (uint16_t)constrain((unsigned long)c0, 0UL, 65535UL);
-    uint16_t v1 = (uint16_t)constrain((unsigned long)c1, 0UL, 65535UL);
-    EEPROM.update(EEPROM_ADDR_HALL_MAGIC, EEPROM_HALL_MAGIC);
-    EEPROM.put(EEPROM_ADDR_HALL_PPR_0, v0);
-    EEPROM.put(EEPROM_ADDR_HALL_PPR_1, v1);
-    // result assembled below for serial output
-    // Provide computed steps-per-pulse as well
-    float sp0 = (c0>0) ? (STEPPER_STEPS_PER_REV / (float)c0) : 0.0f;
-    float sp1 = (c1>0) ? (STEPPER_STEPS_PER_REV / (float)c1) : 0.0f;
-    SERIAL_IO.print(F("{\"ok\":true,\"p0\":"));
-    SERIAL_IO.print((unsigned long)c0);
-    SERIAL_IO.print(F(",\"p1\":"));
-    SERIAL_IO.print((unsigned long)c1);
-    SERIAL_IO.print(F(",\"stepsPerPulse0\":"));
-    SERIAL_IO.print(sp0, 3);
-    SERIAL_IO.print(F(",\"stepsPerPulse1\":"));
-    SERIAL_IO.print(sp1, 3);
-    SERIAL_IO.println('}');
-    Protocol::sendOk("encoder_calibrated");
+    unsigned long dur = (unsigned long)constrain(Protocol::parseJsonLongAfter(line, F("\"duration_ms\":"), 5000L), 500L, 30000L);
+    startEncoderCalibration(dur, false);
+    Protocol::sendOk(F("encoder_calibrating"));
 #else
-    Protocol::sendErr("halls_disabled");
+    Protocol::sendErr(F("halls_disabled"));
 #endif
     return;
   }
 
-  if (line.equalsIgnoreCase("cal")) { robot.calibrateNeutral(); Protocol::sendOk("calibrated"); return; }
-
-  if (line.indexOf("\"cmd\":\"policy\"")>=0){
-    // MuJoCo/policy hook: optional pose[SERVO_COUNT_TOTAL] and steppers[2] arrays
-    int lb=line.indexOf("[", line.indexOf("\"pose\""));
-    int rb=line.indexOf("]", lb+1);
-    if (lb>0 && rb>lb){
-      uint8_t pose[SERVO_COUNT_TOTAL];
-      int i=0;
-      String nums=line.substring(lb+1,rb);
-      nums += ',';
-      int s=0;
-      for(int k=0;k<nums.length() && i<SERVO_COUNT_TOTAL;k++) if(nums[k]==','){
-        pose[i++] = (uint8_t)constrain(nums.substring(s,k).toInt(),0,180);
-        s=k+1;
+  if (cmd == F("policy")){
+    if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+    int pk = Protocol::findKey(line, F("\"pose\":"));
+    if (pk >= 0){
+      int lb = line.indexOf('[', pk);
+      int rb = (lb >= 0) ? line.indexOf(']', lb + 1) : -1;
+      if (lb > 0 && rb > lb){
+        uint8_t pose[SERVO_COUNT_TOTAL];
+        int i=0;
+        String nums=line.substring(lb+1,rb);
+        nums += ',';
+        int s=0;
+        for(int k=0;k<nums.length() && i<SERVO_COUNT_TOTAL;k++) if(nums[k]==','){
+          pose[i++] = (uint8_t)constrain(nums.substring(s,k).toInt(),0,180);
+          s=k+1;
+        }
+        if (i==SERVO_COUNT_TOTAL) robot.servos.writePose(pose);
       }
-      if (i==SERVO_COUNT_TOTAL) robot.servos.writePose(pose);
     }
 
-    int ls=line.indexOf("[", line.indexOf("\"steppers\""));
-    int rs=line.indexOf("]", ls+1);
-    if (ls>0 && rs>ls){
-      String nums=line.substring(ls+1,rs);
-      nums += ',';
-      long v[2]={0,0};
-      int i=0;
-      int s=0;
-      for(int k=0;k<nums.length() && i<2;k++) if(nums[k]==','){
-        v[i++] = nums.substring(s,k).toInt();
-        s=k+1;
+    int sk = Protocol::findKey(line, F("\"steppers\":"));
+    if (sk >= 0){
+      int ls = line.indexOf('[', sk);
+      int rs = (ls >= 0) ? line.indexOf(']', ls + 1) : -1;
+      if (ls > 0 && rs > ls){
+        String nums=line.substring(ls+1,rs);
+        nums += ',';
+        long v[2]={0,0};
+        int i=0;
+        int s=0;
+        for(int k=0;k<nums.length() && i<2;k++) if(nums[k]==','){
+          v[i++] = nums.substring(s,k).toInt();
+          s=k+1;
+        }
+        if (i>=1) robot.steppers.setSpeedOne(0, (float)v[0]);
+        if (i>=2) robot.steppers.setSpeedOne(1, (float)v[1]);
       }
-      if (i>=1) robot.steppers.setSpeedOne(0, (float)v[0]);
-      if (i>=2) robot.steppers.setSpeedOne(1, (float)v[1]);
     }
 
-    Protocol::sendOk("policy_applied");
+    Protocol::sendOk(F("policy_applied"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"track\"")>=0){
-    // Tracking skeleton: client (OpenCV) sends desired head angles and optional steer velocity
-    // {"cmd":"track","head_tilt":x,"head_pan":y,"drive":v}
-    float tilt=90, pan=90;
-    long drive=0;
-    // Accept both "head_tilt"/"head_pan" and "tilt"/"pan" keys.
-    int p=line.indexOf("\"head_tilt\":");
-    if(p>=0) tilt=line.substring(p+12).toFloat();
-    else { p=line.indexOf("\"tilt\":"); if(p>=0) tilt=line.substring(p+7).toFloat(); }
-    p=line.indexOf("\"head_pan\":");
-    if(p>=0) pan=line.substring(p+11).toFloat();
-    else { p=line.indexOf("\"pan\":"); if(p>=0) pan=line.substring(p+6).toFloat(); }
-    p=line.indexOf("\"drive\":"); if(p>=0) drive=line.substring(p+9).toInt();
-    // robot.head expects (tilt, pan)
-    robot.head(tilt, pan);
-    // In sit/skate, set user drive command (mixed with balance correction)
-    robot.setDriveCmd((float)drive);
-    Protocol::sendOk("track_ack");
+  if (cmd == F("track")){
+    if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+    float tilt = robot.servos.getTarget(1);
+    float pan  = robot.servos.getTarget(0);
+    bool hasT = false, hasP = false, hasD = false;
+
+    float tVal = Protocol::parseJsonFloatAfter(line, F("\"head_tilt\":"), tilt, &hasT);
+    if (!hasT) tVal = Protocol::parseJsonFloatAfter(line, F("\"tilt\":"), tilt, &hasT);
+    if (hasT) tilt = tVal;
+
+    float pVal = Protocol::parseJsonFloatAfter(line, F("\"head_pan\":"), pan, &hasP);
+    if (!hasP) pVal = Protocol::parseJsonFloatAfter(line, F("\"pan\":"), pan, &hasP);
+    if (hasP) pan = pVal;
+
+    long drive = Protocol::parseJsonLongAfter(line, F("\"drive\":"), 0L, &hasD);
+    if (hasT || hasP) robot.head(tilt, pan);
+    if (hasD) robot.setDriveCmd((float)drive);
+    Protocol::sendOk(F("track_ack"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"get_state\"")>=0){
+  if (cmd == F("get_state")){
     robot.imu.read();
     SERIAL_IO.print(F("{\"ok\":true,\"mode\":"));
     SERIAL_IO.print(robot.getMode()==MODE_HEAD_TRACK ? F("\"stand\"") : F("\"sit\""));
-    SERIAL_IO.print(F(",\"pid\":false,\"pitch\":"));
+    SERIAL_IO.print(F(",\"estop\":"));
+    SERIAL_IO.print(robot.isEstopped() ? F("true") : F("false"));
+    SERIAL_IO.print(F(",\"i2c_errors\":"));
+    SERIAL_IO.print((unsigned long)Protocol::getI2cErrorCount());
+    SERIAL_IO.print(F(",\"pitch\":"));
     SERIAL_IO.print(robot.imu.getPitch(), 2);
     SERIAL_IO.print(F(",\"roll\":"));
     SERIAL_IO.print(robot.imu.getRoll(), 2);
@@ -689,75 +733,83 @@ static inline void handleJson(const String &line){
     SERIAL_IO.print(robot.steppers.pos1());
     SERIAL_IO.print(',');
     SERIAL_IO.print(robot.steppers.pos2());
-    SERIAL_IO.println(F("]}"));
+    SERIAL_IO.print(']');
+    Protocol::endJsonReply(SERIAL_IO);
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"estop\"")>=0){
-    robot.estop();
-#if BUZZER_ENABLED
-  g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 150);
-#endif
-    Protocol::sendOk("estopped");
-    return;
-  }
-
-  if (line.indexOf("\"cmd\":\"telemetry_start\"")>=0){
-    int p=line.indexOf("\"interval_ms\":");
-    if(p>=0){
-      unsigned long v=line.substring(p+15).toInt();
-      telemetryInterval = max((unsigned long)TELEMETRY_MIN_INTERVAL_MS, v);
+  if (cmd == F("telemetry_start")){
+    bool hasInt = false;
+    long v = Protocol::parseJsonLongAfter(line, F("\"interval_ms\":"), (long)telemetryInterval, &hasInt);
+    if (hasInt && v > 0){
+      telemetryInterval = max((unsigned long)TELEMETRY_MIN_INTERVAL_MS, (unsigned long)v);
     }
     telemetryOn = true;
     lastTelemetryMs = millis();
-    Protocol::sendOk("telemetry_on");
+    Protocol::sendOk(F("telemetry_on"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"telemetry_stop\"")>=0){ telemetryOn=false; Protocol::sendOk("telemetry_off"); return; }
+  if (cmd == F("telemetry_stop")){ telemetryOn=false; Protocol::sendOk(F("telemetry_off")); return; }
 
-  if (line.indexOf("\"cmd\":\"tune\"")>=0){
-    int p=line.indexOf("\"servo_speed\":");
-    if(p>=0){ float v=line.substring(p+14).toFloat(); robot.setServoSpeed(v); }
-    // Tune skate (stepper) parameters and servo speed.
-    float skp, ski, skd;
-    robot.getSkateGains(skp,ski,skd);
-    float smax=robot.getSkateSpeedLimit();
-    int sp=line.indexOf("\"skate\"");
-    if(sp>=0){
-      int q=line.indexOf("\"kp\":", sp); if(q>0) skp=line.substring(q+5).toFloat();
-      q=line.indexOf("\"ki\":", sp); if(q>0) ski=line.substring(q+5).toFloat();
-      q=line.indexOf("\"kd\":", sp); if(q>0) skd=line.substring(q+5).toFloat();
-      q=line.indexOf("\"max\":", sp); if(q>0) smax=line.substring(q+6).toFloat();
+  if (cmd == F("tune")){
+    bool hasServoSpd = false;
+    float sSpd = Protocol::parseJsonFloatAfter(line, F("\"servo_speed\":"), 0.0f, &hasServoSpd);
+    if (hasServoSpd && sSpd > 0.0f) robot.setServoSpeed(sSpd);
+
+    int pStart = -1, pEnd = -1;
+    if (Protocol::findObjectBounds(line, F("\"pid\":"), pStart, pEnd)){
+      float kp = 0, ki = 0, kd = 0;
+      robot.steppers.getPidGains(0, kp, ki, kd);
+      kp = Protocol::parseJsonFloatAfter(line, F("\"kp\":"), kp, nullptr, pStart, pEnd);
+      ki = Protocol::parseJsonFloatAfter(line, F("\"ki\":"), ki, nullptr, pStart, pEnd);
+      kd = Protocol::parseJsonFloatAfter(line, F("\"kd\":"), kd, nullptr, pStart, pEnd);
+      robot.steppers.configurePid(0, kp, ki, kd);
+      robot.steppers.configurePid(1, kp, ki, kd);
     }
 
-    robot.setSkateGains(skp,ski,skd);
-    robot.setSkateSpeedLimit(smax);
-    Protocol::sendOk("tuned");
+    int sStart = -1, sEnd = -1;
+    if (Protocol::findObjectBounds(line, F("\"skate\":"), sStart, sEnd)){
+      float skp = 0, ski = 0, skd = 0;
+      robot.getSkateGains(skp, ski, skd);
+      float smax = robot.getSkateSpeedLimit();
+      skp  = Protocol::parseJsonFloatAfter(line, F("\"kp\":"),  skp,  nullptr, sStart, sEnd);
+      ski  = Protocol::parseJsonFloatAfter(line, F("\"ki\":"),  ski,  nullptr, sStart, sEnd);
+      skd  = Protocol::parseJsonFloatAfter(line, F("\"kd\":"),  skd,  nullptr, sStart, sEnd);
+      smax = Protocol::parseJsonFloatAfter(line, F("\"max\":"), smax, nullptr, sStart, sEnd);
+      robot.setSkateGains(skp, ski, skd);
+      robot.setSkateSpeedLimit(smax);
+    }
+
+    Protocol::sendOk(F("tuned"));
     return;
   }
 
-  if (line.indexOf("\"cmd\":\"liveliness\"")>=0){
-    // {"cmd":"liveliness","enable":bool,"mode":"breathe|idle|micro",
-    //  "amplitude_deg":f,"period_ms":n,"pan_center":f,"tilt_center":f}
-    bool enable = line.indexOf("\"enable\":true")>=0;
+  if (cmd == F("liveliness")){
+    bool enable = Protocol::parseJsonBoolAfter(line, F("\"enable\":"), false);
     if (!enable){
       g_livOn = false;
-      robot.head(g_livTiltC, g_livPanC);  // re-centre
-      Protocol::sendOk("liveliness_off");
+      if (!robot.isEstopped()) robot.head(g_livTiltC, g_livPanC);
+      Protocol::sendOk(F("liveliness_off"));
       return;
     }
-    int p=line.indexOf("\"amplitude_deg\":"); if(p>=0) g_livAmp=line.substring(p+16).toFloat();
-    p=line.indexOf("\"period_ms\":");        if(p>=0) g_livPeriodMs=(unsigned long)line.substring(p+12).toInt();
-    p=line.indexOf("\"pan_center\":");        if(p>=0) g_livPanC=line.substring(p+13).toFloat();
-    p=line.indexOf("\"tilt_center\":");       if(p>=0) g_livTiltC=line.substring(p+14).toFloat();
-    g_livMicro = (line.indexOf("\"mode\":\"micro\"")>=0);
+    if (robot.isEstopped()){ Protocol::sendErr(F("estopped")); return; }
+    bool hasAmp=false, hasPer=false, hasPan=false, hasTilt=false;
+    float amp = Protocol::parseJsonFloatAfter(line, F("\"amplitude_deg\":"), g_livAmp, &hasAmp);
+    long per = Protocol::parseJsonLongAfter(line, F("\"period_ms\":"), (long)g_livPeriodMs, &hasPer);
+    float panC = Protocol::parseJsonFloatAfter(line, F("\"pan_center\":"), g_livPanC, &hasPan);
+    float tiltC = Protocol::parseJsonFloatAfter(line, F("\"tilt_center\":"), g_livTiltC, &hasTilt);
+    if (hasAmp)  g_livAmp = amp;
+    if (hasPer && per > 0) g_livPeriodMs = (unsigned long)per;
+    if (hasPan)  g_livPanC = panC;
+    if (hasTilt) g_livTiltC = tiltC;
+    g_livMicro = (Protocol::parseJsonStringAfter(line, F("\"mode\":")) == F("micro"));
     g_livOn = true;
-    Protocol::sendOk("liveliness_on");
+    Protocol::sendOk(F("liveliness_on"));
     return;
   }
 
-  Protocol::sendErr("unknown_cmd");
+  Protocol::sendErr(F("unknown_cmd"));
 }
 
 #endif // SENTRY_APP_COMMANDS_H
