@@ -4,7 +4,7 @@
 #include <Arduino.h>
 #include "../xConfig.h"
 
-#if IR_ENABLED
+#if IR_HW_ENABLED
 // Requires Arduino Library: IRremote (v4+)
 #include <IRremote.hpp>
 

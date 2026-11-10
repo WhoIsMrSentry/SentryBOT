@@ -67,7 +67,9 @@ public:
   // Get total pulses counted (monotonic since last reset)
   unsigned long getCount() const { return _count; }
 
-  // Convenience: returns revolutions (float)
+  // Convenience: pulses-per-rev & revolutions
+  void setPulsesPerRev(uint8_t ppr){ _ppr = (ppr > 0) ? ppr : 1; }
+  uint8_t getPulsesPerRev() const { return _ppr; }
   float getRevolutions() const { return (float)_count / (float)_ppr; }
 
   // Configure debounce in ms (default 6ms)
