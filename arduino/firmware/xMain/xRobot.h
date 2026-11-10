@@ -13,9 +13,9 @@ enum RobotMode { MODE_HEAD_TRACK, MODE_SKATE };
 class Robot {
 public:
   void begin(){
-    // Attach servos (pan, tilt, pi servo 1, pi servo 2)
+    // Attach servos (pan, tilt, pi servo 1, pi servo 2) from PROGMEM POSE_STAND
     uint8_t pins[SERVO_COUNT_TOTAL] = {PIN_PAN, PIN_TILT, PIN_PI_SERVO_1, PIN_PI_SERVO_2};
-    servos.attachAll(pins, POSE_STAND);
+    servos.attachAllProgmem(pins, POSE_STAND);
     servos.setSpeed(SPEED_DEG_PER_S);
 
     // Steppers
@@ -26,11 +26,12 @@ public:
   #if defined(ARDUINO_ARCH_AVR)
     // Prevent hard lockups on missing/bad I2C devices and auto-recover the
     // bus so an unhealthy IMU does not silently break LCD/PCA9685 traffic.
-    Wire.setWireTimeout(25000, true);
+    Wire.setWireTimeout(I2C_WIRE_TIMEOUT_US, true);
   #endif
     imu.begin(IMU_I2C_ADDR);
 
-    lastPidMs = millis();
+    _estopped = false;
+    _driveActive = false;
     mode = MODE_HEAD_TRACK;
     // Skate gains initialized from config
     skateKp = SKATE_KP; skateKi = SKATE_KI; skateKd = SKATE_KD; skateSpeedLimit = SKATE_SPEED_LIMIT;
@@ -38,6 +39,12 @@ public:
 
   void update(){
     servos.update();
+    if (!_estopped && mode == MODE_SKATE && _driveActive){
+      float pitch = imu.isReady() ? imu.getPitch() : 0.0f;
+      float bal = (fabs(pitch) > 2.0f) ? (skateKp * pitch) : 0.0f;
+      float spd = constrain(driveCmd + bal, -skateSpeedLimit, skateSpeedLimit);
+      steppers.setSpeed(spd, spd);
+    }
     steppers.update();
   }
 
@@ -47,25 +54,36 @@ public:
     servos.write(1, constrain(tilt, TILT_MIN, TILT_MAX));
   }
 
-  void calibrateNeutral(){ servos.writePose(POSE_STAND); }
+  void calibrateNeutral(){ servos.writePoseProgmem(POSE_STAND); }
 
   RobotMode getMode() const { return mode; }
+  bool isEstopped() const { return _estopped; }
 
   void estop(){
-    // Detach servos and stop steppers immediately
+    // Latches E-STOP across servos, steppers, ramps, PID, and drive state
+    _estopped = true;
+    _driveActive = false;
+    driveCmd = 0.0f;
     servos.detachAll();
     steppers.stop();
+    steppers.stopAllRamps();
+    steppers.disableAllPid();
+    steppers.setEnable(false);
   }
+
+  void clearEstop(){
+    _estopped = false;
+    _driveActive = false;
+    driveCmd = 0.0f;
+    steppers.setEnable(true);
+    servos.reattachAll();
+  }
+
   // Runtime tuning
   void setSkateGains(float kp, float ki, float kd){ skateKp=kp; skateKi=ki; skateKd=kd; }
-  void setSkateSpeedLimit(float lim){ skateSpeedLimit = lim; }
+  void setSkateSpeedLimit(float lim){ if (lim > 0.0f) skateSpeedLimit = lim; }
   void setServoSpeed(float dps){ servos.setSpeed(dps); }
 
-  void getPidGains(float &kpP, float &kiP, float &kdP, float &kpR, float &kiR, float &kdR) const {
-    // Return configured constants for compatibility with existing host calls.
-    kpP = PID_PITCH_KP; kiP = PID_PITCH_KI; kdP = PID_PITCH_KD;
-    kpR = PID_ROLL_KP;  kiR = PID_ROLL_KI;  kdR = PID_ROLL_KD;
-  }
   void getSkateGains(float &kp, float &ki, float &kd) const { kp=skateKp; ki=skateKi; kd=skateKd; }
   float getSkateSpeedLimit() const { return skateSpeedLimit; }
 
@@ -96,11 +114,20 @@ public:
   float driveCmd = 0; // user-requested forward (+)/backward (-) velocity (steps/s)
 
 public:
-  void setDriveCmd(float v){ driveCmd = constrain(v, -skateSpeedLimit, skateSpeedLimit); }
+  void setDriveCmd(float v){
+    driveCmd = constrain(v, -skateSpeedLimit, skateSpeedLimit);
+    if (fabs(driveCmd) > 0.1f) {
+      _driveActive = true;
+    } else {
+      _driveActive = false;
+      if (!_estopped && mode == MODE_SKATE) steppers.stop();
+    }
+  }
   float getDriveCmd() const { return driveCmd; }
 
 private:
-  unsigned long lastPidMs = 0;
+  bool _estopped{false};
+  bool _driveActive{false};
   RobotMode mode{MODE_HEAD_TRACK};
   // Runtime skate gains
   float skateKp=SKATE_KP, skateKi=SKATE_KI, skateKd=SKATE_KD;
