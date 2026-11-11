@@ -48,20 +48,21 @@ WS2812/NeoPixel LED kontrol modülüdür. Hem kütüphane hem servis olarak çal
 ### Prompt
 - `POST /neopixel/prompt`
 
-### Animations List
-- `GET /neopixel/animations` - curated list (use `?show_all=true` for all)
-- `GET /neopixel/emotions` - emotion names list
+### Animations & Emotions
+- `GET /neopixel/animations` - curated list (use `?show_all=true` for all; tüm adlar `ANIMATIONS` & `NeoRunner._ANIM_MAP` ile birebir hizalıdır)
+- `GET /neopixel/emotions` - emotion names list (`get_shared_store()` tekil bellek önbelleğinden okunur)
 
 ## Konfigürasyon
 
 `modules/visual_output/neopixel/config/config.yml`:
-- `hardware.backend`: `auto|pi|arduino|sim`
-- `hardware.segments`: `[{"name": "jewel", "start": 0, "count": 7}, {"name": "stick_left", "start": 7, "count": 8}, {"name": "stick_right", "start": 15, "count": 8}]` (anahtar `length` değil `count`)
+- `hardware.backend`: `auto|pi|sim` (`ws2812_spi_khz: 2400` ile Pi5Neo SPI sürüşü veya simülatör)
+- `hardware.max_brightness` (`0.7`) & `hardware.max_current_ma` (`900`): RPi 5 için global parlaklık ve toplam akım (mA) tavanı ölçekleyicisi (`NeoDriver.power_status()`)
+- `hardware.segments`: `[{"name": "jewel", "start": 0, "count": 7}, {"name": "stick_left", "start": 7, "count": 8}, {"name": "stick_right", "start": 15, "count": 8}]` (`stick` alias'ı otomatik olarak `stick_left` + `stick_right` kaş segmentlerine eşlenir)
 - `hardware.num_leds`, `speed_khz`, `ws2812_spi_khz`, `order` (GRB)
-- `presets`: named preset definitions
-- `companion`: companion mode configs
+- `presets`: named preset definitions (kilitli + atomik YAML yazım, yorum koruma)
+- `companion`: companion mode configs (`off` iken zero-polling bekleme, statik kare tekilleştirme, ayrık `listen`/`wake_chase`)
 
-Env override: `NEO_DEVICE`, `NEO_NUM_LEDS`, `NEO_BACKEND`, `NEO_SPEED_KHZ`
+Env override: `NEO_DEVICE`, `NEO_NUM_LEDS`, `NEO_BACKEND`, `NEO_SPEED_KHZ`, `NEO_WS2812_SPI_KHZ`, `NEO_MAX_BRIGHTNESS`, `NEO_MAX_CURRENT_MA`
 
 ## İlişkiler (Güncel Modül Yolları)
 

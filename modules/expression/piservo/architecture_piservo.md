@@ -6,37 +6,33 @@ PiServo modülü (`modules/piservo`), Arduino'ya harici olarak bağlanamayan vey
 
 ```mermaid
 flowchart TD
-    %% PiServo Akışı
-    REQ_SRV("POST /piservo/set") --> PARSE_ID("Hangi Kulak?<br>Sol (12) / Sağ (13)")
-    
-    PARSE_ID --> CHK_LIB{"RPi.GPIO<br>Kurulu mu?"}
-    
-    CHK_LIB -- "Hayır (PC/Mac)" --> LOG_MOCK("Uyarı: RPi.GPIO Yok<br>Yazılımsal Simülasyon (Mock)")
-    CHK_LIB -- "Evet" --> SET_DUTY("Açı (0-180) -> Duty Cycle (%)<br>Dönüştür")
-    
-    SET_DUTY --> APLY_PWM("pwm.ChangeDutyCycle(val)")
-    LOG_MOCK --> APLY_PWM
-    
-    APLY_PWM --> RET_OK("Başarılı")
+    REQ_SRV("POST /piservo/set") --> VALIDATE("Açı Doğrulama (finite & min..max)")
+    VALIDATE --> RAMP("EarRunner (~50 Hz Ramp + RLock)")
+    RAMP --> BACKEND{"Aktif Paylaşımlı Backend?"}
+    BACKEND -- "pigpio" --> PIG("_PigpioWrapper (tek pi örneği)")
+    BACKEND -- "lgpio (RPi 5)" --> LGP("_LgpioWrapper (tek gpiochip handle)")
+    BACKEND -- "yok (dev/test)" --> SIM("_SimGPIO")
+    PIG & LGP & SIM --> DETACH("idle_detach_ms sonrası PWM=0")
 ```
 
 ## 🔄 İlişkisel Etkileşimler (Veri Akışı)
 
 ```mermaid
 erDiagram
-    PiServoService ||--|| RpiGpio : uses_hardware_pwm
-    AutonomyBrain ||--o{ PiServoService : sends_custom_gestures
+    EarRunner ||--|| SharedGpioBackend : shares_across_ears
+    EarRunner ||--|| EarReflexEngine : acoustic_doa_reflex
+    AutonomyBrain ||--o{ EarRunner : sends_gestures_or_emotions
 
-    PiServoService {
-        int servo_pin
-        int angle_deg
+    EarRunner {
+        float center_deg
+        int idle_detach_ms
+        float max_speed_deg_s
     }
 ```
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
 
-1. **İşletim Sistemi Bağımlılığı (Mock/Simülator)**
-   - Bu proje bilgisayarda (Windows/Mac) test edilirken `RPi.GPIO` kütüphanesini `import` etmek çökmeye neden olur. Modül çalışmaya başladığında **`try / except ImportError`** kullanır. **`if`** Raspberry Pi donanımı yoksa `self.pwm = None` kalır ve gelen tüm açı komutlarını sadece konsola (`logger.info("Mock Servo 90")`) yazdırıp sistemi çökertmekten kurtarır.
-2. **Görev Döngüsü (Duty Cycle) Dönüşümü**
-   - SG90/MG996 tarzı servolar 50Hz (20ms) periyotta çalışır.
-   - Açıyı (0-180 derece) direkt 0-100% PWM pulslarına çevirme formülü işletilir. Standart bir 2ms pals %10 duty'e denk gelir. **`if`** açı 180'den büyük veya 0'dan küçük girilmişse güvenli sınırlar (Clamp) uygulanıp motora fiziksel hasar verilmesi engellenir.
+1. **Tek Paylaşımlı Backend & Lifespan Temizliği**
+   - Sol (GPIO 12) ve sağ (GPIO 13) kulak tek bir paylaşılan `_PigpioWrapper` / `_LgpioWrapper` / `_SimGPIO` örneği kullanır. FastAPI `lifespan` kapanışında `runner.close()` tüm zamanlayıcıları durdurur, PWM'i `0` yapıp chip/pigpio tanıtıcısını kapatır.
+2. **Yumuşak Ramp & `idle_detach_ms` PWM Kapatma**
+   - Hedefe yumuşak ~50 Hz adım atıldıktan ve konum oturduktan `idle_detach_ms` ms sonra PWM kapatılarak SG90/MG90S servolarda vızıltı ve ısınma engellenir; bilinmeyen veya `NaN` girdiler HTTP 400 ile reddedilir.
