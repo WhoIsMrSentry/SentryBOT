@@ -1,11 +1,18 @@
 from __future__ import annotations
-from fastapi import APIRouter, Query, Body
-from pydantic import BaseModel, Field
+
+import time
 from typing import List, Optional
 
+from fastapi import APIRouter, Body, Query
+from pydantic import BaseModel, Field
+
+from modules.common.color_utils import clamp_rgb, normalize_color
+
 try:
+    from ..emotions.loader import get_shared_store
     from ..services.runner import NeoRunner
 except Exception:
+    from modules.visual_output.neopixel.emotions.loader import get_shared_store  # type: ignore
     from modules.visual_output.neopixel.services.runner import NeoRunner  # type: ignore
 
 
@@ -65,9 +72,9 @@ def _pretty(name: str) -> str:
 
 def _recommended_list(all_names: List[str]) -> List[AnimationInfo]:
     preferred = [
-        'RAINBOW', 'RAINBOW_CYCLE', 'BREATHE', 'METEOR', 'FIRE', 'COMET', 'WAVE', 'PULSE',
-        'TWINKLE', 'WIPE', 'THEATER_CHASE', 'SNOW', 'ALTERNATING', 'GRADIENT',
-        'BOUNCING_BALL', 'RUNNING_LIGHTS', 'STACKED_BARS'
+        "RAINBOW", "RAINBOW_CYCLE", "BREATHE", "METEOR", "FIRE", "COMET", "WAVE", "PULSE",
+        "TWINKLE", "WIPE", "CHASE", "SNOW", "ALT", "GRADIENT", "M_GRAD", "M_WAVE",
+        "BOUNCE", "RUN", "STACK", "EYE_EYEBROW", "EMOTIONAL_PULSE", "BLINK",
     ]
     out: List[AnimationInfo] = []
     added = set()
@@ -86,21 +93,9 @@ def _recommended_list(all_names: List[str]) -> List[AnimationInfo]:
 
 def _parse_color_fields(req: AnimateRequest):
     if req.r is not None and req.g is not None and req.b is not None:
-        return (req.r, req.g, req.b)
+        return clamp_rgb(req.r, req.g, req.b)
     if req.color:
-        s = req.color.strip()
-        if s.startswith('#') and len(s) >= 7:
-            try:
-                v = int(s[1:7], 16)
-                return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
-            except Exception:
-                return None
-        parts = s.split(',')
-        if len(parts) == 3:
-            try:
-                return (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
-            except Exception:
-                return None
+        return normalize_color(req.color)
     return None
 
 
@@ -128,18 +123,17 @@ def get_router(runner: NeoRunner) -> APIRouter:
 
     @r.get("/emotions", response_model=EmotionsResponse)
     def list_emotions():
-        try:
-            from ..emotions.loader import EmotionStore  # type: ignore
-        except Exception:
-            from ..emotions.loader import EmotionStore  # type: ignore
-        store = EmotionStore()
+        store = get_shared_store()
         palette = store.load()
         names = sorted(list(palette.entries_by_emotion.keys()))
         return {"ok": True, "emotions": names}
 
     @r.get("/healthz")
     def healthz():
-        return {"ok": True, "num_leds": runner.driver.num_leds}
+        payload = {"ok": True, "num_leds": runner.driver.num_leds}
+        if hasattr(runner.driver, "power_status"):
+            payload["power"] = runner.driver.power_status()
+        return payload
 
     @r.get("/segments")
     def segments():
@@ -195,7 +189,13 @@ def get_router(runner: NeoRunner) -> APIRouter:
         if segment:
             ok = runner.fill_segment(segment, r_, g, b)
             if not ok:
-                return {"ok": False, "error": "unknown segment", "segment": segment}
+                exists = bool(
+                    runner._segment_ranges(segment)
+                    if hasattr(runner, "_segment_ranges")
+                    else any(seg["name"] == segment.strip().lower() for seg in runner.list_segments())
+                )
+                error = "companion mode is active" if exists else "unknown segment"
+                return {"ok": False, "error": error, "segment": segment}
         else:
             ok = runner.fill(r_, g, b)
             if not ok:
@@ -206,7 +206,11 @@ def get_router(runner: NeoRunner) -> APIRouter:
     def clear_segment(name: str = Query(..., description="segment name")):
         ok = runner.clear_segment(name)
         if not ok:
-            exists = any(seg["name"] == name.strip().lower() for seg in runner.list_segments())
+            exists = bool(
+                runner._segment_ranges(name)
+                if hasattr(runner, "_segment_ranges")
+                else any(seg["name"] == name.strip().lower() for seg in runner.list_segments())
+            )
             error = "companion mode is active" if exists else "unknown segment"
             return {"ok": False, "error": error, "segment": name}
         return {"ok": True}
@@ -264,18 +268,17 @@ def get_router(runner: NeoRunner) -> APIRouter:
                 seq = ["neutral"]
         else:
             seq = ["neutral"]
-        # Collect names if available
-        try:
-            from modules.visual_output.neopixel.emotions.loader import EmotionStore  # type: ignore
-        except Exception:
-            from ..emotions.loader import EmotionStore  # type: ignore
-        store = EmotionStore()
+        store = get_shared_store()
         chosen = []
         applied = True
-        for emo in seq:
+        hold_s = max(0.0, float(duration))
+        for idx, emo in enumerate(seq):
             entry = store.random_entry(emo)
             chosen.append({"emotion": emo, "name": entry.name, "rgb": entry.color})
-            applied = runner.show_color(*entry.color, duration=duration, clear_after=False) and applied
+            ok_step = runner.show_color(*entry.color, duration=hold_s, clear_after=False)
+            applied = bool(ok_step) and applied
+            if len(seq) > 1 and idx < len(seq) - 1 and hold_s > 0.0 and ok_step:
+                time.sleep(min(hold_s, 2.0))
         return {
             "ok": applied,
             "error": None if applied else "companion mode is active",
@@ -285,11 +288,7 @@ def get_router(runner: NeoRunner) -> APIRouter:
 
     @r.post("/emote_named")
     def emote_named(emotion: str, name: str, duration: float = 0.25):
-        try:
-            from modules.visual_output.neopixel.emotions.loader import EmotionStore  # type: ignore
-        except Exception:
-            from ..emotions.loader import EmotionStore  # type: ignore
-        store = EmotionStore()
+        store = get_shared_store()
         entry = store.get_by_name(emotion, name)
         if not entry:
             return {"ok": False, "error": "not found"}
@@ -305,7 +304,20 @@ def get_router(runner: NeoRunner) -> APIRouter:
     @r.post("/animate")
     def animate(body: AnimateRequest = Body(...)):
         color = _parse_color_fields(body)
-        ok = runner.animate(body.name, emotions=body.emotions, iterations=body.iterations, color=color, segment=body.segment)
+        if body.name.strip().upper() in {"M_GRAD", "MULTI_GRADIENT", "M_WAVE", "MULTI_WAVE"}:
+            if not body.emotions and color is None:
+                return {
+                    "ok": False,
+                    "error": "emotions or color is required for multi-color animation",
+                    "name": body.name,
+                }
+        ok = runner.animate(
+            body.name,
+            emotions=body.emotions,
+            iterations=body.iterations,
+            color=color,
+            segment=body.segment,
+        )
         return {
             "ok": ok,
             "error": None if ok else "companion mode is active",
@@ -368,14 +380,12 @@ def get_router(runner: NeoRunner) -> APIRouter:
         keywords = ['joy','sadness','anger','fear','surprise','disgust','neutral']
         emotions = [k for k in keywords if k in prompt]
         if emotions:
-            try:
-                from modules.visual_output.neopixel.emotions.loader import EmotionStore  # type: ignore
-            except Exception:
-                from ..emotions.loader import EmotionStore  # type: ignore
-            store = EmotionStore()
-            for emo in emotions:
+            store = get_shared_store()
+            for idx, emo in enumerate(emotions):
                 entry = store.random_entry(emo)
-                runner.show_color(*entry.color, duration=2.0, clear_after=False)
+                runner.show_color(*entry.color, duration=0.25, clear_after=False)
+                if len(emotions) > 1 and idx < len(emotions) - 1:
+                    time.sleep(0.25)
             return {"ok": True, "message": f"Showed emotions: {emotions}"}
         
         return {"ok": True, "message": "No specific action taken."}
