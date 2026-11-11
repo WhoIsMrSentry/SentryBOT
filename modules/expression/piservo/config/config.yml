@@ -2,10 +2,26 @@ server:
   host: 0.0.0.0
   port: 8093
 
-# SentryBOT V5 Topology:
-# Ear servos are connected directly to Raspberry Pi GPIO pins (left: 12, right: 13).
-# Pan and Tilt servos belong to Arduino.
+# SentryBOT V5 Hardware Ownership:
+# - Ear servos are connected directly to Raspberry Pi GPIO (left: 12, right: 13).
+# - Head Pan and Tilt servos belong to Arduino Mega (PCA9685 ch 6 & 9; ch 7 & 8 reserved/unused).
 left:
   gpio: 12
+  min_us: 500
+  max_us: 2500
+  min_deg: 0.0
+  max_deg: 180.0
+  center_deg: 90.0
 right:
   gpio: 13
+  min_us: 500
+  max_us: 2500
+  min_deg: 0.0
+  max_deg: 180.0
+  center_deg: 90.0
+
+motion:
+  smooth_enabled: true
+  ramp_hz: 50.0
+  max_speed_deg_s: 360.0
+  idle_detach_ms: 800
