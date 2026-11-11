@@ -201,6 +201,22 @@ def _testing(d, W, H, now):
             d.line(pts, fill=1, width=wdt, joint="curve")
 
 
+_DEPLOY_SCRATCH: dict[tuple[int, int], tuple[Image.Image, ImageDraw.ImageDraw]] = {}
+_DEPLOY_KERNEL = ImageFilter.MaxFilter(3)
+
+
+def _deploy_canvas(W: int, H: int) -> tuple[Image.Image, ImageDraw.ImageDraw]:
+    key = (W, H)
+    pair = _DEPLOY_SCRATCH.get(key)
+    if pair is None:
+        img = Image.new("1", key, 0)
+        pair = (img, ImageDraw.Draw(img))
+        _DEPLOY_SCRATCH[key] = pair
+    else:
+        pair[1].rectangle([0, 0, W - 1, H - 1], fill=0)
+    return pair
+
+
 def _deploying(d, W, H, now):
     sea_at = lambda t: max(0.0, min(1.0, 0.5 + 0.34 * math.sin(t * 0.06) + 0.16 * math.sin(t * 0.015 + 1.3)))
     sea, wl = sea_at(now), H - 4
@@ -212,8 +228,7 @@ def _deploying(d, W, H, now):
     sy = surf(cx)
     pitch = math.degrees(math.atan(sum(ba * amp * k * math.cos(k * cx - w * now + ph)
                                        for k, w, ph, ba in _SPECTRUM))) * 0.45
-    lay = Image.new("1", (W, H), 0)
-    g = ImageDraw.Draw(lay)
+    lay, g = _deploy_canvas(W, H)
     deck = sy - 11
     g.chord([cx - 24, deck - 13, cx + 16, deck + 13], 0, 180, fill=1)
     g.polygon([(cx + 10, deck + 1), (cx + 22, deck - 10), (cx + 16, deck + 1)], fill=1)
@@ -225,13 +240,13 @@ def _deploying(d, W, H, now):
             bx = x0 + c * cw
             g.rectangle([bx, yt, bx + cw, yt + ch], fill=1, outline=0)
     g.ellipse([cx - 20, deck - 3, cx - 18, deck - 1], fill=0)
-    lay = lay.rotate(pitch, resample=Image.NEAREST, center=(cx, sy))
+    rot = lay.rotate(pitch, resample=Image.NEAREST, center=(cx, sy))
     belly = [(x, surf(x)) for x in range(0, W + 1, 2)] + [(W, H), (0, H)]
-    ImageDraw.Draw(lay).polygon(belly, fill=0)
+    ImageDraw.Draw(rot).polygon(belly, fill=0)
     base = frame(d)
     if base is not None:
-        base.paste(0, (0, 0), lay.convert("L").filter(ImageFilter.MaxFilter(3)).convert("1"))
-        base.paste(1, (0, 0), lay)
+        base.paste(0, (0, 0), rot.convert("L").filter(_DEPLOY_KERNEL).convert("1"))
+        base.paste(1, (0, 0), rot)
     d.line([(x, surf(x)) for x in range(0, W + 1, 2)], fill=1, width=1, joint="curve")
 
 

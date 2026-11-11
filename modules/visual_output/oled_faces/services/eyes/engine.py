@@ -20,28 +20,31 @@ from .activities import ACT_EXPIRY, ACT_MOOD, ACTIVITIES, OVERLAYS, pose
 from .gestures import BLINKS, GESTURE_FACE, GESTURE_FX, GESTURES_FN
 from .moods import MOODS
 from .primitives import ease, rounded_rect
-from .vibes import VIBES
+from .vibes import VIBES, VibeState, render_vibe
 
 _TAU_GAZE, _TAU_SIZE = 0.09, 0.11            # gaze / eye-size settle time-constants
 _AUTO = ({"left", "right"}, 0.20, 1, 0.5)    # spontaneous blink (eyes, dur, reps, anchor)
 _MASK = ({"left", "right"}, 0.24, 1, 0.5)    # blink that hides a mood's lid swap
+_TR_MAP = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
 
 
 class EyeEngine:
     def __init__(self, show, *, width=128, height=64, fps=30,
                  eye_w=36, eye_h=36, radius=12, gap=10,
-                 set_brightness=None, bright=255,
-                 widgets=True):        # bright = panel brightness; widgets = top status strip
+                 set_brightness=None, bright=None, initial_contrast=None,
+                 widgets=True):        # bright = explicit cap; None preserves panel contrast
         self._show = show
         self._set_brightness, self._bright = set_brightness, bright
+        self._base_contrast = initial_contrast
         self._widgets = bool(widgets)
-        self._cur_bright = None                          # unset -> first frame pushes the general level
+        self._cur_bright = initial_contrast if bright is None else None
         self.W, self.H, self.fps = width, height, max(5, fps)
         self.eye_w, self.eye_h, self.radius, self.gap = eye_w, eye_h, radius, gap
         self.base_lx = (width - (2 * eye_w + gap)) // 2
         self.base_ly = (height - eye_h) // 2
         self._img = Image.new("1", (width, height), 0)   # one reused frame buffer
         self._draw = ImageDraw.Draw(self._img)
+        self._vibe_state = VibeState()
 
         self.gx = self.gy = 0.0                          # eased pose (thread-only)
         self.ew, self.eh = float(eye_w), float(eye_h)
@@ -64,12 +67,15 @@ class EyeEngine:
 
     # ------------------------------------------------------------------ API
     def set_stt_text(self, text: str, duration_s: float = 4.5) -> None:
-        """Display last recognized STT speech text at the bottom of the OLED face."""
-        if not text or not str(text).strip():
-            return
+        """Display or clear recognized STT speech text at the bottom of the OLED face."""
+        clean = str(text or "").strip()
         with self._lock:
-            self._subtitle_text = str(text).strip()
-            self._subtitle_expiry = time.monotonic() + max(1.0, float(duration_s))
+            if not clean:
+                self._subtitle_text = None
+                self._subtitle_expiry = 0.0
+                return
+            self._subtitle_text = clean
+            self._subtitle_expiry = time.monotonic() + max(0.5, float(duration_s))
 
     def set_vibe(self, name: Optional[str]) -> None:
         """Play a retro full-screen vibe loop; 'idle'/None clears it (eyes return)."""
@@ -202,7 +208,10 @@ class EyeEngine:
             mood, act, look = self.mood, self._activity, (self.look_x, self.look_y)
 
         spec = MOODS.get(mood, MOODS.get("neutral", {}))
-        target = min(spec.get("bright", self._bright), self._bright)  # emote may dim, capped at the general max
+        base = self._bright if self._bright is not None else (
+            self._base_contrast if self._base_contrast is not None else 255
+        )
+        target = min(int(spec.get("bright", base)), int(base))  # emote may dim, capped at active panel level
         if self._set_brightness and target != self._cur_bright:
             try:
                 self._set_brightness(target)
@@ -225,6 +234,10 @@ class EyeEngine:
     def _render(self, now):
         with self._lock:                                 # snapshot; the dicts are never mutated in place
             mood, act, b, g, vibe = self.mood, self._activity, self._blink, self._gesture, self._vibe
+            widget_battery = self._widget_battery
+            widget_text = self._widget_text
+            subtitle_text = self._subtitle_text
+            subtitle_expiry = self._subtitle_expiry
 
         # blink: per-eye openness 1 -> 0 -> 1 (reps times); anchor = where the lid shuts
         ol = or_ = 1.0
@@ -255,7 +268,7 @@ class EyeEngine:
         d.rectangle([0, 0, self.W - 1, self.H - 1], fill=0)   # clear the reused buffer
         if vibe is not None:                             # a vibe owns the whole canvas
             try:
-                VIBES[vibe](d, self.W, self.H, now)
+                render_vibe(vibe, d, self.W, self.H, now, state=self._vibe_state)
             except Exception:
                 pass                                     # a broken vibe must not kill the face
             return self._img                             # no widgets/eyes while a vibe runs
@@ -283,7 +296,7 @@ class EyeEngine:
 
         # Top status strip widgets: battery + custom text left, clock right
         if self._widgets:
-            wtxt = " ".join(x for x in (self._widget_battery, self._widget_text) if x)
+            wtxt = " ".join(x for x in (widget_battery, widget_text) if x)
             clock = time.strftime("%H:%M")
             try:
                 if wtxt:
@@ -293,9 +306,8 @@ class EyeEngine:
                 pass
 
         # STT recognized speech text banner overlay (128x64 bottom strip)
-        if self._subtitle_text and now < self._subtitle_expiry:
-            _TR_MAP = str.maketrans("çğıöşüÇĞİÖŞÜ", "cgiosuCGIOSU")
-            txt = self._subtitle_text.translate(_TR_MAP)
+        if subtitle_text and now < subtitle_expiry:
+            txt = subtitle_text.translate(_TR_MAP)
             d.rectangle([0, self.H - 14, self.W - 1, self.H - 1], fill=0)
             d.line([(0, self.H - 14), (self.W - 1, self.H - 14)], fill=1)
             display_txt = txt if len(txt) <= 21 else (txt[:19] + "..")
