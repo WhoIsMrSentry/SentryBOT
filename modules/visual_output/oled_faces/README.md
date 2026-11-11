@@ -9,23 +9,24 @@ Robot durum ve olay sinyallerini Raspberry Pi SSD1306 OLED ekranda Pip tarzı pr
 - STT metnini geçici altyazı olarak gösterme
 - Konuşma oturumu sırasında duygu debounce/kilitleme
 
-## Mimari (Güncel: 2026-08-20)
+## Mimari (Güncel: 2026-11-16)
 
-- Giriş noktası: `xOledFacesService.py`
-- **Koordinatör**: `services/face_coordinator.py` → `FaceCoordinator` (state machine, event routing)
+- Giriş noktası: `xOledFacesService.py` (FastAPI `lifespan`, `time.monotonic()` süre tutarlılığı, fail-closed `claim_oled` + hata anında kiralama serbest bırakma)
+- **Koordinatör**: `services/face_coordinator.py` → `FaceCoordinator` (state machine, event routing, `monotonic()` oturum süreleri)
 - **Göz Motoru**: `services/eyes/`:
-  - `engine.py` → `EyeEngine` (render loop, frame generation)
-  - `moods.py` → Mood render (neutral, happy, sad, angry, curious, vb.)
-  - `gestures.py` → Gesture animasyonları (blink, look, scan, wink)
-  - `activities.py` → Activity modları (thinking, listening, speaking, scanning, idle)
-  - `activity_drawings.py` → Activity çizimleri (activities.py'den ayrıldı)
-  - `primitives.py` → Low-level çizim (ellipse, line, bitmap)
-- **Sürücü**: `services/pi_ssd1306_driver.py` → `SSD1306Driver` (I2C, buffer, PIL conversion)
+  - `engine.py` → `EyeEngine` (render loop, kilitli widget/altyazı anlık kopyası, modül seviyesi `_TR_MAP`, boş metinle altyazı sıfırlama, başlangıç `contrast` koruma)
+  - `moods.py` → Mood render (`MOODS`)
+  - `gestures.py` → Gesture animasyonları (`BLINKS`, `GESTURES_FN`)
+  - `activities.py` → Activity modları (`ACTIVITIES`, `OVERLAYS`)
+  - `activity_drawings.py` → Activity çizimleri (`_deploying` tampon reuse)
+  - `vibes.py` → `VIBES` ve motor örneğine izole `VibeState`
+  - `primitives.py` → Low-level çizim (ellipse, rounded_rect, heart, sparkle)
+- **Sürücü**: `services/pi_ssd1306_driver.py` → `PiSsd1306Driver` (NumPy/PIL bit-pack, `_prev_buffer` dirty-page I2C delta yazımı, tam `RLock`, backoff ile otomatik I2C yeniden bağlanma, boşta `burn_in_dim_s` kontrast kısma ve `burn_in_sleep_s` `0xAE`/`0xAF` uyku/uyanma koruması)
 - **Legacy Map**: `services/legacy_map.py` → Eski isim uyumluluğu
 - **Idle Ambient**: `services/idle_ambient.py` → Boşta animasyon havuzu
 - **Catalog Registry**: `services/catalog_registry.py` → Motor/activity/gesture kayıt
 - **Mapper**: `services/mapper.py` → Event → mood/activity/gesture eşleme
-- **Renderer**: `services/face_renderer.py` → Frame composition
+- **Renderer**: `services/face_renderer.py` → `PiSsd1306Driver` + `EyeEngine` koordinasyonu
 
 ## Veri Kaynakları (Güncel Modül Yolları)
 
@@ -38,17 +39,17 @@ Robot durum ve olay sinyallerini Raspberry Pi SSD1306 OLED ekranda Pip tarzı pr
 
 ## API (Gateway altında `/oled_faces/*`)
 
-- `GET /oled_faces/healthz`
-- `GET /oled_faces/status`
+- `GET /oled_faces/healthz` (gerçek ekran/donanım durumu: `ok = bool(has_display)`)
+- `GET /oled_faces/status` (`ok = bool(enabled and has_display)`)
 - `GET /oled_faces/catalog` - Full motor/activity/gesture listesi
-- `POST /oled_faces/manual` (`mode`: `bitmap`|`animation`|`logo`)
-- `POST /oled_faces/event` (`type`, opsiyonel `data`)
-- `POST /oled_faces/stt_text` (speech modülünden beslenir)
+- `POST /oled_faces/manual` (`ManualRequest`: `mode`, `name`)
+- `POST /oled_faces/event` (`EventRequest`: `type`, `data`; `speech.final`/`stt.final` altyazı sonrası erken döner)
+- `POST /oled_faces/stt_text` (`SttTextRequest`: `text` boş string ile aktif altyazıyı temizler, `duration_s` doğrulaması yapılır)
 
 ## Konfigürasyon
 
 `modules/visual_output/oled_faces/config/config.yml`:
-- `display` I2C ayarları (`address`, `width`, `height`, `bus`)
+- `display` I2C ayarları (`address`, `width`, `height`, `bus`, `contrast`, `dim_contrast`, `burn_in_dim_s`, `burn_in_sleep_s`)
 - `event_map` - Event → mood/activity/gesture eşleme
 - `idle_ambient.pool` - Boşta animasyon havuzu
 - `idle_ambient.use_full_catalog: true` → Geniş mood/gesture/activity kataloğu (`use_full_catalog` bu alt anahtardır)
@@ -70,8 +71,6 @@ arbiter.claim_oled(source="autonomy", priority=70, ttl_s=3.0)
 
 **Öncelik:** `expression/animate` (90) > `autonomy` (70) > `interactions` (50) — bu **FaceCoordinator iç öncelik skalasıdır (74-100)**; ExpressionArbiter lease öncelikleri farklı bir skaladır (`modules/agent_core/config/config.yml` → `expression_lease.priorities`: autonomy 20, interactions 40, owner_command 60, safety_navigation 80, hardware_protection 90, emergency 100). İki skala karıştırılmamalı.
 
-## Bilinen Sorunlar
+## Durum & Doğrulama
 
-1. **FaceCoordinator + EyeEngine Çok Büyük** - `engine.py` 248, `activities.py` 102, `moods.py` 221 satır. `activities.py` çizimleri `services/eyes/activity_drawings.py`'a taşındı; `EyeEngine` render loop + frame generation ayrılmalı.
-2. **Legacy Map Yüzde 80+ Kullanım** - `legacy_map.py` 136 satır, eski config isimleri hâlâ destekleniyor. Temizleme planlanmalı.
-3. **Driver Headless Test Eksik** - `pi_ssd1306_driver.py` donanıma bağlı, CI'de mock test yok.
+- `PiSsd1306Driver`, `FaceMapper`, `FaceCoordinator`, `EyeEngine`, router Pydantic uçları ve `ExpressionArbiter` kiralama kuralları `tests/modules/visual_output/oled_faces/` altındaki başsız (headless) birim testleriyle doğrulanır (`test_pi_ssd1306_driver.py`, `test_oled_faces_full.py`).
