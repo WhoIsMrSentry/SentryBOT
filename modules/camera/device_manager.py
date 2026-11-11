@@ -64,10 +64,12 @@ class CameraDeviceManager:
         self._refs: Dict[str, DeviceRef] = {}
         self._weak_refs: Set[weakref.ref] = set()
         
-        # Locks
-        self._state_lock = threading.RLock()
-        self._refs_lock = threading.RLock()
+        # Locks (unified op lock prevents _refs_lock <-> _state_lock ordering inversion)
+        self._op_lock = threading.RLock()
+        self._state_lock = self._op_lock
+        self._refs_lock = self._op_lock
         self._picam2_lock = threading.RLock()
+        self._bound_capture: Optional[Any] = None
         
         # State
         self._current_mode = CameraMode.LOCAL
@@ -154,7 +156,7 @@ class CameraDeviceManager:
                 if self._state == DeviceState.CLOSED:
                     self._open_device(mode)
                 elif mode != self._current_mode:
-                    self._switch_mode(mode)
+                    self.switch_mode(mode)
                 
                 ref = DeviceRef(owner=owner, mode=mode, opened_at=time.time())
                 self._refs[owner] = ref
@@ -489,18 +491,26 @@ class CameraDeviceManager:
         finally:
             handle.release()
     
+    def attach_capture(self, capture: Any) -> None:
+        """Bind a CameraCapture lifecycle instance so shutdown/release cleans it up."""
+        with self._op_lock:
+            self._bound_capture = capture
+
     def shutdown(self) -> None:
         """Shutdown device manager completely."""
         logger.info("Shutting down CameraDeviceManager")
         
-        # Force release all references
-        with self._refs_lock:
+        with self._op_lock:
+            capture = self._bound_capture
+            self._bound_capture = None
             for owner in list(self._refs.keys()):
                 self.release(owner)
-        
-        # Close device
-        with self._state_lock:
             self._close_device()
+        if capture is not None and hasattr(capture, "stop"):
+            try:
+                capture.stop()
+            except Exception as exc:
+                logger.debug("Bound capture stop during shutdown failed: %s", exc)
         
         logger.info("CameraDeviceManager shutdown complete")
 
