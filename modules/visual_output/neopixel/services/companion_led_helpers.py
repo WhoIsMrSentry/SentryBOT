@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Tuple
+import math
+from typing import Any, List, Optional, Tuple
+
+from modules.common.color_utils import lerp_color as _common_lerp_color, normalize_color
 
 logger = logging.getLogger("neopixel.companion_helpers")
 
@@ -9,25 +12,32 @@ Color = Tuple[int, int, int]
 
 
 def _parse_hex_color(raw: Any, default: Color) -> Color:
-    if isinstance(raw, (list, tuple)) and len(raw) >= 3:
-        return (int(raw[0]) & 255, int(raw[1]) & 255, int(raw[2]) & 255)
-    if isinstance(raw, str):
-        s = raw.strip()
-        if s.startswith("#") and len(s) >= 7:
-            try:
-                v = int(s[1:7], 16)
-                return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
-            except ValueError:
-                return default
-    return default
+    parsed = normalize_color(raw)
+    return parsed if parsed is not None else default
 
 
 def _lerp_color(c1: Color, c2: Color, t: float) -> Color:
-    return (
-        int(c1[0] + (c2[0] - c1[0]) * t),
-        int(c1[1] + (c2[1] - c1[1]) * t),
-        int(c1[2] + (c2[2] - c1[2]) * t),
-    )
+    return _common_lerp_color(c1, c2, t)
+
+
+def _safe_float(
+    value: Any,
+    default: float,
+    *,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(v):
+        return default
+    if minimum is not None:
+        v = max(minimum, v)
+    if maximum is not None:
+        v = min(maximum, v)
+    return v
 
 
 def _interpolate_gradient(gradient: List[Color], pos: float) -> Color:

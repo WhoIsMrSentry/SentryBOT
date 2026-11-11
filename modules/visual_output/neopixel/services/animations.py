@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 import math
 import random
 import time
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
+
+from modules.common.color_utils import clamp_rgb, lerp_color, normalize_color
 
 try:
     from .driver import NeoDriver
@@ -23,47 +26,65 @@ def eye_eyebrow(
     jewel_count: int = 7,
     center_rel: int = 0,
     stick_start: int = 7,
-    stick_count: int = 16
+    stick_count: int = 16,
+    sticks: Optional[Sequence[Tuple[int, int]]] = None,
 ) -> None:
-    """
-    Explicit animation for the eye (jewel) and eyebrows (sticks).
-    This performs a few pulses.
-    """
-    n = driver.num_leds
-    opp = (255 - color[0], 255 - color[1], 255 - color[2])
-    
-    half_stick = stick_count // 2
-    sticks = []
-    if half_stick > 0:
-        sticks.append((stick_start, half_stick))
-        sticks.append((stick_start + half_stick, stick_count - half_stick))
-    else:
-        sticks.append((stick_start, stick_count))
+    """Animation for the eye (jewel) and eyebrows (sticks)."""
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    rgb = clamp_rgb(*color)
+    opp = (255 - rgb[0], 255 - rgb[1], 255 - rgb[2])
 
-    for _ in range(max(1, iterations)):
+    # Derive balanced layout dynamically when run on non-23-LED strips or SegmentView
+    j_start = max(0, min(n, int(jewel_start)))
+    if sticks:
+        stick_spans = [(max(0, s), max(0, min(n, s + c) - max(0, s))) for s, c in sticks if c > 0]
+        j_count = max(0, min(int(jewel_count), n - j_start))
+    elif stick_start >= n and j_start == 0:
+        j_count = min(int(jewel_count), n)
+        rem = max(0, n - j_count)
+        half = rem // 2
+        stick_spans = [(j_count, half), (j_count + half, rem - half)] if rem > 0 else []
+    else:
+        j_count = max(0, min(int(jewel_count), n - j_start))
+        s_start = max(0, min(n, int(stick_start)))
+        s_count = max(0, min(int(stick_count), n - s_start))
+        half_stick = s_count // 2
+        if half_stick > 0:
+            stick_spans = [(s_start, half_stick), (s_start + half_stick, s_count - half_stick)]
+        elif s_count > 0:
+            stick_spans = [(s_start, s_count)]
+        else:
+            stick_spans = []
+
+    for _ in range(max(1, int(iterations))):
         for step in range(20):
             phase = step / 20.0
-            pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(phase * 2 * math.pi))
-            
-            for rel in range(jewel_count):
-                idx = jewel_start + rel
-                if idx >= n: break
+            pulse_v = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(phase * 2 * math.pi))
+
+            for rel in range(j_count):
+                idx = j_start + rel
+                if idx >= n:
+                    break
                 if rel == center_rel:
-                    driver.set(idx, int(opp[0] * pulse), int(opp[1] * pulse), int(opp[2] * pulse))
+                    driver.set(idx, int(opp[0] * pulse_v), int(opp[1] * pulse_v), int(opp[2] * pulse_v))
                 else:
-                    driver.set(idx, int(color[0] * 0.15), int(color[1] * 0.15), int(color[2] * 0.15))
-            
+                    driver.set(idx, int(rgb[0] * 0.15), int(rgb[1] * 0.15), int(rgb[2] * 0.15))
+
             eyebrow_pulse = 0.2 + 0.5 * (0.5 + 0.5 * math.cos(phase * math.pi))
-            for stick_start_idx, stick_len in sticks:
+            for stick_start_idx, stick_len in stick_spans:
                 for i in range(stick_len):
                     idx = stick_start_idx + i
-                    if idx >= n: break
+                    if idx >= n:
+                        break
                     arch_factor = math.sin((i / max(1, stick_len - 1)) * math.pi) if stick_len > 1 else 1.0
                     intensity = eyebrow_pulse * (0.4 + 0.6 * arch_factor)
-                    driver.set(idx, int(color[0] * intensity), int(color[1] * intensity), int(color[2] * intensity))
-            
+                    driver.set(idx, int(rgb[0] * intensity), int(rgb[1] * intensity), int(rgb[2] * intensity))
+
             driver.show()
-            time.sleep(wait)
+            time.sleep(max(0.0, float(wait)))
+
 
 def _clamp(x: float, lo: int = 0, hi: int = 255) -> int:
     return max(lo, min(hi, int(x)))
@@ -72,45 +93,65 @@ def _clamp(x: float, lo: int = 0, hi: int = 255) -> int:
 def _wheel_tinted(pos: int, color: Color | None = None) -> Color:
     pos &= 255
     if color:
-        r, g, b = color
+        r, g, b = clamp_rgb(*color)
         max_ch = max(r, g, b)
         ratio = pos / 255.0
         if max_ch == r:
             return (r, _clamp(g * ratio), 0)
-        elif max_ch == g:
+        if max_ch == g:
             return (_clamp(r * ratio), g, 0)
-        else:
-            return (0, _clamp(g * ratio), b)
+        return (0, _clamp(g * ratio), b)
     return base_wheel(pos)
 
 
-def rainbow(driver: NeoDriver, color: Color | None = None, iterations: int = 1, wait: float = 0.02) -> None:
-    n = driver.num_leds
-    for j in range(256 * max(1, iterations)):
+def rainbow(
+    driver: NeoDriver,
+    color: Color | None = None,
+    iterations: int = 1,
+    wait: float = 0.02,
+    step: int = 4,
+) -> None:
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    step_sz = max(1, int(step))
+    for j in range(0, 256 * max(1, int(iterations)), step_sz):
         for i in range(n):
             r, g, b = _wheel_tinted((i + j) & 255, color)
             driver.set(i, r, g, b)
         driver.show()
-        time.sleep(wait)
+        time.sleep(max(0.0, float(wait)))
 
 
-def rainbow_cycle(driver: NeoDriver, color: Color | None = None, iterations: int = 1, wait: float = 0.02) -> None:
-    n = driver.num_leds
-    for j in range(256 * max(1, iterations)):
+def rainbow_cycle(
+    driver: NeoDriver,
+    color: Color | None = None,
+    iterations: int = 1,
+    wait: float = 0.02,
+    step: int = 4,
+) -> None:
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    step_sz = max(1, int(step))
+    for j in range(0, 256 * max(1, int(iterations)), step_sz):
         for i in range(n):
             pos = ((i * 256 // n) + j) & 255
             r, g, b = _wheel_tinted(pos, color)
             driver.set(i, r, g, b)
         driver.show()
-        time.sleep(wait)
+        time.sleep(max(0.0, float(wait)))
 
 
 def spinner(driver: NeoDriver, color: Color, iterations: int = 1, wait: float = 0.1) -> None:
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    rgb = clamp_rgb(*color)
     for _ in range(max(1, iterations)):
         for i in range(n):
             driver.clear()
-            driver.set(i, *color)
+            driver.set(i, *rgb)
             driver.show()
             time.sleep(wait)
 
@@ -133,8 +174,10 @@ def breathe(driver: NeoDriver, color: Color, iterations: int = 1, step: int = 5,
 
 
 def meteor_rain(driver: NeoDriver, color: Color, size: int = 5, decay_ms: int = 50) -> None:
-    r, g, b = color
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    r, g, b = clamp_rgb(*color)
     for i in range(n + size):
         driver.clear()
         for j in range(size):
@@ -146,8 +189,10 @@ def meteor_rain(driver: NeoDriver, color: Color, size: int = 5, decay_ms: int = 
 
 
 def fire_flicker(driver: NeoDriver, color: Color, cycles: int = 1) -> None:
-    r, g, b = color
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    r, g, b = clamp_rgb(*color)
     for _ in range(max(1, cycles)):
         for i in range(n):
             flicker = random.randint(50, 255) / 255.0
@@ -157,8 +202,10 @@ def fire_flicker(driver: NeoDriver, color: Color, cycles: int = 1) -> None:
 
 
 def comet(driver: NeoDriver, color: Color, speed_ms: int = 50) -> None:
-    r, g, b = color
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    r, g, b = clamp_rgb(*color)
     for i in range(n):
         driver.clear()
         driver.set(i, r, g, b)
@@ -169,7 +216,9 @@ def comet(driver: NeoDriver, color: Color, speed_ms: int = 50) -> None:
 
 
 def wave(driver: NeoDriver, color: Color | None = None, wait: float = 0.05) -> None:
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
     for j in range(0, 256, 5):
         for i in range(n):
             r, g, b = _wheel_tinted((i * 256 // n + j) & 255, color)
@@ -179,7 +228,9 @@ def wave(driver: NeoDriver, color: Color | None = None, wait: float = 0.05) -> N
 
 
 def pulse(driver: NeoDriver, color: Color, step: int = 10, wait: float = 0.05) -> None:
-    r, g, b = color
+    if int(getattr(driver, "num_leds", 0)) <= 0:
+        return
+    r, g, b = clamp_rgb(*color)
     for bright in range(0, 255, max(1, step)):
         ratio = bright / 255.0
         driver.fill(_clamp(r * ratio), _clamp(g * ratio), _clamp(b * ratio))
@@ -187,10 +238,13 @@ def pulse(driver: NeoDriver, color: Color, step: int = 10, wait: float = 0.05) -
 
 
 def twinkle(driver: NeoDriver, color: Color, count: int = 5, wait: float = 0.1) -> None:
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    rgb = clamp_rgb(*color)
     for _ in range(count):
         idx = random.randrange(n)
-        driver.set(idx, *color)
+        driver.set(idx, *rgb)
         driver.show()
         time.sleep(wait)
         driver.set(idx, 0, 0, 0)
@@ -198,20 +252,25 @@ def twinkle(driver: NeoDriver, color: Color, count: int = 5, wait: float = 0.1) 
 
 
 def color_wipe(driver: NeoDriver, color: Color, speed_ms: int = 50) -> None:
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    rgb = clamp_rgb(*color)
     for i in range(n):
-        driver.set(i, *color)
+        driver.set(i, *rgb)
         driver.show()
         time.sleep(max(0.0, speed_ms / 1000.0))
 
 
 def random_blink(driver: NeoDriver, color: Color | None = None, wait: float = 0.1) -> None:
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
     if color is None:
         for i in range(n):
             driver.set(i, random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
     else:
-        r, g, b = color
+        r, g, b = clamp_rgb(*color)
         for i in range(n):
             variation = random.randint(-30, 30)
             driver.set(i, _clamp(r + variation), _clamp(g + variation), _clamp(b + variation))
@@ -220,23 +279,28 @@ def random_blink(driver: NeoDriver, color: Color | None = None, wait: float = 0.
 
 
 def theater_chase(driver: NeoDriver, color: Color, wait: float = 0.05, cycles: int = 5) -> None:
-    n = driver.num_leds
-    for _ in range(cycles):
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    rgb = clamp_rgb(*color)
+    for _ in range(max(1, cycles)):
         for q in range(3):
             for i in range(0, n, 3):
                 if i + q < n:
-                    driver.set(i + q, *color)
+                    driver.set(i + q, *rgb)
             driver.show()
-            time.sleep(wait)
+            time.sleep(max(0.0, float(wait)))
             for i in range(0, n, 3):
                 if i + q < n:
                     driver.set(i + q, 0, 0, 0)
 
 
 def snow(driver: NeoDriver, color: Color, flakes: int = 10, wait: float = 0.2) -> None:
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
     driver.clear()
-    r, g, b = color
-    n = driver.num_leds
+    r, g, b = clamp_rgb(*color)
     for _ in range(flakes):
         idx = random.randrange(n)
         intensity = random.randint(100, 255) / 255.0
@@ -246,26 +310,22 @@ def snow(driver: NeoDriver, color: Color, flakes: int = 10, wait: float = 0.2) -
 
 
 def alternating_colors(driver: NeoDriver, color1: Color, color2: Color, cycles: int = 10, wait: float = 0.1) -> None:
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    c1 = clamp_rgb(*color1)
+    c2 = clamp_rgb(*color2)
     for j in range(cycles):
         for i in range(n):
-            driver.set(i, *(color1 if (i + j) % 2 == 0 else color2))
+            driver.set(i, *(c1 if (i + j) % 2 == 0 else c2))
         driver.show()
         time.sleep(wait)
 
 
-def _lerp(a: int, b: int, t: float) -> int:
-    return _clamp(a + (b - a) * t)
-
-
-def _lerp_color(c1: Color, c2: Color, t: float) -> Color:
-    return (_lerp(c1[0], c2[0], t), _lerp(c1[1], c2[1], t), _lerp(c1[2], c2[2], t))
-
-
 def multi_color_gradient(driver: NeoDriver, colors: Sequence[Color], iterations: int = 5, wait: float = 0.03) -> None:
-    if not colors:
+    n = int(getattr(driver, "num_leds", 0))
+    if not colors or n <= 0:
         return
-    n = driver.num_leds
     k = len(colors)
     for _ in range(max(1, iterations)):
         for j in range(0, 256, 5):
@@ -275,15 +335,15 @@ def multi_color_gradient(driver: NeoDriver, colors: Sequence[Color], iterations:
                 c1 = colors[segment % k]
                 c2 = colors[(segment + 1) % k]
                 t = pos / 255.0
-                driver.set(i, *_lerp_color(c1, c2, t))
+                driver.set(i, *lerp_color(c1, c2, t))
             driver.show()
             time.sleep(wait)
 
 
 def multi_color_wave(driver: NeoDriver, colors: Sequence[Color], iterations: int = 5, wait: float = 0.03) -> None:
-    if not colors:
+    n = int(getattr(driver, "num_leds", 0))
+    if not colors or n <= 0:
         return
-    n = driver.num_leds
     k = len(colors)
     for _ in range(max(1, iterations)):
         for j in range(0, 256, 5):
@@ -294,13 +354,15 @@ def multi_color_wave(driver: NeoDriver, colors: Sequence[Color], iterations: int
                 c1 = colors[segment % k]
                 c2 = colors[(segment + 1) % k]
                 t = seg_pos / 255.0
-                driver.set(i, *_lerp_color(c1, c2, t))
+                driver.set(i, *lerp_color(c1, c2, t))
             driver.show()
             time.sleep(wait)
 
 
 def gradient_fade(driver: NeoDriver, cycles: int = 5, color: Color | None = None, wait: float = 0.03) -> None:
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
     for j in range(cycles):
         for i in range(n):
             pos = int((i / max(1, n - 1)) * 255)
@@ -310,8 +372,10 @@ def gradient_fade(driver: NeoDriver, cycles: int = 5, color: Color | None = None
 
 
 def bouncing_ball(driver: NeoDriver, color: Color, frames: int = 60, wait: float = 0.03) -> None:
-    r, g, b = color
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    r, g, b = clamp_rgb(*color)
     gravity = 0.1
     start_height = 1.0
     height = start_height
@@ -332,8 +396,10 @@ def bouncing_ball(driver: NeoDriver, color: Color, frames: int = 60, wait: float
 
 
 def running_lights(driver: NeoDriver, color: Color, loops: int = 2, wait: float = 0.05) -> None:
-    r, g, b = color
-    n = driver.num_leds
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    r, g, b = clamp_rgb(*color)
     position = 0
     for _ in range(n * loops):
         position += 1
@@ -346,8 +412,9 @@ def running_lights(driver: NeoDriver, color: Color, loops: int = 2, wait: float 
 
 
 def stacked_bars(driver: NeoDriver, wait_ms: int = 50, color: Color | None = None) -> None:
-    n = driver.num_leds
-    # Fill up
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
     for h in range(n):
         for i in range(h + 1):
             if color is None:
@@ -356,7 +423,6 @@ def stacked_bars(driver: NeoDriver, wait_ms: int = 50, color: Color | None = Non
                 driver.set(i, *color)
         driver.show()
         time.sleep(max(0.0, wait_ms / 1000.0))
-    # Empty
     for h in range(n - 1, -1, -1):
         for i in range(h, n):
             driver.set(i, 0, 0, 0)
@@ -364,42 +430,8 @@ def stacked_bars(driver: NeoDriver, wait_ms: int = 50, color: Color | None = Non
         time.sleep(max(0.0, wait_ms / 1000.0))
 
 
-# Helper registry mapping Arduino-style names to functions with simple parameter parsing
 def _parse_color_arg(arg) -> Color:
-    if arg is None:
-        return (255, 255, 255)
-    if isinstance(arg, tuple) or isinstance(arg, list):
-        return (int(arg[0]) & 255, int(arg[1]) & 255, int(arg[2]) & 255)
-    if isinstance(arg, str):
-        s = arg.strip()
-        if s.startswith('#') and len(s) in (7, 9):
-            v = int(s[1:7], 16)
-            return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
-        parts = s.split(',')
-        if len(parts) == 3:
-            return (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
-    # fallback white
-    return (255, 255, 255)
-
-
-def run_animation(driver: NeoDriver, name: str, *args, **kwargs) -> None:
-    """Run animation by name (case-insensitive). Args are passed to target function.
-    Supports simple color strings like "r,g,b" or "#RRGGBB" for first color parameter.
-    """
-    name_up = name.strip().upper()
-    fn = ANIMATIONS.get(name_up)
-    if not fn:
-        raise KeyError(f"Unknown animation: {name}")
-
-    # allow first positional arg to be color string
-    if args:
-        first = args[0]
-        if isinstance(first, str) and (',' in first or first.startswith('#')):
-            c = _parse_color_arg(first)
-            new_args = (c,) + args[1:]
-            return fn(driver, *new_args, **kwargs)
-    return fn(driver, *args, **kwargs)
-
+    return normalize_color(arg) or (255, 255, 255)
 
 
 def emotional_pulse(
@@ -411,6 +443,10 @@ def emotional_pulse(
     wait: float = 0.05,
 ) -> None:
     """Organic heartbeat/breathing pulse corresponding to robot's emotional arousal."""
+    n = int(getattr(driver, "num_leds", 0))
+    if n <= 0:
+        return
+    rgb = clamp_rgb(*color)
     period = 60.0 / max(10.0, float(bpm))
     steps = int(max(10, period / max(0.01, wait)))
     for _ in range(max(1, iterations)):
@@ -418,19 +454,20 @@ def emotional_pulse(
             phase = step / float(steps)
             beat = math.sin(phase * 2 * math.pi)
             intensity = (0.15 + 0.85 * max(0.0, beat)) * max(0.1, min(1.0, brightness_max))
-            r = int(color[0] * intensity)
-            g = int(color[1] * intensity)
-            b = int(color[2] * intensity)
-            for i in range(driver.num_leds):
+            r = int(rgb[0] * intensity)
+            g = int(rgb[1] * intensity)
+            b = int(rgb[2] * intensity)
+            for i in range(n):
                 driver.set(i, r, g, b)
             driver.show()
             time.sleep(wait)
 
 
-# canonical name mapping similar to Arduino sketch names
+# Canonical name mapping (superset of short and long names)
 ANIMATIONS = {
     "RAINBOW": rainbow,
     "RAINBOW_CYCLE": rainbow_cycle,
+    "SPINNER": spinner,
     "BREATHE": breathe,
     "METEOR": meteor_rain,
     "FIRE": fire_flicker,
