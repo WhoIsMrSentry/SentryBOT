@@ -40,6 +40,7 @@ def test_fill_segment_applies_only_target_range():
     assert ok is True
     assert runner.driver.buf[:3] == [(9, 8, 7), (9, 8, 7), (9, 8, 7)]
     assert runner.driver.buf[3:] == [(0, 0, 0)] * 7
+    runner.stop()
 
 
 def test_animate_unknown_effect_on_segment_falls_back_to_segment_fill():
@@ -50,6 +51,7 @@ def test_animate_unknown_effect_on_segment_falls_back_to_segment_fill():
     assert runner.driver.buf[0] == (10, 20, 30)
     assert runner.driver.buf[1] == (10, 20, 30)
     assert runner.driver.buf[2:] == [(0, 0, 0)] * 4
+    runner.stop()
 
 
 def test_animate_known_effect_runs_scoped_to_segment():
@@ -63,6 +65,7 @@ def test_animate_known_effect_runs_scoped_to_segment():
     assert runner.driver.buf[1] != (0, 0, 0)
     assert runner.driver.buf[2:] == [(0, 0, 0)] * 4
     assert runner.driver.shows > 0
+    runner.stop()
 
 
 def test_apply_preset_sets_segment_colors():
@@ -77,11 +80,13 @@ def test_apply_preset_sets_segment_colors():
     assert runner.driver.buf[0] == (1, 2, 3)
     assert runner.driver.buf[1] == (1, 2, 3)
     assert runner.driver.buf[2] == (4, 5, 6)
+    runner.stop()
 
 
 def test_apply_unknown_preset_returns_false():
     runner = NeoRunner(NeoDriverConfig(num_leds=4), segments=[], presets={})
     assert runner.apply_preset("missing") is False
+    runner.stop()
 
 
 def test_runtime_preset_crud():
@@ -94,11 +99,13 @@ def test_runtime_preset_crud():
     assert "jewel" in data
     assert runner.delete_preset("temp") is True
     assert runner.get_preset("temp") is None
+    runner.stop()
 
 
 def test_preset_persistence_writes_yaml_and_increments_version(tmp_path: Path):
     cfg_path = tmp_path / "neo.yml"
     cfg_path.write_text(
+        "# Top comment\n"
         "server:\n"
         "  host: 0.0.0.0\n"
         "presets_meta:\n"
@@ -115,7 +122,10 @@ def test_preset_persistence_writes_yaml_and_increments_version(tmp_path: Path):
     )
 
     assert runner.set_preset("demo", {"jewel": {"color": [7, 8, 9]}}, persist=True) is True
-    saved = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    raw_text = cfg_path.read_text(encoding="utf-8")
+    assert "# Top comment" in raw_text
+    saved = yaml.safe_load(raw_text)
     assert saved["presets"]["demo"]["jewel"]["color"] == [7, 8, 9]
     assert saved["presets_meta"]["version"] == 5
     assert runner.preset_version() == 5
+    runner.stop()
