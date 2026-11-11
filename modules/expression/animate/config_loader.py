@@ -9,10 +9,14 @@ except Exception:  # pragma: no cover
     yaml = None
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "animations_dir": None,  # if None, use modules/animate/animations
-    "default_speed": 1.0,   # multiplier
+    "animations_dir": None,  # if None, use modules/expression/animate/animations
+    "default_speed": 1.0,    # multiplier
     "interpolate": True,
+    "run_timeout_s": 30.0,
     "rest_pose": [90, 90, 90, 90],
+    "idle_breathing_period_s": 4.5,
+    "idle_tilt_amp_deg": 1.8,
+    "idle_ear_amp_deg": 1.5,
 }
 
 
