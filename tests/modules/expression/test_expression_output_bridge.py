@@ -25,10 +25,33 @@ def test_output_bridge_apply_is_disabled_when_cfg_says_so():
     assert result["reason"] == "bridge_disabled"
 
 
-def test_output_bridge_skips_unchanged_targets():
+def test_failed_output_bridge_does_not_cache_target_sig():
     engine = SemanticExpressionEngine()
     engine.event("interactions.idle", {})
     bridge = ExpressionOutputBridge(engine, cfg={"enabled": True, "gateway_url": "http://127.0.0.1:9"})
-    bridge.apply()
+    first = bridge.apply()
     second = bridge.apply()
+    assert first["ok"] is False
+    assert first["reason"] == "output_failed"
+    assert second["reason"] == "output_failed"
+
+
+def test_successful_output_bridge_skips_unchanged_targets(monkeypatch):
+    engine = SemanticExpressionEngine()
+    engine.event("interactions.idle", {})
+    bridge = ExpressionOutputBridge(engine, cfg={"enabled": True, "gateway_url": "http://127.0.0.1:9"})
+    sent = []
+
+    def _ok_send(action):
+        sent.append(action["component"])
+        return {"ok": True, "component": action["component"], "status": 200, "response": {}}
+
+    monkeypatch.setattr(bridge, "_send", _ok_send)
+    first = bridge.apply()
+    second = bridge.apply()
+    assert first["ok"] is True
+    assert first["reason"] == "applied"
+    assert len(sent) == 3
+    assert second["ok"] is True
     assert second["reason"] == "unchanged"
+    assert len(sent) == 3

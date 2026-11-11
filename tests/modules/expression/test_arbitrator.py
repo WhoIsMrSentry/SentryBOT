@@ -25,16 +25,37 @@ def test_express_emotion_returns_ok():
 
 def test_intensity_scales_render():
     async def run():
-        arb = ExpressionArbiter(ModalityClients())
+        seen_speeds: list[float] = []
+
+        class _FakeNeo:
+            async def set_effect(self, effect, color, speed=1.0, duration_s=3.0):
+                seen_speeds.append(speed)
+                return True
+
+        arb = ExpressionArbiter(ModalityClients(neopixel=_FakeNeo()))
         base = await arb.express_emotion(
             emotion="anger", intensity=1.0, duration_s=0.2,
             modalities=["leds"], force=True,
         )
-        await arb.express_emotion(
+        await asyncio.sleep(0.01)
+        subtle = await arb.express_emotion(
+            emotion="anger", intensity=0.2, duration_s=0.2,
+            modalities=["leds"], force=True,
+        )
+        await asyncio.sleep(0.01)
+        extreme = await arb.express_emotion(
             emotion="anger", intensity=2.0, duration_s=0.2,
             modalities=["leds"], force=True,
         )
+        await asyncio.sleep(0.01)
+        await arb.stop()
         assert base["render"]["semantic"]["intensity"] == 1.0
+        assert subtle["render"]["semantic"]["intensity"] == 0.2
+        assert extreme["render"]["semantic"]["intensity"] == 2.0
+        assert extreme["render"]["head"]["pan_delta"] == 2 * base["render"]["head"]["pan_delta"]
+        # Speed passed to adapter equals render.neopixel.speed (no double scaling)
+        assert len(seen_speeds) == 3
+        assert seen_speeds[1] == subtle["render"]["neopixel"]["speed"]
     asyncio.run(run())
 
 
