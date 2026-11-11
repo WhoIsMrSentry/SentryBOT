@@ -4,14 +4,14 @@
 Robotun anlık durum ve olaylarını SSD1306 ekranda **prosedürel animasyonlu göz ifadelerine** dönüştürmek (Pip `EyeEngine`).
 
 ## Bileşenler
-- `xOledFacesService`: servis yaşam döngüsü, state polling, event işleme
+- `xOledFacesService`: servis yaşam döngüsü (`monotonic()` süreler, fail-closed `ExpressionArbiter` kiralama), state polling, event işleme
 - `services/mapper.py`: olay/durum -> mode/name eşleme
 - `services/legacy_map.py`: eski Irisoled isimlerini Pip mood/gesture/activity'ye çevirir
-- `services/face_renderer.py`: `EyeEngine` + `PiSsd1306Driver` birleşimi
-- `services/eyes/`: Pip yüz katmanları (`moods`, `gestures`, `activities`, `engine`)
-- `services/pi_ssd1306_driver.py`: Pi I2C SSD1306 sürücüsü
-- `api/router.py`: manuel kontrol ve gözlem endpointleri
-- `config/config.yml`: eşleme tabloları
+- `services/face_renderer.py`: `EyeEngine` + `PiSsd1306Driver` birleşimi (açık `brightness` yoksa panel `contrast` değerini korur)
+- `services/eyes/`: Pip yüz katmanları (`moods`, `gestures`, `activities`, `activity_drawings`, `vibes` [`VibeState`], `engine`)
+- `services/pi_ssd1306_driver.py`: Pi I2C SSD1306 sürücüsü (vektörize bit-pack, dirty-page delta I2C yazımı, kilit korumalı yeniden bağlanma, boşta `0xAE`/`0xAF` burn-in uyku koruması)
+- `api/router.py`: Pydantic doğrulamalı kontrol, STT altyazı (temizleme dahil) ve durum endpointleri
+- `config_loader.py` & `config/config.yml`: `_deep_update` tabanlı birleştirme ve eşleme tabloları
 
 ## Veri Akışı
 1. Gateway `bootstrap`, `xOledFacesService` örneğini oluşturur.
