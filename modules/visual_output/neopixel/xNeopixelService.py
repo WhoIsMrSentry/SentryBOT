@@ -31,6 +31,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         ws2812_spi_khz=int(hw.get("ws2812_spi_khz", 2400)),
         backend=str(hw.get("backend", "auto")),
         order=str(hw.get("order", "GRB")),
+        max_brightness=float(hw.get("max_brightness", 0.7)),
+        max_current_ma=int(hw.get("max_current_ma", 900)),
     )
 
     preset_meta = cfg.get("presets_meta", {}) if isinstance(cfg.get("presets_meta", {}), dict) else {}
@@ -44,15 +46,14 @@ def create_app(config_path: str | None = None) -> FastAPI:
     )
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        yield
+    async def lifespan(_app: FastAPI):
         try:
-            runner.companion_set_mode("off")
-            runner.clear()
-        except Exception:
-            pass
+            yield
+        finally:
+            runner.stop()
 
     app = FastAPI(lifespan=lifespan)
+    app.state.runner = runner
     app.include_router(get_router(runner))
     return app
 

@@ -34,11 +34,56 @@ SemaphoreHandle_t stripMutex; // NeoPixel şeridine erişim için mutex
 
 // Animasyon komut yapısı
 typedef struct {
-    char name[20];
+    char name[24];
+    char segment[16];
     uint32_t color1;
     uint32_t color2;
     int repeat;
 } AnimationCommand;
+
+volatile bool g_abortAnimation = false;
+volatile bool g_preserveStaticPixels = false;
+int g_segStart = 0;
+int g_segEnd = LED_COUNT;
+
+void segmentRange(const char* seg, int &startIdx, int &endIdx) {
+    if (!seg || seg[0] == '\0') {
+        startIdx = 0;
+        endIdx = LED_COUNT;
+        return;
+    }
+    if (strcasecmp(seg, "JEWEL") == 0 || strcasecmp(seg, "HEAD") == 0) {
+        startIdx = 0;
+        endIdx = min(7, LED_COUNT);
+    } else if (strcasecmp(seg, "STICK_LEFT") == 0 || strcasecmp(seg, "LEFT_BROW") == 0) {
+        startIdx = min(7, LED_COUNT);
+        endIdx = min(15, LED_COUNT);
+    } else if (strcasecmp(seg, "STICK_RIGHT") == 0 || strcasecmp(seg, "RIGHT_BROW") == 0) {
+        startIdx = min(15, LED_COUNT);
+        endIdx = LED_COUNT;
+    } else if (strcasecmp(seg, "STICK") == 0 || strcasecmp(seg, "BODY") == 0) {
+        startIdx = min(7, LED_COUNT);
+        endIdx = LED_COUNT;
+    } else {
+        startIdx = 0;
+        endIdx = LED_COUNT;
+    }
+}
+
+bool shouldAbortAnimation() {
+    return g_abortAnimation || hasCommand();
+}
+
+bool delayOrAbort(unsigned long ms) {
+    unsigned long elapsed = 0;
+    while (elapsed < ms) {
+        if (shouldAbortAnimation()) return true;
+        unsigned long chunk = min(15UL, ms - elapsed);
+        vTaskDelay(pdMS_TO_TICKS(chunk));
+        elapsed += chunk;
+    }
+    return shouldAbortAnimation();
+}
 
 // --- Renk Tanımlamaları ---
 #define COLOR_RED     strip.Color(255, 0, 0)
@@ -65,29 +110,33 @@ typedef struct {
 
 // --- Yardımcı Fonksiyonlar ---
 
-// İsimden Renk Alma
+// İsimden Renk Alma (büyük/küçük harf duyarsız)
 uint32_t getColorFromString(const char* colorName) {
-  if (strlen(colorName) == 0) return 0;
-  if (strcmp(colorName, "RED") == 0) return COLOR_RED;
-  else if (strcmp(colorName, "GREEN") == 0) return COLOR_GREEN;
-  else if (strcmp(colorName, "BLUE") == 0) return COLOR_BLUE;
-  else if (strcmp(colorName, "YELLOW") == 0) return COLOR_YELLOW;
-  else if (strcmp(colorName, "PURPLE") == 0) return COLOR_PURPLE;
-  else if (strcmp(colorName, "CYAN") == 0) return COLOR_CYAN;
-  else if (strcmp(colorName, "WHITE") == 0) return COLOR_WHITE;
-  else if (strcmp(colorName, "ORANGE") == 0) return COLOR_ORANGE;
-  else if (strcmp(colorName, "PINK") == 0) return COLOR_PINK;
-  else if (strcmp(colorName, "GOLD") == 0) return COLOR_GOLD;
-  else if (strcmp(colorName, "TEAL") == 0) return COLOR_TEAL;
-  else if (strcmp(colorName, "MAGENTA") == 0) return COLOR_MAGENTA;
-  else if (strcmp(colorName, "LIME") == 0) return COLOR_LIME;
-  else if (strcmp(colorName, "SKY_BLUE") == 0) return COLOR_SKY_BLUE;
-  else if (strcmp(colorName, "NAVY") == 0) return COLOR_NAVY;
-  else if (strcmp(colorName, "MAROON") == 0) return COLOR_MAROON;
-  else if (strcmp(colorName, "AQUA") == 0) return COLOR_AQUA;
-  else if (strcmp(colorName, "VIOLET") == 0) return COLOR_VIOLET;
-  else if (strcmp(colorName, "CORAL") == 0) return COLOR_CORAL;
-  else if (strcmp(colorName, "TURQUOISE") == 0) return COLOR_TURQUOISE;
+  if (!colorName || strlen(colorName) == 0) return 0;
+  if (strcasecmp(colorName, "RED") == 0) return COLOR_RED;
+  else if (strcasecmp(colorName, "GREEN") == 0) return COLOR_GREEN;
+  else if (strcasecmp(colorName, "BLUE") == 0) return COLOR_BLUE;
+  else if (strcasecmp(colorName, "YELLOW") == 0) return COLOR_YELLOW;
+  else if (strcasecmp(colorName, "PURPLE") == 0) return COLOR_PURPLE;
+  else if (strcasecmp(colorName, "CYAN") == 0) return COLOR_CYAN;
+  else if (strcasecmp(colorName, "WHITE") == 0) return COLOR_WHITE;
+  else if (strcasecmp(colorName, "ORANGE") == 0) return COLOR_ORANGE;
+  else if (strcasecmp(colorName, "PINK") == 0) return COLOR_PINK;
+  else if (strcasecmp(colorName, "GOLD") == 0) return COLOR_GOLD;
+  else if (strcasecmp(colorName, "TEAL") == 0) return COLOR_TEAL;
+  else if (strcasecmp(colorName, "MAGENTA") == 0) return COLOR_MAGENTA;
+  else if (strcasecmp(colorName, "LIME") == 0) return COLOR_LIME;
+  else if (strcasecmp(colorName, "SKY_BLUE") == 0) return COLOR_SKY_BLUE;
+  else if (strcasecmp(colorName, "NAVY") == 0) return COLOR_NAVY;
+  else if (strcasecmp(colorName, "MAROON") == 0) return COLOR_MAROON;
+  else if (strcasecmp(colorName, "AQUA") == 0) return COLOR_AQUA;
+  else if (strcasecmp(colorName, "VIOLET") == 0) return COLOR_VIOLET;
+  else if (strcasecmp(colorName, "CORAL") == 0) return COLOR_CORAL;
+  else if (strcasecmp(colorName, "TURQUOISE") == 0) return COLOR_TURQUOISE;
+  if (colorName[0] == '#' && strlen(colorName) >= 7) {
+      unsigned long hexVal = strtoul(colorName + 1, NULL, 16);
+      return strip.Color((hexVal >> 16) & 0xFF, (hexVal >> 8) & 0xFF, hexVal & 0xFF);
+  }
   // RGB formatını dene: R,G,B
   int r, g, b;
   if (sscanf(colorName, "%d,%d,%d", &r, &g, &b) == 3) {
@@ -161,29 +210,32 @@ uint32_t wheel(byte pos, uint32_t color = 0) {
 void rainbow(uint32_t color = 0, int iterations = 1) {
   TickType_t mutexTimeout = pdMS_TO_TICKS(100);
   for (int j = 0; j < 256 * iterations; j++) {
+    if (shouldAbortAnimation()) return;
     if (xSemaphoreTake(stripMutex, mutexTimeout) == pdTRUE) {
-      for (int i = 0; i < strip.numPixels(); i++) {
+      for (int i = g_segStart; i < g_segEnd; i++) {
         strip.setPixelColor(i, wheel((i + j) & 255, color));
       }
       strip.show();
       xSemaphoreGive(stripMutex);
     }
-    vTaskDelay(pdMS_TO_TICKS(20));
+    if (delayOrAbort(20)) return;
   }
 }
 
 void rainbowCycle(uint32_t color = 0, int iterations = 1) {
   TickType_t mutexTimeout = pdMS_TO_TICKS(100);
+  int segLen = max(1, g_segEnd - g_segStart);
   for (int j = 0; j < 256 * iterations; j++) {
+    if (shouldAbortAnimation()) return;
     if (xSemaphoreTake(stripMutex, mutexTimeout) == pdTRUE) {
-      for (int i = 0; i < strip.numPixels(); i++) {
-        int pos = ((i * 256 / strip.numPixels()) + j) & 255;
+      for (int i = g_segStart; i < g_segEnd; i++) {
+        int pos = (((i - g_segStart) * 256 / segLen) + j) & 255;
         strip.setPixelColor(i, wheel(pos, color));
       }
       strip.show();
       xSemaphoreGive(stripMutex);
     }
-    vTaskDelay(pdMS_TO_TICKS(20));
+    if (delayOrAbort(20)) return;
   }
 }
 
@@ -191,14 +243,15 @@ void spinner(uint32_t color = COLOR_RED, int iterations = 1) {
   TickType_t mutexTimeout = pdMS_TO_TICKS(100);
    if (color == 0) color = COLOR_RED; 
   for (int iter = 0; iter < iterations; iter++) {
-    for (int i = 0; i < strip.numPixels(); i++) {
+    for (int i = g_segStart; i < g_segEnd; i++) {
+      if (shouldAbortAnimation()) return;
       if (xSemaphoreTake(stripMutex, mutexTimeout) == pdTRUE) {
         strip.clear();
         strip.setPixelColor(i, color);
         strip.show();
         xSemaphoreGive(stripMutex);
       }
-      vTaskDelay(pdMS_TO_TICKS(100));
+      if (delayOrAbort(100)) return;
     }
   }
 }
@@ -211,25 +264,27 @@ void breathe(uint32_t color = COLOR_RED, int iterations = 1) {
 
   for (int iter = 0; iter < iterations; iter++) {
     for (int brightness = 0; brightness <= 255; brightness += 5) {
+      if (shouldAbortAnimation()) return;
       if (xSemaphoreTake(stripMutex, mutexTimeout) == pdTRUE) {
         uint32_t current_color = strip.Color((r * brightness) / 255, (g * brightness) / 255, (b * brightness) / 255);
-        strip.fill(current_color);
+        for (int i = g_segStart; i < g_segEnd; i++) strip.setPixelColor(i, current_color);
         strip.show();
         xSemaphoreGive(stripMutex);
       }
-      vTaskDelay(pdMS_TO_TICKS(20));
+      if (delayOrAbort(20)) return;
     }
     for (int brightness = 255; brightness >= 0; brightness -= 5) {
        if (brightness < 0) brightness = 0;
+       if (shouldAbortAnimation()) return;
       if (xSemaphoreTake(stripMutex, mutexTimeout) == pdTRUE) {
          uint32_t current_color = strip.Color((r * brightness) / 255, (g * brightness) / 255, (b * brightness) / 255);
-        strip.fill(current_color);
+        for (int i = g_segStart; i < g_segEnd; i++) strip.setPixelColor(i, current_color);
         strip.show();
         xSemaphoreGive(stripMutex);
       }
-      vTaskDelay(pdMS_TO_TICKS(20));
+      if (delayOrAbort(20)) return;
     }
-     vTaskDelay(pdMS_TO_TICKS(50));
+     if (delayOrAbort(50)) return;
   }
 }
 
@@ -694,6 +749,58 @@ void stackedBars(int wait = 50, uint32_t color = 0, int repeat = 1) {
   }
 }
 
+void eyeEyebrow(uint32_t color = COLOR_TURQUOISE, int iterations = 1) {
+  TickType_t mutexTimeout = pdMS_TO_TICKS(50);
+  if (color == 0) color = COLOR_TURQUOISE;
+  uint8_t r, g, b;
+  getRGBFromColor(color, r, g, b);
+  uint8_t oppR = 255 - r, oppG = 255 - g, oppB = 255 - b;
+  for (int iter = 0; iter < iterations; iter++) {
+    for (int step = 0; step < 20; step++) {
+      if (shouldAbortAnimation()) return;
+      float phase = (float)step / 20.0;
+      float pulseVal = 0.45 + 0.55 * (0.5 + 0.5 * sin(phase * 2.0 * PI));
+      float browVal = 0.2 + 0.5 * (0.5 + 0.5 * cos(phase * PI));
+      if (xSemaphoreTake(stripMutex, mutexTimeout) == pdTRUE) {
+        for (int i = g_segStart; i < g_segEnd; i++) {
+          if (i < 7) {
+            if (i == 0) strip.setPixelColor(i, strip.Color((uint8_t)(oppR * pulseVal), (uint8_t)(oppG * pulseVal), (uint8_t)(oppB * pulseVal)));
+            else strip.setPixelColor(i, strip.Color((uint8_t)(r * 0.15), (uint8_t)(g * 0.15), (uint8_t)(b * 0.15)));
+          } else {
+            strip.setPixelColor(i, strip.Color((uint8_t)(r * browVal), (uint8_t)(g * browVal), (uint8_t)(b * browVal)));
+          }
+        }
+        strip.show();
+        xSemaphoreGive(stripMutex);
+      }
+      if (delayOrAbort(50)) return;
+    }
+  }
+}
+
+void emotionalPulse(uint32_t color = COLOR_CYAN, int iterations = 1) {
+  TickType_t mutexTimeout = pdMS_TO_TICKS(50);
+  if (color == 0) color = COLOR_CYAN;
+  uint8_t r, g, b;
+  getRGBFromColor(color, r, g, b);
+  for (int iter = 0; iter < iterations; iter++) {
+    for (int step = 0; step < 20; step++) {
+      if (shouldAbortAnimation()) return;
+      float phase = (float)step / 20.0;
+      float beat = sin(phase * 2.0 * PI);
+      float intensity = 0.15 + 0.85 * max(0.0f, beat);
+      if (xSemaphoreTake(stripMutex, mutexTimeout) == pdTRUE) {
+        for (int i = g_segStart; i < g_segEnd; i++) {
+          strip.setPixelColor(i, strip.Color((uint8_t)(r * intensity), (uint8_t)(g * intensity), (uint8_t)(b * intensity)));
+        }
+        strip.show();
+        xSemaphoreGive(stripMutex);
+      }
+      if (delayOrAbort(50)) return;
+    }
+  }
+}
+
 // --- Animasyon Görevi ---
 void animationTask(void *pvParameters) {
   AnimationCommand cmd;
@@ -703,6 +810,9 @@ void animationTask(void *pvParameters) {
 
   for (;;) {
     if (xQueueReceive(animationCommandQueue, &cmd, portMAX_DELAY) == pdPASS) {
+        g_abortAnimation = false;
+        g_preserveStaticPixels = false;
+        segmentRange(cmd.segment, g_segStart, g_segEnd);
         multiColorCount = 0;
         if(cmd.color1 != 0) multiColors[multiColorCount++] = cmd.color1;
         if(cmd.color2 != 0) multiColors[multiColorCount++] = cmd.color2;
@@ -717,26 +827,30 @@ void animationTask(void *pvParameters) {
       else if (strcmp(cmd.name, "WAVE") == 0) wave(cmd.color1, cmd.repeat);
       else if (strcmp(cmd.name, "PULSE") == 0) pulse(cmd.color1, cmd.repeat);
       else if (strcmp(cmd.name, "TWINKLE") == 0) twinkle(cmd.color1, cmd.repeat);
-      else if (strcmp(cmd.name, "COLOR_WIPE") == 0) colorWipe(cmd.color1, 50, cmd.repeat);
-      else if (strcmp(cmd.name, "RANDOM_BLINK") == 0) randomBlink(cmd.color1, cmd.repeat);
-      else if (strcmp(cmd.name, "THEATER_CHASE") == 0) theaterChase(cmd.color1, 50, cmd.repeat);
+      else if (strcmp(cmd.name, "COLOR_WIPE") == 0 || strcmp(cmd.name, "WIPE") == 0) colorWipe(cmd.color1, 50, cmd.repeat);
+      else if (strcmp(cmd.name, "RANDOM_BLINK") == 0 || strcmp(cmd.name, "BLINK") == 0) randomBlink(cmd.color1, cmd.repeat);
+      else if (strcmp(cmd.name, "THEATER_CHASE") == 0 || strcmp(cmd.name, "CHASE") == 0) theaterChase(cmd.color1, 50, cmd.repeat);
       else if (strcmp(cmd.name, "SNOW") == 0) snow(cmd.color1, cmd.repeat);
-      else if (strcmp(cmd.name, "ALTERNATING") == 0) alternatingColors(cmd.color1, cmd.color2, cmd.repeat * 5, 100);
-      else if (strcmp(cmd.name, "GRADIENT") == 0) gradientFade(cmd.repeat, cmd.color1); 
-      else if (strcmp(cmd.name, "BOUNCING_BALL") == 0) bouncingBall(cmd.color1, cmd.repeat);
-      else if (strcmp(cmd.name, "RUNNING_LIGHTS") == 0) runningLights(cmd.color1, 50, cmd.repeat);
-      else if (strcmp(cmd.name, "STACKED_BARS") == 0) stackedBars(50, cmd.color1, cmd.repeat);
-      else if (strcmp(cmd.name, "MULTI_GRADIENT") == 0) {
+      else if (strcmp(cmd.name, "ALTERNATING") == 0 || strcmp(cmd.name, "ALT") == 0) alternatingColors(cmd.color1, cmd.color2, cmd.repeat * 5, 100);
+      else if (strcmp(cmd.name, "GRADIENT") == 0) gradientFade(cmd.repeat, cmd.color1);
+      else if (strcmp(cmd.name, "BOUNCING_BALL") == 0 || strcmp(cmd.name, "BOUNCE") == 0) bouncingBall(cmd.color1, cmd.repeat);
+      else if (strcmp(cmd.name, "RUNNING_LIGHTS") == 0 || strcmp(cmd.name, "RUN") == 0) runningLights(cmd.color1, 50, cmd.repeat);
+      else if (strcmp(cmd.name, "STACKED_BARS") == 0 || strcmp(cmd.name, "STACK") == 0) stackedBars(50, cmd.color1, cmd.repeat);
+      else if (strcmp(cmd.name, "EYE_EYEBROW") == 0) eyeEyebrow(cmd.color1, cmd.repeat);
+      else if (strcmp(cmd.name, "EMOTIONAL_PULSE") == 0) emotionalPulse(cmd.color1, cmd.repeat);
+      else if (strcmp(cmd.name, "MULTI_GRADIENT") == 0 || strcmp(cmd.name, "M_GRAD") == 0) {
            if(multiColorCount >= 2) multiColorGradient(multiColors, multiColorCount, cmd.repeat);
       }
-      else if (strcmp(cmd.name, "MULTI_WAVE") == 0) {
+      else if (strcmp(cmd.name, "MULTI_WAVE") == 0 || strcmp(cmd.name, "M_WAVE") == 0) {
            if(multiColorCount >= 1) multiColorWave(multiColors, multiColorCount, cmd.repeat);
       }
 
-      if (xSemaphoreTake(stripMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+      if (!g_preserveStaticPixels && !shouldAbortAnimation()) {
+        if (xSemaphoreTake(stripMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
           strip.clear();
           strip.show();
           xSemaphoreGive(stripMutex);
+        }
       }
     }
   }
@@ -835,10 +949,26 @@ void loop() {
 
   if (hasCommand()) {
     String cmd = getNextCommand();
+    String cmdUpper = cmd;
+    cmdUpper.toUpperCase();
 
-    if (cmd.startsWith("SET ")) {
+    if (cmdUpper == "CLEAR") {
+      g_abortAnimation = true;
+      g_preserveStaticPixels = true;
+      if (xSemaphoreTake(stripMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        strip.clear();
+        strip.show();
+        xSemaphoreGive(stripMutex);
+      }
+    }
+    else if (cmdUpper.startsWith("SET ")) {
       int idx, r, g, b;
-      if (sscanf(cmd.c_str(), "SET %d %d %d %d", &idx, &r, &g, &b) == 4 && idx >= 0 && idx < LED_COUNT) {
+      if (sscanf(cmdUpper.c_str(), "SET %d %d %d %d", &idx, &r, &g, &b) == 4 && idx >= 0 && idx < LED_COUNT) {
+        r = constrain(r, 0, 255);
+        g = constrain(g, 0, 255);
+        b = constrain(b, 0, 255);
+        g_abortAnimation = true;
+        g_preserveStaticPixels = true;
         if (xSemaphoreTake(stripMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
           strip.setPixelColor(idx, strip.Color(r, g, b));
           strip.show();
@@ -847,47 +977,53 @@ void loop() {
         }
       }
     }
-    else if (cmd.startsWith("ANIMATE")) {
+    else if (cmdUpper.startsWith("ANIMATE")) {
         AnimationCommand animCmd;
         memset(&animCmd, 0, sizeof(animCmd));
         animCmd.repeat = 1;
 
-        char animName[20] = "";
+        char animName[24] = "";
+        char segName[16] = "";
         char color1Str[20] = "";
         char color2Str[20] = "";
-        char repeatStr[5] = ""; 
+        char repeatStr[8] = "";
 
         char cmdBuffer[MAX_COMMAND_LENGTH];
-        cmd.toCharArray(cmdBuffer, sizeof(cmdBuffer));
-        char* token = strtok(cmdBuffer, " "); 
+        cmdUpper.toCharArray(cmdBuffer, sizeof(cmdBuffer));
+        char* token = strtok(cmdBuffer, " ");
         int part = 0;
-        
-        while (token != NULL) {
-            if(part > 0) { 
-                 if (part == 1) strncpy(animName, token, sizeof(animName) - 1);
-                 else if (part >= 2) {
-                    bool isNumber = true;
-                    for(int k=0; k<strlen(token); k++){
-                        if(!isdigit(token[k])) { isNumber = false; break;}
-                    }
 
-                    if(isNumber) { 
-                         strncpy(repeatStr, token, sizeof(repeatStr) - 1);
-                    } else { 
+        while (token != NULL) {
+            if (part > 0) {
+                if (part == 1) {
+                    strncpy(animName, token, sizeof(animName) - 1);
+                } else if (strncmp(token, "SEG=", 4) == 0) {
+                    strncpy(segName, token + 4, sizeof(segName) - 1);
+                } else {
+                    bool isNumber = true;
+                    for (size_t k = 0; k < strlen(token); k++) {
+                        if (!isdigit((unsigned char)token[k])) { isNumber = false; break; }
+                    }
+                    if (isNumber) {
+                        strncpy(repeatStr, token, sizeof(repeatStr) - 1);
+                    } else {
                         if (strlen(color1Str) == 0) strncpy(color1Str, token, sizeof(color1Str) - 1);
                         else if (strlen(color2Str) == 0) strncpy(color2Str, token, sizeof(color2Str) - 1);
                     }
-                 }
+                }
             }
             token = strtok(NULL, " ");
             part++;
         }
 
         if (strlen(animName) > 0) {
+            g_abortAnimation = true;
+            g_preserveStaticPixels = false;
             strncpy(animCmd.name, animName, sizeof(animCmd.name) - 1);
+            strncpy(animCmd.segment, segName, sizeof(animCmd.segment) - 1);
             animCmd.color1 = getColorFromString(color1Str);
             animCmd.color2 = getColorFromString(color2Str);
-            if(strlen(repeatStr) > 0) animCmd.repeat = atoi(repeatStr);
+            if (strlen(repeatStr) > 0) animCmd.repeat = atoi(repeatStr);
             animCmd.repeat = constrain(animCmd.repeat, 1, 10);
 
             xQueueSend(animationCommandQueue, &animCmd, pdMS_TO_TICKS(50));
