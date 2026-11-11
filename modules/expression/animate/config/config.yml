@@ -1,5 +1,9 @@
 # Animate module config
-animations_dir: null  # null -> use default modules/animate/animations
+animations_dir: null  # null -> use default modules/expression/animate/animations
 default_speed: 1.0
 interpolate: true
+run_timeout_s: 30.0
 rest_pose: [90, 90, 90, 90]  # pan, tilt, ear_l, ear_r
+idle_breathing_period_s: 4.5
+idle_tilt_amp_deg: 1.8
+idle_ear_amp_deg: 1.5
