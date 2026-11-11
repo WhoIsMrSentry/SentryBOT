@@ -1,13 +1,20 @@
 from __future__ import annotations
+
 import random
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+from modules.common.color_utils import clamp_rgb, normalize_color
 
 Color = Tuple[int, int, int]
+
+_PALETTE_CACHE_LOCK = threading.Lock()
+_PALETTE_CACHE: Dict[str, Tuple[float, "EmotionPalette"]] = {}
+_SHARED_STORES: Dict[str, "EmotionStore"] = {}
 
 
 @dataclass
@@ -17,26 +24,19 @@ class ColorEntry:
 
 
 def _parse_color(value) -> ColorEntry:
-    # Accept [r,g,b], "#RRGGBB", or {r,g,b}
-    if isinstance(value, (list, tuple)) and len(value) == 3:
-        return ColorEntry(None, (int(value[0]), int(value[1]), int(value[2])))
+    # Accept [r,g,b], "#RRGGBB", named colors, or {name, hex | r/g/b}
     if isinstance(value, dict):
-        # Named entry variants
-        if "name" in value:
-            nm = str(value.get("name"))
-            if "hex" in value and isinstance(value["hex"], str):
-                s = value["hex"]
-                if s.startswith("#") and len(s) == 7:
-                    r = int(s[1:3], 16); g = int(s[3:5], 16); b = int(s[5:7], 16)
-                    return ColorEntry(nm, (r, g, b))
-            if all(k in value for k in ("r", "g", "b")):
-                return ColorEntry(nm, (int(value["r"]), int(value["g"]), int(value["b"])) )
-        # Bare RGB mapping
+        nm = str(value["name"]) if "name" in value else None
+        if "hex" in value and isinstance(value["hex"], str):
+            parsed = normalize_color(value["hex"])
+            if parsed is not None:
+                return ColorEntry(nm, parsed)
         if all(k in value for k in ("r", "g", "b")):
-            return ColorEntry(None, (int(value["r"]), int(value["g"]), int(value["b"])) )
-    if isinstance(value, str) and value.startswith("#") and len(value) == 7:
-        r = int(value[1:3], 16); g = int(value[3:5], 16); b = int(value[5:7], 16)
-        return ColorEntry(None, (r, g, b))
+            return ColorEntry(nm, clamp_rgb(value["r"], value["g"], value["b"]))
+        raise ValueError(f"Unsupported color format: {value!r}")
+    parsed = normalize_color(value)
+    if parsed is not None:
+        return ColorEntry(None, parsed)
     raise ValueError(f"Unsupported color format: {value!r}")
 
 
@@ -105,22 +105,37 @@ class EmotionStore:
     """
 
     def __init__(self, root_dir: str | Path | None = None) -> None:
-        self.root = Path(root_dir or Path(__file__).parent)
-        self._palette = None  # type: Optional[EmotionPalette]
+        self.root = Path(root_dir or Path(__file__).parent).resolve()
+        self._palette: Optional[EmotionPalette] = None
 
-    def load(self) -> EmotionPalette:
-        if self._palette is not None:
+    @staticmethod
+    def _dir_signature(root: Path) -> float:
+        try:
+            mtimes = [root.stat().st_mtime]
+            mtimes.extend(p.stat().st_mtime for p in root.glob("*.yml"))
+            return max(mtimes)
+        except OSError:
+            return 0.0
+
+    def load(self, *, force_reload: bool = False) -> EmotionPalette:
+        if self._palette is not None and not force_reload:
             return self._palette
+        key = str(self.root)
+        sig = self._dir_signature(self.root)
+        if not force_reload:
+            with _PALETTE_CACHE_LOCK:
+                cached = _PALETTE_CACHE.get(key)
+                if cached is not None and cached[0] == sig:
+                    self._palette = cached[1]
+                    return cached[1]
+
         colors: Dict[str, List[ColorEntry]] = {}
         for yml in sorted(self.root.glob("*.yml")):
             name = yml.stem.lower()
             try:
                 with open(yml, "r", encoding="utf-8") as f:
                     data = yaml.safe_load(f) or []
-                if isinstance(data, dict):
-                    seq = data.get("colors", [])
-                else:
-                    seq = data
+                seq = data.get("colors", []) if isinstance(data, dict) else data
                 parsed = []
                 for item in seq:
                     try:
@@ -130,10 +145,12 @@ class EmotionStore:
                 if parsed:
                     colors[name] = parsed
             except Exception:
-                # Skip malformed files
                 continue
-        self._palette = EmotionPalette(colors)
-        return self._palette
+        palette = EmotionPalette(colors)
+        with _PALETTE_CACHE_LOCK:
+            _PALETTE_CACHE[key] = (sig, palette)
+        self._palette = palette
+        return palette
 
     def random_color(self, emotion: str) -> Color:
         return self.load().random_color(emotion)
@@ -143,3 +160,14 @@ class EmotionStore:
 
     def get_by_name(self, emotion: str, name: str) -> Optional[ColorEntry]:
         return self.load().get_by_name(emotion, name)
+
+
+def get_shared_store(root_dir: str | Path | None = None) -> EmotionStore:
+    """Return a shared, in-memory cached EmotionStore instance per directory."""
+    resolved = str(Path(root_dir or Path(__file__).parent).resolve())
+    with _PALETTE_CACHE_LOCK:
+        store = _SHARED_STORES.get(resolved)
+        if store is None:
+            store = EmotionStore(resolved)
+            _SHARED_STORES[resolved] = store
+        return store
