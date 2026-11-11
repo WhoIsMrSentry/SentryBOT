@@ -6,13 +6,27 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from .state_events import ExpressionStateEventsMixin
+from modules.common.emotion_vocab import Emotion, get_vocab
 
-_ALLOWED_EMOTIONS = {
+_LEGACY_EMOTIONS = {
     "neutral", "curious", "happy", "sleepy", "alert", "sad", "thinking", "listening", "speaking"
 }
+_ALLOWED_EMOTIONS = _LEGACY_EMOTIONS | {e.value for e in Emotion}
 _ALLOWED_AROUSAL = {"low", "medium", "high"}
 _ALLOWED_ATTENTION = {"idle", "user", "sound", "object", "sleep", "internal", "camera"}
 _ALLOWED_ENERGY = {"low", "normal", "high"}
+
+_LEGACY_ALIASES = {
+    "curiosity": "curious",
+    "curiousity": "curious",
+    "joy": "happy",
+    "tired": "sleepy",
+    "bored": "curious",
+    "wake": "alert",
+    "listen": "listening",
+    "talking": "speaking",
+    "asleep": "sleepy",
+}
 
 
 def _utc_iso() -> str:
@@ -21,18 +35,22 @@ def _utc_iso() -> str:
 
 def _choice(value: Any, allowed: set[str], default: str) -> str:
     text = str(value or "").strip().lower()
-    aliases = {
-        "curiosity": "curious",
-        "curiousity": "curious",
-        "joy": "happy",
-        "tired": "sleepy",
-        "bored": "curious",
-        "wake": "alert",
-        "listen": "listening",
-        "talking": "speaking",
-        "asleep": "sleepy",
-    }
-    text = aliases.get(text, text)
+    if not text:
+        return default
+    if allowed is _ALLOWED_EMOTIONS:
+        if text in _LEGACY_ALIASES:
+            text = _LEGACY_ALIASES[text]
+        if text in allowed:
+            return text
+        vocab = get_vocab()
+        if vocab.is_known(text):
+            canon = vocab.canonical(text).value
+            if canon in _LEGACY_ALIASES:
+                canon = _LEGACY_ALIASES[canon]
+            if canon in allowed:
+                return canon
+        return default
+    text = _LEGACY_ALIASES.get(text, text)
     return text if text in allowed else default
 
 
