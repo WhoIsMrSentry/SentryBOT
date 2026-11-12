@@ -25,20 +25,34 @@ class QwenVlmClient:
         self.temperature = float(cfg.qwen_temperature)
         self._session = requests.Session()
 
-    def analyze_frame(self, frame: Any, question: str = "", semantic_reason: str = "") -> Dict[str, Any]:
+    def analyze_frame(
+        self,
+        frame: Any,
+        question: str = "",
+        semantic_reason: str = "",
+        *,
+        image_b64: Optional[str] = None,
+    ) -> Dict[str, Any]:
         if not self.enabled or not self.endpoint or not self.primary_model:
             return {"ok": False, "error": "qwen disabled"}
-        image_b64 = self._encode_frame(frame)
+        encoded_b64 = image_b64 if (image_b64 and self._frame_within_width(frame)) else self._encode_frame(frame)
         for model in self._models():
             result = self._call_model(
                 model=model,
-                image_b64=image_b64,
+                image_b64=encoded_b64,
                 question=str(question or "").strip(),
                 semantic_reason=str(semantic_reason or "").strip(),
             )
             if result.get("ok"):
                 return result
         return {"ok": False, "error": "qwen request failed"}
+
+    @staticmethod
+    def _frame_within_width(frame: Any, max_width: int = 1280) -> bool:
+        try:
+            return int(frame.shape[1]) <= max_width
+        except Exception:
+            return False
 
     def _models(self) -> List[str]:
         models = [self.primary_model]
