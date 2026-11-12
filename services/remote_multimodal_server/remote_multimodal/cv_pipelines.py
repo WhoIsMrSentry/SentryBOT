@@ -29,7 +29,7 @@ class MultiModalCVPipelinesMixin:
 
     @staticmethod
     def decode_image(image_b64: str) -> np.ndarray:
-        raw = base64.b64decode(image_b64)
+        raw = base64.b64decode(image_b64, validate=True)
         arr = np.frombuffer(raw, dtype=np.uint8)
         frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
         if frame is None:
@@ -40,12 +40,13 @@ class MultiModalCVPipelinesMixin:
         out: List[Dict[str, Any]] = []
         if self.backends.yolo is not None:
             try:
-                res = self.backends.yolo.predict(
-                    frame,
-                    verbose=False,
-                    conf=float(self.cfg.yolo_conf),
-                    imgsz=int(self.cfg.yolo_imgsz),
-                )
+                with self._gpu_slot():
+                    res = self.backends.yolo.predict(
+                        frame,
+                        verbose=False,
+                        conf=float(self.cfg.yolo_conf),
+                        imgsz=int(self.cfg.yolo_imgsz),
+                    )
                 if res:
                     r0 = res[0]
                     boxes = getattr(r0, "boxes", None)
@@ -100,12 +101,18 @@ class MultiModalCVPipelinesMixin:
         faces = self._face_cascade.detectMultiScale(gray, scaleFactor=1.12, minNeighbors=5, minSize=(56, 56))
         return [[int(x), int(y), int(x + w), int(y + h)] for (x, y, w, h) in faces]
 
-    def recognize_person(self, frame: np.ndarray, face_box: List[int]) -> Tuple[str, float]:
+    def recognize_person(
+        self,
+        frame: np.ndarray,
+        face_box: List[int],
+        *,
+        rgb_frame: Optional[np.ndarray] = None,
+    ) -> Tuple[str, float]:
         fr = self.backends.face_recognition
         if fr is None:
             return "Unknown", 0.0
         x1, y1, x2, y2 = face_box
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb = rgb_frame if rgb_frame is not None else cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         try:
             enc = fr.face_encodings(rgb, [(y1, x2, y2, x1)])
             if not enc:
@@ -113,7 +120,9 @@ class MultiModalCVPipelinesMixin:
             vec = enc[0]
             best_name = "Unknown"
             best_dist = 999.0
-            for known in self._known_faces:
+            with self._lock_obj():
+                known_snapshot = list(self._known_faces)
+            for known in known_snapshot:
                 dist = np.linalg.norm(np.array(known.embedding) - vec)
                 if dist < best_dist:
                     best_dist = float(dist)
@@ -130,7 +139,8 @@ class MultiModalCVPipelinesMixin:
         if deepface is None:
             return None, None
         try:
-            analysis = deepface.analyze(face_img, actions=["age", "emotion"], enforce_detection=False)
+            with self._gpu_slot():
+                analysis = deepface.analyze(face_img, actions=["age", "emotion"], enforce_detection=False)
             data = analysis[0] if isinstance(analysis, list) and analysis else analysis
             age = int(data.get("age")) if isinstance(data, dict) and data.get("age") is not None else None
             emotion = str(data.get("dominant_emotion")) if isinstance(data, dict) and data.get("dominant_emotion") else None
@@ -162,7 +172,8 @@ class MultiModalCVPipelinesMixin:
             return None
         try:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            out = pipe(rgb)
+            with self._gpu_slot():
+                out = pipe(rgb)
             if isinstance(out, list) and out and isinstance(out[0], dict):
                 text = str(out[0].get("generated_text", "")).strip()
                 return text or None
@@ -170,70 +181,84 @@ class MultiModalCVPipelinesMixin:
             return None
         return None
 
-    def ocr_frame(self, frame: np.ndarray) -> Dict[str, Any]:
+    def ocr_frame(self, frame: np.ndarray, languages: Optional[List[str]] = None) -> Dict[str, Any]:
+        if hasattr(self, "ensure_ready"):
+            self.ensure_ready()
         ocr = self.backends.ocr
         backend = self.backends.ocr_backend_name
+        req_langs = [str(x).strip().lower() for x in (languages or []) if str(x).strip()]
         if ocr is None or not backend:
             return {"ok": False, "error": "ocr_backend_unavailable", "text": "", "lines": []}
         try:
-            if backend == "paddleocr":
-                results = ocr.ocr(frame, cls=True)
-                lines = []
-                texts = []
-                if results and isinstance(results, list):
-                    for block in results:
-                        if not block:
+            with self._gpu_slot():
+                if backend == "paddleocr":
+                    results = ocr.ocr(frame, cls=True)
+                    lines = []
+                    texts = []
+                    if results and isinstance(results, list):
+                        for block in results:
+                            if not block:
+                                continue
+                            for entry in block:
+                                try:
+                                    bbox, (text, conf) = entry
+                                except Exception:
+                                    continue
+                                if float(conf) < self.cfg.ocr_min_confidence:
+                                    continue
+                                lines.append({"text": str(text), "confidence": round(float(conf), 3), "bbox": [[int(p[0]), int(p[1])] for p in bbox]})
+                                texts.append(str(text))
+                    return {"ok": True, "backend": backend, "languages": req_langs, "text": " ".join(texts).strip(), "lines": lines}
+
+                if backend == "easyocr":
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    results = ocr.readtext(rgb)
+                    lines = []
+                    texts = []
+                    for entry in results or []:
+                        try:
+                            bbox, text, conf = entry
+                        except Exception:
                             continue
-                        for entry in block:
-                            try:
-                                bbox, (text, conf) = entry
-                            except Exception:
-                                continue
-                            if float(conf) < self.cfg.ocr_min_confidence:
-                                continue
-                            lines.append({"text": str(text), "confidence": round(float(conf), 3), "bbox": [[int(p[0]), int(p[1])] for p in bbox]})
-                            texts.append(str(text))
-                return {"ok": True, "backend": backend, "text": " ".join(texts).strip(), "lines": lines}
+                        if float(conf) < self.cfg.ocr_min_confidence:
+                            continue
+                        lines.append({"text": str(text), "confidence": round(float(conf), 3), "bbox": [[int(p[0]), int(p[1])] for p in bbox]})
+                        texts.append(str(text))
+                    return {"ok": True, "backend": backend, "languages": req_langs, "text": " ".join(texts).strip(), "lines": lines}
 
-            if backend == "easyocr":
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = ocr.readtext(rgb)
-                lines = []
-                texts = []
-                for entry in results or []:
-                    try:
-                        bbox, text, conf = entry
-                    except Exception:
-                        continue
-                    if float(conf) < self.cfg.ocr_min_confidence:
-                        continue
-                    lines.append({"text": str(text), "confidence": round(float(conf), 3), "bbox": [[int(p[0]), int(p[1])] for p in bbox]})
-                    texts.append(str(text))
-                return {"ok": True, "backend": backend, "text": " ".join(texts).strip(), "lines": lines}
-
-            if backend == "tesseract":
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                text = str(ocr.image_to_string(gray) or "").strip()
-                lines = [{"text": line, "confidence": 0.0, "bbox": []} for line in text.splitlines() if line.strip()]
-                return {"ok": True, "backend": backend, "text": text, "lines": lines}
+                if backend == "tesseract":
+                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    tess_lang_map = {"tr": "tur", "en": "eng"}
+                    lang_arg = "+".join(tess_lang_map.get(lc, lc) for lc in req_langs) if req_langs else ""
+                    if lang_arg:
+                        text = str(ocr.image_to_string(gray, lang=lang_arg) or "").strip()
+                    else:
+                        text = str(ocr.image_to_string(gray) or "").strip()
+                    lines = [{"text": line, "confidence": 0.0, "bbox": []} for line in text.splitlines() if line.strip()]
+                    return {"ok": True, "backend": backend, "languages": req_langs, "text": text, "lines": lines}
         except Exception as exc:
             return {"ok": False, "error": str(exc), "text": "", "lines": []}
         return {"ok": False, "error": "unsupported_backend", "text": "", "lines": []}
 
     def register_face(self, name: str, image_b64: str) -> Dict[str, Any]:
+        if hasattr(self, "ensure_ready"):
+            self.ensure_ready()
         fr = self.backends.face_recognition
         if fr is None:
             return {"ok": False, "error": "face_recognition backend unavailable"}
         frame = self.decode_image(image_b64)
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        locs = fr.face_locations(rgb, model="hog")
-        if not locs:
-            return {"ok": False, "error": "no face detected"}
-        enc = fr.face_encodings(rgb, [locs[0]])
+        with self._gpu_slot():
+            locs = fr.face_locations(rgb, model="hog")
+            if not locs:
+                return {"ok": False, "error": "no face detected"}
+            enc = fr.face_encodings(rgb, [locs[0]])
         if not enc:
             return {"ok": False, "error": "face encoding failed"}
         embedding = enc[0].tolist()
-        self._known_faces = [f for f in self._known_faces if f.name.lower() != name.lower()]
-        self._known_faces.append(KnownFace(name=name, embedding=embedding))
-        self._save_face_db()
-        return {"ok": True, "name": name, "known_faces": len(self._known_faces)}
+        with self._lock_obj():
+            self._known_faces = [f for f in self._known_faces if f.name.lower() != name.lower()]
+            self._known_faces.append(KnownFace(name=name, embedding=embedding))
+            self._save_face_db()
+            count = len(self._known_faces)
+        return {"ok": True, "name": name, "known_faces": count}
