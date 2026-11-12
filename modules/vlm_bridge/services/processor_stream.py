@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import queue
 import threading
 import time
 from typing import Any, Dict, Generator, List, Optional
@@ -50,6 +51,16 @@ class ProcessorStreamMixin:
             return
 
         self._stop_event.clear()
+        self._mjpeg_cond = threading.Condition()
+        self._mjpeg_subscribers = 0
+        self._mjpeg_seq = 0
+        self._side_effect_queue: queue.Queue = queue.Queue(maxsize=2)
+        self._side_effect_thread = threading.Thread(
+            target=self._side_effect_loop,
+            name="vlm-side-effects",
+            daemon=True,
+        )
+        self._side_effect_thread.start()
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
@@ -75,11 +86,59 @@ class ProcessorStreamMixin:
         if self.processing_mode != "local" and not self.hybrid_local_capture:
             return
         self._stop_event.set()
+        cond = getattr(self, "_mjpeg_cond", None)
+        if cond is not None:
+            with cond:
+                cond.notify_all()
         if self._capture_thread:
             self._capture_thread.join(timeout=2.0)
         if self._inference_thread:
             self._inference_thread.join(timeout=2.0)
+        se_thread = getattr(self, "_side_effect_thread", None)
+        if se_thread:
+            se_thread.join(timeout=1.5)
         logger.info("Vision processing stopped")
+
+    def _side_effect_loop(self) -> None:
+        q = getattr(self, "_side_effect_queue", None)
+        if q is None:
+            return
+        while not self._stop_event.is_set():
+            try:
+                results = q.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            try:
+                self._dispatch_side_effects(results)
+            except Exception as exc:
+                logger.debug("vlm side-effect worker error: %s", exc)
+
+    def _enqueue_side_effects(self, results: List[Dict[str, Any]]) -> None:
+        q = getattr(self, "_side_effect_queue", None)
+        if q is None:
+            self._dispatch_side_effects(results)
+            return
+        snapshot = [dict(r) for r in results]
+        try:
+            q.put_nowait(snapshot)
+        except queue.Full:
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                q.put_nowait(snapshot)
+            except queue.Full:
+                pass
+
+    def _dispatch_side_effects(self, parsed_results: List[Dict[str, Any]]) -> None:
+        self._handle_person_interactions(parsed_results)
+        if not self._follow_active:
+            self._evaluate_alerts(parsed_results)
+            if parsed_results and self.mode_flags.get("semantic_scene", True):
+                self.action_dispatcher.emit_scene(self.semantic, parsed_results)
+            if self.blind_mode_enabled and parsed_results:
+                self._handle_blind_mode(parsed_results)
 
     def _is_http_camera_source(self) -> bool:
         src = self.camera_source
@@ -185,41 +244,59 @@ class ProcessorStreamMixin:
 
             parsed_results, annotated = self._analyze_frame(frame, enable_follow=True)
             if self._onsensor_active():
-                extras = self._onsensor_object_results()
+                extras = self._onsensor_object_results(frame_shape=frame.shape)
                 if extras:
                     parsed_results = list(parsed_results) + extras
             self.latest_results = parsed_results
 
             self._maybe_sample_vlm(parsed_results)
+            self._enqueue_side_effects(parsed_results)
 
-            self._handle_person_interactions(parsed_results)
-            if not self._follow_active:
-                self._evaluate_alerts(parsed_results)
-                if parsed_results and self.mode_flags.get("semantic_scene", True):
-                    self.action_dispatcher.emit_scene(self.semantic, parsed_results)
-                if self.blind_mode_enabled and parsed_results:
-                    self._handle_blind_mode(parsed_results)
-
-            if cv2 is not None:
+            cond = getattr(self, "_mjpeg_cond", None)
+            subs = int(getattr(self, "_mjpeg_subscribers", 0) or 0)
+            if cv2 is not None and subs > 0:
                 ok, buf = cv2.imencode(".jpg", annotated)
                 if ok:
                     with self._frame_lock:
                         self._latest_annotated_frame = buf.tobytes()
+                    if cond is not None:
+                        with cond:
+                            self._mjpeg_seq = int(getattr(self, "_mjpeg_seq", 0)) + 1
+                            cond.notify_all()
 
             time.sleep(0.05)
 
     def generate_frames(self) -> Generator[bytes, None, None]:
-        while True:
-            frame = None
-            with self._frame_lock:
-                frame = self._latest_annotated_frame
-
-            if frame:
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
-                )
-            time.sleep(0.05)
+        cond = getattr(self, "_mjpeg_cond", None)
+        if cond is None:
+            cond = threading.Condition()
+            self._mjpeg_cond = cond
+        with cond:
+            self._mjpeg_subscribers = int(getattr(self, "_mjpeg_subscribers", 0)) + 1
+        last_seq = -1
+        try:
+            while not self._stop_event.is_set():
+                with cond:
+                    if self._stop_event.is_set():
+                        break
+                    cur_seq = int(getattr(self, "_mjpeg_seq", 0))
+                    if cur_seq == last_seq:
+                        cond.wait(timeout=0.25)
+                        cur_seq = int(getattr(self, "_mjpeg_seq", 0))
+                if self._stop_event.is_set():
+                    break
+                frame = None
+                with self._frame_lock:
+                    frame = self._latest_annotated_frame
+                if frame and cur_seq != last_seq:
+                    last_seq = cur_seq
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + frame + b"\r\n"
+                    )
+        finally:
+            with cond:
+                self._mjpeg_subscribers = max(0, int(getattr(self, "_mjpeg_subscribers", 1)) - 1)
 
     def analyze_snapshot(self) -> List[Dict[str, Any]]:
         if self.processing_mode != "local":
