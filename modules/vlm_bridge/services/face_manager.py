@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 try:
@@ -68,6 +69,7 @@ class FaceManager:
                 social_db = None
         self._social_db = social_db
 
+        self._lock = threading.RLock()
         self.known_face_names: List[str] = []
         self._known_descriptors: Dict[str, np.ndarray] = {}
         self._known_embeddings: Dict[str, np.ndarray] = {}
@@ -296,20 +298,25 @@ class FaceManager:
         return True
 
     def load_faces(self) -> None:
-        self.known_face_names = []
-        self._known_descriptors = {}
-        self._known_embeddings = {}
-        if self._social_db is not None:
-            try:
-                self._load_faces_from_social_db()
-            except Exception:
-                pass
-        if not self._known_descriptors and not self._known_embeddings:
-            self._load_faces_from_json()
-        self.known_face_names = sorted(set(self._known_descriptors.keys()) | set(self._known_embeddings.keys()))
-        logger.info("Total %d known faces registered in FaceManager.", len(self.known_face_names))
+        with self._lock:
+            self.known_face_names = []
+            self._known_descriptors = {}
+            self._known_embeddings = {}
+            if self._social_db is not None:
+                try:
+                    self._load_faces_from_social_db()
+                except Exception:
+                    pass
+            if not self._known_descriptors and not self._known_embeddings:
+                self._load_faces_from_json()
+            self.known_face_names = sorted(set(self._known_descriptors.keys()) | set(self._known_embeddings.keys()))
+            logger.info("Total %d known faces registered in FaceManager.", len(self.known_face_names))
 
     def save_faces(self) -> None:
+        with self._lock:
+            self._save_faces_locked()
+
+    def _save_faces_locked(self) -> None:
         persisted = False
         if self._social_db is not None:
             try:
@@ -359,8 +366,12 @@ class FaceManager:
             data[name] = entry
 
         try:
-            with open(self.faces_file, "w", encoding="utf-8") as f:
+            tmp_file = f"{self.faces_file}.tmp.{os.getpid()}"
+            with open(tmp_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_file, self.faces_file)
             logger.info("Faces saved successfully to %s", self.faces_file)
         except Exception as exc:
             logger.error("Failed to save faces to %s: %s", self.faces_file, exc)
@@ -370,80 +381,110 @@ class FaceManager:
             return False
 
         person = str(name).strip()
-        roi = self._extract_largest_face_roi(image)
-        if roi is None and (self._yunet is None or not self._yunet.is_available):
-            logger.warning("No face found in image.")
-            return False
+        with self._lock:
+            roi = self._extract_largest_face_roi(image)
+            if roi is None and (self._yunet is None or not self._yunet.is_available):
+                logger.warning("No face found in image.")
+                return False
 
-        registered = False
+            registered = False
 
-        # 1. SFace embedding (YuNet + SFace)
-        if self._sface is not None and getattr(self._sface, "is_available", False):
-            raw_face = getattr(self, "_last_detected_raw_face", None)
-            if raw_face is None and self._yunet is not None and getattr(self._yunet, "is_available", False):
-                yfaces = self._yunet.detect(image)
-                if yfaces:
-                    raw_face = yfaces[0].get("raw_face")
-            if raw_face is not None:
-                feat = self._sface.extract_feature(image, raw_face)
-                if feat is not None:
-                    self._known_embeddings[person] = feat
+            # 1. SFace embedding (YuNet + SFace)
+            if self._sface is not None and getattr(self._sface, "is_available", False):
+                raw_face = self._last_detected_raw_face
+                if raw_face is None and self._yunet is not None and getattr(self._yunet, "is_available", False):
+                    yfaces = self._yunet.detect(image)
+                    if yfaces:
+                        raw_face = yfaces[0].get("raw_face")
+                if raw_face is not None:
+                    feat = self._sface.extract_feature(image, raw_face)
+                    if feat is not None:
+                        self._known_embeddings[person] = feat
+                        registered = True
+
+            # 2. ORB descriptor (classical fallback)
+            if roi is not None:
+                desc = self._extract_descriptor(roi)
+                if desc is not None:
+                    self._known_descriptors[person] = desc
                     registered = True
 
-        # 2. ORB descriptor (classical fallback)
-        if roi is not None:
-            desc = self._extract_descriptor(roi)
-            if desc is not None:
-                self._known_descriptors[person] = desc
-                registered = True
+            if not registered:
+                logger.warning("Could not extract any face descriptor or embedding for %s", person)
+                return False
 
-        if not registered:
-            logger.warning("Could not extract any face descriptor or embedding for %s", person)
-            return False
+            self.known_face_names = sorted(
+                set(self._known_descriptors.keys()) | set(self._known_embeddings.keys())
+            )
+            self.save_faces()
+            logger.info(
+                "Registered/updated face: %s (sface=%s, orb=%s)",
+                person,
+                person in self._known_embeddings,
+                person in self._known_descriptors,
+            )
+            return True
 
-        self.known_face_names = sorted(set(self._known_descriptors.keys()) | set(self._known_embeddings.keys()))
-        self.save_faces()
-        logger.info("Registered/updated face: %s (sface=%s, orb=%s)", person, person in self._known_embeddings, person in self._known_descriptors)
-        return True
+    def identify_face_with_score(
+        self,
+        image: np.ndarray,
+        *,
+        full_frame: Optional[np.ndarray] = None,
+        raw_face: Optional[np.ndarray] = None,
+        is_cropped: bool = False,
+    ) -> Tuple[str, float]:
+        with self._lock:
+            if not self._known_descriptors and not self._known_embeddings:
+                return "Unknown", 0.0
+            known_embeddings = dict(self._known_embeddings)
 
-    def identify_face_with_score(self, image: np.ndarray) -> Tuple[str, float]:
-        if not self._known_descriptors and not self._known_embeddings:
-            return "Unknown", 0.0
-
-        # 1. High-accuracy YuNet + SFace recognition
-        if self._known_embeddings and self._sface is not None and getattr(self._sface, "is_available", False) and self._yunet is not None and getattr(self._yunet, "is_available", False):
+        # 1. High-accuracy YuNet + SFace recognition (skip second YuNet scan when raw_face or cropped ROI given)
+        if known_embeddings and self._sface is not None and getattr(self._sface, "is_available", False):
             try:
-                yfaces = self._yunet.detect(image)
-                if yfaces:
-                    best_yface = max(yfaces, key=lambda f: (f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1]))
-                    raw_face = best_yface.get("raw_face")
-                    if raw_face is not None:
-                        feat = self._sface.extract_feature(image, raw_face)
-                        if feat is not None:
-                            best_name = "Unknown"
-                            best_score = -1.0
-                            for name, known_feat in self._known_embeddings.items():
-                                score = float(self._sface.match(feat, known_feat))
-                                if score > best_score:
-                                    best_score = score
-                                    best_name = name
-                            if best_score >= self._sface.COSINE_MATCH_THRESHOLD:
-                                calibrated = min(1.0, 0.5 + 0.5 * ((best_score - self._sface.COSINE_MATCH_THRESHOLD) / (1.0 - self._sface.COSINE_MATCH_THRESHOLD)))
-                                return best_name, float(round(calibrated, 3))
-                            return "Unknown", float(round(max(0.0, best_score), 3))
+                align_img = full_frame if full_frame is not None else image
+                y_raw = raw_face
+                if y_raw is None and not is_cropped and self._yunet is not None and getattr(self._yunet, "is_available", False):
+                    yfaces = self._yunet.detect(image)
+                    if yfaces:
+                        best_yface = max(
+                            yfaces,
+                            key=lambda f: (f["bbox"][2] - f["bbox"][0]) * (f["bbox"][3] - f["bbox"][1]),
+                        )
+                        y_raw = best_yface.get("raw_face")
+                if y_raw is not None:
+                    feat = self._sface.extract_feature(align_img, y_raw)
+                    if feat is not None:
+                        best_name = "Unknown"
+                        best_score = -1.0
+                        for name, known_feat in known_embeddings.items():
+                            score = float(self._sface.match(feat, known_feat))
+                            if score > best_score:
+                                best_score = score
+                                best_name = name
+                        if best_score >= self._sface.COSINE_MATCH_THRESHOLD:
+                            calibrated = min(
+                                1.0,
+                                0.5
+                                + 0.5
+                                * (
+                                    (best_score - self._sface.COSINE_MATCH_THRESHOLD)
+                                    / (1.0 - self._sface.COSINE_MATCH_THRESHOLD)
+                                ),
+                            )
+                            return best_name, float(round(calibrated, 3))
+                        return "Unknown", float(round(max(0.0, best_score), 3))
             except Exception as exc:
                 logger.debug("YuNet+SFace identification failed, trying ORB: %s", exc)
 
-        # 2. Classical ORB + FLANN fallback
-        roi = self._extract_largest_face_roi(image)
-        if roi is None:
-            roi = image
+        # 2. Classical ORB + FLANN fallback (skipped Haar re-detect if already pre-cropped)
+        roi = image if is_cropped else (self._extract_largest_face_roi(image) or image)
 
         desc = self._extract_descriptor(roi)
         if desc is None:
             return "Unknown", 0.0
 
-        best_name, best_score, best_good = self._best_match(desc)
+        with self._lock:
+            best_name, best_score, best_good = self._best_match(desc)
         if best_good < self.min_good_matches or best_score < self.min_score:
             return "Unknown", float(best_score)
         return best_name, float(best_score)
