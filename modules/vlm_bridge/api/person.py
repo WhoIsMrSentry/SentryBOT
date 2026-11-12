@@ -47,22 +47,14 @@ def get_person_router(processor: Any, base_url: str) -> APIRouter:
         if not person_id and not name:
             raise HTTPException(status_code=400, detail="person_id or name required")
 
-        if name and not person_id:
-            records = processor.person_identity._records
-            for rec in records.values():
-                if rec.name.lower() == name.lower():
-                    person_id = rec.person_id
-                    break
-
-        if person_id:
-            rec = processor.person_identity._records.get(person_id)
-            if rec:
-                if relationship:
-                    rec.relationship = relationship
-                if recognition_level >= 0:
-                    rec.recognition_level = min(5, max(0, int(recognition_level)))
-                processor.person_identity._save_unlocked()
-                return {"ok": True, "person_id": rec.person_id, "name": rec.name}
+        rec = processor.person_identity.update_relationship_by_name_or_id(
+            person_id=person_id,
+            name=name,
+            relationship=relationship,
+            recognition_level=int(recognition_level),
+        )
+        if rec is not None:
+            return {"ok": True, "person_id": rec.person_id, "name": rec.name}
 
         return {"ok": False, "error": "person not found"}
 
@@ -85,17 +77,7 @@ def get_person_router(processor: Any, base_url: str) -> APIRouter:
         if not processor.person_identity:
             return {"people": []}
 
-        people = []
-        for rec in processor.person_identity._records.values():
-            people.append({
-                "person_id": rec.person_id,
-                "name": rec.name,
-                "recognition_level": rec.recognition_level,
-                "relationship": rec.relationship,
-                "seen_count": rec.seen_count,
-                "last_seen": rec.last_seen,
-            })
-        return {"people": people}
+        return {"people": processor.person_identity.list_people()}
 
     @r.post("/memory/chat", tags=["memory"], summary="Append chat to person's memory")
     def memory_chat(person: str, text: str, role: str = "assistant"):
