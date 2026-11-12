@@ -8,15 +8,14 @@
 
 ## 1. Genel Bakış ve Sorumluluklar
 
-`modules.vlm_bridge`, kameradan gelen optik kareleri anlamsal sahne açıklamalarına, nesne tespitlerine, insan duygularına ve uzamsal ilişkilere dönüştüren çok modlu (multimodal) yapay zeka köprüsüdür. Hem yerel Ollama multimodal modellerini (`qwen2.5-vl`, `llama3.2-vision`) hem de bulut Google AI Studio (`gemini-2.5-flash`) servislerini destekler. Bütçe ve kota denetleyicisi (`InferenceBudgetManager`) ile donanımı aşırı ısınmadan ve kota aşımlarından korur.
+`modules.vlm_bridge`, kameradan gelen optik kareleri anlamsal sahne açıklamalarına, nesne tespitlerine (`px` + `bbox_xyxy_norm` standart şeması), insan yüz/duygularına ve kafa takip komutlarına dönüştüren çok modlu algı köprüsüdür. Yerel Ollama modellerini (`modules.common.ollama_url` ortak URL çözümlemesi ve esnek `single_model_mode`), Google Gemini desteğini ve uzak GPU sunucusunu (`remote_multimodal_server`) destekler.
 
 ### Temel Sorumluluk Alanları
-1. **Görsel Örnekleme ve Kapılama (`VisionSampler`, `VisionRequestGate`):** Kameradan sürekli gelen kareleri belirli aralıklarla veya sahnede hareket/değişiklik olduğunda filtreleyerek yakalar (FPS debouncing).
-2. **Çıkarım Bütçesi ve Kota Yönetimi (`InferenceBudgetManager`):** Çıkarım sıklığını, token tüketimini ve saniye başına maliyeti sınırlandırır. Raspberry Pi CPU/GPU kaynaklarının tükenmesini engeller.
-3. **Çok Modlu Model İstemcileri (`OllamaVlmClient`, `GoogleVlmClient`):** Görüntüleri Base64 formatına çevirip yapılandırılmış JSON şablonları eşliğinde yerel veya uzak VLM'e iletir.
-4. **Semantik Sahne Anlamlandırma (`SemanticDescriber`, `VisualContext`):** VLM'den dönen yanıtları ayrıştırır; sahne özeti, tespit edilen nesneler, yüz ifadeleri ve güven skorlarını thread-safe bir önbellek zarfında (`VisualContext`) tutar.
-5. **Görsel Olay Dağıtımı (`VisionEventBus`):** Sahne belirgin şekilde değiştiğinde (`vision.scene_changed`), yeni bir insan belirdiğinde (`vision.person_spotted`) veya duygu algılandığında EventBus üzerinden sinyal yayınlar.
-6. **Kafa Yönlendirme Hakemi (`HeadControlArbiter`):** Algılanan insan yüzlerine ve ilgi noktalarına robot kafasını hizalamak için pan/tilt açı komutları üretir.
+1. **Görsel Örnekleme ve Kapılama (`VisionSampler`, `VisionRequestGate`):** Kareleri sahne değişikliği ve cooldown kurallarına göre süzer; kilitli (`RLock`) sayaçlarla gereksiz VLM/semantic çağrılarını önler (`vision_semantic_budget`).
+2. **Yerel Yüz Tanıma & Kimlik Hafızası (`YuNetDetector`, `SFaceRecognizer`, `FaceManager`, `PersonIdentityManager`):** RLock korumalı yüz tespiti (kırpılmış ROI'de ikinci YuNet taramasını atlar) ve `SocialDB` / atomik JSON kişi hafızası yönetir.
+3. **Asenkron Yan Etki & Talep Odaklı MJPEG (`VisionProcessor`):** HTTP/TTS/Ollama takip çağrılarını `_side_effect_queue` arka plan işçisinde çalıştırır; `/vlm/video_feed` JPEG kodlamasını yalnız aktif izleyici varken yapar.
+4. **Kafa Yönlendirme Hakemi & PD Takip (`HeadControlArbiter`, `ProcessorFollowMixin`):** `_move_fn` HTTP çağrılarını kilit dışında paylaşımlı oturumla çalıştırır, aktif takip kaynaklarını otomatik öncelik penceresiyle korur, PD yumuşatma ve hedef kaybında sınırlı pan taraması (sweep) uygular.
+5. **Güvenli Dış Sonuç Alımı & Bütçe Sözleşmesi:** `POST /vlm/results` fail-closed `hmac.compare_digest` token doğrulaması (`SENTRYBOT_VLM_AUTH_TOKEN` / `MM_AUTH_TOKEN`) ve `IngestResultsPayload` doğrulaması uygular; `InferenceBudgetManager` sözleşme uyumluluğu için korunur.
 
 ---
 
@@ -26,51 +25,44 @@
 ```mermaid
 flowchart TD
     subgraph Camera [Optik Girdi]
-        CAM["modules.camera (GET /camera/frame)"]
+        CAM["modules.camera (GET /camera/snap)"]
     end
 
-    subgraph Sampling [Örnekleme & Bütçe Denetimi]
+    subgraph Sampling [Örnekleme & Kapılama]
         VS["VisionSampler (services/vision_sampler.py)"]
-        RG["VisionRequestGate (Debounce)"]
-        BM["InferenceBudgetManager (Quota / Cooldown)"]
+        RG["VisionRequestGate (Thread-Safe Cooldown & Budget)"]
     end
 
     subgraph Backends [Çok Modlu Model Sağlayıcıları]
-        OVLM["OllamaVlmClient (Yerel Qwen-VL)"]
-        GVLM["GoogleVlmClient (Gemini 2.5 Flash)"]
+        OVLM["OllamaVlmClient (Paylaşımlı Session)"]
+        RM["RemoteMultimodalClient (Cheap / Semantic / OCR)"]
     end
 
-    subgraph ContextEngine [Anlamsal Algı & Önbellek]
-        SD["SemanticDescriber (JSON Parser)"]
-        VC[("VisualContext Cache (visual_context.py)")]
-        FE["FaceEmotionClassifier (Yüz & Duygu)"]
-        HA["HeadControlArbiter (Pan/Tilt Hedefi)"]
+    subgraph ContextEngine [Kilitli Algı, Takip & Yan Etki]
+        FM["YuNet + FaceManager (RLock / Tek Tarama)"]
+        PI["PersonIdentityManager (SocialDB / Atomik JSON)"]
+        SEQ["SideEffectQueue Worker (TTS / Ollama / Action)"]
+        HA["HeadControlArbiter + PD/Sweep Takip"]
     end
 
     subgraph Consumers [Tüketici Sistemler]
-        Agent["modules.agent_core (Akıl Yürütme)"]
-        Arduino["modules.arduino_serial (Kafa Motorları)"]
+        Agent["modules.agent_core (Görsel Bağlam)"]
+        Arduino["modules.arduino_serial (Kilit Dışı Track)"]
         EB["EventBus (vision.* Olayları)"]
     end
 
     CAM -->|JPEG Kare Çek| VS
+    VS --> FM
     VS --> RG
-    RG --> BM
-    
-    BM -->|Yerel Profil| OVLM
-    BM -->|Bulut Profil| GVLM
-    
-    OVLM --> SD
-    GVLM --> SD
-    SD --> VC
-    
-    VS --> FE
-    FE --> VC
-    FE --> HA
-    
-    VC -->|Sahne Bilgisi Enjeksiyonu| Agent
-    HA -->|Pan/Tilt Hedef Açıları| Arduino
-    VC -->|Olay Bildirimi| EB
+    RG -->|Semantic Budget| OVLM
+    RG -->|Cheap / Semantic| RM
+    FM --> PI
+    FM --> HA
+    PI --> SEQ
+    OVLM --> Agent
+    RM --> Agent
+    HA -->|Pan/Tilt Hedefleri| Arduino
+    SEQ -->|Bildirim / Eylem| EB
 ```
 
 ### 2.2 Görsel Çıkarım Döngüsü (Sequence Diagram)
@@ -78,65 +70,56 @@ flowchart TD
 sequenceDiagram
     autonumber
     participant Cam as Kamera Servisi
-    participant Sampler as VisionSampler
-    participant Budget as InferenceBudgetManager
-    participant VLM as GoogleVlmClient / OllamaVlmClient
-    participant Context as VisualContext Cache
-    participant Agent as AgentOrchestrator
+    participant Proc as VisionProcessor Stream
+    participant Gate as VisionRequestGate
+    participant VLM as OllamaVlmClient / Remote MM
+    participant Queue as SideEffectWorker
 
-    loop Periyodik Örnekleme (ör. her 3 saniyede bir)
-        Sampler->>Cam: GET /camera/frame
-        Cam-->>Sampler: jpeg_bytes
-        Sampler->>Budget: can_infer(priority="routine")
-        alt Bütçe veya Cooldown Yetersiz
-            Budget-->>Sampler: False (İstek atlanır / rate-limited)
-        else Bütçe Uygun
-            Budget-->>Sampler: True
-            Sampler->>VLM: describe_scene(jpeg_bytes, prompt)
-            activate VLM
-            VLM->>VLM: Base64 encode + Multimodal Inference
-            VLM-->>Sampler: Structured JSON (scene, objects, safety)
-            deactivate VLM
-            Sampler->>Context: update_scene(json_result, timestamp)
-            Context->>Context: Cache güncelle & vision.scene_changed yayınla
+    loop Kare Döngüsü
+        Proc->>Cam: GET /camera/snap (veya VideoCapture)
+        Cam-->>Proc: frame
+        Proc->>Gate: decide(reason)
+        alt Cooldown veya Bütçe Dolu
+            Gate-->>Proc: False (Semantic atlanır)
+        else İzin Verildi
+            Gate-->>Proc: True
+            Proc->>VLM: async context refresh (cached TTL)
+            VLM-->>Proc: JSON scene & hazards
         end
+        Proc-->>Queue: Enqueue TTS / Ollama followup / Event
     end
-
-    Agent->>Context: get_latest_context()
-    Context-->>Agent: {"scene": "Masa üzerinde laptop ve kahve bardağı", "people": 1}
 ```
 
 ---
 
 ## 3. Bileşen Detayları ve API Sözleşmeleri
 
-### 3.1 `InferenceBudgetManager` (`services/inference_budget.py`)
-- `can_infer(priority: str = "normal") -> bool`
-  - Son çıkarımdan bu yana geçen süreyi (`min_interval_s`), dakikalık istek kotasını (`max_requests_per_minute`) ve günlük bütçeyi denetler.
-- `record_inference(tokens_used: int = 0, latency_ms: float = 0.0) -> None`
-  - Gerçekleşen çıkarımı kaydeder, ortalama yanıt süresini ve harcanan kaynak miktarını telemetriye işler.
+### 3.1 `VisionRequestGate` & `InferenceBudgetManager` (`services/vision_request_gate.py`, `services/inference_budget.py`)
+- `VisionRequestGate.decide(reason: str)`: Hareket/sahne değişikliği debouncing'i ve `self._lock` altında sayaç takibi yapar (`vision_semantic_budget` ile koordine çalışır).
+- `InferenceBudgetManager`: Geriye dönük bütçe sözleşmesi testleri için korunur.
 
-### 3.2 `OllamaVlmClient` & `GoogleVlmClient` (`services/*_vlm_client.py`)
-- `describe_frame(image_bytes: bytes, prompt: str | None = None) -> Dict[str, Any]`
-  - **Parametreler:** JPEG baytları ve yönlendirici sistem promptu.
-  - **Dönüş:** `{ "description": str, "objects": List[str], "confidence": float, "is_safe": bool }`
-  - **İş Mantığı:** İstemci, modelden katı bir JSON yapısı talep eder; model serbest metin dönse dahi regex tabanlı kurtarıcı (`_extract_json`) ile geçerli bir sözlüğe dönüştürür.
+### 3.2 `OllamaVlmClient` & `RemoteMultimodalClient` (`services/ollama_vlm_client.py`, `services/llm_client.py`)
+- Ortak URL çözümlemesi `modules.common.ollama_url.normalize_ollama_url` üzerinden yapılır.
+- `OllamaVlmClient` paylaşımlı `requests.Session` kullanır; `llm_client` gerçek `httpx` ortamında `_SHARED_HTTPX_CLIENT` paylaşır.
+- `config_loader.py` içindeki `llm.single_model_mode` varsayılan `true` iken zorunlu modeli uygular; `false` yapıldığında farklı Ollama modelleri kabul edilir.
 
-### 3.3 `VisualContext` (`services/visual_context.py`)
-- `get_latest() -> Dict[str, Any]`
-  - En güncel sahne zarfını (envelope) döner.
-- `update(scene_data: Dict[str, Any]) -> None`
-  - Thread-safe kilit (`threading.Lock`) ile önbelleği yeniler ve zaman damgasını günceller.
+### 3.3 `HeadControlArbiter` & `ProcessorFollowMixin` (`services/head_control_arbiter.py`, `services/processor_follow.py`)
+- `HeadControlArbiter.request_move(cmd)`: `self._lock` dışında `_move_fn(pan, tilt)` çağırır; hedef-merkezli settled deadband (`< 0.5 deg`) ve `active_speaker`/`owner_follow` için otomatik `_active_lock_ttl_s` koruması uygular.
+- `ProcessorFollowMixin._drive_follow()` & `_sweep_on_target_lost()`: PD (`pd_kp`, `pd_kd`) yumuşatma ve hedef kaybında yönlü sınırlı pan taraması (`sweep_after_lost_frames`, `sweep_max_steps`, `sweep_step_deg`, `sweep_span_deg`) uygular.
 
 ### 3.4 REST API Endpointleri (`modules/vlm_bridge/api/router.py`)
 
-| Metot | Endpoint | Açıklama | Yanıt Modeli |
+| Metot | Endpoint | Açıklama | Yanıt / Güvenlik |
 |:---|:---|:---|:---|
-| **`GET`** | `/vlm/healthz` | VLM köprüsü ve backend bağlantı sağlık kontrolü. | `{"ok": bool, "backend": str}` |
-| **`GET`** | `/vlm/context/latest` | En son sahne açıklaması ve nesne listesi. | `{"scene": str, "objects": list, "timestamp": float}` |
-| **`GET`** | `/vlm/results/latest` | Ayrıntılı model yanıtı ve ham JSON zarfı. | `{"results": dict, "latency_ms": float}` |
-| **`POST`**| `/vlm/describe` | Anlık olarak bir kare yakalayıp VLM çıkarımını tetikler. | `{"success": bool, "description": str}` |
-| **`POST`**| `/vlm/target/follow` | Kafa takibi için hedef koordinatları kilitler. | `{"tracking": bool, "target": str}` |
+| **`GET`** | `/vlm/context/latest` | En son sahne açıklaması ve nesne listesi. | `{"available": bool, "context": dict}` |
+| **`POST`** | `/vlm/context/refresh` | Güncel kare için VLM sahne bağlamını yeniler. | `{"ok": bool, "context": dict}` |
+| **`GET`** | `/vlm/results/latest` | Son tespit edilen nesneler (`px` + `bbox_xyxy_norm`). | `{"results": list, "count": int}` |
+| **`POST`** | `/vlm/results` | Uzak sonuçları alır (`IngestResultsPayload`). | Fail-closed `X-Auth-Token` (`hmac.compare_digest`) |
+| **`POST`** | `/vlm/ask` | Anlık kare hakkında VLM'e soru sorar. | `{"ok": bool, "answer": str}` |
+| **`POST`** | `/vlm/follow/start`, `/vlm/follow/stop` | Kafa takibini (`owner` dahil) başlatır/durdurur. | `{"ok": bool}` |
+| **`GET`/`POST`** | `/vlm/head/status`, `/vlm/head/move` | `HeadControlArbiter` durumu ve manuel pan/tilt. | `{"ok": bool, "pan": float, "tilt": float}` |
+| **`GET`/`POST`** | `/vlm/people`, `/vlm/person/*` | Kilitli kişi hafızası ve ilişki güncelleme. | `{"ok": bool, "people": list}` |
+| **`GET`** | `/vlm/video_feed` | Talep odaklı (subscriber-gated) MJPEG akışı. | `multipart/x-mixed-replace` |
 
 ---
 
@@ -144,19 +127,19 @@ sequenceDiagram
 
 | Senaryo / Edge-Case | Olası Risk | Savunma Mekanizması |
 |:---|:---|:---|
-| **VLM Arka Ucunun Çökmesi (Ollama / Gemini Down)** | İstek sonsuza kadar askıda kalabilir. | İstemciler katı timeout sınırına (`timeout=5.0s`) sahiptir; hata anında önbellekteki son geçerli sahne bilgisi (`stale-while-revalidate`) döndürülür. |
-| **Karanlık / Boş Kare (Black Frame)** | VLM anlamsız halüsinasyonlar üretebilir. | `VisionSampler`, ortalama piksel parlaklığını (`luminance`) kontrol eder; parlaklık `< 15` ise çıkarım iptal edilir. |
-| **Modelin Bozuk JSON Yanıtı Dönmesi** | JSONDecodeError ile servisin durması. | `SemanticDescriber`, yapılandırılmış JSON bulamazsa metin madenciliğiyle anahtar kelimeleri ayıklar ve güvenli varsayılan şemaya yerleştirir. |
-| **Aşırı Bulut Kota Tüketimi (Gemini Quota Exceeded)** | API faturalandırma riski veya HTTP 429. | `InferenceBudgetManager` yerel kotayı aştığı anda otomatik olarak yerel hafif tespit modellerine fallback yapar. |
+| **VLM Arka Ucunun Çökmesi (Ollama / Remote Down)** | İstek sonsuza kadar askıda kalabilir. | İstemciler zaman aşımı sınırına ve önbelleğe sahiptir; yan etkiler `_side_effect_queue` işçisinde çalıştığından ana kare/takip döngüsü kilitlenmez. |
+| **Sahte `/vlm/results` Enjeksiyonu** | Boş veya `"changeme"` token ile sahte nesne gönderilmesi. | `SENTRYBOT_VLM_AUTH_TOKEN` / `MM_AUTH_TOKEN` fallback'i, placeholder reddi (401), sabit zamanlı doğrulama ve Pydantic `IngestResultsPayload` şeması zorunludur. |
+| **Kare & Kafa Kilit Yarışması** | Eşzamanlı YuNet/PersonIdentity/HeadArbiter çağrıları çakışabilir. | `YuNetDetector`, `SFaceRecognizer`, `FaceManager` ve `PersonIdentityManager` `RLock` + atomik JSON `.tmp`/`replace` kullanır; `_move_fn` kilit dışında çalışır. |
+| **Gereksiz VLM / JPEG Yükü** | İzleyici yokken JPEG encode veya ucuz modda ağır caption çalışabilir. | `/vlm/video_feed` yalnız `_mjpeg_subscribers > 0` iken encode yapar; uzak sunucu `_caption()` yalnız `semantic`/Qwen modunda çalışır. |
 
 ---
 
 ## 5. Modüller Arası Giriş ve Çıkışlar
 
 - **Girişler:**
-  - `modules.camera`: `/camera/frame` üzerinden çekilen anlık JPEG görüntüleri
-  - `config/agent.yaml`: VLM profil tercihleri (`runtime_profile`), model adları ve hız sınırları
+  - `modules.camera`: `/camera/snap` üzerinden çekilen anlık JPEG görüntüleri veya doğrudan `cv2.VideoCapture` + IMX500 `onsensor_hints@1`
+  - `modules/vlm_bridge/config/config.yml`: Takip PD/sweep parametreleri, kapılama bütçesi, uzak multimodal uç noktaları
 - **Çıkışlar:**
-  - `modules.agent_core`: Çevresel sahne bağlamı (`laya_scene_summary`, `world_context`)
-  - `modules.arduino_serial`: Hedef takip koordinatları (`pan_target`, `tilt_target`)
-  - `EventBus`: `vision.scene_changed`, `vision.person_spotted` olay bildirimleri
+  - `modules.agent_core`: Çevresel sahne bağlamı (`get_latest_visual_context`)
+  - `modules.arduino_serial`: Hedef takip koordinatları (`pan`, `tilt`, `HeadControlArbiter`)
+  - `EventBus`: `vision.scene_changed`, `vision.person_spotted` ve kişi/duygu bildirimleri
