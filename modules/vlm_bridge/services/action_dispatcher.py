@@ -12,6 +12,7 @@ except Exception:  # pragma: no cover
     extract_llm_tags = None  # type: ignore
 
 logger = logging.getLogger("vlm_bridge.actions")
+_ORIG_REQUESTS_POST = requests.post
 
 
 class VisionActionDispatcher:
@@ -21,6 +22,7 @@ class VisionActionDispatcher:
         self.endpoint = (endpoint or "").strip()
         self.timeout = timeout
         self.enabled = enabled and bool(self.endpoint)
+        self._session = requests.Session()
 
     def emit_scene(self, semantic_describer, results: List[Dict[str, Any]]) -> None:
         if not self.enabled or not results or semantic_describer is None:
@@ -45,7 +47,8 @@ class VisionActionDispatcher:
             "speak": False,
         }
         try:
-            requests.post(self.endpoint, json=payload, timeout=self.timeout)
+            post_fn = self._session.post if requests.post is _ORIG_REQUESTS_POST else requests.post
+            post_fn(self.endpoint, json=payload, timeout=self.timeout)
         except Exception as exc:  # pragma: no cover - network
             logger.debug("Vision action dispatch failed: %s", exc)
 
