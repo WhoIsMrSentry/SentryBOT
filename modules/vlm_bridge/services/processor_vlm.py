@@ -145,16 +145,30 @@ class ProcessorVlmMixin(ProcessorVlmSignalsMixin):
 
         sampler.record_call()
         try:
-            threading.Thread(target=self._background_context_refresh, args=(reason, request_id), daemon=True).start()
+            semantic_ok = self._semantic_budget_allows(reason=reason)
+            threading.Thread(
+                target=self._background_context_refresh,
+                args=(reason, request_id, semantic_ok),
+                daemon=True,
+            ).start()
         except Exception:
             self._finish_vlm_refresh()
             raise
 
-    def _background_context_refresh(self, reason: str = "background_refresh", request_id: str = "") -> None:
+    def _background_context_refresh(
+        self,
+        reason: str = "background_refresh",
+        request_id: str = "",
+        force_semantic: Optional[bool] = None,
+    ) -> None:
         ok = False
         try:
             try:
-                context = self.refresh_visual_context(semantic_reason=reason, semantic_request_id=request_id)
+                context = self.refresh_visual_context(
+                    semantic_reason=reason,
+                    semantic_request_id=request_id,
+                    force_semantic=force_semantic,
+                )
             except TypeError:
                 context = self.refresh_visual_context()
             ok = context is not None
