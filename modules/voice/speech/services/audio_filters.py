@@ -204,11 +204,20 @@ class SpeechAudioFilterMixin:
             n += 1
         return math.sqrt(acc / n) if n else 0.0
 
+    def _condition_mono_chunk(self, mono: bytes, rms: float) -> bytes:
+        mono = apply_gain_pcm16(mono, getattr(self, "_stt_input_gain", 1.0))
+        echo_gate = getattr(self, "_echo_gate", None)
+        if echo_gate is not None:
+            mono, barge_in = echo_gate.process_chunk(mono, rms)
+            if barge_in:
+                self._on_barge_in_breakthrough()
+        self._append_utterance_pcm(mono)
+        return mono
+
     def _direction_wrapper(self, stream):
-        if not self._direction:
-            yield from stream
-            return
-        ctrl = (self.cfg.get("direction", {}) or {}).get("control", {})
+        direction_est = getattr(self, "_direction", None)
+        dir_root = self.cfg.get("direction", {}) if isinstance(getattr(self, "cfg", None), dict) else {}
+        ctrl = (dir_root or {}).get("control", {}) if isinstance(dir_root, dict) else {}
         invert = bool(ctrl.get("invert_direction", False))
         deadband = float(ctrl.get("deadband_deg", 0.0))
         alpha = float(ctrl.get("smoothing_alpha", 0.0))
@@ -216,6 +225,7 @@ class SpeechAudioFilterMixin:
         energy_th = float(ctrl.get("energy_threshold", 0.0))
         last_out = None
         last_ts = None
+
         for chunk in stream:
             rms = 0.0
             has_rms = False
@@ -225,37 +235,35 @@ class SpeechAudioFilterMixin:
                     has_rms = True
             except Exception:
                 pass
-            try:
-                if energy_th and rms < energy_th:
+
+            if direction_est is not None:
+                try:
+                    if not (energy_th and rms < energy_th):
+                        angle = direction_est.estimate(chunk)
+                        if invert:
+                            angle = -angle
+                        if last_out is not None and abs(angle - last_out) < deadband:
+                            angle = last_out
+                        if last_out is not None and 0.0 < alpha < 1.0:
+                            angle = alpha * angle + (1 - alpha) * last_out
+                        now = time.time()
+                        if last_out is not None and last_ts is not None and slew > 0:
+                            dt = max(1e-3, now - last_ts)
+                            max_step = slew * dt
+                            if abs(angle - last_out) > max_step:
+                                angle = last_out + (max_step if angle > last_out else -max_step)
+                        self._last_angle = angle
+                        if getattr(self, "_tracking", False) and getattr(self, "_pan", None) is not None:
+                            center = float((self.cfg.get("pan_tilt", {}) or {}).get("center_deg", 90.0))
+                            self._pan.set_target(center + angle)
+                        last_out = angle
+                        last_ts = time.time()
+                except Exception:
                     pass
-                else:
-                    angle = self._direction.estimate(chunk)
-                    if invert:
-                        angle = -angle
-                    if last_out is not None and abs(angle - last_out) < deadband:
-                        angle = last_out
-                    if last_out is not None and 0.0 < alpha < 1.0:
-                        angle = alpha * angle + (1 - alpha) * last_out
-                    now = time.time()
-                    if last_out is not None and last_ts is not None and slew > 0:
-                        dt = max(1e-3, now - last_ts)
-                        max_step = slew * dt
-                        if abs(angle - last_out) > max_step:
-                            angle = last_out + (max_step if angle > last_out else -max_step)
-                    self._last_angle = angle
-                    if self._tracking:
-                        center = float(self.cfg.get("pan_tilt", {}).get("center_deg", 90.0))
-                        target = center + angle
-                        self._pan.set_target(target)
-                    last_out = angle
-                    last_ts = time.time()
-            except Exception:
-                pass
-            try:
-                if has_rms:
-                    self._last_audio_level = min(1.0, rms / 8000.0)
-            except Exception:
-                pass
+
+            if has_rms:
+                self._last_audio_level = min(1.0, rms / 8000.0)
+
             if self._get_capture_channels() >= 2:
                 dtype = self._get_capture_dtype()
                 try:
@@ -265,21 +273,10 @@ class SpeechAudioFilterMixin:
                         mono = downmix_stereo_pcm(chunk, dtype)
                 except Exception:
                     mono = downmix_stereo_pcm(chunk, dtype)
-                mono = apply_gain_pcm16(mono, self._stt_input_gain)
-                if getattr(self, "_echo_gate", None) is not None:
-                    mono, barge_in = self._echo_gate.process_chunk(mono, rms)
-                    if barge_in:
-                        self._on_barge_in_breakthrough()
-                self._append_utterance_pcm(mono)
-                yield mono
             else:
-                mono = apply_gain_pcm16(chunk, self._stt_input_gain)
-                if getattr(self, "_echo_gate", None) is not None:
-                    mono, barge_in = self._echo_gate.process_chunk(mono, rms)
-                    if barge_in:
-                        self._on_barge_in_breakthrough()
-                self._append_utterance_pcm(mono)
-                yield mono
+                mono = chunk
+
+            yield self._condition_mono_chunk(mono, rms)
 
 
 __all__ = [
