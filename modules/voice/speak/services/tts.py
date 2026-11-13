@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from collections import OrderedDict
 import logging
 import os
 import threading
@@ -149,12 +150,23 @@ class PiperBackend(TTSBackend):
 
 class TextToSpeech:
     def __init__(self, cfg: Dict[str, Any]) -> None:
+        clear_synthesis_cancel()
         raw = copy.deepcopy(cfg or {})
         if "tts" in raw and isinstance(raw["tts"], dict):
             self._base_cfg = {**raw, **raw["tts"]}
         else:
             self._base_cfg = raw
+        self._cache_lock = threading.Lock()
+        self._pcm_cache: "OrderedDict[tuple[Any, ...], PCM]" = OrderedDict()
+        self._pcm_cache_max_entries = max(0, int(self._base_cfg.get("pcm_cache_max_entries", 24)))
+        self._pcm_cache_max_chars = max(1, int(self._base_cfg.get("pcm_cache_max_chars", 80)))
+        self._pcm_cache_hits = 0
+        self._pcm_cache_misses = 0
+        self._fallback_piper: Optional[PiperBackend] = None
+        self._backends_cache: Dict[tuple[Any, ...], TTSBackend] = {}
         self.backend = self._build_backend(self._base_cfg)
+        base_engine = str(self._base_cfg.get("engine", "piper")).strip().lower()
+        self._backends_cache[self._backend_cache_key(base_engine, self._base_cfg)] = self.backend
 
     def _tts_config(self, cfg: Dict[str, Any]) -> TTSConfig:
         return TTSConfig(
@@ -196,6 +208,13 @@ class TextToSpeech:
         health = self.backend.health()
         health.setdefault("available", self.is_available())
         health.setdefault("engine", str(self._base_cfg.get("engine", "")))
+        with self._cache_lock:
+            health["pcm_cache"] = {
+                "entries": len(self._pcm_cache),
+                "max_entries": self._pcm_cache_max_entries,
+                "hits": self._pcm_cache_hits,
+                "misses": self._pcm_cache_misses,
+            }
         return health
 
     def _merge(self, overrides: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -230,31 +249,117 @@ class TextToSpeech:
                 raise TTSUnavailableError(f"no Piper voice for language={language}; fallback={fallback_engine} is not active")
         return piper_voice_for_language(language, piper_cfg)
 
+    def _backend_cache_key(self, requested_engine: str, cfg: Dict[str, Any]) -> tuple[Any, ...]:
+        remote_cfg = cfg.get("remote", {}) if isinstance(cfg.get("remote"), dict) else {}
+        xtts_cfg = cfg.get("xtts", {}) if isinstance(cfg.get("xtts"), dict) else {}
+        return (
+            requested_engine,
+            bool(remote_cfg.get("enabled", False)),
+            str(remote_cfg.get("endpoint") or ""),
+            str(xtts_cfg.get("endpoint") or ""),
+        )
+
+    def _get_or_build_backend(self, requested_engine: str, cfg: Dict[str, Any]) -> TTSBackend:
+        key = self._backend_cache_key(requested_engine, cfg)
+        base_engine = str(self._base_cfg.get("engine", "piper")).strip().lower()
+        if key == self._backend_cache_key(base_engine, self._base_cfg):
+            return self.backend
+        cached = self._backends_cache.get(key)
+        if cached is not None:
+            return cached
+        built = self._build_backend(cfg)
+        self._backends_cache[key] = built
+        return built
+
+    def _get_fallback_piper(self, cfg: Dict[str, Any]) -> PiperBackend:
+        if isinstance(self.backend, PiperBackend):
+            return self.backend
+        if self._fallback_piper is None:
+            piper_cfg = cfg.get("piper", {}) if isinstance(cfg.get("piper"), dict) else {}
+            self._fallback_piper = PiperBackend(self._tts_config(cfg), piper_cfg)
+        return self._fallback_piper
+
+    def _pcm_cache_get(self, key: tuple[Any, ...]) -> Optional[PCM]:
+        if self._pcm_cache_max_entries <= 0:
+            return None
+        with self._cache_lock:
+            hit = self._pcm_cache.get(key)
+            if hit is None:
+                self._pcm_cache_misses += 1
+                return None
+            self._pcm_cache.move_to_end(key)
+            self._pcm_cache_hits += 1
+            return PCM(data=hit.data.copy(), samplerate=hit.samplerate, channels=hit.channels)
+
+    def _pcm_cache_put(self, key: tuple[Any, ...], pcm: PCM) -> None:
+        if self._pcm_cache_max_entries <= 0 or _synth_cancel.is_set():
+            return
+        data = getattr(pcm, "data", None)
+        if data is None or not hasattr(data, "copy"):
+            return
+        with self._cache_lock:
+            self._pcm_cache[key] = PCM(data=data.copy(), samplerate=pcm.samplerate, channels=pcm.channels)
+            self._pcm_cache.move_to_end(key)
+            while len(self._pcm_cache) > self._pcm_cache_max_entries:
+                self._pcm_cache.popitem(last=False)
+
     def synthesize(self, text: str, overrides: Optional[Dict[str, Any]] = None) -> PCM:
         cfg = self._merge(overrides)
         requested_engine = str(cfg.get("engine", "piper")).strip().lower()
-        base_engine = str(self._base_cfg.get("engine", "piper")).strip().lower()
-        backend = self.backend if requested_engine == base_engine else self._build_backend(cfg)
+        backend = self._get_or_build_backend(requested_engine, cfg)
+        lang_hint = str((overrides or {}).get("language") or cfg.get("language") or "")
 
         if isinstance(backend, PiperBackend):
             voice_key = self._resolve_piper_voice(text, cfg, overrides)
             runtime = cfg.get("piper", {}) if isinstance(cfg.get("piper"), dict) else {}
-            return backend.synthesize(text, voice_key=voice_key, runtime=runtime)
+            cache_key = (
+                "piper",
+                voice_key or backend.default_voice,
+                text,
+                str(runtime.get("length_scale", "")),
+                str(runtime.get("noise_scale", "")),
+                str(runtime.get("noise_w", "")),
+            )
+            if len(text) <= self._pcm_cache_max_chars:
+                cached = self._pcm_cache_get(cache_key)
+                if cached is not None:
+                    return cached
+            pcm = backend.synthesize(text, voice_key=voice_key, runtime=runtime)
+            if len(text) <= self._pcm_cache_max_chars:
+                self._pcm_cache_put(cache_key, pcm)
+            return pcm
+
         if isinstance(backend, (XTTSHttpBackend, RemoteTTSHttpBackend)):
             speaker_wav = overrides.get("speaker_wav") if isinstance(overrides, dict) else None
             language = overrides.get("language") if isinstance(overrides, dict) else None
+            cache_key = (backend.__class__.__name__, requested_engine, language or "", str(speaker_wav or ""), text)
+            if len(text) <= self._pcm_cache_max_chars:
+                cached = self._pcm_cache_get(cache_key)
+                if cached is not None:
+                    return cached
             try:
-                return backend.synthesize(text, speaker_wav=speaker_wav, language=language)
+                pcm = backend.synthesize(text, speaker_wav=speaker_wav, language=language)
             except Exception as exc:
-                # Remote path failed (network/timeout/cancel): degrade to the
-                # local Piper engine instead of leaving the robot mute (R22).
-                logger.warning("remote TTS failed (%s); falling back to local Piper", exc)
-                piper_cfg = cfg.get("piper", {}) if isinstance(cfg.get("piper"), dict) else {}
-                local = PiperBackend(self._tts_config(cfg), piper_cfg)
+                if "synthesis_cancelled" in str(exc) or _synth_cancel.is_set():
+                    raise
+                logger.warning("remote TTS failed (%s); falling back to cached local Piper", exc)
+                local = self._get_fallback_piper(cfg)
                 voice_key = self._resolve_piper_voice(text, cfg, overrides)
-                runtime = piper_cfg
-                return local.synthesize(text, voice_key=voice_key, runtime=runtime)
-        return backend.synthesize(text)
+                piper_cfg = cfg.get("piper", {}) if isinstance(cfg.get("piper"), dict) else {}
+                return local.synthesize(text, voice_key=voice_key, runtime=piper_cfg)
+            if len(text) <= self._pcm_cache_max_chars:
+                self._pcm_cache_put(cache_key, pcm)
+            return pcm
+
+        cache_key = (backend.__class__.__name__, requested_engine, lang_hint, text)
+        if len(text) <= self._pcm_cache_max_chars:
+            cached = self._pcm_cache_get(cache_key)
+            if cached is not None:
+                return cached
+        pcm = backend.synthesize(text)
+        if len(text) <= self._pcm_cache_max_chars and not isinstance(backend, UnavailableBackend):
+            self._pcm_cache_put(cache_key, pcm)
+        return pcm
 
     _resolve_piper_voice_key = _resolve_piper_voice
 
