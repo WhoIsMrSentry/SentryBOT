@@ -30,3 +30,4 @@ class SynthesizeRequest(BaseModel):
     piper: Dict[str, Any] = Field(default_factory=dict)
     xtts: Dict[str, Any] = Field(default_factory=dict)
     response_format: Literal["wav", "json_base64"] = "wav"
+    stream: bool = False

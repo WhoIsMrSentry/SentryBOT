@@ -1,10 +1,48 @@
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
+from typing import Optional
 
 from pydantic import BaseModel
 
+try:
+    from modules.common.config_loader import bool_env, load_dotenv_once  # type: ignore
+    from modules.common.ollama_url import default_ollama_base_url, normalize_ollama_url  # type: ignore
+except Exception:  # pragma: no cover -- standalone container fallback
+    def bool_env(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None:
+            return default
+        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+    def load_dotenv_once() -> None:
+        candidates = [Path.cwd() / ".env"]
+        try:
+            candidates.append(Path(__file__).resolve().parents[3] / ".env")
+        except Exception:
+            pass
+        for target in candidates:
+            if not target.exists():
+                continue
+            for raw in target.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                if key and key not in os.environ:
+                    os.environ[key] = value.strip().strip('"').strip("'")
+
+    def normalize_ollama_url(raw: str) -> str:
+        return str(raw or "").strip().rstrip("/") or "http://127.0.0.1:11434"
+
+    def default_ollama_base_url() -> str:
+        return "http://whoismrsentry.local:11434"
+
+
+logger = logging.getLogger("remote_tts_server")
 PIPER_MODELS_SOURCE_URL = "https://docs.gladecore.com/files/piper-voice-models"
 
 
@@ -13,46 +51,43 @@ def env_path(name: str, default: Path) -> Path:
     return Path(value).expanduser() if value else default
 
 
-def bool_env(name: str, default: bool) -> bool:
+def _int_env(name: str, default: int, *, minimum: int = 1) -> int:
     raw = os.getenv(name)
-    if raw is None:
+    if raw is None or not str(raw).strip():
         return default
-    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
-
-def load_dotenv_once() -> None:
-    candidates = [Path.cwd() / ".env"]
     try:
-        candidates.append(Path(__file__).resolve().parents[3] / ".env")
-    except Exception:
-        pass
-    for target in candidates:
-        if not target.exists():
-            continue
-        for raw in target.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = raw.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            key = key.strip()
-            if key and key not in os.environ:
-                os.environ[key] = value.strip().strip('\"').strip("'")
+        return max(minimum, int(str(raw).strip()))
+    except ValueError:
+        logger.warning("Invalid int env %s=%r; using default=%d", name, raw, default)
+        return default
+
+
+def _float_env(name: str, default: float, *, minimum: float = 0.1) -> float:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return max(minimum, float(str(raw).strip()))
+    except ValueError:
+        logger.warning("Invalid float env %s=%r; using default=%.1f", name, raw, default)
+        return default
 
 
 def default_ollama_tags_endpoint() -> str:
-    raw = (
+    raw: Optional[str] = (
         os.getenv("SENTRYBOT_OLLAMA_TAGS_ENDPOINT")
         or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
         or os.getenv("OLLAMA_BASE_URL")
         or os.getenv("OLLAMA_HOST")
-        or "http://whoismrsentry.local:11434"
     )
-    value = str(raw).strip().rstrip("/")
-    if value.endswith("/api/tags"):
-        return value
-    if value.endswith("/api/chat"):
-        return value[:-9] + "/api/tags"
-    return value + "/api/tags"
-
+    if raw:
+        value = str(raw).strip().rstrip("/")
+        if value.endswith("/api/tags"):
+            return value
+        if value.endswith("/api/chat"):
+            return value[:-9] + "/api/tags"
+        return value + "/api/tags"
+    return normalize_ollama_url(default_ollama_base_url()).rstrip("/") + "/api/tags"
 
 
 def normalize_ollama_chat_endpoint(tags_endpoint: str) -> str:
@@ -83,6 +118,9 @@ class RuntimeConfig(BaseModel):
     ollama_tags_endpoint: str
     ollama_chat_endpoint: str
     ollama_timeout_sec: float = 15.0
+    max_upload_bytes: int = 25 * 1024 * 1024
+    synth_timeout_sec: float = 60.0
+    wav_cache_max_entries: int = 32
 
 
 def load_runtime_config() -> RuntimeConfig:
@@ -92,9 +130,13 @@ def load_runtime_config() -> RuntimeConfig:
     default_piper_root = default_tts_root / "piper_models"
     default_xtts_root = default_tts_root / "xtts"
 
+    host = str(os.getenv("SENTRYBOT_TTS_HOST", os.getenv("SENTRYBOT_HOST", "127.0.0.1"))).strip() or "127.0.0.1"
+    port = _int_env("SENTRYBOT_TTS_PORT", _int_env("SENTRYBOT_PORT", 5000, minimum=1), minimum=1)
+    max_upload_mb = _int_env("SENTRYBOT_TTS_MAX_UPLOAD_MB", 25, minimum=1)
+
     cfg = RuntimeConfig(
-        host=str(os.getenv("SENTRYBOT_TTS_HOST", os.getenv("SENTRYBOT_HOST", "127.0.0.1"))).strip() or "127.0.0.1",
-        port=int(os.getenv("SENTRYBOT_TTS_PORT", os.getenv("SENTRYBOT_PORT", "5000"))),
+        host=host,
+        port=port,
         auth_token=str(os.getenv("SENTRYBOT_TTS_AUTH_TOKEN", "")).strip(),
         tts_root=str(env_path("SENTRYBOT_TTS_ROOT", default_tts_root)),
         piper_root=str(env_path("SENTRYBOT_PIPER_ROOT", default_piper_root)),
@@ -110,12 +152,15 @@ def load_runtime_config() -> RuntimeConfig:
             os.getenv("SENTRYBOT_PIPER_MODELS_SOURCE_URL", PIPER_MODELS_SOURCE_URL)
         ).strip()
         or PIPER_MODELS_SOURCE_URL,
-        bootstrap_timeout_sec=float(os.getenv("SENTRYBOT_BOOTSTRAP_TIMEOUT", "300")),
+        bootstrap_timeout_sec=_float_env("SENTRYBOT_BOOTSTRAP_TIMEOUT", 300.0, minimum=1.0),
         ollama_tags_endpoint=str(
             os.getenv("SENTRYBOT_OLLAMA_TAGS_ENDPOINT", default_ollama_tags_endpoint())
         ).strip(),
         ollama_chat_endpoint="",
-        ollama_timeout_sec=float(os.getenv("SENTRYBOT_OLLAMA_TIMEOUT", "15")),
+        ollama_timeout_sec=_float_env("SENTRYBOT_OLLAMA_TIMEOUT", 15.0, minimum=0.5),
+        max_upload_bytes=max_upload_mb * 1024 * 1024,
+        synth_timeout_sec=_float_env("SENTRYBOT_TTS_SUBPROCESS_TIMEOUT", 60.0, minimum=1.0),
+        wav_cache_max_entries=_int_env("SENTRYBOT_TTS_CACHE_SIZE", 32, minimum=0),
     )
     cfg.ollama_chat_endpoint = normalize_ollama_chat_endpoint(cfg.ollama_tags_endpoint)
     return cfg
