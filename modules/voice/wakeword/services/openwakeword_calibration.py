@@ -38,29 +38,23 @@ class OpenWakewordCalibrationMixin:
     _verifier: Any
     _model: Any
 
-    def _parse_audio(self, chunk: bytes) -> Optional[np.ndarray]:
-        if np is None:
+    def _parse_audio(self, chunk: bytes, sample_width: int = 2) -> Optional[np.ndarray]:
+        if np is None or not chunk:
             return None
-        audio = None
         try:
-            audio16 = np.frombuffer(chunk, dtype=np.int16)
-            if audio16.size > 0:
-                audio = audio16
+            if sample_width == 4 and len(chunk) >= 4:
+                audio32 = np.frombuffer(chunk, dtype=np.int32)
+                audio = (audio32 >> 16).astype(np.int16)
+            else:
+                usable = (len(chunk) // 2) * 2
+                if usable <= 0:
+                    return None
+                audio = np.frombuffer(chunk[:usable], dtype=np.int16)
         except Exception:
-            audio = None
-        if audio is None or audio.size == 0:
-            if len(chunk) % 4 == 0:
-                try:
-                    audio32 = np.frombuffer(chunk, dtype=np.int32)
-                    audio = (audio32 >> 16).astype(np.int16)
-                except Exception:
-                    audio = None
-        if audio is None or audio.size == 0:
-            try:
-                audio = np.frombuffer(chunk, dtype=np.int16)
-            except Exception:
-                logger.debug("openwakeword: failed to interpret audio chunk bytes")
-                return None
+            logger.debug("openwakeword: failed to interpret audio chunk bytes")
+            return None
+        if audio.size == 0:
+            return None
         if self._input_channels >= 2 and audio.size >= 2:
             ch0 = audio[0::self._input_channels].astype(np.int32)
             ch1 = audio[1::self._input_channels].astype(np.int32)
