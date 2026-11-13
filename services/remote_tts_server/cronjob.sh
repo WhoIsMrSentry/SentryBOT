@@ -5,7 +5,7 @@
 #
 # To add to crontab, run: crontab -e
 # Then add the following line to run this check every 5 minutes:
-# */5 * * * * /path/to/SentryBOT/tools/remote_tts_server/cronjob.sh >> /var/log/sentrybot_tts_cron.log 2>&1
+# */5 * * * * /path/to/SentryBOT/services/remote_tts_server/cronjob.sh >> /var/log/sentrybot_tts_cron.log 2>&1
 
 PORT=5000
 HOST="http://localhost:$PORT"
