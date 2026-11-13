@@ -80,7 +80,10 @@ def _transcript_score(text: str, target_lang: str) -> float:
 
 def _decode_pcm(recognizer: Recognizer, pcm: bytes) -> str:
     try:
-        return str(recognizer.recognize_pcm(pcm) or "").strip()
+        raw = recognizer.recognize_pcm(pcm)
+        if isinstance(raw, (tuple, list)):
+            raw = raw[0] if raw else ""
+        return str(raw or "").strip()
     except FileNotFoundError:
         lang = getattr(getattr(recognizer, "cfg", None), "language", "?")
         logger.warning("%s STT model missing; skipping dual-decode for that language", lang)
@@ -147,11 +150,8 @@ def resolve_stt_text_and_language(
         if not cand:
             continue
         score = _transcript_score(cand, lang)
-        if score > best_score + (0.0 if lang == primary_lang else dual_decode_margin * 0.5):
-            best_score = score
-            best_lang = lang
-            best_text = cand
-        elif score > best_score:
+        margin = 0.0 if lang == primary_lang else max(0.0, float(dual_decode_margin)) * 0.5
+        if score > best_score + margin:
             best_score = score
             best_lang = lang
             best_text = cand
