@@ -123,16 +123,13 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         }
 
     last: dict | None = {"text": None, "language": getattr(service, "source_language", "tr"), "ts": 0.0}
-    last_nonempty_text = ""
     last_partial_text = ""
     last_partial_ts = 0.0
-    last_vu_emit_ts = 0.0
     speaking = False
     speaking_lock = Lock()
-    vu_stop = threading.Event()
-    vu_thread: threading.Thread | None = None
-    _final_timer: threading.Timer | None = None
     _pending_text = ""
+    _pending_language = ""
+    _pending_already_transcribed = False
 
     def _mark_speaking(val: bool) -> bool:
         nonlocal speaking
@@ -150,33 +147,24 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         t.daemon = True
         t.start()
 
-    def _vu_loop():
-        while not vu_stop.is_set():
-            time.sleep(0.1)
-
-    def _start_vu_monitor():
-        nonlocal vu_thread
-        if vu_thread is None or not vu_thread.is_alive():
-            vu_stop.clear()
-            vu_thread = threading.Thread(target=_vu_loop, daemon=True)
-            vu_thread.start()
-
-    def _stop_vu_monitor():
-        vu_stop.set()
-
-    _pending_language = ""
-
     def _execute_final():
-        nonlocal last, last_nonempty_text, _pending_text, _pending_language, last_partial_text
+        nonlocal last, _pending_text, _pending_language, _pending_already_transcribed, last_partial_text
         text = _pending_text
         language = _pending_language or getattr(service, "source_language", "tr")
+        already_transcribed = _pending_already_transcribed
         _pending_text = ""
         _pending_language = ""
+        _pending_already_transcribed = False
         if not text:
             return
-            
+
         if hasattr(service, "finalize_stt"):
-            fin_text, fin_lang = service.finalize_stt(text)
+            try:
+                fin_text, fin_lang = service.finalize_stt(
+                    text, language=language, already_transcribed=already_transcribed
+                )
+            except TypeError:
+                fin_text, fin_lang = service.finalize_stt(text)
             if fin_text:
                 text = fin_text
             if fin_lang:
@@ -194,8 +182,6 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         if hasattr(service, "source_language"):
             service.source_language = language
 
-        if text:
-            last_nonempty_text = text
         voice_hint = getattr(service, "last_voice_speaker", None)
         last = {
             "text": text or None,
@@ -230,7 +216,7 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
             _schedule_speech_end()
 
     def _cb(r):
-        nonlocal last, last_partial_text, last_partial_ts, last_nonempty_text, last_vu_emit_ts, _final_timer, _pending_text, _pending_language
+        nonlocal last, last_partial_text, last_partial_ts, _pending_text, _pending_language, _pending_already_transcribed
         now = time.time()
         if hasattr(service, "is_stt_suppressed") and service.is_stt_suppressed():
             return
@@ -238,20 +224,14 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         r_lang = getattr(r, "language", None)
         if r_lang:
             _pending_language = str(r_lang)
+            _pending_already_transcribed = True
 
         if r.is_final:
             if not text and not _pending_text:
                 return
             _pending_text = text or _pending_text
-            if _final_timer:
-                _final_timer.cancel()
-                _final_timer = None
             _execute_final()
         else:
-            if _final_timer:
-                _final_timer.cancel()
-                _final_timer = None
-
             if text and contains_wakeword(text):
                 remainder = strip_wakewords(text)
                 if len(remainder.split()) < 2:
@@ -289,7 +269,6 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         if hasattr(service, "clear_utterance_buffer"):
             service.clear_utterance_buffer()
         service.start_background(on_result=_cb)
-        _start_vu_monitor()
         logger.info("speech start handled (listening=%s)", service.listening)
         if not was_listening:
             _emit_speech_event("speech.listen.start")
@@ -297,7 +276,6 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
 
     @router.post("/speech/stop")
     async def stop():
-        _stop_vu_monitor()
         service.stop()
         _emit_speech_event("speech.listen.end")
         if _mark_speaking(False):
