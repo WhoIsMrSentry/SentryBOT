@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Dict, Iterator, Optional
 
 from .schema import SCHEMA_VERSION, get_ddl
+from .utils import backup_sqlite_connection, resolve_repo_path
 from .repositories.persons import PersonsRepo
 from .repositories.face_descriptors import FaceDescriptorsRepo
 from .repositories.sightings import SightingsRepo
@@ -31,12 +32,8 @@ from .repositories.world_memory import WorldMemoryRepo
 
 logger = logging.getLogger("social_db")
 
-_DEFAULT_LOCK = threading.Lock()
+_DEFAULT_LOCK = threading.RLock()
 _DEFAULT: Optional["SocialDB"] = None
-
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
 
 
 class SocialDB:
@@ -53,6 +50,8 @@ class SocialDB:
     ) -> None:
         self.path = self._resolve_path(path)
         self._lock = threading.RLock()
+        self._closed = False
+        self._tx_depth = threading.local()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(
             str(self.path),
@@ -95,24 +94,36 @@ class SocialDB:
         return {"purged_sightings": s_count, "purged_interaction_events": i_count}
 
     def close(self) -> None:
+        global _DEFAULT
         with self._lock:
+            self._closed = True
             try:
                 self._conn.close()
             except Exception:
                 pass
+        with _DEFAULT_LOCK:
+            if _DEFAULT is self:
+                _DEFAULT = None
 
     @staticmethod
     def _resolve_path(path: str | Path) -> Path:
-        p = Path(path)
-        if p.is_absolute():
-            return p
-        return (_project_root() / p).resolve()
+        return resolve_repo_path(path)
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """Run a block under an exclusive transaction. Reuses the shared connection."""
+        """Run a block under an exclusive transaction; supports re-entrant nesting via thread-local _tx_depth."""
         with self._lock:
+            depth = int(getattr(self._tx_depth, "count", 0))
+            if depth > 0:
+                self._tx_depth.count = depth + 1
+                try:
+                    yield self._conn
+                finally:
+                    self._tx_depth.count = depth
+                return
+
             cur = self._conn.cursor()
+            self._tx_depth.count = 1
             try:
                 cur.execute("BEGIN IMMEDIATE")
                 yield self._conn
@@ -124,7 +135,12 @@ class SocialDB:
                     pass
                 raise
             finally:
+                self._tx_depth.count = 0
                 cur.close()
+
+    def backup(self, dest_path: str | Path) -> Path:
+        """Create a consistent online SQLite backup using Connection.backup()."""
+        return backup_sqlite_connection(self._conn, self._lock, dest_path)
 
     def execute(self, sql: str, params: tuple | list | dict = ()) -> sqlite3.Cursor:
         with self._lock:
@@ -164,14 +180,15 @@ class SocialDB:
             "rituals",
             "interaction_events",
             "owner_sessions",
-            "world_memory",
+            ("world_memory", "world_memories"),
         )
         for tbl in tables:
+            key, sql_tbl = tbl if isinstance(tbl, tuple) else (tbl, tbl)
             try:
-                row = self.fetchone(f"SELECT COUNT(*) AS n FROM {tbl}")
-                out[tbl] = int(row["n"]) if row else 0
+                row = self.fetchone(f"SELECT COUNT(*) AS n FROM {sql_tbl}")
+                out[key] = int(row["n"]) if row else 0
             except Exception:
-                out[tbl] = 0
+                out[key] = 0
         out["schema_version"] = SCHEMA_VERSION
         return out
 
@@ -181,6 +198,10 @@ class SocialDB:
             try:
                 for stmt in get_ddl():
                     cur.execute(stmt)
+                try:
+                    cur.execute("ALTER TABLE world_memories ADD COLUMN expiry REAL NOT NULL DEFAULT 0.0")
+                except sqlite3.OperationalError:
+                    pass
                 cur.execute(
                     "INSERT OR IGNORE INTO schema_version(version, applied_at) VALUES (?, ?)",
                     (SCHEMA_VERSION, time.time()),
@@ -190,8 +211,11 @@ class SocialDB:
 
 
 def get_default() -> Optional[SocialDB]:
-    """Return the process-wide default :class:`SocialDB`, if registered."""
+    """Return the process-wide default :class:`SocialDB`, if registered and open."""
+    global _DEFAULT
     with _DEFAULT_LOCK:
+        if _DEFAULT is not None and getattr(_DEFAULT, "_closed", False):
+            _DEFAULT = None
         return _DEFAULT
 
 
@@ -205,9 +229,10 @@ def reset_default() -> None:
     """Clear the process-wide default. Used by tests."""
     global _DEFAULT
     with _DEFAULT_LOCK:
-        if _DEFAULT is not None:
-            try:
-                _DEFAULT.close()
-            except Exception:
-                pass
+        db = _DEFAULT
         _DEFAULT = None
+    if db is not None:
+        try:
+            db.close()
+        except Exception:
+            pass
