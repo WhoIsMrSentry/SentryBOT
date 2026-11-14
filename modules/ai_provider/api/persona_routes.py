@@ -1,14 +1,26 @@
 from __future__ import annotations
+
 import logging
 import os
+import threading
 from typing import Any, List
-from fastapi import APIRouter
+from urllib.parse import urlparse
+
+from fastapi import APIRouter, HTTPException
 import requests
 
-from modules.ai_provider.api._helpers import persona_dir, load_persona_text, should_use_persona_model
+from modules.ai_provider.api._helpers import (
+    DEFAULT_PERSONA_DIR,
+    load_persona_text,
+    persona_base_dir,
+    persona_dir,
+    should_use_persona_model,
+    validate_persona_name,
+)
 from modules.ai_provider.services.chat import OllamaChatService
 
 logger = logging.getLogger("ollama.api")
+_MAX_PERSONA_BYTES = 256 * 1024
 
 
 def get_persona_router(
@@ -21,31 +33,42 @@ def get_persona_router(
     runtime: dict,
 ) -> APIRouter:
     r = APIRouter(tags=["ollama-persona"])
+    rt_lock = runtime.setdefault("_lock", threading.RLock())
 
     @r.get("/persona")
     def get_persona():
-        return {"ok": True, "active": runtime["active_persona"], "persona": runtime["persona_text"][:4096]}
+        with rt_lock:
+            return {
+                "ok": True,
+                "active": runtime["active_persona"],
+                "persona": runtime["persona_text"][:4096],
+            }
 
     @r.get("/personas")
     def list_personas() -> dict:
-        base = str(cfg.get("persona", {}).get("dir", "modules/ollama/config/personalities"))
+        base = persona_base_dir(cfg)
         items: List[str] = []
-        if os.path.exists(base):
-            for name in os.listdir(base):
-                if os.path.isdir(os.path.join(base, name)):
-                    items.append(name)
-        return {"ok": True, "items": items, "active": runtime["active_persona"]}
+        if base.exists():
+            for entry in sorted(base.iterdir()):
+                if entry.is_dir():
+                    items.append(entry.name)
+        with rt_lock:
+            active = runtime["active_persona"]
+        return {"ok": True, "items": items, "active": active}
 
     @r.post("/persona/select")
     def select_persona(name: str):
-        pdir = persona_dir(cfg, name)
+        try:
+            safe_name = validate_persona_name(name)
+            pdir = persona_dir(cfg, safe_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
         path = os.path.join(pdir, "persona.txt")
         if not os.path.exists(path):
             return {"ok": False, "error": "persona not found"}
 
-        runtime["active_persona"] = str(name)
-        raw_content = load_persona_text(cfg, name)
-
+        raw_content = load_persona_text(cfg, safe_name)
         if "FROM " in raw_content and "SYSTEM " in raw_content:
             modelfile = raw_content
         else:
@@ -54,27 +77,32 @@ def get_persona_router(
 
         success = False
         if provider_name == "ollama" and not single_model_mode and use_persona_models:
-            success = client.create_model(name, modelfile)
+            success = client.create_model(safe_name, modelfile)
             if not success:
-                logger.error(f"Failed to create model for persona {name}")
+                logger.error("Failed to create model for persona %s", safe_name)
         elif provider_name == "ollama":
-            logger.info("Persona model creation disabled (single_model_mode/use_persona_models) for '%s'.", name)
+            logger.info("Persona model creation disabled (single_model_mode/use_persona_models) for '%s'.", safe_name)
 
-        runtime["persona_text"] = raw_content
-        runtime["_persona_cache"][name] = raw_content
-
-        chat = OllamaChatService(
-            client,
-            persona_name=runtime["active_persona"],
-            max_history=6,
-            use_persona_as_model=should_use_persona_model(provider_name, single_model_mode, use_persona_models),
-            num_predict=ollama_num_predict,
-        )
-        runtime["chat"] = chat
+        use_persona_flag = should_use_persona_model(provider_name, single_model_mode, use_persona_models)
+        with rt_lock:
+            runtime["active_persona"] = safe_name
+            runtime["persona_text"] = raw_content
+            runtime["_persona_cache"][safe_name] = raw_content
+            existing_chat = runtime.get("chat")
+            if existing_chat is not None and hasattr(existing_chat, "update_persona"):
+                existing_chat.update_persona(safe_name, use_persona_flag)
+            else:
+                runtime["chat"] = OllamaChatService(
+                    client,
+                    persona_name=safe_name,
+                    max_history=6,
+                    use_persona_as_model=use_persona_flag,
+                    num_predict=ollama_num_predict,
+                )
 
         return {
             "ok": True,
-            "active": name,
+            "active": safe_name,
             "provider": provider_name,
             "model_created": success if provider_name == "ollama" else None,
             "single_model_mode": single_model_mode,
@@ -82,14 +110,30 @@ def get_persona_router(
 
     @r.post("/persona/create_from_url")
     def create_persona_from_url(name: str, url: str):
-        base = str(cfg.get("persona", {}).get("dir", "modules/ollama/config/personalities"))
-        pdir = os.path.join(base, name)
+        try:
+            safe_name = validate_persona_name(name)
+            pdir = persona_dir(cfg or {"persona": {"dir": DEFAULT_PERSONA_DIR}}, safe_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        parsed = urlparse(str(url or "").strip())
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            raise HTTPException(status_code=400, detail="Only http(s) URLs with valid host are allowed")
+
+        try:
+            resp = requests.get(parsed.geturl(), timeout=10.0)
+            resp.raise_for_status()
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch persona URL: {exc}") from exc
+
+        raw_bytes = resp.content or resp.text.encode("utf-8", errors="replace")
+        if len(raw_bytes) > _MAX_PERSONA_BYTES:
+            raise HTTPException(status_code=413, detail="Persona URL content exceeds size limit")
+
         os.makedirs(pdir, exist_ok=True)
-        resp = requests.get(url)
-        resp.raise_for_status()
         with open(os.path.join(pdir, "persona.txt"), "w", encoding="utf-8") as f:
             f.write(resp.text)
         open(os.path.join(pdir, "urls.txt"), "a", encoding="utf-8").close()
-        return {"ok": True, "name": name}
+        return {"ok": True, "name": safe_name}
 
     return r
