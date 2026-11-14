@@ -149,6 +149,7 @@ _DDL: tuple[str, ...] = (
         observation_count INTEGER NOT NULL DEFAULT 1,
         first_seen REAL NOT NULL,
         last_seen REAL NOT NULL,
+        expiry REAL NOT NULL DEFAULT 0.0,
         location TEXT NOT NULL DEFAULT '',
         tags_json TEXT NOT NULL DEFAULT '[]'
     )
