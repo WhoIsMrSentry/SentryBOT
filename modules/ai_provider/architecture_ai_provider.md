@@ -14,11 +14,11 @@
 
 Modülün temel sorumlulukları şunlardır:
 
-1. **Çoklu Sağlayıcı ve Geri Çekilme (Multi-Provider & Fallback):** Yerel Ollama sunucusunu (`http://127.0.0.1:11434`) birincil motor olarak koşturur. Bulut profili seçildiğinde veya yerel kaynaklar yetersiz kaldığında Google AI Studio (Gemini) REST API'sine şeffaf geçiş yapar; bulut anahtarı geçersizse otomatik olarak yerel Ollama motoruna geri döner.
-2. **Öncelikli Çıkarım Zamanlayıcısı (`PriorityInferenceLock`):** Kullanıcının sesli komutları (Öncelik 0 - yüksek), normal sohbet istekleri (Öncelik 1 - orta) ve robotun boşta çalışırken ürettiği içsel/otonom düşünceleri (Öncelik 2 - düşük) bir öncelik kuyruğunda (`heapq`) sıraya dizer. Kullanıcı konuştuğunda arka plan otonom düşüncelerinin kullanıcı yanıtını geciktirmesini engeller.
-3. **Yapılandırılmış Çıktı ve Eylem Yürütme (Structured Actions & Tag Extraction):** Modelden dönen metinleri `SentryResponse` Pydantic şemasıyla doğrular; şema dışı veya kısmi JSON yanıtlarında düzenli ifadelerle (`extract_llm_tags`) XML benzeri etiketleri (`<action>`, `<emotion>`) ayrıştırır ve Gateway üzerindeki eylem motoruna (`/actions/execute`) iletir.
-4. **Kişilik ve Karakter Yönetimi (Persona Management):** `sentry` ve `glados` gibi kişilik tanımlarını diskten dinamik olarak okur, sistem komutlarına enjekte eder ve istendiğinde tek komutla yeni Ollama modelleri derler (`create_model`).
-5. **Çift Yönlü Çeviri Köprüsü (`OllamaTranslator`):** Türkçe ve İngilizce arasındaki dil ayrımını sezgisel olarak tespit eder, istemleri gerektiğinde modele uygun dile çevirir ve bellek içi önbellek (`_cache`) ile gecikmesiz çalışır.
+1. **Yerel Ollama Yönlendirmesi & Devre Kesici:** Tüm canlı çıkarımlar kalıcı HTTP `requests.Session` kullanan `OllamaClient` üzerinden yürütülür (`think=False` ve zaman aşımı zorunlu). Geçici ağ/5xx hatalarında `_CircuitBreaker` açılarak ölü köprülerde gereksiz beklemeyi önler; devre dışı `GoogleAIStudioClient` uyumluluk stub'ı başlangıçta reddedilip Ollama'ya yönlendirilir.
+2. **Öncelikli Çıkarım Zamanlayıcısı (`PriorityInferenceLock`):** `(priority, itertools.count(), threading.Event)` yığını ile aynı saat tikinde bile Deterministik FIFO ve `TypeError` korumalı öncelik sırası sunar.
+3. **Yapılandırılmış Çıktı, SSE Akışı & Eylem Yönlendirme:** `/ollama/chat` `structured=True` olduğunda `SentryResponse.model_json_schema()` şemasını, `stream=True` olduğunda NDJSON/SSE token akışını kullanır; eylemleri `@gateway/...` çözümlemeli kalıcı `requests.Session` ile iletir.
+4. **Thread-Safe Bellek, Kişilik & Model Paylaşımı:** `runtime["_lock"]` altındaki paylaşımlı bağlam `/persona/select`, `/model/add` ve `/runtime/num_predict` değişikliklerini anında `/chat` ve `/healthz`'e yansıtır; kişi adları path traversal doğrulamasından geçer.
+5. **DRY Konfigürasyon & Çeviri Önbelleği (`OllamaTranslator`):** `config_loader.py` doğrudan `modules.common.config_loader.load_ai_provider_config()`'e delege eder (`single_model_mode` / `allowed_models` YAML destekli); `OllamaTranslator` kilit korumalı LRU `_cache`/`_detect_cache` kullanır.
 
 ---
 
@@ -43,14 +43,12 @@ flowchart TD
     PERSONA --> BLD_PROMPT["Sistem İstemi + Geçmiş + Kullanıcı Girdisi"]:::logic
     BLD_PROMPT --> FACTORY["create_llm_client (Sağlayıcı Seçimi)"]:::client
 
-    FACTORY -->|provider='google' & valid_key| GOOGLE_CLI["GoogleAIStudioClient (Gemini-2.5-Flash)"]:::client
-    FACTORY -->|provider='ollama' veya fallback| OLLAMA_CLI["OllamaClient (qwen3.5:9b)"]:::client
+    FACTORY -->|provider='google' (DISABLED=True)| FALLBACK["Router Fallback -> OllamaClient"]:::client
+    FACTORY -->|provider='ollama'| OLLAMA_CLI["OllamaClient (Session + Breaker)"]:::client
+    FALLBACK --> OLLAMA_CLI
 
-    GOOGLE_CLI -->|REST generateContent| GOOGLE_API["Google AI Studio API"]:::ext
-    OLLAMA_CLI -->|HTTP POST /api/chat\n(Retry: 2 Deneme)| OLLAMA_API["Yerel Ollama Daemon (:11434)"]:::ext
-
-    GOOGLE_API --> RAW_RESP["Ham LLM Yanıtı"]:::client
-    OLLAMA_API --> RAW_RESP
+    OLLAMA_CLI -->|HTTP POST /api/chat\n(stream/think=False/timeout)| OLLAMA_API["Ollama Daemon (:11434)"]:::ext
+    OLLAMA_API --> RAW_RESP["Ham / Akış LLM Yanıtı"]:::client
 
     RAW_RESP --> PYDANTIC{"Pydantic JSON Ayrıştırma\n(SentryResponse)"}:::parse
     PYDANTIC -->|Geçerli JSON| STRUCT_OK["Yapılandırılmış Yanıt\n(thoughts, speech, actions)"]:::parse
@@ -121,22 +119,14 @@ class LLMClientProtocol(Protocol):
   - `priority = 0`: Sesli kullanıcı komutu (En yüksek öncelik).
   - `priority = 1`: Standart sohbet / REST sorgusu.
   - `priority = 2`: Arka plan içsel düşünceleri (Düşük öncelik).
-  - **İç Mantık:** Dahili `heapq` kullanarak sıralanmış `(priority, timestamp, threading.Event)` çiftlerini tutar. Kilit boşa çıktığında en düşük sayısal değerli (en yüksek öncelikli) olayı tetikler.
+  - **İç Mantık:** Dahili `heapq` kullanarak `(priority, itertools.count(), threading.Event)` üçlülerini tutar; aynı zaman dilimindeki eşzamanlı isteklerde deterministik FIFO sağlar.
 
-#### `OllamaClient`
-- `__init__(base_url: str, model: str, request_timeout: float = 60.0)`:
-  - `base_url`: `normalize_ollama_url()` ile biçimlendirilir. Gateway self-URL'leri (`:8080`) döngü kilitlenmelerini önlemek amacıyla kesinlikle reddedilir.
-- `chat(messages, format=None, options=None, model=None, priority=1) -> Dict[str, Any]`:
-  - **Dirençli Yeniden Deneme (Resilient Retry):** Ağ hatası (`requests.exceptions.ConnectionError`) veya zaman aşımında 200 ms bekleyip 1 kez daha dener (toplam 2 deneme).
-  - Yanıttan `content` metnini ayıklar ve standart `{"message": {"content": ...}, "raw": ...}` formatında döner.
-- `is_alive(timeout: float = 2.0) -> bool`: `/api/version` ve `/api/tags` uç noktalarını yoklayarak daimonun ayakta olduğunu doğrular.
-- `list_models() -> List[str]`: Ollama'da yüklü model adlarını listeler.
-- `pull_model(name: str) -> bool`: Model indirme isteği atar (`/api/pull`).
-- `create_model(name: str, modelfile: str) -> bool`: Özel Modelfile içeriği ile model derler (`/api/create`).
+#### `OllamaClient` & `_CircuitBreaker`
+- Tek birleşik HTTP `requests.Session` yolu üzerinden çalışır (`think=False`, zorunlu `request_timeout`); yedekli `ollama.Client` çift çıkarım yolu kaldırılmıştır.
+- `chat(...)` & `chat_stream(...)`: NDJSON token akışı, 1 geçici bağlantı tekrar denemesi ve `cb_failure_threshold`/`cb_recovery_timeout_s` parametreleriyle `CircuitOpenError` hızlı devresi sağlar.
 
 #### `GoogleAIStudioClient` (`services/google_ai_client.py`)
-- `_sanitize_google_api_key(raw_value: Any) -> str`: `your-api-key`, `changeme`, `replace_me` gibi yer tutucu anahtarları tespit edip reddeder.
-- `chat(...)`: Google AI Studio `v1beta/models/{model}:generateContent` REST uç noktasına istek atar. Gelen JSON içerisindeki `candidates[0].content.parts[0].text` bloğunu standart `message.content` yapısına uyarlar.
+- `DISABLED = True`: Devre dışı uyumluluk stub'ıdır (`ProviderDisabledError` yükseltir); `router.py` başlangıçta yerel Ollama'ya düşer, `health.py` `provider_disabled` raporlar.
 
 #### `create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]`
 - `cfg["llm"]["provider"]` değerini inceler (`"google"` veya `"ollama"`).
@@ -170,15 +160,14 @@ class LLMClientProtocol(Protocol):
 ### 3.4 `models/sentry_schema.py` (Pydantic Modelleri)
 
 ```python
-class ActionCall(BaseModel):
-    name: str                   # Eylem adı: "nod_head", "look_around", "change_face"
-    parameters: Dict[str, Any] = Field(default_factory=dict)
+class RobotAction(BaseModel):
+    type: str
+    attrs: Dict[str, Any] = Field(default_factory=dict)
 
 class SentryResponse(BaseModel):
-    thoughts: str = ""          # Robotun içsel akıl yürütmesi (hoparlörden okunmaz)
-    speech: str = ""            # Robotun seslendireceği nihai yanıt
-    emotion: str = "neutral"    # Yüz ifadesi: "happy", "curious", "sad", "angry"
-    actions: List[ActionCall] = Field(default_factory=list)
+    text: str
+    thoughts: str
+    actions: List[RobotAction] = Field(default_factory=list)
 ```
 
 ---
@@ -189,15 +178,15 @@ Tüm API rotaları varsayılan olarak `/ollama` öneki altındadır:
 
 | Metot | Uç Nokta | Açıklama | Parametreler / Gövde |
 |---|---|---|---|
-| `POST` | `/ollama/chat` | Öncelikli sohbet ve çıkarım | `{"text": "Merhaba", "persona": "sentry", "priority": 0, "apply_actions": true}` |
-| `POST` | `/ollama/generate` | Geçmişsiz tek seferlik metin üretimi | `{"prompt": "Özetle...", "model": "qwen3.5:9b"}` |
-| `POST` | `/ollama/stream` | Token akışı (SSE streaming) | `{"text": "Detaylı anlat...", "priority": 1}` |
-| `GET` | `/ollama/health` | LLM motoru ve model doğruluk kontrolü | Yanıt: `{"status": "ok", "provider": "ollama", "model_available": true}` |
-| `GET` | `/ollama/persona` | Aktif ve yüklü kişilik listesi | Yanıt: `{"active": "sentry", "available": ["sentry", "glados"]}` |
-| `POST` | `/ollama/persona/set` | Aktif kişiliği değiştirir | `{"persona": "glados"}` |
-| `POST` | `/ollama/persona/create` | Yeni Modelfile derler | `{"name": "sentry_v2", "modelfile": "FROM qwen3.5:9b..."}` |
-| `GET` | `/ollama/models` | Yüklü Ollama modellerini listeler | Yanıt: `{"models": ["qwen3.5:9b", "llama3.2:3b"]}` |
-| `POST` | `/ollama/models/pull` | Yeni modeli yerel daemona indirir | `{"name": "qwen3.5:9b"}` |
+| `GET`/`POST` | `/ollama/chat` | Öncelikli sohbet (`structured=true` -> `SentryResponse`, `stream=true` -> SSE) | `?query=...&structured=false&stream=false` |
+| `POST` | `/ollama/translate` | TR/EN köprü çevirisi | `?text=...&source_lang=auto&target_lang=en` |
+| `POST` | `/ollama/runtime/num_predict` | Dinamik token üst sınırını günceller (`min 48`) | `{"num_predict": 120}` |
+| `GET` | `/ollama/healthz` | LLM motoru, model ve `circuit_breaker` durumu | `{"ok": true, "provider": "ollama", "model_available": true}` |
+| `GET` | `/ollama/persona`, `/ollama/personas` | Aktif kişiliği ve diskteki kişilik listesini döner | `{"ok": true, "items": ["sentry"]}` |
+| `POST` | `/ollama/persona/select` | Güvenli ad doğrulamasıyla aktif kişiliği seçer | `?name=sentry` |
+| `POST` | `/ollama/persona/create_from_url` | `http(s)` URL'den kişilik metni indirir | `?name=...&url=https://...` |
+| `GET` | `/ollama/models` | Yüklü Ollama modellerini ve aktif modeli listeler | `{"ok": true, "items": [...], "active": "..."}` |
+| `POST` | `/ollama/model/add`, `/ollama/warmup` | Yeni model çeker (`pull`) veya önyükler | `?name=qwen3.5:9b&set_default=true` |
 
 ---
 
