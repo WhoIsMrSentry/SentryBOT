@@ -24,6 +24,7 @@ _FAILURE_MARKERS = (
     "continue with text-only",
     "vision results unavailable",
     "no known locations",
+    "görüntü işleme gecikti",
 )
 
 _VISION_SUCCESS_MARKERS = (
@@ -34,7 +35,6 @@ _VISION_SUCCESS_MARKERS = (
     "hazards:",
     "importance:",
     "visual context refreshed",
-    "görüntü işleme gecikti",
     "önümde",
 )
 
