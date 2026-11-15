@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from .config_loader import load_config
@@ -33,12 +35,20 @@ class xAgentCoreService:
 
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
-    app = FastAPI(title="Agent Core Service")
-
     agent = AgentOrchestrator(cfg)
-    agent.start()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        agent.start()
+        try:
+            yield
+        finally:
+            agent.stop()
+
+    app = FastAPI(title="Agent Core Service", lifespan=lifespan)
 
     from .api.router import get_router
+
     app.include_router(get_router(agent))
 
     return app
