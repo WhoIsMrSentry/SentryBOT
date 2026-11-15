@@ -59,6 +59,30 @@ class CapabilityIndex:
         }
         self._registry = registry if isinstance(registry, dict) else {}
         self._registry_caps = self._extract_registry_capabilities(self._registry)
+        self._registry_cap_count = len(self._registry_caps)
+        self._tool_risks: Dict[str, str] = self._build_tool_risk_cache()
+
+    def _build_tool_risk_cache(self) -> Dict[str, str]:
+        rank_map = {"none": 0, "low": 1, "semantic": 1, "medium": 2, "high": 3, "critical": 4}
+        cache: Dict[str, str] = {}
+        for tool_name, caps in self._tool_caps.items():
+            best_risk = "unknown"
+            best_score = 9
+            for cap in caps:
+                meta = self._registry_caps.get(cap)
+                if not isinstance(meta, dict):
+                    continue
+                risk = str(meta.get("risk") or "unknown").strip().lower()
+                score = rank_map.get(risk, 9)
+                if score < best_score:
+                    best_score = score
+                    best_risk = risk
+            cache[tool_name] = best_risk
+        return cache
+
+    @property
+    def registry_capability_count(self) -> int:
+        return self._registry_cap_count
 
     @staticmethod
     def _extract_registry_capabilities(registry: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -139,6 +163,25 @@ class CapabilityIndex:
                 break
         return selected
 
+    def _tool_risk_for_capability(self, tool_name: str, capability: str) -> str:
+        caps = self._tool_caps.get(tool_name, [])
+        matching_risks: List[str] = []
+        for cap in caps:
+            if cap == capability or cap.startswith(capability):
+                meta = self._registry_caps.get(cap)
+                if isinstance(meta, dict) and meta.get("risk"):
+                    matching_risks.append(str(meta["risk"]).strip().lower())
+        if matching_risks:
+            risk_order = {"none": 0, "low": 1, "semantic": 1, "medium": 2, "high": 3, "critical": 4}
+            return min(matching_risks, key=lambda r: risk_order.get(r, 9))
+        cached = self._tool_risks.get(tool_name)
+        if cached and cached != "unknown":
+            return cached
+        meta = self._registry_caps.get(capability) or {}
+        if isinstance(meta, dict) and meta.get("risk"):
+            return str(meta["risk"]).strip().lower()
+        return "unknown"
+
     def _rank_candidates(
         self,
         capability: str,
@@ -148,13 +191,11 @@ class CapabilityIndex:
         usable = [c for c in candidates if c in available]
         if not usable:
             return []
-        risk = "unknown"
-        meta = self._registry_caps.get(capability) or {}
-        if isinstance(meta, dict):
-            risk = str(meta.get("risk") or "unknown")
         risk_order = {"none": 0, "low": 1, "semantic": 1, "medium": 2, "high": 3, "critical": 4}
-        # Prefer lower-risk capabilities; tool order is stable alphabetical as tie-break
-        return sorted(usable, key=lambda t: (risk_order.get(risk, 9), t))
+        return sorted(
+            usable,
+            key=lambda t: (risk_order.get(self._tool_risk_for_capability(t, capability), 9), t),
+        )
 
     def capability_gap(
         self,
