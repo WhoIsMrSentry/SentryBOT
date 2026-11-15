@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import OrderedDict
+import copy
 import logging
 import threading
 from typing import Any, Dict, Optional, Sequence, Tuple
@@ -39,6 +41,51 @@ class System1CascadeEngine:
         self._embed_cfg = embed_cfg
         self._tier_counts: Dict[str, int] = {"rules": 0, "embed": 0, "laya": 0, "none": 0}
         self._last_backend = "none"
+        cache_cfg = s1_cfg.get("cache", {}) if isinstance(s1_cfg.get("cache"), dict) else {}
+        self._cache_maxsize = max(0, int(cache_cfg.get("max_entries", 128)))
+        self._cache_lock = threading.Lock()
+        self._intent_cache: "OrderedDict[str, Optional[Any]]" = OrderedDict()
+        self._emotion_cache: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        self._cache_hits = 0
+        self._cache_misses = 0
+
+    def _cache_get_decision(self, key: str) -> Tuple[bool, Optional[Any]]:
+        if self._cache_maxsize <= 0:
+            return False, None
+        with self._cache_lock:
+            if key not in self._intent_cache:
+                return False, None
+            self._intent_cache.move_to_end(key)
+            self._cache_hits += 1
+            cached = self._intent_cache[key]
+            return True, copy.copy(cached) if cached is not None else None
+
+    def _cache_put_decision(self, key: str, decision: Optional[Any]) -> None:
+        if self._cache_maxsize <= 0:
+            return
+        with self._cache_lock:
+            self._cache_misses += 1
+            self._intent_cache[key] = copy.copy(decision) if decision is not None else None
+            self._intent_cache.move_to_end(key)
+            while len(self._intent_cache) > self._cache_maxsize:
+                self._intent_cache.popitem(last=False)
+
+    def invalidate_cache(self) -> None:
+        with self._cache_lock:
+            self._intent_cache.clear()
+            self._emotion_cache.clear()
+
+    def cache_stats(self) -> Dict[str, Any]:
+        with self._cache_lock:
+            total = self._cache_hits + self._cache_misses
+            return {
+                "intent_entries": len(self._intent_cache),
+                "emotion_entries": len(self._emotion_cache),
+                "max_entries": self._cache_maxsize,
+                "hits": self._cache_hits,
+                "misses": self._cache_misses,
+                "hit_rate": round(self._cache_hits / total, 4) if total else 0.0,
+            }
 
     @classmethod
     def get_instance(cls, config: Optional[Dict[str, Any]] = None) -> "System1CascadeEngine":
@@ -90,6 +137,11 @@ class System1CascadeEngine:
         if not cleaned:
             return None
 
+        cache_key = f"{int(self.rules_enabled)}:{int(self._embed_enabled)}:{cleaned.lower()}"
+        hit, cached_decision = self._cache_get_decision(cache_key)
+        if hit:
+            return cached_decision
+
         if self.rules_enabled:
             decision = rules_classify(cleaned, action_proposal_cfg=self._laya.action_proposal_cfg)
             if decision is not None:
@@ -104,6 +156,7 @@ class System1CascadeEngine:
                 self._laya._last_decision_text = cleaned
                 self._laya._record_telemetry(cleaned, decision)
                 self._record("rules")
+                self._cache_put_decision(cache_key, decision)
                 return decision
 
         embed_engine = self.embed if self._embed_enabled else None
@@ -116,6 +169,7 @@ class System1CascadeEngine:
                 self._laya._last_decision_text = cleaned
                 self._laya._record_telemetry(cleaned, decision)
                 self._record("embed")
+                self._cache_put_decision(cache_key, decision)
                 return decision
 
         if getattr(self._laya, "_agent", None) is not None:
@@ -124,9 +178,11 @@ class System1CascadeEngine:
                 self._last_decision_text = cleaned
                 self._laya._last_decision_text = cleaned
                 self._record("laya")
+                self._cache_put_decision(cache_key, decision)
                 return decision
 
         self._record("none")
+        self._cache_put_decision(cache_key, None)
         return None
 
     def decide_with_context(
@@ -236,7 +292,21 @@ class System1CascadeEngine:
         return self._laya.get_fast_ack(language)
 
     def get_affective_reaction(self, affect: str, urgency: float = 0.0) -> Dict[str, Any]:
-        return self._laya.get_affective_reaction(affect, urgency)
+        key = f"{str(affect or '').strip().lower()}:{round(float(urgency or 0.0), 1)}"
+        with self._cache_lock:
+            cached = self._emotion_cache.get(key)
+            if cached is not None:
+                self._emotion_cache.move_to_end(key)
+                self._cache_hits += 1
+                return dict(cached)
+        reaction = self._laya.get_affective_reaction(affect, urgency)
+        if self._cache_maxsize > 0 and isinstance(reaction, dict):
+            with self._cache_lock:
+                self._emotion_cache[key] = dict(reaction)
+                self._emotion_cache.move_to_end(key)
+                while len(self._emotion_cache) > self._cache_maxsize:
+                    self._emotion_cache.popitem(last=False)
+        return reaction
 
     def get_mood_deltas(self, decision: Optional[Any] = None) -> Dict[str, float]:
         return self._laya.get_mood_deltas(decision or self._last_decision())
@@ -255,6 +325,7 @@ class System1CascadeEngine:
         laya_stats["last_backend"] = self._last_backend
         laya_stats["tier_counts"] = dict(self._tier_counts)
         laya_stats["embed_backend"] = embed_stats
+        laya_stats["cache"] = self.cache_stats()
         return laya_stats
 
 
