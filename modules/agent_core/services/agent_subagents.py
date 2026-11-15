@@ -52,13 +52,36 @@ class AgentSubagentsMixin:
             "temperature": profile.temperature,
             "num_predict": profile.num_predict,
         }
-        res = self._chat_turn(profile.model, messages, tools=None, options=options)
-        text = res.get("message", {}).get("content", "")
+        registry = getattr(self, "tool_registry", None)
+        allowed = [str(t) for t in (getattr(profile, "allowed_tools", None) or ()) if str(t).strip()]
+        sub_tools = (
+            registry.get_tool_schema(include=allowed)
+            if registry is not None and allowed and hasattr(registry, "get_tool_schema")
+            else None
+        )
+        actions: List[Dict[str, Any]] = []
+        sub_model = getattr(self, "model", None) or profile.model
+        res = self._chat_turn(sub_model, messages, tools=sub_tools or None, options=options)
+        msg = res.get("message", {}) if isinstance(res, dict) else {}
+        tool_calls = msg.get("tool_calls") or []
+        if tool_calls and registry is not None and hasattr(registry, "execute"):
+            messages.append({"role": "assistant", "content": str(msg.get("content", "") or ""), "tool_calls": tool_calls})
+            for call in tool_calls:
+                fn = (call.get("function") or {}) if isinstance(call, dict) else {}
+                name = str(fn.get("name", "")).strip()
+                args = fn.get("arguments") if isinstance(fn.get("arguments"), dict) else {}
+                if name and (not allowed or name in allowed):
+                    out = registry.execute(name, args)
+                    actions.append({"tool": name, "args": args, "result": out})
+                    messages.append({"role": "tool", "name": name, "content": str(out)})
+            res = self._chat_turn(sub_model, messages, tools=None, options=options)
+            msg = res.get("message", {}) if isinstance(res, dict) else {}
+        text = str(msg.get("content", "") or "")
         return {
             "name": profile.name,
             "text": text,
             "duration_ms": int((time.time() - t0) * 1000),
-            "actions": [],
+            "actions": actions,
         }
 
     def _summarize_actions(self, subagent_reports: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -120,7 +143,7 @@ class AgentSubagentsMixin:
             "num_ctx": self.num_ctx,
         }
 
-        default_model = getattr(self, "default_model", "qwen3.5:9b")
+        default_model = getattr(self, "model", None) or getattr(self, "default_model", "qwen3.5:9b")
         if self.persona_stream_enabled and on_sentence:
             return self._stream_turn_sentence_by_sentence(
                 default_model, messages, tools=None, options=options, on_sentence=on_sentence

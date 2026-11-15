@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import re
 import time
@@ -116,6 +117,19 @@ class AgentStreamingMixin:
         remainder = parts[-1] if len(parts) % 2 == 1 else ""
         return sentences, remainder
 
+    @staticmethod
+    def _chat_accepts_priority(client: Any) -> bool:
+        chat_fn = getattr(client, "chat", None)
+        if chat_fn is None:
+            return False
+        try:
+            sig = inspect.signature(chat_fn)
+        except (TypeError, ValueError):
+            return hasattr(client, "supports_priority")
+        if "priority" in sig.parameters:
+            return True
+        return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
     def _chat_maybe_stream(
         self,
         model: str,
@@ -124,10 +138,9 @@ class AgentStreamingMixin:
         options: Optional[Dict[str, Any]],
         on_sentence: Optional[Callable[..., None]] = None,
     ) -> Dict[str, Any]:
-        if tools:
-            # Native tool-calling must use the normal chat path so Ollama can return tool_calls.
-            return self._chat_turn(model, messages, tools, options)
         if not on_sentence:
+            return self._chat_turn(model, messages, tools, options)
+        if getattr(self, "llm_provider", "ollama") != "ollama":
             return self._chat_turn(model, messages, tools, options)
         # Enable streaming when on_sentence callback is provided unless explicitly forced off
         if getattr(self, "persona_stream_enabled", None) is False:
@@ -147,6 +160,7 @@ class AgentStreamingMixin:
 
         runtime_model = self._pick_runtime_model(model)
         full_text: List[str] = []
+        collected_tool_calls: List[Dict[str, Any]] = []
         buffer: str = ""
         first_token_ts: Optional[float] = None
         t0 = time.time()
@@ -156,7 +170,6 @@ class AgentStreamingMixin:
         def _emit(s: str) -> None:
             nonlocal sentence_idx, is_first_chunk
             try:
-                import inspect
                 sig = inspect.signature(on_sentence)
                 if len(sig.parameters) >= 2:
                     on_sentence(s, sentence_idx)
@@ -179,6 +192,8 @@ class AgentStreamingMixin:
                 "messages": messages,
                 "stream": True,
             }
+            if tools:
+                stream_kwargs["tools"] = tools
             if options:
                 stream_kwargs["options"] = options
             ollama_think = getattr(self, "ollama_think", None)
@@ -187,30 +202,47 @@ class AgentStreamingMixin:
             ollama_keep_alive = getattr(self, "ollama_keep_alive", None)
             if ollama_keep_alive is not None:
                 stream_kwargs["keep_alive"] = ollama_keep_alive
+            if self._chat_accepts_priority(self.ollama_client):
+                stream_kwargs["priority"] = 0
 
             stream = self.ollama_client.chat(**stream_kwargs)
             for chunk in stream:
                 if first_token_ts is None:
                     first_token_ts = time.time()
-                content = chunk.get("message", {}).get("content", "")
+                msg_chunk = chunk.get("message", {}) if isinstance(chunk, dict) else {}
+                if not msg_chunk and hasattr(chunk, "message"):
+                    raw_msg = getattr(chunk, "message")
+                    msg_chunk = raw_msg if isinstance(raw_msg, dict) else {
+                        "content": getattr(raw_msg, "content", ""),
+                        "tool_calls": getattr(raw_msg, "tool_calls", None),
+                    }
+                chunk_calls = msg_chunk.get("tool_calls") or []
+                if chunk_calls:
+                    collected_tool_calls.extend(chunk_calls)
+                content = msg_chunk.get("content", "")
                 if not content:
                     continue
                 full_text.append(content)
-                buffer += content
-                sentences, buffer = self._extract_ready_sentences(buffer, is_first_chunk=is_first_chunk)
-                for sentence in sentences:
-                    _emit(sentence)
+                if not collected_tool_calls:
+                    buffer += content
+                    sentences, buffer = self._extract_ready_sentences(buffer, is_first_chunk=is_first_chunk)
+                    for sentence in sentences:
+                        _emit(sentence)
 
-            rem = buffer.strip()
-            if rem:
-                _emit(rem)
+            if not collected_tool_calls:
+                rem = buffer.strip()
+                if rem:
+                    _emit(rem)
 
             final_content = "".join(full_text)
+            msg_out: Dict[str, Any] = {
+                "role": "assistant",
+                "content": final_content,
+            }
+            if collected_tool_calls:
+                msg_out["tool_calls"] = collected_tool_calls
             return {
-                "message": {
-                    "role": "assistant",
-                    "content": final_content,
-                },
+                "message": msg_out,
                 "latency": {
                     "ttft_ms": int((first_token_ts - t0) * 1000) if first_token_ts else 0,
                     "total_ms": int((time.time() - t0) * 1000),
