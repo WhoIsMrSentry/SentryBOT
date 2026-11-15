@@ -84,6 +84,9 @@ agent_runtime:
   max_identical_actions: 3
   max_zero_progress: 3
   decision_trace_maxlen: 64
+  decision_trace_log_path: ""
+  decision_trace_log_max_bytes: 262144
+  decision_trace_log_backups: 2
   contextual_replan:
     enabled: true
     llm_assist: false
