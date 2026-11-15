@@ -1,8 +1,10 @@
 import json
-import os
-from typing import List, Dict
 import logging
+import os
 import re
+import tempfile
+import threading
+from typing import Dict, List
 
 logger = logging.getLogger("agent.slam")
 
@@ -17,6 +19,7 @@ class TopologicalMap:
             project_root = os.path.abspath(os.path.join(base, "..", "..", ".."))
             map_file = os.path.join(project_root, "data", "map.json")
         self.map_file = map_file
+        self._lock = threading.RLock()
         # Default nodes if map is empty
         self.nodes = {
             "base_station": {"neighbors": ["living_room"], "description": "The charging dock."},
@@ -45,18 +48,28 @@ class TopologicalMap:
             logger.info("No saved map found. Using default topomap.")
 
     def save_map(self):
-        import os
-        os.makedirs(os.path.dirname(self.map_file), exist_ok=True)
-        with open(self.map_file, "w") as f:
-            json.dump(
-                {
-                    "nodes": self.nodes,
-                    "current_location": self.current_location,
-                    "aliases": self.aliases,
-                },
-                f,
-                indent=2,
-            )
+        lock = getattr(self, "_lock", None) or threading.RLock()
+        with lock:
+            target_dir = os.path.dirname(os.path.abspath(self.map_file)) or "."
+            os.makedirs(target_dir, exist_ok=True)
+            payload = {
+                "nodes": dict(self.nodes),
+                "current_location": self.current_location,
+                "aliases": dict(self.aliases),
+            }
+            fd, tmp_path = tempfile.mkstemp(prefix=".map_", suffix=".tmp", dir=target_dir)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(tmp_path, self.map_file)
+            except Exception:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
 
     @staticmethod
     def _slug(text: str) -> str:
