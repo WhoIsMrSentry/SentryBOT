@@ -11,9 +11,12 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from .capability_index import CapabilityIndex
+from .contextual_replanner import ContextualReplanner
 from .decision_trace import DecisionTraceStore
+from .plan_policy_gate import PlanPolicyGate
 from .progress_tracker import ProgressTracker
 from .recovery import FailureClassifier, RecoveryManager
+from .recovery_helpers import build_replan_context, run_contextual_replan
 from .schemas import (
     AgentActionKind,
     Budget,
@@ -25,6 +28,7 @@ from .schemas import (
     Observation,
     Plan,
     PlanStep,
+    PolicyConstraints,
     RuntimeBudgetUsage,
     RuntimeState,
     StepStatus,
@@ -49,6 +53,9 @@ class AgentRuntime:
         decide_fn: Optional[DecisionFn] = None,
         evaluate_fn: Optional[EvaluateFn] = None,
         available_tools: Optional[Sequence[str]] = None,
+        replanner: Optional[ContextualReplanner] = None,
+        policy_gate: Optional[PlanPolicyGate] = None,
+        policy_constraints: Optional[PolicyConstraints] = None,
     ) -> None:
         self.tool_executor = tool_executor
         self.capabilities = capability_index or CapabilityIndex.from_robot_registry()
@@ -58,6 +65,9 @@ class AgentRuntime:
         self.recovery = RecoveryManager()
         self.progress = ProgressTracker()
         self.traces = DecisionTraceStore()
+        self.replanner = replanner or ContextualReplanner(capabilities=self.capabilities)
+        self.policy_gate = policy_gate or PlanPolicyGate(capabilities=self.capabilities)
+        self.policy_constraints = policy_constraints or PolicyConstraints()
         self.decide_fn = decide_fn or self._default_decide
         self.evaluate_fn = evaluate_fn or self._default_evaluate
         self.available_tools = list(available_tools or [])
@@ -99,127 +109,130 @@ class AgentRuntime:
         self.observations = []
         self.last_evaluation = None
         self.last_recovery = None
+        self.usage.begin_active()
 
         stop_reason = ""
-        while True:
-            exceeded = self.usage.exceeded(self.budget)
-            if exceeded:
-                self.state = RuntimeState.BUDGET_EXCEEDED
-                stop_reason = exceeded
-                goal.status = GoalStatus.FAILED
-                break
-
-            self.usage.iterations += 1
-            step = self.plan.next_ready_step() if self.plan else None
-
-            self.state = RuntimeState.DECIDING
-            candidate = self.decide_fn(self, goal, self.plan, step)
-            if candidate.action == AgentActionKind.COMPLETE_GOAL:
-                self.state = RuntimeState.COMPLETED
-                goal.status = GoalStatus.COMPLETED
-                self.traces.record(
-                    goal_id=goal.id,
-                    decision="complete_goal",
-                    reason=candidate.rationale or "goal_complete",
-                    iteration=self.usage.iterations,
-                    next_action="done",
-                )
-                stop_reason = "completed"
-                break
-            if candidate.action == AgentActionKind.ABORT:
-                self.state = RuntimeState.FAILED
-                goal.status = GoalStatus.FAILED
-                self.traces.record(
-                    goal_id=goal.id,
-                    decision="abort",
-                    reason=candidate.rationale or "aborted",
-                    iteration=self.usage.iterations,
-                )
-                stop_reason = "aborted"
-                break
-            if candidate.action == AgentActionKind.WAIT:
-                self.state = RuntimeState.WAITING_FOR_INPUT
-                goal.status = GoalStatus.WAITING
-                stop_reason = "waiting"
-                break
-            if candidate.action == AgentActionKind.REQUEST_PERMISSION:
-                self.state = RuntimeState.WAITING_FOR_PERMISSION
-                goal.status = GoalStatus.WAITING
-                stop_reason = "permission_required"
-                break
-            if candidate.action == AgentActionKind.REQUEST_INFORMATION:
-                self.state = RuntimeState.WAITING_FOR_INPUT
-                goal.status = GoalStatus.WAITING
-                stop_reason = "need_information"
-                break
-
-            signature = self._action_signature(candidate)
-            observation = self._execute_candidate(candidate, step)
-            self.observations.append(observation)
-
-            self.state = RuntimeState.EVALUATING
-            evaluation = self.evaluate_fn(goal, candidate, observation)
-            self.last_evaluation = evaluation
-
-            stall = self.progress.record(signature, progressed=bool(observation.success))
-            if stall:
-                self.state = RuntimeState.FAILED
-                goal.status = GoalStatus.FAILED
-                stop_reason = stall
-                self.traces.record(
-                    goal_id=goal.id,
-                    decision="stop",
-                    reason=stall,
-                    tool=candidate.tool_name,
-                    iteration=self.usage.iterations,
-                    evaluation=evaluation.to_dict(),
-                )
-                break
-
-            self.traces.record(
-                goal_id=goal.id,
-                decision=candidate.action.value,
-                reason=candidate.rationale or evaluation.reason,
-                tool=candidate.tool_name,
-                result_summary=str(observation.result)[:200],
-                next_action="recover" if not evaluation.execution_success else "continue",
-                evaluation=evaluation.to_dict(),
-                iteration=self.usage.iterations,
-            )
-
-            if step is not None and self.plan is not None:
-                if evaluation.execution_success:
-                    step.status = StepStatus.SUCCEEDED
-                else:
-                    step.status = StepStatus.FAILED
-
-            if evaluation.goal_success:
-                self.state = RuntimeState.COMPLETED
-                goal.status = GoalStatus.COMPLETED
-                stop_reason = "goal_success"
-                break
-
-            if not evaluation.execution_success or evaluation.should_replan:
-                recovered = self._handle_failure(goal, candidate, evaluation, step)
-                if recovered.get("stop"):
-                    stop_reason = str(recovered.get("reason") or "recovery_stop")
+        try:
+            while True:
+                exceeded = self.usage.exceeded(self.budget)
+                if exceeded:
+                    self.state = RuntimeState.BUDGET_EXCEEDED
+                    stop_reason = exceeded
+                    goal.status = GoalStatus.FAILED
                     break
-                continue
 
-            if self.plan and self.plan.next_ready_step() is None:
-                # All steps done but goal_success false → complete if executions ok
-                if all(
-                    s.status in {StepStatus.SUCCEEDED, StepStatus.SKIPPED}
-                    for s in self.plan.steps
-                ):
+                self.usage.iterations += 1
+                step = self.plan.next_ready_step() if self.plan else None
+
+                self.state = RuntimeState.DECIDING
+                candidate = self.decide_fn(self, goal, self.plan, step)
+                if candidate.action == AgentActionKind.COMPLETE_GOAL:
                     self.state = RuntimeState.COMPLETED
                     goal.status = GoalStatus.COMPLETED
-                    stop_reason = "plan_exhausted_success"
+                    self.traces.record(
+                        goal_id=goal.id,
+                        decision="complete_goal",
+                        reason=candidate.rationale or "goal_complete",
+                        iteration=self.usage.iterations,
+                        next_action="done",
+                    )
+                    stop_reason = "completed"
                     break
-                self.state = RuntimeState.FAILED
-                goal.status = GoalStatus.FAILED
-                stop_reason = "plan_exhausted_without_success"
-                break
+                if candidate.action == AgentActionKind.ABORT:
+                    self.state = RuntimeState.FAILED
+                    goal.status = GoalStatus.FAILED
+                    self.traces.record(
+                        goal_id=goal.id,
+                        decision="abort",
+                        reason=candidate.rationale or "aborted",
+                        iteration=self.usage.iterations,
+                    )
+                    stop_reason = "aborted"
+                    break
+                if candidate.action == AgentActionKind.WAIT:
+                    self.state = RuntimeState.WAITING_FOR_INPUT
+                    goal.status = GoalStatus.WAITING
+                    stop_reason = "waiting"
+                    break
+                if candidate.action == AgentActionKind.REQUEST_PERMISSION:
+                    self.state = RuntimeState.WAITING_FOR_PERMISSION
+                    goal.status = GoalStatus.WAITING
+                    stop_reason = "permission_required"
+                    break
+                if candidate.action == AgentActionKind.REQUEST_INFORMATION:
+                    self.state = RuntimeState.WAITING_FOR_INPUT
+                    goal.status = GoalStatus.WAITING
+                    stop_reason = "need_information"
+                    break
+
+                signature = self._action_signature(candidate)
+                observation = self._execute_candidate(candidate, step)
+                self.observations.append(observation)
+
+                self.state = RuntimeState.EVALUATING
+                evaluation = self.evaluate_fn(goal, candidate, observation)
+                self.last_evaluation = evaluation
+
+                stall = self.progress.record(signature, progressed=bool(observation.success))
+                if stall:
+                    self.state = RuntimeState.FAILED
+                    goal.status = GoalStatus.FAILED
+                    stop_reason = stall
+                    self.traces.record(
+                        goal_id=goal.id,
+                        decision="stop",
+                        reason=stall,
+                        tool=candidate.tool_name,
+                        iteration=self.usage.iterations,
+                        evaluation=evaluation.to_dict(),
+                    )
+                    break
+
+                self.traces.record(
+                    goal_id=goal.id,
+                    decision=candidate.action.value,
+                    reason=candidate.rationale or evaluation.reason,
+                    tool=candidate.tool_name,
+                    result_summary=str(observation.result)[:200],
+                    next_action="recover" if not evaluation.execution_success else "continue",
+                    evaluation=evaluation.to_dict(),
+                    iteration=self.usage.iterations,
+                )
+
+                if step is not None and self.plan is not None:
+                    if evaluation.execution_success:
+                        step.status = StepStatus.SUCCEEDED
+                    else:
+                        step.status = StepStatus.FAILED
+
+                if evaluation.goal_success:
+                    self.state = RuntimeState.COMPLETED
+                    goal.status = GoalStatus.COMPLETED
+                    stop_reason = "goal_success"
+                    break
+
+                if not evaluation.execution_success or evaluation.should_replan:
+                    recovered = self._handle_failure(goal, candidate, evaluation, step)
+                    if recovered.get("stop"):
+                        stop_reason = str(recovered.get("reason") or "recovery_stop")
+                        break
+                    continue
+
+                if self.plan and self.plan.next_ready_step() is None:
+                    if all(
+                        s.status in {StepStatus.SUCCEEDED, StepStatus.SKIPPED}
+                        for s in self.plan.steps
+                    ):
+                        self.state = RuntimeState.COMPLETED
+                        goal.status = GoalStatus.COMPLETED
+                        stop_reason = "plan_exhausted_success"
+                        break
+                    self.state = RuntimeState.FAILED
+                    goal.status = GoalStatus.FAILED
+                    stop_reason = "plan_exhausted_without_success"
+                    break
+        finally:
+            self.usage.pause_active()
 
         return self.snapshot(stop_reason=stop_reason)
 
@@ -376,13 +389,40 @@ class AgentRuntime:
             return {"stop": False, "reason": "switch_tool"}
 
         if decision.should_replan and self.plan is not None:
-            self.usage.replans += 1
-            self.state = RuntimeState.REPLANNING
-            if self.usage.replans > self.budget.max_replans:
+            if not self.usage.can_replan(self.budget):
                 goal.status = GoalStatus.FAILED
                 self.state = RuntimeState.FAILED
                 return {"stop": True, "reason": "max_replans"}
-            # Soft replan: reopen failed step as ready once
+            self.usage.replans += 1
+            self.state = RuntimeState.REPLANNING
+            if step is not None and self.replanner is not None and self.policy_gate is not None:
+                obs = self.observations[-1] if self.observations else Observation(source="runtime", result=None, success=False)
+                context = build_replan_context(
+                    goal=goal,
+                    plan=self.plan,
+                    failed_step=step,
+                    observation=obs,
+                    evaluation=evaluation,
+                    capabilities=self.capabilities,
+                    policy_constraints=self.policy_constraints,
+                    budget=self.budget,
+                    usage=self.usage,
+                )
+                approved = run_contextual_replan(
+                    replanner=self.replanner,
+                    policy_gate=self.policy_gate,
+                    traces=self.traces,
+                    goal=goal,
+                    plan=self.plan,
+                    failed_step=step,
+                    failure=failure,
+                    observation=obs,
+                    evaluation=evaluation,
+                    context=context,
+                )
+                if approved is not None:
+                    return {"stop": False, "reason": "contextual_replan"}
+            # Soft replan fallback: reopen failed step once when contextual replan yields no candidate
             if step is not None:
                 step.status = StepStatus.READY
                 step.fallback_strategy = decision.strategy
