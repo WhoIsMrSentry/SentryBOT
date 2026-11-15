@@ -171,9 +171,16 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
         ollama_keep_alive = getattr(self, "ollama_keep_alive", None)
         if ollama_keep_alive is not None:
             kwargs["keep_alive"] = ollama_keep_alive
-        kwargs["priority"] = 0  # Interactive user turn preempts background tasks
+        if self._chat_accepts_priority(self.ollama_client):
+            kwargs["priority"] = 0  # Interactive user turn preempts background tasks
         try:
-            return self.ollama_client.chat(**kwargs)
+            try:
+                return self.ollama_client.chat(**kwargs)
+            except TypeError as exc:
+                if "priority" in str(exc) and "priority" in kwargs:
+                    kwargs.pop("priority", None)
+                    return self.ollama_client.chat(**kwargs)
+                raise
         except Exception as exc:
             fallback = str(self.clm_fallback_model or "").strip()
             if (
@@ -383,8 +390,13 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
         )
 
         duration_ms = int((time.time() - t0) * 1000)
-        self.chat_history.append({"role": "user", "content": user_prompt})
-        self.chat_history.append({"role": "assistant", "content": final_content})
+        append_fn = getattr(self, "_append_history", None)
+        if callable(append_fn):
+            append_fn("user", user_prompt)
+            append_fn("assistant", final_content)
+        else:
+            self.chat_history.append({"role": "user", "content": user_prompt})
+            self.chat_history.append({"role": "assistant", "content": final_content})
 
         return {
             "ok": True,
