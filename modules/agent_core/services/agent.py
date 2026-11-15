@@ -41,6 +41,8 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         self._active_progress_token: str = ""
         self.last_routed_subagents: List[str] = []
         self._turn_lock = threading.Lock()
+        if getattr(self, "_history_lock", None) is None:
+            self._history_lock = threading.RLock()
 
     def start(self) -> None:
         """Start background subsystems."""
@@ -53,6 +55,26 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         self.sensor_loop.stop()
         self.idle_system.stop()
         self.speech_arbiter.stop()
+        if hasattr(self, "_shutdown_memory_consolidator"):
+            self._shutdown_memory_consolidator()
+        registry = getattr(self, "tool_registry", None)
+        if registry is not None and hasattr(registry, "close"):
+            try:
+                registry.close()
+            except Exception:
+                pass
+        handler_sess = getattr(self, "_handler_http_session", None)
+        if handler_sess is not None and hasattr(handler_sess, "close"):
+            try:
+                handler_sess.close()
+            except Exception:
+                pass
+        goal_store = getattr(self, "goal_store", None)
+        if goal_store is not None and hasattr(goal_store, "close"):
+            try:
+                goal_store.close()
+            except Exception:
+                pass
         logger.info("AgentOrchestrator subsystems stopped.")
 
 
@@ -128,6 +150,17 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             return
         decision.suggested_action = bind_laya_action_proposal(proposal, request_id)
 
+    def _ensure_history_lock(self) -> threading.RLock:
+        lock = getattr(self, "_history_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._history_lock = lock
+        return lock
+
+    def _get_history_snapshot(self) -> List[Dict[str, Any]]:
+        with self._ensure_history_lock():
+            return [dict(m) for m in getattr(self, "chat_history", [])]
+
     def _append_history(self, role: str, content: str, tool_calls=None, tool_name=None) -> None:
         msg = {"role": role, "content": content}
         if tool_calls is not None:
@@ -135,10 +168,11 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         if tool_name is not None:
             msg["name"] = tool_name
 
-        self.chat_history.append(msg)
-        limit = self.max_history * 2
-        if len(self.chat_history) > limit:
-            self.chat_history = self.chat_history[-limit:]
+        with self._ensure_history_lock():
+            self.chat_history.append(msg)
+            limit = int(getattr(self, "max_history", 10) or 10) * 2
+            if len(self.chat_history) > limit:
+                self.chat_history = self.chat_history[-limit:]
 
     def route_preview(self, user_prompt: str) -> Dict[str, Any]:
         modules = self.router.route(user_prompt)
@@ -207,24 +241,77 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         session_language: str,
         trace_id: str,
     ) -> Tuple[Optional[str], str, str]:
-        """Build world/memory context, append user prompt to history, and resolve active model."""
+        """Build transient world/memory context, append clean user prompt to history, and resolve model."""
         latency_trace.mark(trace_id, "agent.context_start")
         survival_override = self.check_survival_drives()
         world_context = self.world_state.inject_world_state("")
         memory_context = self._get_world_memory_context(prompt)
         if memory_context:
             world_context = f"{world_context}\n\n[World Memory]\n{memory_context}"
-        language_rule = self._language_directive(session_language)
-        full_prompt = f"{prompt}\n\n[{language_rule}]\n\n[World State]\n{world_context}"
-        if survival_override:
-            full_prompt += f"\n\n{survival_override}"
-        self._append_history("user", full_prompt)
+        self._append_history("user", prompt)
         active_model = self._get_active_persona_model()
         latency_trace.mark(trace_id, "agent.context_done", {"model": active_model})
         return survival_override, world_context, active_model
 
+    def _bind_speaker(self, speaker: Optional[str]) -> None:
+        if not speaker:
+            return
+        try:
+            world_state = getattr(self, "world_state", None)
+            if world_state is None:
+                return
+            state = getattr(world_state, "state", None)
+            if isinstance(state, dict):
+                state["speaker"] = speaker
+            elif hasattr(world_state, "set"):
+                world_state.set("speaker", speaker)
+            if (
+                hasattr(world_state, "update_state")
+                and str(speaker).strip().lower() not in {"unknown", "none", ""}
+            ):
+                world_state.update_state({"speaker": str(speaker).strip()})
+        except Exception:
+            pass
+
+    def _make_sentence_callback(
+        self,
+        session_language: str,
+        trace_id: str,
+        stream_state: Dict[str, int],
+    ) -> Optional[Callable[[str, int], None]]:
+        arbiter = getattr(self, "speech_arbiter", None)
+        if arbiter is None or getattr(arbiter, "_speak_fn", None) is None:
+            return None
+        speech_tone = self._current_speech_tone()
+        detected_lang: Dict[str, Optional[str]] = {"value": None}
+
+        def speak_sentence(sentence: str, index: int) -> None:
+            if detected_lang["value"] is None:
+                lang = session_language
+                try:
+                    from modules.voice.speak.services.lang_detect import detect_text_language
+
+                    lang = detect_text_language(sentence, default=session_language)
+                except Exception:
+                    pass
+                detected_lang["value"] = lang
+            chunk_lang = detected_lang["value"] or session_language
+            item_id = arbiter.enqueue_final_chunk(
+                sentence,
+                index=index,
+                language=chunk_lang,
+                tone=speech_tone,
+                trace_id=trace_id,
+            )
+            if item_id:
+                stream_state["spoken"] += 1
+
+        return speak_sentence
+
     def _finalize_turn_memory(self, prompt: str, final_text: str, dialogue_entry: str) -> None:
-        """Record episodic dialogue and trigger world/social memory consolidation."""
+        """Record clean assistant reply, episodic dialogue, and world/social memory consolidation."""
+        if str(final_text or "").strip():
+            self._append_history("assistant", str(final_text))
         self.memory.remember("dialogue", dialogue_entry)
         try:
             self._observe_world_memory_dialogue(prompt, final_text)
@@ -235,44 +322,39 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         except Exception:
             logger.debug("memory consolidation failed", exc_info=True)
 
-    def step(
+    def _run_turn_core(
         self,
-        user_prompt: str = "",
+        prompt: str,
+        *,
+        bypass_cooldown: bool,
+        language: Optional[str],
+        speaker: Optional[str],
+        native_tools: bool,
+        trace_id: Optional[str],
         progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
-        language: Optional[str] = None,
-        speaker: Optional[str] = None,
-        native_tools: bool = False,
-        trace_id: Optional[str] = None,
+        event_type: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
-        if speaker is None and isinstance(progress_cb, str):
-            speaker = progress_cb
-            progress_cb = None
-
-        if speaker:
-            try:
-                world_state = getattr(self, "world_state", None)
-                if world_state is not None:
-                    state = getattr(world_state, "state", None)
-                    if isinstance(state, dict):
-                        state["speaker"] = speaker
-                    elif hasattr(world_state, "set"):
-                        world_state.set("speaker", speaker)
-                    if hasattr(world_state, "update_state") and str(speaker).strip().lower() not in {"unknown", "none", ""}:
-                        world_state.update_state({"speaker": str(speaker).strip()})
-            except Exception:
-                pass
-
-        if not self._try_enter_turn(user_prompt, bypass_cooldown=False):
+        self._bind_speaker(speaker)
+        if not self._try_enter_turn(prompt, bypass_cooldown=bypass_cooldown):
             return None
 
         previous_hook = self.tool_registry.status_hook
-        trace_id = latency_trace.ensure(trace_id, {"component": "agent_core", "language": language or ""})
-        latency_trace.mark(trace_id, "agent.request", {"chars": len(user_prompt), "native_tools": native_tools})
+        meta: Dict[str, Any] = {"component": "agent_core"}
+        if event_type:
+            meta["event"] = event_type
+        else:
+            meta["language"] = language or ""
+        trace_id = latency_trace.ensure(trace_id, meta)
+        if event_type:
+            latency_trace.mark(trace_id, "agent.event_request", {"event": event_type, "chars": len(prompt)})
+        else:
+            latency_trace.mark(trace_id, "agent.request", {"chars": len(prompt), "native_tools": native_tools})
 
         autonomy_client = getattr(self, "autonomy_client", None)
         if autonomy_client and hasattr(autonomy_client, "set_expression_event"):
             try:
-                autonomy_client.set_expression_event("agent.thinking", {"trace_id": trace_id})
+                ev_name = f"agent.event.{event_type}" if event_type else "agent.thinking"
+                autonomy_client.set_expression_event(ev_name, {"trace_id": trace_id})
             except Exception:
                 pass
 
@@ -285,35 +367,37 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         self.tool_registry.status_hook = callback
 
         try:
-            use_fast_path = self._should_fast_path(user_prompt, native_tools=native_tools)
+            is_short_fast = self._should_fast_path(prompt, native_tools=False)
+            use_fast_path = bool(native_tools) or is_short_fast
             self._record_laya_latency(trace_id)
+
             custom_ack = ""
-            laya_eng = getattr(self, "laya_engine", None)
-            if laya_eng and getattr(laya_eng, "enabled", True):
-                try:
-                    if not use_fast_path:
-                        custom_ack = laya_eng.get_instant_filler(language=session_language)
-                    # Trigger immediate affective body language if praise/rudeness detected
-                    laya_dec = self._resolve_turn_laya_decision(user_prompt, laya_eng)
-                    if laya_dec is not None:
-                        self._bind_laya_action_request(laya_dec, request_id)
-                    if laya_dec and hasattr(self.world_state, "update_laya_state"):
-                        self.world_state.update_laya_state(laya_dec)
-                    if laya_dec and laya_dec.affective_event in {
-                        "user_praise", "user_rude", "joy", "anger", "disgust", "fear", "curiosity", "sadness",
-                    }:
-                        reaction = laya_eng.get_affective_reaction(
-                            laya_dec.affective_event,
-                            urgency=float(getattr(laya_dec, "urgency_score", 0.0) or 0.0),
-                        )
-                        if autonomy_client and hasattr(autonomy_client, "set_expression_event"):
-                            autonomy_client.set_expression_event("agent.affect", reaction)
-                except Exception:
-                    pass
+            if not event_type:
+                laya_eng = getattr(self, "laya_engine", None)
+                if laya_eng and getattr(laya_eng, "enabled", True):
+                    try:
+                        if not use_fast_path:
+                            custom_ack = laya_eng.get_instant_filler(language=session_language)
+                        laya_dec = self._resolve_turn_laya_decision(prompt, laya_eng)
+                        if laya_dec is not None:
+                            self._bind_laya_action_request(laya_dec, request_id)
+                        if laya_dec and hasattr(self.world_state, "update_laya_state"):
+                            self.world_state.update_laya_state(laya_dec)
+                        if laya_dec and laya_dec.affective_event in {
+                            "user_praise", "user_rude", "joy", "anger", "disgust", "fear", "curiosity", "sadness",
+                        }:
+                            reaction = laya_eng.get_affective_reaction(
+                                laya_dec.affective_event,
+                                urgency=float(getattr(laya_dec, "urgency_score", 0.0) or 0.0),
+                            )
+                            if autonomy_client and hasattr(autonomy_client, "set_expression_event"):
+                                autonomy_client.set_expression_event("agent.affect", reaction)
+                    except Exception:
+                        pass
 
             self.progress_manager.emit_ack(progress_token, custom_text=custom_ack, speak=not use_fast_path)
             survival_override, world_context, active_model = self._prepare_turn_context(
-                user_prompt, session_language, trace_id
+                prompt, session_language, trace_id
             )
 
             provider_error = self._check_provider_availability()
@@ -326,30 +410,12 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             subagent_reports: List[Dict[str, Any]] = []
             executed_actions: List[Dict[str, Any]] = []
             stream_state = {"spoken": 0}
-            speech_tone = self._current_speech_tone()
-            on_sentence: Optional[Callable[[str, int], None]] = None
-            if self.speech_arbiter._speak_fn is not None:
-                def speak_sentence(sentence: str, index: int) -> None:
-                    chunk_lang = session_language
-                    try:
-                        from modules.voice.speak.services.lang_detect import detect_text_language
-                        chunk_lang = detect_text_language(sentence, default=session_language)
-                    except Exception:
-                        pass
-                    item_id = self.speech_arbiter.enqueue_final_chunk(
-                        sentence,
-                        index=index,
-                        language=chunk_lang,
-                        tone=speech_tone,
-                        trace_id=trace_id,
-                    )
-                    if item_id:
-                        stream_state["spoken"] += 1
-                on_sentence = speak_sentence
+            on_sentence = self._make_sentence_callback(session_language, trace_id, stream_state)
 
-            if self.tri_layer_enabled and not use_fast_path:
+            use_tri_layer = bool(getattr(self, "tri_layer_enabled", False)) and not bool(native_tools) and not is_short_fast
+            if use_tri_layer:
                 final_text, total_steps, subagent_reports = self._run_tri_layer(
-                    user_prompt,
+                    prompt,
                     world_context,
                     survival_override,
                     active_model,
@@ -360,26 +426,34 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                 )
                 executed_actions = self._summarize_actions(subagent_reports)
             else:
-                messages = self._native_loop_messages(session_language)
+                try:
+                    messages = self._native_loop_messages(
+                        session_language,
+                        world_context=world_context,
+                        survival_override=survival_override,
+                    )
+                except TypeError:
+                    messages = self._native_loop_messages(session_language)
                 final_text, total_steps = self._run_native_history_loop(
                     active_model,
                     messages,
                     actions_out=executed_actions,
-                    num_predict=getattr(self, "fast_path_num_predict", None) if use_fast_path else None,
+                    num_predict=getattr(self, "fast_path_num_predict", None) if is_short_fast else None,
                     on_sentence=on_sentence,
                     max_steps=(
                         getattr(self, "fast_path_max_steps", 2)
-                        if use_fast_path
+                        if is_short_fast
                         else getattr(self, "max_steps", 4)
                     ),
                     trace_id=trace_id,
                 )
 
-            self._finalize_turn_memory(
-                user_prompt,
-                final_text,
-                f"User: {user_prompt} | Bot: {final_text}",
+            dialogue_entry = (
+                f"Event({event_type}): {prompt} | Bot: {final_text}"
+                if event_type
+                else f"User: {prompt} | Bot: {final_text}"
             )
+            self._finalize_turn_memory(prompt, final_text, dialogue_entry)
 
             latency_trace.mark(
                 trace_id,
@@ -388,9 +462,14 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             )
             if self.speech_arbiter._speak_fn is None:
                 latency_trace.finish(trace_id, "done")
+            thoughts = (
+                f"Agent reacted to {event_type} in {total_steps} internal steps."
+                if event_type
+                else f"Agent executed {total_steps} internal steps."
+            )
             return {
                 "text": final_text,
-                "thoughts": f"Agent executed {total_steps} internal steps.",
+                "thoughts": thoughts,
                 "actions": executed_actions,
                 "plan": [],
                 "route": self.last_routed_subagents,
@@ -409,6 +488,29 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             self._active_laya_request_id = ""
             self._exit_turn()
 
+    def step(
+        self,
+        user_prompt: str = "",
+        progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+        language: Optional[str] = None,
+        speaker: Optional[str] = None,
+        native_tools: bool = False,
+        trace_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if speaker is None and isinstance(progress_cb, str):
+            speaker = progress_cb
+            progress_cb = None
+        return self._run_turn_core(
+            user_prompt,
+            bypass_cooldown=False,
+            language=language,
+            speaker=speaker,
+            native_tools=native_tools,
+            trace_id=trace_id,
+            progress_cb=progress_cb,
+            event_type=None,
+        )
+
     def step_event(
         self,
         event_type: str,
@@ -418,117 +520,14 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         trace_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Event-driven step that bypasses cooldown but not active-turn safety."""
-        if not self._try_enter_turn(event_prompt, bypass_cooldown=True):
-            return None
-        previous_hook = self.tool_registry.status_hook
-
-        trace_id = latency_trace.ensure(trace_id, {"component": "agent_core", "event": event_type})
-        latency_trace.mark(trace_id, "agent.event_request", {"event": event_type, "chars": len(event_prompt)})
-
-        session_language = self._normalize_session_language(language)
-        progress_token = self.progress_manager.new_request(language=session_language)
-        self._active_progress_token = progress_token
-        callback = self._build_progress_callback(progress_token, None)
-        self.tool_registry.status_hook = callback
-
-        try:
-            autonomy_client = getattr(self, "autonomy_client", None)
-            if autonomy_client and hasattr(autonomy_client, "set_expression_event"):
-                try:
-                    autonomy_client.set_expression_event(f"agent.event.{event_type}", {"trace_id": trace_id})
-                except Exception:
-                    pass
-
-            use_fast_path = self._should_fast_path(event_prompt, native_tools=True)
-            self._record_laya_latency(trace_id)
-            self.progress_manager.emit_ack(progress_token, speak=not use_fast_path)
-            survival_override, world_context, active_model = self._prepare_turn_context(
-                event_prompt, session_language, trace_id
-            )
-
-            provider_error = self._check_provider_availability()
-            if provider_error:
-                latency_trace.finish(trace_id, "provider_unavailable")
-                return {**provider_error, "trace_id": trace_id}
-
-            final_text = ""
-            total_steps = 0
-            subagent_reports: List[Dict[str, Any]] = []
-            executed_actions: List[Dict[str, Any]] = []
-            stream_state = {"spoken": 0}
-            speech_tone = self._current_speech_tone()
-            on_sentence: Optional[Callable[[str, int], None]] = None
-            if self.speech_arbiter._speak_fn is not None:
-                def speak_sentence(sentence: str, index: int) -> None:
-                    item_id = self.speech_arbiter.enqueue_final_chunk(
-                        sentence,
-                        index=index,
-                        language=session_language,
-                        tone=speech_tone,
-                        trace_id=trace_id,
-                    )
-                    if item_id:
-                        stream_state["spoken"] += 1
-                on_sentence = speak_sentence
-
-            if self.tri_layer_enabled and not use_fast_path:
-                final_text, total_steps, subagent_reports = self._run_tri_layer(
-                    event_prompt,
-                    world_context,
-                    survival_override,
-                    active_model,
-                    session_language,
-                    progress_token,
-                    callback,
-                    on_sentence=on_sentence,
-                )
-                executed_actions = self._summarize_actions(subagent_reports)
-            else:
-                messages = self._native_loop_messages(session_language)
-                final_text, total_steps = self._run_native_history_loop(
-                    active_model,
-                    messages,
-                    actions_out=executed_actions,
-                    num_predict=getattr(self, "fast_path_num_predict", None) if use_fast_path else None,
-                    on_sentence=on_sentence,
-                    max_steps=(
-                        getattr(self, "fast_path_max_steps", 2)
-                        if use_fast_path
-                        else getattr(self, "max_steps", 4)
-                    ),
-                    trace_id=trace_id,
-                )
-
-            self._finalize_turn_memory(
-                event_prompt,
-                final_text,
-                f"Event({event_type}): {event_prompt} | Bot: {final_text}",
-            )
-
-            latency_trace.mark(
-                trace_id,
-                "agent.done",
-                {"steps": total_steps, "speech_handled": stream_state["spoken"] > 0},
-            )
-            if self.speech_arbiter._speak_fn is None:
-                latency_trace.finish(trace_id, "done")
-            return {
-                "text": final_text,
-                "thoughts": f"Agent reacted to {event_type} in {total_steps} internal steps.",
-                "actions": executed_actions,
-                "plan": [],
-                "route": self.last_routed_subagents,
-                "subagents": subagent_reports,
-                "speech_handled": stream_state["spoken"] > 0,
-                "trace_id": trace_id,
-                "latency": latency_trace.get(trace_id),
-            }
-        except Exception as exc:
-            latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
-            raise
-        finally:
-            self.progress_manager.emit_final(progress_token)
-            self.tool_registry.status_hook = previous_hook
-            self._active_progress_token = ""
-            self._exit_turn()
+        return self._run_turn_core(
+            event_prompt,
+            bypass_cooldown=True,
+            language=language,
+            speaker=speaker,
+            native_tools=False,
+            trace_id=trace_id,
+            progress_cb=None,
+            event_type=event_type,
+        )
 
