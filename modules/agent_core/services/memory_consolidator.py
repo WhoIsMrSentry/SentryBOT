@@ -21,8 +21,8 @@ MEMORY_WORLD_BOUNDARY_REASON = 'MemoryConsolidator now uses LLM extraction and w
 
 import json
 import logging
-import re
 import threading
+import time
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("agent.memory_consolidator")
@@ -52,20 +52,6 @@ CONVERSATION:
 {conversation}
 
 FACTS:"""
-
-
-_SIMPLE_FACT_PATTERNS = [
-    (re.compile(r"\b(?:benim|my)\s+(?:ad[ıi]m?|name|ismim)\s+(\w+)", re.IGNORECASE), "people", "User's name is {0}"),
-    (re.compile(r"\b(?:i am|i'm|ben)\s+(\w+)(?:\s|$|[.!,])", re.IGNORECASE), "people", "User introduced as {0}"),
-    (re.compile(r"\b(?:k[öo]pe[ğg]im(?:in)?|kedim(?:in)?|my dog|my cat)(?:\s+ad[ıi]|'s name)?\s+(\w+)", re.IGNORECASE), "people", "User has a pet named {0}"),
-    (re.compile(r"\b(\w+)['’]?(?:de|da|te|ta)\s+(?:ya[şs][ıi]yorum|oturuyorum)\b", re.IGNORECASE), "places", "User lives in {0}"),
-    (re.compile(r"\b(?:live in)\s+(\w+)", re.IGNORECASE), "places", "User lives in {0}"),
-    (re.compile(r"\b(?:işim|meslegim|mesle[ğg]im|my job|i work as)\s+(\w+)", re.IGNORECASE), "observations", "User works as {0}"),
-    (re.compile(r"(?:^|[.,!?;]\s*)(?:ben\s+)?([a-zçğıöşü\s]{2,25}?)\s+(?:çok\s+)?(?:seviyorum|hoşlanıyorum)\b", re.IGNORECASE), "observations", "User likes {0}"),
-    (re.compile(r"\b(?:seviyorum|i like|i love)\s+([a-zçğıöşü]{2,30})", re.IGNORECASE), "observations", "User likes {0}"),
-    (re.compile(r"(?:^|[.,!?;]\s*)(?:ben\s+)?([a-zçğıöşü\s]{2,25}?)\s+(?:hiç\s+)?(?:sevmiyorum|nefret\s+ediyorum)\b", re.IGNORECASE), "observations", "User dislikes {0}"),
-    (re.compile(r"\b(?:nefret|hate|sevmiyorum|dislike)\s+([a-zçğıöşü]{2,30})", re.IGNORECASE), "observations", "User dislikes {0}"),
-]
 
 
 class MemoryConsolidator:
@@ -103,26 +89,15 @@ class MemoryConsolidator:
         return self._learner
 
     def extract_facts(self, text: str, speaker: Optional[str] = None) -> List[str]:
-        """Extract facts using regex patterns (fast path)."""
+        """Extract facts via the shared cognitive_memory PreferenceLearner."""
         learner = self._get_learner()
-        facts: List[str] = []
-        if learner is not None and hasattr(learner, "extract_facts"):
-            try:
-                facts.extend(learner.extract_facts(text))
-            except Exception:
-                pass
-        # Fallback simple patterns
-        if not facts:
-            low = text.lower()
-            for pattern, kind, template in _SIMPLE_FACT_PATTERNS:
-                m = pattern.search(low)
-                if m:
-                    val = m.group(1).strip()
-                    if val and len(val) > 1:
-                        fact = template.format(val)
-                        if fact not in facts:
-                            facts.append(fact)
-        return facts
+        if learner is None or not hasattr(learner, "extract_facts"):
+            return []
+        try:
+            return list(learner.extract_facts(text) or [])
+        except Exception:
+            logger.debug("PreferenceLearner.extract_facts failed", exc_info=True)
+            return []
 
     def extract_facts_llm(self, conversation: str, speaker: Optional[str] = None) -> List[Dict[str, Any]]:
         """Extract structured facts using LLM. Returns list of fact dicts for WorldMemory."""
@@ -132,8 +107,13 @@ class MemoryConsolidator:
             prompt = _FACT_EXTRACTION_PROMPT.format(conversation=conversation)
             # Use the LLM client directly (assumes ollama-compatible interface)
             if hasattr(self.llm_client, "chat"):
+                model_name = (
+                    getattr(self, "llm_model", None)
+                    or getattr(self.llm_client, "model", None)
+                    or "qwen3.5:9b"
+                )
                 resp = self.llm_client.chat(
-                    model=getattr(self, "llm_model", "llama3.1:8b"),
+                    model=model_name,
                     messages=[{"role": "user", "content": prompt}],
                     options={"temperature": 0.1, "num_predict": 512},
                 )
@@ -201,7 +181,7 @@ class MemoryConsolidator:
                 self._pending_queue.append({
                     "text": text,
                     "speaker": speaker,
-                    "timestamp": __import__("time").time(),
+                    "timestamp": time.time(),
                 })
             self._ensure_worker()
 
@@ -260,19 +240,27 @@ class MemoryConsolidator:
 
         # Also push via autonomy client (hits RAG SQLite store)
         if self.autonomy_client:
-            for fact in structured_facts:
-                try:
-                    self.autonomy_client.observe_world_memory({
-                        "kind": fact["kind"],
-                        "name": fact["name"],
-                        "summary": fact["summary"],
-                        "properties": fact.get("properties", {}),
-                        "confidence": fact["confidence"],
-                        "salience": fact["salience"],
-                        "tags": fact.get("tags", []),
-                    }, source="memory_consolidator")
-                except Exception as e:
-                    logger.debug(f"Autonomy client WorldMemory write failed: {e}")
+            observe_fn = getattr(self.autonomy_client, "world_memory_observe", None) or getattr(
+                self.autonomy_client, "observe_world_memory", None
+            )
+            if callable(observe_fn):
+                for fact in structured_facts:
+                    try:
+                        payload = {
+                            "kind": fact["kind"],
+                            "name": fact["name"],
+                            "summary": fact["summary"],
+                            "properties": fact.get("properties", {}),
+                            "confidence": fact["confidence"],
+                            "salience": fact["salience"],
+                            "tags": fact.get("tags", []),
+                        }
+                        try:
+                            observe_fn(payload, source="memory_consolidator")
+                        except TypeError:
+                            observe_fn(payload)
+                    except Exception as e:
+                        logger.debug(f"Autonomy client WorldMemory write failed: {e}")
 
     def _store_episodic(self, fact: str) -> None:
         if self.memory is None:
