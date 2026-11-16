@@ -19,8 +19,8 @@ ENDPOINTS = [
     ("world_memory", "/autonomy/memory", True, "runtime"),
     ("camera", "/camera/status", True, "robot_hardware"),
     ("speech", "/speech/status", False, "pc_optional"),
-    ("tts", "/tts/status", True, "robot_hardware"),
-    ("arduino", "/arduino/status", True, "robot_hardware"),
+    ("tts", "/speak/status", True, "robot_hardware"),
+    ("arduino", "/arduino/healthz", True, "robot_hardware"),
 ]
 
 
@@ -80,16 +80,26 @@ def classify_endpoint(name: str, path: str, required_robot: bool, kind: str) -> 
         return "READY", "speech ready"
 
     if name == "arduino":
-        controller_ready = bool(data.get("controller_ready", False))
-        connected = bool(data.get("connected", False))
+        controller_ready = bool(data.get("controller_ready", data.get("ok", False)))
+        connected = bool(data.get("connected", data.get("ok", False)))
         if controller_ready and connected:
             return "READY", f"controller_ready=True connected=True reason={data.get('reason','')}"
         return "NEEDED_BEFORE_ROBOT", f"endpoint_ok controller_ready={controller_ready} connected={connected} reason={data.get('reason','')} ports={data.get('serial_port_count', data.get('ports', 0))}"
 
-    if name in {"camera", "tts"}:
-        if bool(data.get("ok", False)) and bool(data.get("available", data.get("ready", False))):
+    if name == "camera":
+        cam_ok = bool(data.get("ok", False))
+        cam_avail = bool(data.get("available", data.get("enabled", False)))
+        if cam_ok and cam_avail:
             return "READY", "ok=True available=True"
-        return "NEEDED_BEFORE_ROBOT", f"endpoint_ok ok={data.get('ok')} available={data.get('available', data.get('ready', False))}"
+        return "NEEDED_BEFORE_ROBOT", f"endpoint_ok ok={data.get('ok')} enabled={data.get('enabled')}"
+
+    if name == "tts":
+        tts_dict = data.get("tts") if isinstance(data.get("tts"), dict) else {}
+        tts_ready = bool(data.get("ready", tts_dict.get("available", False)))
+        tts_ok = bool(data.get("ok", tts_ready))
+        if tts_ok and tts_ready:
+            return "READY", "ok=True ready=True"
+        return "NEEDED_BEFORE_ROBOT", f"endpoint_ok ok={tts_ok} ready={tts_ready}"
 
     return "READY", "endpoint reachable"
 

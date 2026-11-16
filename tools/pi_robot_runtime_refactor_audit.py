@@ -15,16 +15,28 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path.cwd()
-ROOT_STR = str(ROOT)
-if ROOT_STR not in sys.path:
-    sys.path.insert(0, ROOT_STR)
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-OUT_MD = ROOT / "PI_ROBOT_RUNTIME_REFACTOR_AUDIT.md"
-OUT_JSON = ROOT / "pi_robot_runtime_refactor_audit.json"
+from tools._audit_common import (  # noqa: E402
+    VOICE_CONFIG_FILES,
+    iter_repo_files,
+    parse_output_dir_arg,
+    read_text,
+    rel as _common_rel,
+    resolve_output_paths,
+    safe_json,
+    safe_yaml,
+    summarize as summarize_config,
+    table,
+    write_audit_reports,
+)
+
+MD_NAME = "PI_ROBOT_RUNTIME_REFACTOR_AUDIT.md"
+JSON_NAME = "pi_robot_runtime_refactor_audit.json"
 
 SCAN_ROOTS = ["modules", "apps", "services", "scripts", "tools", "tests", "config"]
-EXCLUDE_PARTS = {".git", ".venv", "__pycache__", ".pytest_cache", ".sentrybot_state", "node_modules", "dist", "build"}
 
 RUNTIME_PREFIXES = [
     "modules/",
@@ -128,22 +140,12 @@ CONFIG_FILES = [
     "config/robot_arm_policy.json",
     "modules/camera/config/config.yml",
     "modules/vlm_bridge/config/config.yml",
-    "modules/speech/config/config.yml",
-    "modules/speak/config/config.yml",
-    "modules/wakeword/config/config.yml",
+    *VOICE_CONFIG_FILES,
 ]
 
 
-def should_skip(path: Path) -> bool:
-    return any(part in EXCLUDE_PARTS for part in path.parts)
-
-
 def rel(path: Path) -> str:
-    return str(path.relative_to(ROOT)).replace("\\", "/")
-
-
-def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    return _common_rel(path, ROOT)
 
 
 def is_runtime_path(path_s: str) -> bool:
@@ -155,13 +157,7 @@ def is_dev_only_path(path_s: str) -> bool:
 
 
 def iter_files() -> list[Path]:
-    suffixes = {".py", ".json", ".yml", ".yaml", ".md", ".ps1", ".toml", ".ini", ".service", ".sh"}
-    out: list[Path] = []
-    for root_name in SCAN_ROOTS:
-        root = ROOT / root_name
-        if root.exists():
-            out.extend(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in suffixes and not should_skip(p))
-    return sorted(set(out))
+    return iter_repo_files(ROOT, SCAN_ROOTS)
 
 
 def route_from_dec(dec: ast.AST) -> str | None:
@@ -256,40 +252,6 @@ def file_record(path: Path) -> dict[str, Any]:
     return rec
 
 
-def safe_json(path: Path) -> Any:
-    try:
-        return json.loads(read_text(path))
-    except Exception as exc:
-        return {"_error": str(exc)}
-
-
-def safe_yaml(path: Path) -> Any:
-    try:
-        import yaml  # type: ignore
-    except Exception as exc:
-        return {"_yaml_available": False, "_error": str(exc)}
-    try:
-        return yaml.safe_load(read_text(path))
-    except Exception as exc:
-        return {"_yaml_available": True, "_error": str(exc)}
-
-
-def summarize_config(value: Any) -> Any:
-    if isinstance(value, dict):
-        out: dict[str, Any] = {}
-        for key, item in value.items():
-            if isinstance(item, dict):
-                out[str(key)] = {"type": "object", "keys": list(item.keys())[:25], "count": len(item)}
-            elif isinstance(item, list):
-                out[str(key)] = {"type": "list", "count": len(item)}
-            else:
-                out[str(key)] = item
-        return out
-    if isinstance(value, list):
-        return {"type": "list", "count": len(value), "sample": value[:5]}
-    return value
-
-
 def config_records() -> list[dict[str, Any]]:
     rows = []
     for name in CONFIG_FILES:
@@ -367,218 +329,219 @@ def snippet(path: Path, terms: list[str], radius: int = 2, limit: int = 8) -> li
     return out
 
 
-def table(headers: list[str], rows: list[list[Any]]) -> str:
-    out = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
-    for row in rows:
-        out.append("| " + " | ".join(str(x).replace("\n", "<br>")[:700] for x in row) + " |")
-    return "\n".join(out)
+def main(argv: list[str] | None = None) -> int:
+    output_dir = parse_output_dir_arg(argv, description="Pi robot runtime refactor audit")
+    out_md, out_json = resolve_output_paths(ROOT, output_dir, MD_NAME, JSON_NAME)
 
+    all_records = [file_record(p) for p in iter_files()]
 
-all_records = [file_record(p) for p in iter_files()]
+    runtime_pc_assumptions = [
+        r for r in all_records
+        if r["runtime_path"] and r["pc_assumption_hits"]
+    ]
+    runtime_stubs = [
+        r for r in all_records
+        if r["runtime_path"] and r["stub_hits"]
+    ]
+    runtime_pi_touchpoints = [
+        r for r in all_records
+        if r["runtime_path"] and r["pi_target_hits"]
+    ]
+    compile_failures = [
+        r for r in all_records
+        if r.get("compile_ok") is False and r["path"].endswith(".py")
+    ]
+    runtime_top_level_side_effects = [
+        r for r in all_records
+        if r["runtime_path"] and r.get("top_level_calls")
+    ]
 
-runtime_pc_assumptions = [
-    r for r in all_records
-    if r["runtime_path"] and r["pc_assumption_hits"]
-]
-runtime_stubs = [
-    r for r in all_records
-    if r["runtime_path"] and r["stub_hits"]
-]
-runtime_pi_touchpoints = [
-    r for r in all_records
-    if r["runtime_path"] and r["pi_target_hits"]
-]
-compile_failures = [
-    r for r in all_records
-    if r.get("compile_ok") is False and r["path"].endswith(".py")
-]
-runtime_top_level_side_effects = [
-    r for r in all_records
-    if r["runtime_path"] and r.get("top_level_calls")
-]
+    configs = config_records()
+    imports = [import_side_effect_probe(m) for m in CRITICAL_IMPORT_MODULES]
+    import_failures = [r for r in imports if not r["ok"]]
+    import_stdout_side_effects = [r for r in imports if r.get("stdout_len", 0) > 0 or r.get("stderr_len", 0) > 0]
 
-configs = config_records()
-imports = [import_side_effect_probe(m) for m in CRITICAL_IMPORT_MODULES]
-import_failures = [r for r in imports if not r["ok"]]
-import_stdout_side_effects = [r for r in imports if r.get("stdout_len", 0) > 0 or r.get("stderr_len", 0) > 0]
+    config_findings = []
+    for cfg in configs:
+        raw = cfg.get("raw")
+        if cfg["path"] == "config/robot_execution_profiles.json" and isinstance(raw, dict):
+            active_mode = raw.get("active_mode")
+            if active_mode == "pc_dry_run":
+                config_findings.append({
+                    "severity": "needs_pi_profile_plan",
+                    "path": cfg["path"],
+                    "finding": "active_mode is pc_dry_run; Pi deployment needs robot_safe_preview/manual profile selection, not PC default.",
+                })
+        if cfg["path"] == "config/robot_capability_registry.json" and isinstance(raw, dict):
+            profile = raw.get("profile")
+            if profile == "pc_dry_run":
+                config_findings.append({
+                    "severity": "needs_pi_profile_plan",
+                    "path": cfg["path"],
+                    "finding": "capability registry profile is pc_dry_run; robot target needs explicit deployment mode without enabling hardware by default.",
+                })
+        if cfg["path"] == "modules/camera/config/config.yml" and isinstance(raw, dict):
+            if raw.get("enabled") is False:
+                config_findings.append({
+                    "severity": "safe_default",
+                    "path": cfg["path"],
+                    "finding": "camera.enabled is false; safe for refactor, activation requires separate robot profile.",
+                })
 
-config_findings = []
-for cfg in configs:
-    raw = cfg.get("raw")
-    if cfg["path"] == "config/robot_execution_profiles.json" and isinstance(raw, dict):
-        active_mode = raw.get("active_mode")
-        if active_mode == "pc_dry_run":
-            config_findings.append({
-                "severity": "needs_pi_profile_plan",
-                "path": cfg["path"],
-                "finding": "active_mode is pc_dry_run; Pi deployment needs robot_safe_preview/manual profile selection, not PC default.",
-            })
-    if cfg["path"] == "config/robot_capability_registry.json" and isinstance(raw, dict):
-        profile = raw.get("profile")
-        if profile == "pc_dry_run":
-            config_findings.append({
-                "severity": "needs_pi_profile_plan",
-                "path": cfg["path"],
-                "finding": "capability registry profile is pc_dry_run; robot target needs explicit deployment mode without enabling hardware by default.",
-            })
-    if cfg["path"] == "modules/camera/config/config.yml" and isinstance(raw, dict):
-        if raw.get("enabled") is False:
-            config_findings.append({
-                "severity": "safe_default",
-                "path": cfg["path"],
-                "finding": "camera.enabled is false; safe for refactor, activation requires separate robot profile.",
-            })
+    summary = {
+        "files_scanned": len(all_records),
+        "compile_failures": len(compile_failures),
+        "runtime_pc_assumption_files": len(runtime_pc_assumptions),
+        "runtime_stub_files": len(runtime_stubs),
+        "runtime_pi_touchpoint_files": len(runtime_pi_touchpoints),
+        "runtime_top_level_side_effect_files": len(runtime_top_level_side_effects),
+        "critical_imports": len(imports),
+        "critical_import_failures": len(import_failures),
+        "critical_import_stdout_side_effects": len(import_stdout_side_effects),
+        "config_findings": len(config_findings),
+        "host_platform": f"{platform.system()} {platform.machine()}",
+        "audit_target": "Pi/Linux robot runtime",
+    }
 
-summary = {
-    "files_scanned": len(all_records),
-    "compile_failures": len(compile_failures),
-    "runtime_pc_assumption_files": len(runtime_pc_assumptions),
-    "runtime_stub_files": len(runtime_stubs),
-    "runtime_pi_touchpoint_files": len(runtime_pi_touchpoints),
-    "runtime_top_level_side_effect_files": len(runtime_top_level_side_effects),
-    "critical_imports": len(imports),
-    "critical_import_failures": len(import_failures),
-    "critical_import_stdout_side_effects": len(import_stdout_side_effects),
-    "config_findings": len(config_findings),
-    "host_platform": f"{platform.system()} {platform.machine()}",
-    "audit_target": "Pi/Linux robot runtime",
-}
+    data = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "report_type": "pi_robot_runtime_refactor_audit",
+        "pc_is_dev_host_only": True,
+        "target": "Raspberry Pi / Linux robot runtime",
+        "summary": summary,
+        "compile_failures": compile_failures,
+        "runtime_pc_assumptions": runtime_pc_assumptions,
+        "runtime_stubs": runtime_stubs,
+        "runtime_pi_touchpoints": runtime_pi_touchpoints,
+        "runtime_top_level_side_effects": runtime_top_level_side_effects,
+        "critical_import_probes": imports,
+        "config_records": configs,
+        "config_findings": config_findings,
+        "snippets": {
+            "gateway_bootstrap_pc_terms": snippet(ROOT / "modules/gateway/services/bootstrap.py", PC_ASSUMPTION_TERMS + ["SENTRYBOT_DISABLE_AUTOSTART", "on_event"], limit=10),
+            "robot_profiles": snippet(ROOT / "config/robot_execution_profiles.json", ["pc_dry_run", "robot_safe_preview", "robot_safe_manual"], limit=10),
+            "camera_config": snippet(ROOT / "modules/camera/config/config.yml", ["enabled", "backend", "source", "picamera2", "opencv", "imx500"], limit=10),
+        },
+        "recommended_next": [
+            "Create a Pi deployment profile plan instead of using pc_dry_run as the runtime target.",
+            "Clean or gate import-time console side effects so imports stay quiet on robot runtime.",
+            "Separate PC-only tools from robot runtime modules; PC-only findings should not drive robot design.",
+            "Inspect runtime stub/legacy files by caller before deleting or replacing.",
+            "After audit decisions, patch only robot-target code paths, then run existing CI.",
+        ],
+    }
 
-data = {
-    "generated_at": datetime.now().isoformat(timespec="seconds"),
-    "report_type": "pi_robot_runtime_refactor_audit",
-    "pc_is_dev_host_only": True,
-    "target": "Raspberry Pi / Linux robot runtime",
-    "summary": summary,
-    "compile_failures": compile_failures,
-    "runtime_pc_assumptions": runtime_pc_assumptions,
-    "runtime_stubs": runtime_stubs,
-    "runtime_pi_touchpoints": runtime_pi_touchpoints,
-    "runtime_top_level_side_effects": runtime_top_level_side_effects,
-    "critical_import_probes": imports,
-    "config_records": configs,
-    "config_findings": config_findings,
-    "snippets": {
-        "gateway_bootstrap_pc_terms": snippet(ROOT / "modules/gateway/services/bootstrap.py", PC_ASSUMPTION_TERMS + ["SENTRYBOT_DISABLE_AUTOSTART", "on_event"], limit=10),
-        "robot_profiles": snippet(ROOT / "config/robot_execution_profiles.json", ["pc_dry_run", "robot_safe_preview", "robot_safe_manual"], limit=10),
-        "camera_config": snippet(ROOT / "modules/camera/config/config.yml", ["enabled", "backend", "source", "picamera2", "opencv", "imx500"], limit=10),
-    },
-    "recommended_next": [
-        "Create a Pi deployment profile plan instead of using pc_dry_run as the runtime target.",
-        "Clean or gate import-time console side effects so imports stay quiet on robot runtime.",
-        "Separate PC-only tools from robot runtime modules; PC-only findings should not drive robot design.",
-        "Inspect runtime stub/legacy files by caller before deleting or replacing.",
-        "After audit decisions, patch only robot-target code paths, then run existing CI.",
-    ],
-}
-
-md = [
-    "# SentryBOT Pi Robot Runtime Refactor Audit",
-    "",
-    f"Generated: `{data['generated_at']}`",
-    "",
-    "Target: Raspberry Pi / Linux robot runtime. PC is only the development/test host.",
-    "",
-    "Report-only. No code was changed and no hardware/camera/VLM/motion was started.",
-    "",
-    "## Summary",
-    "",
-    table(["metric", "value"], [[k, v] for k, v in summary.items()]),
-    "",
-    "## Key Decision",
-    "",
-    "Continue refactor for Pi/Linux robot runtime. Do not optimize architecture around Windows/PC behavior.",
-    "",
-    "## Config Findings",
-    "",
-]
-if config_findings:
-    md.append(table(["severity", "path", "finding"], [[x["severity"], x["path"], x["finding"]] for x in config_findings]))
-else:
-    md.append("No config findings.")
-md += [
-    "",
-    "## Critical Import Probes",
-    "",
-    table(["module", "ok", "stdout_len", "stderr_len", "stdout_preview/error"], [
-        [
-            r["module"],
-            r["ok"],
-            r.get("stdout_len"),
-            r.get("stderr_len"),
-            (r.get("stdout_preview") or r.get("error") or "")[:650],
-        ]
-        for r in imports
-    ]),
-    "",
-    "## Runtime PC Assumption Files",
-    "",
-]
-if runtime_pc_assumptions:
-    md.append(table(["path", "hits", "lines"], [[r["path"], ", ".join(r["pc_assumption_hits"]), r["lines"]] for r in runtime_pc_assumptions[:160]]))
-else:
-    md.append("No runtime PC assumption files found.")
-md += [
-    "",
-    "## Runtime Stub / Legacy / Fallback Files",
-    "",
-]
-if runtime_stubs:
-    md.append(table(["path", "hits", "lines"], [[r["path"], ", ".join(r["stub_hits"]), r["lines"]] for r in runtime_stubs[:160]]))
-else:
-    md.append("No runtime stub/legacy/fallback files found.")
-md += [
-    "",
-    "## Runtime Pi Touchpoint Files",
-    "",
-]
-if runtime_pi_touchpoints:
-    md.append(table(["path", "pi_hits", "pc_hits", "lines"], [[r["path"], ", ".join(r["pi_target_hits"]), ", ".join(r["pc_assumption_hits"]), r["lines"]] for r in runtime_pi_touchpoints[:180]]))
-else:
-    md.append("No Pi touchpoint files found.")
-md += [
-    "",
-    "## Runtime Top-level Side-effect Candidates",
-    "",
-]
-if runtime_top_level_side_effects:
-    md.append(table(["path", "top_level_calls"], [
-        [r["path"], json.dumps(r.get("top_level_calls", [])[:5], ensure_ascii=False)]
-        for r in runtime_top_level_side_effects[:120]
-    ]))
-else:
-    md.append("No runtime top-level side-effect candidates found.")
-md += [
-    "",
-    "## Compile Failures",
-    "",
-]
-if compile_failures:
-    md.append(table(["path", "error"], [[r["path"], r.get("compile_error", "")] for r in compile_failures]))
-else:
-    md.append("No compile failures.")
-md += [
-    "",
-    "## Key Snippets",
-    "",
-]
-for name, items in data["snippets"].items():
-    md += [f"### {name}", ""]
-    if items:
-        for s in items:
-            md += ["```text", s["text"], "```", ""]
+    md = [
+        "# SentryBOT Pi Robot Runtime Refactor Audit",
+        "",
+        f"Generated: `{data['generated_at']}`",
+        "",
+        "Target: Raspberry Pi / Linux robot runtime. PC is only the development/test host.",
+        "",
+        "Report-only. No code was changed and no hardware/camera/VLM/motion was started.",
+        "",
+        "## Summary",
+        "",
+        table(["metric", "value"], [[k, v] for k, v in summary.items()]),
+        "",
+        "## Key Decision",
+        "",
+        "Continue refactor for Pi/Linux robot runtime. Do not optimize architecture around Windows/PC behavior.",
+        "",
+        "## Config Findings",
+        "",
+    ]
+    if config_findings:
+        md.append(table(["severity", "path", "finding"], [[x["severity"], x["path"], x["finding"]] for x in config_findings]))
     else:
-        md += ["No snippets.", ""]
-md += ["## Recommended Next", ""]
-for step in data["recommended_next"]:
-    md.append(f"- {step}")
-md.append("")
+        md.append("No config findings.")
+    md += [
+        "",
+        "## Critical Import Probes",
+        "",
+        table(["module", "ok", "stdout_len", "stderr_len", "stdout_preview/error"], [
+            [
+                r["module"],
+                r["ok"],
+                r.get("stdout_len"),
+                r.get("stderr_len"),
+                (r.get("stdout_preview") or r.get("error") or "")[:650],
+            ]
+            for r in imports
+        ]),
+        "",
+        "## Runtime PC Assumption Files",
+        "",
+    ]
+    if runtime_pc_assumptions:
+        md.append(table(["path", "hits", "lines"], [[r["path"], ", ".join(r["pc_assumption_hits"]), r["lines"]] for r in runtime_pc_assumptions[:160]]))
+    else:
+        md.append("No runtime PC assumption files found.")
+    md += [
+        "",
+        "## Runtime Stub / Legacy / Fallback Files",
+        "",
+    ]
+    if runtime_stubs:
+        md.append(table(["path", "hits", "lines"], [[r["path"], ", ".join(r["stub_hits"]), r["lines"]] for r in runtime_stubs[:160]]))
+    else:
+        md.append("No runtime stub/legacy/fallback files found.")
+    md += [
+        "",
+        "## Runtime Pi Touchpoint Files",
+        "",
+    ]
+    if runtime_pi_touchpoints:
+        md.append(table(["path", "pi_hits", "pc_hits", "lines"], [[r["path"], ", ".join(r["pi_target_hits"]), ", ".join(r["pc_assumption_hits"]), r["lines"]] for r in runtime_pi_touchpoints[:180]]))
+    else:
+        md.append("No Pi touchpoint files found.")
+    md += [
+        "",
+        "## Runtime Top-level Side-effect Candidates",
+        "",
+    ]
+    if runtime_top_level_side_effects:
+        md.append(table(["path", "top_level_calls"], [
+            [r["path"], json.dumps(r.get("top_level_calls", [])[:5], ensure_ascii=False)]
+            for r in runtime_top_level_side_effects[:120]
+        ]))
+    else:
+        md.append("No runtime top-level side-effect candidates found.")
+    md += [
+        "",
+        "## Compile Failures",
+        "",
+    ]
+    if compile_failures:
+        md.append(table(["path", "error"], [[r["path"], r.get("compile_error", "")] for r in compile_failures]))
+    else:
+        md.append("No compile failures.")
+    md += [
+        "",
+        "## Key Snippets",
+        "",
+    ]
+    for name, items in data["snippets"].items():
+        md += [f"### {name}", ""]
+        if items:
+            for s in items:
+                md += ["```text", s["text"], "```", ""]
+        else:
+            md += ["No snippets.", ""]
+    md += ["## Recommended Next", ""]
+    for step in data["recommended_next"]:
+        md.append(f"- {step}")
+    md.append("")
 
-OUT_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-OUT_MD.write_text("\n".join(md), encoding="utf-8")
+    write_audit_reports(out_md, out_json, md, data)
 
-print("[WRITE] PI_ROBOT_RUNTIME_REFACTOR_AUDIT.md")
-print("[WRITE] pi_robot_runtime_refactor_audit.json")
-for k, v in summary.items():
-    print(f"[SUMMARY] {k}={v}")
-print("[DONE] Pi robot runtime refactor audit complete")
+    print(f"[WRITE] {rel(out_md) if out_md.is_relative_to(ROOT) else out_md}")
+    print(f"[WRITE] {rel(out_json) if out_json.is_relative_to(ROOT) else out_json}")
+    for k, v in summary.items():
+        print(f"[SUMMARY] {k}={v}")
+    print("[DONE] Pi robot runtime refactor audit complete")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -64,66 +63,27 @@ def main() -> int:
         print(f"[INFO] Loaded image from {img_path}")
     else:
         print("[INFO] Capturing frame from camera...")
-        import numpy as np
+        from modules.vlm_bridge.services.face_manager import FaceManager
+        from scripts._camera_capture_helper import capture_live_face_frame
 
-        # 1. Try to fetch frame from active Gateway if robot is already running
-        try:
-            import urllib.request
-            req = urllib.request.Request("http://127.0.0.1:8000/camera/frame")
-            with urllib.request.urlopen(req, timeout=1.5) as resp:
-                if resp.status == 200:
-                    raw_bytes = resp.read()
-                    frame = cv2.imdecode(np.frombuffer(raw_bytes, np.uint8), cv2.IMREAD_COLOR)
-                    if frame is not None:
-                        print("[INFO] Captured live frame from running SentryBOT Gateway.")
-        except Exception:
-            pass
+        face_detector = FaceManager()
 
-        # 2. Standalone camera capture via Picamera2 Subprocess Bridge
-        if frame is None:
-            try:
-                from modules.camera.services.capture import CameraCapture, CaptureConfig, FramePublisher
-                from modules.vlm_bridge.services.face_manager import FaceManager
+        def _score_enrollment_frame(candidate):
+            roi = face_detector._extract_largest_face_roi(candidate)
+            if roi is not None:
+                return True, float(roi.shape[0] * roi.shape[1])
+            return False, 0.0
 
-                cfg = CaptureConfig(camera_num=args.camera, size=(1280, 720), frame_rate=15)
-                pub = FramePublisher()
-                cap = CameraCapture(cfg=cfg, publisher=pub)
-                if cap.start():
-                    print("[INFO] Camera initialized. Please look directly at the camera...")
-                    print("[INFO] Scanning for face across live frames (up to 5 seconds)...")
-                    face_detector = FaceManager()
-                    
-                    for i in range(1, 30):
-                        time.sleep(0.18)
-                        jpeg_bytes = pub.get_jpeg()
-                        if jpeg_bytes:
-                            candidate = cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR)
-                            if candidate is not None:
-                                roi = face_detector._extract_largest_face_roi(candidate)
-                                if roi is not None:
-                                    frame = candidate
-                                    print(f"\n[INFO] Face detected and locked on frame {i}!")
-                                    break
-                                elif frame is None:
-                                    frame = candidate  # keep candidate as fallback
-                        sys.stdout.write(".")
-                        sys.stdout.flush()
-                    print()
-                    cap.stop()
-            except Exception as exc:
-                print(f"[WARN] CameraCapture bridge fallback: {exc}")
-
-        # 3. Fallback to standard OpenCV VideoCapture
-        if frame is None:
-            try:
-                vcap = cv2.VideoCapture(args.camera)
-                if vcap.isOpened():
-                    for _ in range(10):  # warm up auto-exposure
-                        vcap.read()
-                    ret, frame = vcap.read()
-                    vcap.release()
-            except Exception as exc:
-                print(f"[WARN] OpenCV VideoCapture fallback: {exc}")
+        print("[INFO] Scanning for face across live frames (up to 5 seconds)...")
+        frame = capture_live_face_frame(
+            camera_num=args.camera,
+            max_attempts=30,
+            poll_interval_s=0.18,
+            frame_selector=_score_enrollment_frame,
+            prefer_gateway=True,
+        )
+        if frame is not None and face_detector._extract_largest_face_roi(frame) is not None:
+            print("[INFO] Face detected and ready for enrollment.")
 
     if frame is None:
         print("[ERROR] Failed to capture a frame from the camera. Please check camera connection or supply --image.", file=sys.stderr)

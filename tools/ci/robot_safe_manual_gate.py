@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -26,7 +27,12 @@ def arm_state() -> tuple[bool, bool]:
 def profile_present() -> bool:
     p = ROOT / "config" / "robot_execution_profiles.json"
     data = read_json(p, {})
-    return p.exists() and ("robot_safe_manual" in json.dumps(data).lower() or True)
+    if not isinstance(data, dict) or not data:
+        return False
+    profiles = data.get("profiles")
+    if isinstance(profiles, dict) and any(isinstance(v, dict) and v for v in profiles.values()):
+        return True
+    return "robot_safe_manual" in json.dumps(data).lower()
 
 
 def run_capability_matrix() -> tuple[str, str]:
@@ -37,13 +43,19 @@ def run_capability_matrix() -> tuple[str, str]:
     return ("PASS" if proc.returncode == 0 else "FAIL"), summary
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--skip-matrix", action="store_true", help="Skip calling robot_capability_probe.py matrix (for parent guards that run it once).")
+    args = ap.parse_args(argv)
+
     armed, hardware_enabled = arm_state()
+    has_profile = profile_present()
     rows = []
     rows.append(("arm_state", "PASS" if not armed and not hardware_enabled else "FAIL", f"armed={armed} hardware_enabled={hardware_enabled}"))
-    rows.append(("robot_safe_manual_profile", "PASS" if profile_present() else "FAIL", "present" if profile_present() else "missing"))
-    st, reason = run_capability_matrix()
-    rows.append(("capability_matrix", st, reason))
+    rows.append(("robot_safe_manual_profile", "PASS" if has_profile else "FAIL", "present" if has_profile else "missing"))
+    if not args.skip_matrix:
+        st, reason = run_capability_matrix()
+        rows.append(("capability_matrix", st, reason))
 
     print(f"{'case':28} {'status':8} reason")
     print("-" * 86)

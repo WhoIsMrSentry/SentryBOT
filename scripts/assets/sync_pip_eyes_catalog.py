@@ -7,7 +7,7 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 VENDOR = ROOT / "vendor" / "esp-bridge-mcp-robot" / "src" / "modules" / "espbridge" / "eyes"
 
 
@@ -63,8 +63,8 @@ def main() -> None:
     local = _local_catalog()
     upstream = _upstream_catalog()
     print("Pip eyes catalog diff")
-    print(f"Local:    modules/oled_faces/services/eyes/")
-    print(f"Upstream: vendor/esp-bridge-mcp-robot/src/modules/espbridge/eyes/")
+    print("Local:    modules/visual_output/oled_faces/services/eyes/")
+    print("Upstream: vendor/esp-bridge-mcp-robot/src/modules/espbridge/eyes/")
     for kind in ("moods", "gestures", "activities"):
         _report(kind, local[kind], upstream[kind])
     print("\nDone. Robot-specific extras are intentional; upstream-only items are port candidates.")

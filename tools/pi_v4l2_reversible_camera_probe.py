@@ -84,62 +84,6 @@ def probe_device(
     cap = None
     opened = False
     released = False
-    try:
-        cv2 = cv2_module if cv2_module is not None else _load_cv2()
-        backend_id = getattr(cv2, "CAP_V4L2", 200) if backend.lower() == "v4l2" else 0
-        cap = cv2.VideoCapture(dev, backend_id)
-        opened = bool(cap.isOpened()) if hasattr(cap, "isOpened") else False
-        return CameraProbeDecision(
-            device=dev,
-            allow_camera_open=True,
-            camera_open_attempted=True,
-            camera_opened=opened,
-            released=False,
-            frame_captured=False,
-            reason="opened_and_released" if opened else "open_failed",
-        )
-    except Exception as exc:
-        return CameraProbeDecision(
-            device=dev,
-            allow_camera_open=True,
-            camera_open_attempted=True,
-            camera_opened=False,
-            released=False,
-            frame_captured=False,
-            reason="open_exception",
-            error=f"{type(exc).__name__}: {exc}",
-        )
-    finally:
-        if cap is not None and hasattr(cap, "release"):
-            try:
-                cap.release()
-                released = True
-            except Exception:
-                released = False
-            if opened:
-                object.__setattr__(
-                    locals().get("_dummy", CameraProbeDecision(dev, True, True, opened, released, False, "")),
-                    "released",
-                    released,
-                )
-
-
-def probe_device_reversible(
-    device: str | Path,
-    *,
-    allow_camera_open: bool = False,
-    backend: str = "v4l2",
-    cv2_module: Any = None,
-) -> CameraProbeDecision:
-    """Probe wrapper with guaranteed release state in the returned decision."""
-
-    dev = str(device)
-    if not allow_camera_open:
-        return probe_device(dev, allow_camera_open=False, backend=backend, cv2_module=cv2_module)
-
-    cap = None
-    opened = False
-    released = False
     error = None
     reason = "open_failed"
     try:
@@ -168,6 +112,22 @@ def probe_device_reversible(
         frame_captured=False,
         reason=reason,
         error=error,
+    )
+
+
+def probe_device_reversible(
+    device: str | Path,
+    *,
+    allow_camera_open: bool = False,
+    backend: str = "v4l2",
+    cv2_module: Any = None,
+) -> CameraProbeDecision:
+    """Probe wrapper with guaranteed release state in the returned decision."""
+    return probe_device(
+        device,
+        allow_camera_open=allow_camera_open,
+        backend=backend,
+        cv2_module=cv2_module,
     )
 
 
