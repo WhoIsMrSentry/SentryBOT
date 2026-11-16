@@ -291,15 +291,24 @@ class ResponseTagMixin:
 		self.client.push_interaction_event("persona.mode", attrs)
 
 	# --- Yardımcılar ---------------------------------------------------
+	def _lights_config(self) -> Dict[str, Any]:
+		cfg = getattr(self, "config", {}) or {}
+		if not isinstance(cfg, dict):
+			return {}
+		lights_cfg = cfg.get("lights")
+		if isinstance(lights_cfg, dict):
+			return lights_cfg
+		defaults = cfg.get("defaults")
+		if isinstance(defaults, dict) and isinstance(defaults.get("lights"), dict):
+			return defaults.get("lights")
+		return {}
+
 	def _resolve_palette_rgb(self, name: str | None) -> tuple[int, int, int] | None:
 		if not name:
 			return None
-		cfg = getattr(self, "config", {}) or {}
-		palettes = {}
-		lights_cfg = cfg.get("lights") if isinstance(cfg, dict) else None
-		if isinstance(lights_cfg, dict):
-			palettes = lights_cfg.get("palettes") or {}
-		entry = palettes.get(name) if palettes else None
+		lights_cfg = self._lights_config()
+		palettes = lights_cfg.get("palettes") or {}
+		entry = palettes.get(name) if isinstance(palettes, dict) else None
 		if entry is None:
 			entry = self._DEFAULT_PALETTES.get(name)
 		if isinstance(entry, dict):
@@ -312,10 +321,7 @@ class ResponseTagMixin:
 		return None
 
 	def _default_light_mode(self) -> str | None:
-		cfg = getattr(self, "config", {}) or {}
-		lights_cfg = cfg.get("lights") if isinstance(cfg, dict) else None
-		if isinstance(lights_cfg, dict):
-			mode = lights_cfg.get("default_mode")
-			if isinstance(mode, str) and mode:
-				return mode
+		mode = self._lights_config().get("default_mode")
+		if isinstance(mode, str) and mode:
+			return mode
 		return None
