@@ -1,19 +1,29 @@
 
 from __future__ import annotations
 
-import json
 import random
+import threading
 import time
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from modules.arduino_serial.contract import build_drive_cmd
+from .storage_utils import atomic_write_json, read_json_dict, resolve_autonomy_path
 
 def _float(v: Any, default: float = 0.0) -> float:
     try:
         return float(v)
     except Exception:
         return default
+
+
+def _extract_motion_steps(source: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Return the first non-empty step list across supported plan keys."""
+    for key in ("motion_plan", "steps", "plan", "actions"):
+        raw = source.get(key)
+        if isinstance(raw, list) and raw:
+            return [dict(item) if isinstance(item, dict) else item for item in raw]
+    return []
+
 
 class TopomapMotionExecutor:
     DEFAULTS = {"enabled": True, "map_path": "data/topomap_places.json", "allow_base_motion": False, "require_ultrasonic_clearance": True, "min_clearance_cm": 28.0, "max_steps": 8, "max_step_duration_s": 2.0, "max_drive_value": 120}
@@ -22,25 +32,23 @@ class TopomapMotionExecutor:
         if isinstance(cfg, dict):
             self.cfg.update(cfg)
         self.client = client
-        self.map_path = Path(str(self.cfg.get("map_path") or self.DEFAULTS["map_path"]))
-        if not self.map_path.is_absolute():
-            self.map_path = Path.cwd() / self.map_path
+        self._lock = threading.RLock()
+        self.map_path = resolve_autonomy_path(self.cfg.get("map_path"), str(self.DEFAULTS["map_path"]))
         self.map_path.parent.mkdir(parents=True, exist_ok=True)
         self._last: Dict[str, Any] = {"ok": True, "reason": "never_executed"}
         self._ensure_map()
     def _ensure_map(self) -> None:
-        if not self.map_path.exists():
-            self.map_path.write_text(json.dumps({"places": [], "edges": [], "updated_ts": time.time()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            if not self.map_path.exists():
+                atomic_write_json(self.map_path, {"places": [], "edges": [], "updated_ts": time.time()}, lock=self._lock)
     def _load(self) -> Dict[str, Any]:
-        self._ensure_map()
-        try:
-            data = json.loads(self.map_path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {"places": [], "edges": []}
-        except Exception:
-            return {"places": [], "edges": []}
+        with self._lock:
+            self._ensure_map()
+            return read_json_dict(self.map_path, lambda: {"places": [], "edges": []}, lock=self._lock)
     def _save(self, data: Dict[str, Any]) -> None:
-        data["updated_ts"] = time.time()
-        self.map_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            data["updated_ts"] = time.time()
+            atomic_write_json(self.map_path, data, lock=self._lock)
     def status(self) -> Dict[str, Any]:
         data = self._load()
         places = data.get("places") if isinstance(data.get("places"), list) else []
@@ -72,10 +80,31 @@ class TopomapMotionExecutor:
         payload["tags"] = tags
         body = payload if isinstance(payload, dict) else {}
         place_id = str(body.get("id") or body.get("name") or f"place_{int(time.time())}").strip()
-        place = {"id": place_id, "name": str(body.get("name") or place_id), "kind": str(body.get("kind") or "place"), "summary": str(body.get("summary") or "learned topomap place"), "safety_score": max(0.0, min(1.0, _float(body.get("safety_score"), 0.6))), "motion_plan": body.get("motion_plan") if isinstance(body.get("motion_plan"), list) else [], "created_ts": time.time(), "last_seen": time.time(), "details": body.get("details") if isinstance(body.get("details"), dict) else {}}
-        data = self._load()
-        places = [p for p in data.get("places", []) if isinstance(p, dict) and p.get("id") != place_id]
-        places.append(place); data["places"] = places; self._save(data)
+        steps = _extract_motion_steps(body)
+        place: Dict[str, Any] = {
+            "id": place_id,
+            "name": str(body.get("name") or place_id),
+            "kind": str(body.get("kind") or "place"),
+            "summary": str(body.get("summary") or "learned topomap place"),
+            "safety_score": max(0.0, min(1.0, _float(body.get("safety_score"), 0.6))),
+            "tags": tags,
+            "motion_plan": steps,
+            "steps": list(steps),
+            "pose_only": bool(body.get("pose_only", not bool(self.cfg.get("allow_base_motion", False)))),
+            "created_ts": float(body.get("created_ts") or time.time()),
+            "last_seen": float(body.get("last_seen") or time.time()),
+            "details": body.get("details") if isinstance(body.get("details"), dict) else {},
+        }
+        if "distance_from_owner_m" in body and body.get("distance_from_owner_m") is not None:
+            dist = _float(body.get("distance_from_owner_m"), -1.0)
+            if dist >= 0.0:
+                place["distance_from_owner_m"] = dist
+        with self._lock:
+            data = self._load()
+            places = [p for p in data.get("places", []) if isinstance(p, dict) and p.get("id") != place_id]
+            places.append(place)
+            data["places"] = places
+            self._save(data)
         return {"ok": True, "available": True, "place": place}
     def _find(self, place_id: str) -> Dict[str, Any]:
         for p in self._load().get("places", []):
@@ -86,6 +115,9 @@ class TopomapMotionExecutor:
         body = payload if isinstance(payload, dict) else {}
         place_id = str(body.get("place_id") or body.get("id") or body.get("name") or "").strip()
         place = self._find(place_id) if place_id else {}
+        inline_steps = _extract_motion_steps(body)
+        if not place and inline_steps:
+            place = {"id": place_id or "inline_goal", "name": str(body.get("name") or place_id or "inline_goal"), "motion_plan": inline_steps}
         if not place:
             self._last = {"ok": False, "available": True, "reason": "place_not_found", "place_id": place_id}; return dict(self._last)
         allow = bool(body.get("allow_base_motion", self.cfg.get("allow_base_motion", False)))
@@ -94,7 +126,7 @@ class TopomapMotionExecutor:
         clearance = self._clearance_ok()
         if not clearance.get("ok"):
             self._last = {"ok": False, "available": True, "moved": False, "reason": "clearance_blocked", "clearance": clearance, "place": place}; return dict(self._last)
-        plan = place.get("motion_plan") if isinstance(place.get("motion_plan"), list) else []
+        plan = inline_steps or _extract_motion_steps(place)
         if not plan:
             self._last = {"ok": False, "available": True, "moved": False, "reason": "motion_plan_missing", "place": place}; return dict(self._last)
         actions = [self._execute_step(s) for s in plan[: int(self.cfg.get("max_steps", 8))] if isinstance(s, dict)]
@@ -131,7 +163,9 @@ class TopomapMotionExecutor:
                 )
                 return {"ok": bool(isinstance(resp, dict) and resp.get("ok")), "type": kind, "value": value, "response": resp}
             if kind in {"stepper", "turn"}:
-                resp = self.client.set_stepper(int(step.get("id", 0)), str(step.get("mode") or "rel"), int(_float(step.get("value"), 0)), drive=int(step.get("drive", 160)))
+                raw_mode = str(step.get("mode") or "pos").strip().lower()
+                mode = raw_mode if raw_mode in {"pos", "vel"} else "pos"
+                resp = self.client.set_stepper(int(step.get("id", 0)), mode, int(_float(step.get("value"), 0)), drive=int(step.get("drive", 160)))
                 return {"ok": bool(isinstance(resp, dict) and resp.get("ok")), "type": kind, "response": resp}
             if kind in {"wait", "pause"}:
                 time.sleep(max(0.0, min(_float(step.get("duration_s"), 0.2), _float(self.cfg.get("max_step_duration_s"), 2.0))))
@@ -162,8 +196,8 @@ class TopomapMotionExecutor:
             distance = _float(place.get("distance_from_owner_m"), -1.0)
             if minimum_distance > 0.0 and distance < minimum_distance:
                 continue
-            steps = place.get("steps") or place.get("plan") or place.get("actions")
-            if not isinstance(steps, list) or not steps:
+            steps = _extract_motion_steps(place)
+            if not steps:
                 continue
             candidates.append(place)
         if not candidates:
@@ -175,7 +209,12 @@ class TopomapMotionExecutor:
         while remaining and len(attempts) < max_attempts:
             selected = random.choice(remaining) if str(policy.get("selection") or "").lower() == "random" else remaining[0]
             remaining.remove(selected)
-            result = self.execute_goal({"steps": selected.get("steps") or selected.get("plan") or selected.get("actions")})
+            selected_steps = _extract_motion_steps(selected)
+            result = self.execute_goal({
+                "place_id": str(selected.get("id") or selected.get("name") or ""),
+                "name": str(selected.get("name") or ""),
+                "steps": selected_steps,
+            })
             result["policy"] = policy_name
             result["selected_place"] = str(selected.get("name") or "")
             attempts.append({"place": result["selected_place"], "ok": bool(result.get("ok")), "reason": result.get("reason")})
