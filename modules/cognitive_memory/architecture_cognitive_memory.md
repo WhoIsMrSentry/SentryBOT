@@ -131,31 +131,22 @@ Veritabanı `SocialDB` tarafından yönetilen `data/social.db` dosyasında tutul
 ## 4. Servis API Sözleşmeleri ve İş Kuralları
 
 ### 4.1 `SocialDB` (`modules/cognitive_memory/db.py`)
-- `get_social_db(db_path: str | None = None) -> SocialDB`
-  - Singleton SQLite yöneticisi. `PRAGMA journal_mode=WAL;` ve `PRAGMA foreign_keys=ON;` ayarlarını açar.
-  - Çoklu iş parçacığı güvenliği için `threading.RLock()` ile korunur.
-- `execute(query: str, params: tuple = ()) -> sqlite3.Cursor`
-- `transaction() -> ContextManager[sqlite3.Connection]`
-  - Atomik işlem bloğu; hata oluşursa `ROLLBACK`, başarıyla biterse `COMMIT` eder.
+- `_resolve_path` & `config_loader.py`: Göreli yolları depo köküne göre çözer; `config/agent.yaml` (`social_db`/`cognitive_memory`) ayarlarını `config/config.yml` ile birleştirir.
+- `transaction() -> ContextManager[sqlite3.Connection]`: `threading.local()` `_tx_depth` sayacı sayesinde aynı thread içindeki iç içe repo çağrılarında güvenli re-entrant çalışma sağlar.
+- `backup(dest_path) -> Path`: `sqlite3.Connection.backup()` + atomik `.tmp` yazımıyla çevrimiçi yedek alır.
 
-### 4.2 `RelationshipMemory` (`services/relationship_memory.py`)
-AgentCore'un robot hafızasına eriştiği üst düzey arayüzdür.
-- `ingest_dialogue_turn(person_id: str, user_text: str, robot_text: str, sentiment: float = 0.0) -> None`
-  - Konuşmayı `chat_episodes` tablosuna yazar, ilişkideki etkileşim sayısını artırır.
-- `get_social_context(person_id: str) -> Dict[str, Any]`
-  - Kişinin adını, rolünü, robot ile arasındaki güven/samimiyet seviyesini ve en son konuşulan anıları LLM için özet bir bağlam metni olarak döner.
+### 4.2 `RelationshipMemory` (`services/relationship_memory.py`) & `PeopleMemory`
+- `add_chat(name, role, text)`: Tüm SQLite yazımlarını tek `SocialDB.transaction()` altında gruplar (`ChatEpisodesRepo` `ORDER BY ts DESC, id DESC`).
+- `social_profile(name)`: Salt-okunurdur; yıkıcı `decay()` yazımı yapmaz (bakım için açık `decay_person(name)` kullanılır). `PersonsRepo.adjust_trust()` tek atomik `UPDATE` yürütür.
+- `MomentsRepo.decay()` & `RelationshipStorageMixin._decay_moments()`: `utils.decay_salience()` ile gerçek üstel yarı-ömür azalması uygular.
 
-### 4.3 `WorldMemoryRAG` (`services/world_memory_rag.py`)
-- `search(query: str, limit: int = 5, min_score: float = 0.4) -> List[Dict[str, Any]]`
-  - Gelen soruyu hem kelime eşleşmesi (BM25) hem de anlamsal kosinüs benzerliği ile tarar.
-  - Çift skorlama (hybrid ranking) uygulayarak en güvenilir olguları sıralar.
+### 4.3 `WorldMemoryRAG` & `ChatRAG` (`services/world_memory_rag.py`, `services/chat_rag.py`)
+- Kalıcı bağlantılar, tırnaklı FTS5 sorguları, `expiry`/`supersedes` doğrulaması, boş-başlangıç FTS koruması, SQL'e indirilmiş `person_id`/`kinds` süzgeci ve birim-normlu/şekil kontrollü `_semantic_rerank` içerir.
+- `WorldMemory` (`services/world_memory.py`) `expiry` süresi dolan kayıtları okuma yollarında eler, `get_default()` ile paylaşımlı `WorldMemoryRAG` senkronizasyonu sunar.
+- `backfill_embeddings(batch_size)` ve `backup(dest_path)` ile `embed_state=0` satırları tamamlanır ve yedeklenir.
 
 ### 4.4 `SleepConsolidator` (`services/sleep_consolidator.py`)
-- `run_consolidation() -> Dict[str, Any]`
-  - Robot uyku modundayken tetiklenir:
-    1. Günlük konuşmalardaki geçici detayları temizler.
-    2. Zaman aşımına uğramış eski misafir profillerini arşivler.
-    3. Uzun süredir görülmeyen kişilerin samimiyet puanında hafif bir zaman aşımı indirimi (decay) uygular.
+- `consolidate_session()` & `run_maintenance()`: Doğrudan bağlı `SocialDB.moments.decay()`, `ChatRAG.remember_day_summary()`, `WorldMemoryRAG.consolidate_memories()`, `backfill_embeddings()` ve `.backup()` görevlerini yürütür.
 
 ---
 

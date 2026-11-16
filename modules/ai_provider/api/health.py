@@ -8,6 +8,7 @@ shadowing definitions and four dead URL-normalizer generations
 
 from __future__ import annotations
 
+from typing import Optional
 import requests
 
 from modules.common.ollama_url import (
@@ -41,7 +42,7 @@ def _extract_model_names(data):
 
     return [name for name in names if name]
 
-def get_health_router(config=None, provider="ollama", model="", *args, **kwargs):
+def get_health_router(config=None, provider="ollama", model="", *args, runtime: Optional[dict] = None, **kwargs):
     from fastapi import APIRouter
 
     router = APIRouter()
@@ -63,12 +64,16 @@ def get_health_router(config=None, provider="ollama", model="", *args, **kwargs)
 
     @router.get("/healthz")
     def healthz():
+        active_model = str((runtime or {}).get("model") or requested_model).strip()
+        active_provider = str(provider or "").strip().lower()
+        client = (runtime or {}).get("client")
+        breaker_info = client.circuit_state() if hasattr(client, "circuit_state") else None
         tags_url = base_url.rstrip("/") + "/api/tags"
 
         payload = {
             "ok": False,
             "provider": provider,
-            "model": requested_model,
+            "model": active_model,
             "base_url": base_url,
             "configured_base_url": configured_base_url,
             "base_url_corrected": base_url_corrected,
@@ -77,6 +82,12 @@ def get_health_router(config=None, provider="ollama", model="", *args, **kwargs)
             "model_available": False,
             "available_models": [],
         }
+        if breaker_info is not None:
+            payload["circuit_breaker"] = breaker_info
+
+        if active_provider != "ollama":
+            payload["error"] = "provider_disabled"
+            return payload
 
         try:
             response = requests.get(tags_url, timeout=2.0)
@@ -102,24 +113,17 @@ def get_health_router(config=None, provider="ollama", model="", *args, **kwargs)
             model_names = _extract_model_names(response_data)
             payload["available_models"] = model_names
 
-            if str(provider or "").strip().lower() == "ollama":
-                model_available = bool(requested_model) and requested_model in model_names
-                payload["model_available"] = model_available
+            model_available = bool(active_model) and active_model in model_names
+            payload["model_available"] = model_available
 
-                if daemon_ok and model_available:
-                    payload["ok"] = True
-                elif daemon_ok and not model_available:
-                    payload["ok"] = False
-                    payload["error"] = "ollama_model_missing"
-                else:
-                    payload["ok"] = False
-                    payload["error"] = "ollama_daemon_unavailable"
+            if daemon_ok and model_available:
+                payload["ok"] = True
+            elif daemon_ok and not model_available:
+                payload["ok"] = False
+                payload["error"] = "ollama_model_missing"
             else:
-                payload["model_available"] = True
-                payload["ok"] = daemon_ok
-
-                if not daemon_ok:
-                    payload["error"] = "provider_unavailable"
+                payload["ok"] = False
+                payload["error"] = "ollama_daemon_unavailable"
 
         except Exception as exc:
             payload["ok"] = False

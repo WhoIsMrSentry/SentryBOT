@@ -11,12 +11,11 @@ Mimari detaylar, SQLite WAL şeması ve Mermaid/Graphviz veri akış diyagramlar
 
 ## 🚀 Temel Yetenekler
 
-1. **İlişkisel Sosyal Veritabanı (`SocialDB`):** SQLite WAL modunda çalışan, 10 tablolu, bağlantı havuzlu ve thread-safe veritabanı motoru.
-2. **Kişi ve Yüz Tanıma (`PersonRepository`, `FaceDescriptorRepository`):** 512 boyutlu yüz embedding vektörleri ile kimlik eşleştirme.
-3. **İlişki ve Yakınlık Takibi (`RelationshipRepository`):** Güven seviyesi, tanışıklık skoru ve etkileşim sıklığı analizi.
-4. **Epizodik Sohbet Kaydı (`ChatEpisodeRepository`):** Geçmiş konuşmaların bağlamsal saklanması.
-5. **Hibrit RAG Bilgi Arama (`WorldMemoryRAG`):** BM25 anahtar kelime ve vektör benzerliği ile robotun çevresi hakkındaki olguları LLM istemine getirme.
-6. **Uyku Konsolidasyonu (`SleepConsolidator`):** Gece veya şarj anında hatıraların özetlenmesi ve optimize edilmesi.
+1. **İlişkisel Sosyal Veritabanı (`SocialDB`):** SQLite WAL modunda çalışan, `11` tablolu, `_tx_depth` ile iç içe transaction destekli ve thread-safe veritabanı motoru.
+2. **Kişi ve Yüz Tanıma (`PersonsRepo`, `FaceDescriptorsRepo`):** Yüz embedding tanımlayıcıları ve atomik `adjust_trust()` güven skoru yönetimi.
+3. **İlişki ve Yakınlık Takibi (`RelationshipsRepo`, `RelationshipMemory`):** Tek transaction içinde gruplanmış `add_chat()`, salt-okunur `social_profile()` ve paylaşımlı üstel `decay_salience` azalması.
+4. **Uzun Dönem Sohbet & Dünya Belleği (`ChatRAG`, `WorldMemoryRAG`, `WorldMemory`):** SQL'e indirilmiş `person_id`/`kinds` FTS5 + birim-normlu semantik rerank, `expiry`/`supersedes` doğrulaması, boş-başlangıç FTS koruması ve arka plan `backfill_embeddings()` / `.backup()`.
+5. **Uyku Konsolidasyonu (`SleepConsolidator`):** Şarj/boşta kalma anlarında `SocialDB.moments.decay()`, `ChatRAG.remember_day_summary()`, `backfill_embeddings()` ve çevrimiçi `sqlite3.Connection.backup()` yedekleme yürütümü.
 
 ---
 
@@ -24,54 +23,23 @@ Mimari detaylar, SQLite WAL şeması ve Mermaid/Graphviz veri akış diyagramlar
 
 ### 1. Veritabanına Bağlanma ve Kişi Bilgisi Çekme
 ```python
-from modules.cognitive_memory.db import get_social_db
-from modules.cognitive_memory.repositories.persons import PersonRepository
-
-db = get_social_db()
-person_repo = PersonRepository(db)
-
-# Kişiyi kimliğe veya takma isme göre bulma
-person = person_repo.get_by_name("Emo")
-if person:
-    print(f"Tanınan Kişi: {person['name']} (Rol: {person['role']}, Güven: {person['trust_level']})")
-```
-
-### 2. Diyalog Kaydetme ve İlişki Güncelleme
-```python
+from modules.cognitive_memory import SocialDB
 from modules.cognitive_memory.services.relationship_memory import RelationshipMemory
-
-rel_mem = RelationshipMemory(db)
-rel_mem.ingest_dialogue_turn(
-    person_id=person["id"],
-    user_text="Bugün nasılsın Sentry?",
-    robot_text="Çok iyiyim, seni görmek güzel!",
-    sentiment=0.8,
-)
-```
-
-### 3. Hibrit RAG ile Olgu Sorgulama
-```python
 from modules.cognitive_memory.services.world_memory_rag import WorldMemoryRAG
 
-rag = WorldMemoryRAG(db)
-facts = rag.search(query="En sevilen içecek", limit=2)
-for fact in facts:
-    print(f"- {fact['subject']} {fact['predicate']} {fact['object']}")
+db = SocialDB()
+person = db.persons.get_by_name("Emir")
+rel_mem = RelationshipMemory(social_db=db)
+rel_mem.add_chat("Emir", "user", "Bugün nasılsın Sentry?")
+
+rag = WorldMemoryRAG({"db_path": "data/world_memory.sqlite3"})
+recalled = rag.recall(query="En sevilen içecek", limit=2)
 ```
 
 ---
 
-## 🗄️ Veritabanı Tabloları (10 Tablo)
-- `persons`: Kişi profilleri ve roller
-- `face_descriptors`: 512-dim yüz embedding vektörleri
-- `sightings`: Kameranın kişiyi görüş kayıtları
-- `interaction_events`: Etkileşim günlüğü (dokunma, ses, komut)
-- `relationships`: Robot ile kişi arasındaki samimiyet puanı
-- `rituals`: Tekrarlayan rutinler ve alışkanlıklar
-- `moments`: Önemli ve unutulmaz anılar
-- `chat_episodes`: Sohbet cümleleri ve niyetler
-- `mood_snapshots`: Duygu durumu geçmişi
-- `world_memory`: Dünya ve ortam olguları
+## 🗄️ Veritabanı Tabloları (`11` Repo Tablosu + `schema_version`)
+- `persons`, `face_descriptors`, `sightings`, `chat_episodes`, `relationships`, `moments`, `mood_snapshots`, `rituals`, `interaction_events`, `owner_sessions`, `world_memories`, `world_observations`
 
 ---
 

@@ -6,6 +6,10 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("ollama.google_ai_client")
 
 
+class ProviderDisabledError(RuntimeError):
+    """Raised when invoking a deliberately disabled provider compatibility stub."""
+
+
 class GoogleAIStudioClient:
     """Disabled Google AI Studio compatibility client.
 
@@ -13,6 +17,7 @@ class GoogleAIStudioClient:
     This class exists only so legacy imports keep compiling.
     """
 
+    DISABLED: bool = True
     _RATE_LIMIT_COOLDOWN_S: float = 0.0
 
     def __init__(
@@ -57,7 +62,7 @@ class GoogleAIStudioClient:
         options: Optional[Dict[str, Any]] = None,
         model: Optional[str] = None,
     ) -> Dict[str, Any]:
-        raise RuntimeError("Google provider is disabled. Use local Ollama provider.")
+        raise ProviderDisabledError("Google provider is disabled. Use local Ollama provider.")
 
     def generate_with_image(
         self,
@@ -68,4 +73,4 @@ class GoogleAIStudioClient:
         model: Optional[str] = None,
         options: Optional[Dict[str, Any]] = None,
     ) -> str:
-        raise RuntimeError("Google VLM provider is disabled. Use local Ollama provider.")
+        raise ProviderDisabledError("Google VLM provider is disabled. Use local Ollama provider.")

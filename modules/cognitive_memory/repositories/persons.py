@@ -171,13 +171,23 @@ class PersonsRepo:
         min_score: float = 0.0,
         max_score: float = 1.0,
     ) -> float:
-        """Nudge trust_score by delta and return the clamped new value."""
-        rec = self.get_by_id(person_id)
-        if not rec:
+        """Atomically nudge trust_score inside a single transaction without altering last_seen_at."""
+        if not person_id:
             return 0.0
-        new_score = max(min_score, min(max_score, float(rec.get("trust_score", 0.0)) + float(delta)))
-        updated = self.upsert(name=rec.get("display_name") or rec.get("canonical_name") or "Unknown", trust_score=new_score)
-        return float(updated.get("trust_score", new_score))
+        now = time.time()
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT trust_score FROM persons WHERE id = ?",
+                (str(person_id),),
+            ).fetchone()
+            if row is None:
+                return 0.0
+            new_score = max(min_score, min(max_score, float(row["trust_score"] or 0.0) + float(delta)))
+            conn.execute(
+                "UPDATE persons SET trust_score = ?, updated_at = ? WHERE id = ?",
+                (new_score, now, str(person_id)),
+            )
+            return float(new_score)
 
     def delete(self, person_id: str) -> bool:
         with self.db.transaction() as conn:

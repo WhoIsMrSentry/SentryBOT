@@ -1,15 +1,25 @@
 from __future__ import annotations
+
+import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
+
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 import requests
 
+from modules.ai_provider.models.sentry_schema import SentryResponse
+from modules.ai_provider.services.clients import CircuitOpenError
+from modules.ai_provider.services.google_ai_client import ProviderDisabledError
+from modules.common.url_utils import resolve_config_url
+
 logger = logging.getLogger("ollama.api")
+_HTTP_SESSION = requests.Session()
 
 
 def _safe_llm_exc_text(exc: Exception) -> str:
     try:
-        from modules.system_control.config_center.log_redact import redact_secrets
+        from modules.common.config_loader import redact_secrets
 
         return redact_secrets(str(exc))[:500]
     except Exception:
@@ -48,6 +58,14 @@ def _llm_unavailable_payload(
     }
 
 
+def _post_action_json(url: str, payload: Dict[str, Any], timeout: float) -> None:
+    post_fn = getattr(requests, "post", None)
+    if getattr(post_fn, "__module__", "") == "requests.api":
+        _HTTP_SESSION.post(url, json=payload, timeout=timeout)
+    else:
+        requests.post(url, json=payload, timeout=timeout)
+
+
 def get_chat_router(
     chat: Any,
     translator: Any,
@@ -57,17 +75,42 @@ def get_chat_router(
     action_endpoint: str,
     action_timeout: float,
     default_apply: bool,
+    *,
+    runtime: Optional[Dict[str, Any]] = None,
 ) -> APIRouter:
     r = APIRouter(tags=["ollama-chat"])
+    resolved_action_endpoint = resolve_config_url(action_endpoint) if action_endpoint else ""
 
-    def _format_chat_payload(result: Dict[str, Any], translation: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def _active_context() -> tuple[Any, str, str]:
+        if runtime is None:
+            return chat, model, active_persona
+        lock = runtime.get("_lock")
+        if lock is not None:
+            with lock:
+                return (
+                    runtime.get("chat") or chat,
+                    str(runtime.get("model") or model),
+                    str(runtime.get("active_persona") or active_persona),
+                )
+        return (
+            runtime.get("chat") or chat,
+            str(runtime.get("model") or model),
+            str(runtime.get("active_persona") or active_persona),
+        )
+
+    def _format_chat_payload(
+        result: Dict[str, Any],
+        cur_model: str,
+        cur_persona: str,
+        translation: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "ok": True,
             "answer": result.get("text", ""),
             "text": result.get("text", ""),
             "thoughts": result.get("thoughts", ""),
-            "persona": active_persona,
-            "model": model,
+            "persona": cur_persona,
+            "model": cur_model,
             "provider": provider_name,
         }
         if result.get("actions"):
@@ -79,7 +122,7 @@ def get_chat_router(
         return payload
 
     def _maybe_dispatch_actions(result: Dict[str, Any], apply_flag: bool) -> None:
-        if not apply_flag or not action_endpoint:
+        if not apply_flag or not resolved_action_endpoint:
             return
         actions = result.get("actions")
         if not actions:
@@ -91,32 +134,128 @@ def get_chat_router(
             "speak": False,
         }
         try:
-            requests.post(action_endpoint, json=payload, timeout=action_timeout)
+            _post_action_json(resolved_action_endpoint, payload, timeout=action_timeout)
         except Exception as exc:
             logger.warning("Failed to dispatch persona actions: %s", exc)
+
+    def _prepare_translation(
+        query: str,
+        source_lang: Optional[str],
+        response_lang: Optional[str],
+    ) -> tuple[str, str, str, bool]:
+        source = translator.normalize_lang(source_lang, fallback=translator.cfg.default_source_lang)
+        auto_detected = False
+        if source == "auto":
+            source = translator.detect_language(query)
+            auto_detected = True
+        target = translator.normalize_lang(response_lang or source, fallback=translator.cfg.default_source_lang)
+        query_en = translator.to_bridge(query, source)
+        return source, target, query_en, auto_detected
+
+    def _chat_stream_response(
+        query: str,
+        apply_actions: Optional[bool],
+        structured: bool,
+        source_lang: Optional[str],
+        response_lang: Optional[str],
+    ) -> StreamingResponse:
+        active_chat, cur_model, cur_persona = _active_context()
+        source, target, query_en, auto_detected = _prepare_translation(query, source_lang, response_lang)
+        response_format = SentryResponse.model_json_schema() if structured else None
+        flag = default_apply if apply_actions is None else apply_actions
+
+        def _event_gen() -> Iterator[str]:
+            stream_fn = getattr(active_chat, "chat_stream", None)
+            try:
+                if callable(stream_fn):
+                    iterator = stream_fn(query_en, response_format=response_format)
+                else:
+                    res = active_chat.chat(query_en, response_format=response_format) if response_format is not None else active_chat.chat(query_en)
+                    iterator = iter([{"type": "done", "result": res}])
+
+                for evt in iterator:
+                    if evt.get("type") == "delta":
+                        line = json.dumps({"delta": evt.get("delta", ""), "done": bool(evt.get("done", False))}, ensure_ascii=False)
+                        yield f"data: {line}\n\n"
+                    elif evt.get("type") == "done":
+                        result = dict(evt.get("result") or {})
+                        answer_en = str(result.get("text", ""))
+                        localized = translator.from_bridge(answer_en, target)
+                        result["text"] = localized
+                        _maybe_dispatch_actions(result, flag)
+                        translation_meta = {
+                            "enabled": bool(translator.cfg.enabled),
+                            "request_lang": source,
+                            "bridge_lang": translator.BRIDGE_LANG,
+                            "response_lang": target,
+                            "query_bridge": query_en,
+                            "answer_bridge": answer_en,
+                            "auto_detected": auto_detected,
+                        }
+                        final_payload = _format_chat_payload(result, cur_model, cur_persona, translation=translation_meta)
+                        final_payload["done"] = True
+                        yield f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\n"
+            except CircuitOpenError as exc:
+                err = _llm_unavailable_payload(
+                    provider_name=provider_name,
+                    model=cur_model,
+                    active_persona=cur_persona,
+                    detail=_safe_llm_exc_text(exc),
+                    reason="circuit_breaker_open",
+                )
+                yield f"data: {json.dumps({**err, 'done': True}, ensure_ascii=False)}\n\n"
+            except Exception as exc:
+                err = _llm_unavailable_payload(
+                    provider_name=provider_name,
+                    model=cur_model,
+                    active_persona=cur_persona,
+                    detail=_safe_llm_exc_text(exc),
+                    reason="llm_stream_failed",
+                )
+                yield f"data: {json.dumps({**err, 'done': True}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(_event_gen(), media_type="text/event-stream")
 
     def _chat_response(
         query: str,
         apply_actions: Optional[bool],
         source_lang: Optional[str],
         response_lang: Optional[str],
+        structured: bool = False,
     ) -> Dict[str, Any]:
-        source = translator.normalize_lang(source_lang, fallback=translator.cfg.default_source_lang)
-        if source == "auto":
-            source = translator.detect_language(query)
-        target = translator.normalize_lang(response_lang or source, fallback=translator.cfg.default_source_lang)
-        query_en = translator.to_bridge(query, source)
+        active_chat, cur_model, cur_persona = _active_context()
+        source, target, query_en, auto_detected = _prepare_translation(query, source_lang, response_lang)
+        response_format = SentryResponse.model_json_schema() if structured else None
 
         try:
-            result = chat.chat(query_en)
+            if response_format is not None:
+                result = active_chat.chat(query_en, response_format=response_format)
+            else:
+                result = active_chat.chat(query_en)
+        except ProviderDisabledError as exc:
+            return _llm_unavailable_payload(
+                provider_name=provider_name,
+                model=cur_model,
+                active_persona=cur_persona,
+                detail=_safe_llm_exc_text(exc),
+                reason="provider_disabled",
+            )
+        except CircuitOpenError as exc:
+            return _llm_unavailable_payload(
+                provider_name=provider_name,
+                model=cur_model,
+                active_persona=cur_persona,
+                detail=_safe_llm_exc_text(exc),
+                reason="circuit_breaker_open",
+            )
         except requests.HTTPError as exc:
             detail = _safe_llm_exc_text(exc)
             if _is_llm_not_found(exc):
                 logger.info("LLM chat unavailable; using fallback path: %s", detail)
                 return _llm_unavailable_payload(
                     provider_name=provider_name,
-                    model=model,
-                    active_persona=active_persona,
+                    model=cur_model,
+                    active_persona=cur_persona,
                     detail=detail,
                 )
             logger.warning("LLM upstream request failed: %s", detail)
@@ -127,8 +266,8 @@ def get_chat_router(
                 logger.info("LLM chat unavailable; using fallback path: %s", detail)
                 return _llm_unavailable_payload(
                     provider_name=provider_name,
-                    model=model,
-                    active_persona=active_persona,
+                    model=cur_model,
+                    active_persona=cur_persona,
                     detail=detail,
                 )
             logger.exception("LLM chat failed: %s", detail)
@@ -148,29 +287,35 @@ def get_chat_router(
             "response_lang": target,
             "query_bridge": query_en,
             "answer_bridge": answer_en,
-            "auto_detected": bool(source_lang and str(source_lang).strip().lower() == "auto"),
+            "auto_detected": auto_detected,
         }
-        return _format_chat_payload(result, translation=translation_meta)
+        return _format_chat_payload(result, cur_model, cur_persona, translation=translation_meta)
 
     @r.get("/chat")
     def chat_get(
         query: str = Query(...),
         apply_actions: Optional[bool] = None,
         structured: bool = False,
+        stream: bool = False,
         source_lang: Optional[str] = None,
         response_lang: Optional[str] = None,
     ):
-        return _chat_response(query, apply_actions, source_lang, response_lang)
+        if stream:
+            return _chat_stream_response(query, apply_actions, structured, source_lang, response_lang)
+        return _chat_response(query, apply_actions, source_lang, response_lang, structured=structured)
 
     @r.post("/chat")
     def chat_post(
         query: str,
         apply_actions: Optional[bool] = None,
         structured: bool = False,
+        stream: bool = False,
         source_lang: Optional[str] = None,
         response_lang: Optional[str] = None,
     ):
-        return _chat_response(query, apply_actions, source_lang, response_lang)
+        if stream:
+            return _chat_stream_response(query, apply_actions, structured, source_lang, response_lang)
+        return _chat_response(query, apply_actions, source_lang, response_lang, structured=structured)
 
     @r.post("/translate")
     def translate(text: str, source_lang: str = "auto", target_lang: str = "en"):
@@ -190,7 +335,12 @@ def get_chat_router(
             np_val = max(48, int(np_raw))
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=f"invalid num_predict: {exc}") from exc
-        chat.num_predict = np_val
-        return {"ok": True, "num_predict": chat.num_predict}
+        active_chat, _, _ = _active_context()
+        if hasattr(active_chat, "set_num_predict"):
+            actual = active_chat.set_num_predict(np_val)
+        else:
+            active_chat.num_predict = np_val
+            actual = int(active_chat.num_predict)
+        return {"ok": True, "num_predict": actual}
 
     return r

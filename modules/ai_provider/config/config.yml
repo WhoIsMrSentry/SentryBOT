@@ -18,9 +18,9 @@ google_ai_studio:
   request_timeout: 20
 persona:
   default: sentry
-  dir: modules/ollama/config/personalities
+  dir: modules/ai_provider/config/personalities
 actions:
-  endpoint: http://localhost:8080/autonomy/apply_actions
+  endpoint: '@gateway/autonomy/apply_actions'
   default_apply: true
   timeout: 1.5
 translation:
