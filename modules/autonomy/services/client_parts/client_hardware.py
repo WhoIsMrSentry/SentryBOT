@@ -13,6 +13,7 @@ from modules.arduino_serial.contract import (
     build_simple_cmd,
     build_sound_play_cmd,
     build_stepper_cmd,
+    validate_arduino_payload,
 )
 from .client_lights import ClientLightsMixin
 
@@ -116,20 +117,14 @@ class ClientHardwareMixin(ClientLightsMixin):
         return self._post(svc, f"/{act}")
 
     def arduino_send(self, payload: dict) -> Any:
+        err = validate_arduino_payload(payload)
+        if err:
+            logger.warning("Refused invalid arduino_send payload: %s", err)
+            return {"ok": False, "error": err}
         return self._post("arduino", "/send", payload)
 
     def run_animation(self, name: str, speed: float = 1.0, loop: bool = False) -> Any:
-        url = self.urls.get("animate")
-        if not url:
-            return None
-        try:
-            import requests
-            full_url = f"{url}/run"
-            resp = requests.post(full_url, params={"name": name, "speed": speed, "loop": loop}, timeout=1.0)
-            return resp.json() if resp.status_code == 200 else None
-        except Exception as e:
-            logger.debug("Failed to trigger animation %s: %s", name, e)
-            return None
+        return self._post("animate", "/run", params={"name": name, "speed": speed, "loop": loop}, timeout_s=1.0)
 
     async def async_move_head(self, pan: int, tilt: int, speed: float = 0.8) -> dict:
         pan_resp = await self._async_post(
