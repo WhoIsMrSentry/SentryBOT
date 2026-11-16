@@ -7,11 +7,13 @@ from textual.widget import Widget
 from textual.widgets import Button, Label, Sparkline, Static
 
 
-def _progress_bar(pct: float, width: int = 10) -> str:
-    """ASCII resource meter bar."""
+def _progress_bar(pct: float, width: int = 10, ascii_mode: bool = False) -> str:
+    """Resource meter bar supporting both Unicode blocks and ASCII fallback."""
     pct = max(0.0, min(100.0, pct))
     filled = int(round((pct / 100.0) * width))
-    return "█" * filled + "░" * (width - filled)
+    full_ch = "#" if ascii_mode else "█"
+    empty_ch = "-" if ascii_mode else "░"
+    return full_ch * filled + empty_ch * (width - filled)
 
 
 class ServiceCard(Widget):
@@ -147,6 +149,16 @@ class TabMain(Widget):
                         id="traffic_content",
                     )
 
+            # Autonomy Goal & DecisionTrace Live Feed Card
+            with Vertical(id="decision_trace_panel"):
+                yield Label("AUTONOMY GOAL & DECISION TRACE FEED", classes="panel_title", markup=False)
+                yield Static(
+                    "• Active Goal : Awaiting gateway telemetry...\n"
+                    "• Recent Trace: No decisions recorded yet.",
+                    id="decision_trace_content",
+                    markup=False,
+                )
+
             # Bottom Action Bar
             with Horizontal(id="main_action_bar"):
                 yield Button("Start Robot", id="btn_start_robot", variant="success", classes="action_button")
@@ -196,7 +208,13 @@ class TabMain(Widget):
         except Exception:
             pass
 
-    def update_telemetry(self, companion_text: str, attention_text: str, traffic_text: str = "") -> None:
+    def update_telemetry(
+        self,
+        companion_text: str,
+        attention_text: str,
+        traffic_text: str = "",
+        decision_trace_text: str = "",
+    ) -> None:
         try:
             if companion_text:
                 self.query_one("#companion_content", Static).update(companion_text)
@@ -204,6 +222,8 @@ class TabMain(Widget):
                 self.query_one("#attention_content", Static).update(attention_text)
             if traffic_text:
                 self.query_one("#traffic_content", Static).update(traffic_text)
+            if decision_trace_text:
+                self.query_one("#decision_trace_content", Static).update(decision_trace_text)
         except Exception:
             pass
 

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import List, Tuple
+from collections import deque
+from pathlib import Path
+import time
+from typing import Deque, Optional, Tuple
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -12,13 +15,18 @@ from ..services.async_log_streamer import ParsedLogEntry
 class TabLogs(Widget):
     """Full-width live log viewer with search, filtering, and rich syntax colors."""
 
-    def __init__(self, **kwargs) -> None:
+    BINDINGS = [
+        ("ctrl+s", "export_logs", "Export Logs"),
+    ]
+
+    def __init__(self, root: Optional[Path] = None, max_history: int = 2000, **kwargs) -> None:
         super().__init__(**kwargs)
+        self.root = (root or Path.cwd()).resolve()
         self.active_level_filter = "ALL"
         self.search_query = ""
         self.auto_scroll_enabled = True
-        self.log_history: List[Tuple[ParsedLogEntry, Text]] = []
-        self.max_history = 2000
+        self.max_history = max(10, int(max_history))
+        self.log_history: Deque[Tuple[ParsedLogEntry, Text]] = deque(maxlen=self.max_history)
         self.count_total = 0
         self.count_info = 0
         self.count_warn = 0
@@ -38,6 +46,7 @@ class TabLogs(Widget):
                 yield Button("WARN", id="btn_filter_warn", classes="filter_btn", variant="default")
                 yield Button("ERROR", id="btn_filter_err", classes="filter_btn", variant="default")
                 yield Button("Auto-Scroll: ON", id="log_scroll_toggle", variant="primary")
+                yield Button("Export (Ctrl+S)", id="log_export_btn", variant="default")
                 yield Button("Clear", id="log_clear_btn", variant="error")
 
             # Main Full-Width Rich Log
@@ -59,8 +68,6 @@ class TabLogs(Widget):
             return
 
         self.log_history.append((entry, rich_text))
-        if len(self.log_history) > self.max_history:
-            self.log_history.pop(0)
 
         self.count_total += 1
         if entry.level == "ERROR" or entry.level == "CRITICAL":
@@ -140,6 +147,36 @@ class TabLogs(Widget):
         self._update_stats_label()
         self.refilter_logs()
 
+    def clear_logs(self) -> None:
+        self.log_history.clear()
+        self.count_total = 0
+        self.count_info = 0
+        self.count_warn = 0
+        self.count_err = 0
+        self._update_stats_label()
+        self.refilter_logs()
+
+    def filtered_lines(self) -> list[str]:
+        return [entry.raw for entry, _ in self.log_history if self._matches_filter(entry)]
+
+    def export_filtered_logs(self, export_dir: Optional[Path] = None) -> Path:
+        target_dir = export_dir or (self.root / "logs" / "exports")
+        target_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+        out_path = target_dir / f"logs_export_{stamp}.log"
+        lines = self.filtered_lines()
+        out_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+        return out_path
+
+    def action_export_logs(self) -> None:
+        try:
+            out_path = self.export_filtered_logs()
+            if self.is_mounted:
+                self.app.notify(f"Exported {len(self.filtered_lines())} lines -> {out_path.name}", timeout=3.0)
+        except Exception as exc:
+            if self.is_mounted:
+                self.app.notify(f"Log export failed: {exc}", severity="error")
+
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "log_search_input":
             self.search_query = event.value.strip()
@@ -155,14 +192,10 @@ class TabLogs(Widget):
             self.set_level_filter("WARN")
         elif btn_id == "btn_filter_err":
             self.set_level_filter("ERROR")
+        elif btn_id == "log_export_btn":
+            self.action_export_logs()
         elif btn_id == "log_clear_btn":
-            self.log_history.clear()
-            self.count_total = 0
-            self.count_info = 0
-            self.count_warn = 0
-            self.count_err = 0
-            self._update_stats_label()
-            self.refilter_logs()
+            self.clear_logs()
         elif btn_id == "log_scroll_toggle":
             self.auto_scroll_enabled = not self.auto_scroll_enabled
             try:
