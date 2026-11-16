@@ -71,6 +71,7 @@ class RuntimeConfigRegistry:
                 social_db = None
         self._social_db = social_db
         self._lock = threading.RLock()
+        self._apply_lock = threading.RLock()
         self._keys: Dict[str, RuntimeKey] = {}
 
     # ── Registration ──────────────────────────────────────────────────
@@ -144,33 +145,39 @@ class RuntimeConfigRegistry:
         source: str = "api",
     ) -> Dict[str, Any]:
         composed = self._compose(module, name)
-        # Coerce → apply → write run atomically under the lock so two
-        # concurrent set() calls cannot interleave apply order vs stored
-        # value (R53/R54).
-        with self._lock:
-            entry = self._keys.get(composed)
-            if entry is None:
-                return {"ok": False, "error": "unknown_key", "key": composed}
-
-            coerced, err = self._coerce(entry, value)
-            if err:
-                return {"ok": False, "error": err, "key": composed}
+        # Serialize mutations via _apply_lock without holding _lock across external
+        # apply_fn I/O so readers never stall while an adapter applies a change.
+        with self._apply_lock:
+            with self._lock:
+                entry = self._keys.get(composed)
+                if entry is None:
+                    return {"ok": False, "error": "unknown_key", "key": composed}
+                coerced, err = self._coerce(entry, value)
+                if err:
+                    return {"ok": False, "error": err, "key": composed}
+                apply_fn = entry.apply_fn
 
             applied_payload: Optional[Dict[str, Any]] = None
-            if entry.apply_fn is not None:
+            if apply_fn is not None:
                 try:
-                    applied_payload = entry.apply_fn(coerced)
+                    applied_payload = apply_fn(coerced)
                 except Exception as exc:
                     logger.warning("apply_fn for %s raised: %s", composed, exc)
                     return {"ok": False, "error": "apply_failed", "exception": str(exc)}
 
-            prev_value = entry.value
-            entry.value = coerced
-            entry.updated_at = time.time()
-            entry.updated_by = str(actor or "admin")
+            with self._lock:
+                entry = self._keys.get(composed)
+                if entry is None:
+                    return {"ok": False, "error": "unknown_key", "key": composed}
+                prev_value = entry.value
+                entry.value = coerced
+                entry.updated_at = time.time()
+                entry.updated_by = str(actor or "admin")
+                is_sensitive = entry.sensitive
+                entry_snapshot = entry
 
         self._audit(
-            entry,
+            entry_snapshot,
             previous=prev_value,
             new_value=coerced,
             actor=str(actor or "admin"),
@@ -180,7 +187,7 @@ class RuntimeConfigRegistry:
         return {
             "ok": True,
             "key": composed,
-            "value": coerced if not entry.sensitive else "***",
+            "value": coerced if not is_sensitive else "***",
             "applied": applied_payload or {},
         }
 
@@ -226,10 +233,19 @@ class RuntimeConfigRegistry:
         return float(value)
 
     @staticmethod
-    def _coerce_bool(value: Any) -> Any:
+    def _coerce_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in (0, 1):
+            return bool(value)
         if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on"}
-        return bool(value)
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+            raise ValueError(f"invalid boolean string: {value!r}")
+        raise ValueError(f"invalid boolean value: {value!r}")
 
     def _coerce_choice(self, key: RuntimeKey, value: Any) -> Tuple[Any, Optional[str]]:
         if key.choices is not None and value not in key.choices:

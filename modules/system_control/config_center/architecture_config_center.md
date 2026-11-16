@@ -13,19 +13,19 @@ flowchart TD
     VALID_YAML -- "Evet" --> RET_CFG("JSON Olarak<br>Arayüze Dön")
     LOAD_BACKUP --> RET_CFG
     
-    %% Yazma Akışı
-    REQ_POST("POST /config") --> PARSE_NEW("Gelen JSON'ı Parse Et")
-    PARSE_NEW --> VALID_SCHEMA{"Pydantic Şema<br>Doğrulaması?"}
+    %% Yazma & Rollback Akışı
+    REQ_POST("PUT /config/set (?dry_run)") --> PARSE_NEW("YAML safe_load & Mapping Kontrolü")
+    PARSE_NEW --> VALID_SCHEMA{"Geçerli mi?"}
     
-    VALID_SCHEMA -- "Hata" --> RET_ERR("Hata Döndür:<br>Geçersiz Format")
-    VALID_SCHEMA -- "Başarılı" --> SAVE_YAML("config.yml'e Yaz")
+    VALID_SCHEMA -- "Hata" --> RET_ERR("HTTP 400 Döndür")
+    VALID_SCHEMA -- "dry_run=true" --> RET_DRY("Yazmadan Özet Dön")
+    VALID_SCHEMA -- "Evet" --> SAVE_YAML("Son 5 .bak Koru + os.replace Atomik Yaz")
     
-    SAVE_YAML --> RESTART_REQ{"Restart<br>Gerekiyor mu?"}
-    RESTART_REQ -- "Evet" --> TRIG_RST("Modülü/Sistemi<br>Yeniden Başlat")
-    RESTART_REQ -- "Hayır" --> HOT_RELOAD("Hafızadaki Objeyi<br>Güncelle (Hot-Reload)")
-    
-    TRIG_RST --> RET_OK("Başarılı")
-    HOT_RELOAD --> RET_OK
+    SAVE_YAML --> HOT_RELOAD("clear_agent_config_cache + apply_module_yaml")
+    HOT_RELOAD --> RET_OK("Başarılı")
+
+    REQ_RB("POST /config/rollback") --> PICK_BAK("Son .bak-* Yedeğini Seç")
+    PICK_BAK --> SAVE_YAML
 ```
 
 ## 🔄 İlişkisel Etkileşimler (Veri Akışı)

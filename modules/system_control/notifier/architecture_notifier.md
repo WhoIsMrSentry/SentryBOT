@@ -1,54 +1,41 @@
 # Notifier (Bildirim) Modülü Mimarisi
 
-Notifier modülü (`modules/notifier`), robottaki önemli olayları veya hataları sahibinin cep telefonuna (Telegram, Discord, Slack) webhook'lar üzerinden güvenli olarak iten (push notification) köprü servisidir.
+Notifier modülü (`modules/system_control/notifier`), robot uyarılarını öncelik (`normal`/`critical`) ve sessiz saat (`quiet_hours`) kurallarına göre Telegram ve Discord webhook kanallarına dağıtan, ayrıca güvenli Telegram long-polling üzerinden gateway komutlarını yürüten bildirim köprü servisidir.
 
-## 🏗️ İş Akışı ve Karar Mekanizmaları (Flowchart)
+## İş Akışı ve Karar Mekanizmaları (Flowchart)
 
 ```mermaid
 flowchart TD
-    %% İstek Gelmesi
-    EVT_TRIG("Herhangi Bir Modül:<br>POST /notify/send") --> PARSE_MSG("Parametre: title, message, level")
-    
-    PARSE_MSG --> CHK_LVL{"Level (Seviye)<br>Ne?"}
-    
-    CHK_LVL -- "INFO" --> SET_ICON("ℹ️ İkonu Ekle")
-    CHK_LVL -- "WARNING" --> SET_ICON_W("⚠️ İkonu Ekle")
-    CHK_LVL -- "CRITICAL" --> SET_ICON_C("🚨 İkonu Ekle")
-    
-    SET_ICON --> CHK_TEL{"Telegram Token<br>Tanımlı mı?"}
-    SET_ICON_W --> CHK_TEL
-    SET_ICON_C --> CHK_TEL
-    
-    %% API Gönderimi
-    CHK_TEL -- "Evet" --> REQ_TEL("Telegram API'ye Req At<br>(SendMessage)")
-    CHK_TEL -- "Hayır" --> CHK_DIS{"Discord Webhook<br>Var mı?"}
-    
-    REQ_TEL --> CHK_DIS
-    
-    CHK_DIS -- "Evet" --> REQ_DIS("Discord Webhook'a Req At")
-    CHK_DIS -- "Hayır" --> FINISH_NOT("İşlem Bitti")
-    REQ_DIS --> FINISH_NOT
+    REQ_SEND["POST /notify/send (text, priority, channels?)"] --> CHK_QH{"quiet_hours aktif ve priority != critical?"}
+    CHK_QH -- "Evet" --> SKIP_QH["Durdur: reason=quiet_hours"]
+    CHK_QH -- "Hayir" --> CHK_DEB{"Son cooldown_sec icinde ayni mesaj gonderildi mi?"}
+    CHK_DEB -- "Evet" --> SKIP_DEB["Durdur: reason=debounced"]
+    CHK_DEB -- "Hayir" --> DISPATCH["Secili aktif kanallara dagit (Telegram, Discord)"]
+
+    POLL_UPD["TelegramBot._handle_update"] --> CHK_AUTH{"_is_authorized(user_id)?"}
+    CHK_AUTH -- "Hayir" --> DROP_UNAUTH["Reddet + warning log"]
+    CHK_AUTH -- "Evet" --> CHK_BOT_QH{"QuietHours.is_quiet_now()?"}
+    CHK_BOT_QH -- "Evet" --> DROP_SILENT["Sessizce yoksay (yanit atma)"]
+    CHK_BOT_QH -- "Hayir" --> CMD_ROUTE["CommandRouter -> CommandRegistry.handle(...)"]
 ```
 
-## 🔄 İlişkisel Etkileşimler (Veri Akışı)
+## İlişkisel Etkileşimler (Veri Akışı)
 
 ```mermaid
 erDiagram
-    NotifierService ||--o{ ThirdPartyApis : http_post
-    Diagnostics ||--o{ NotifierService : triggers_critical
-    Interactions ||--o{ NotifierService : triggers_info
-
-    NotifierService {
-        string telegram_token
-        string discord_webhook
-    }
+    NotifierRouter ||--o{ TelegramBot : dispatches_and_controls
+    NotifierRouter ||--o{ SyncSenders : threadpool_http_post
+    TelegramBot ||--|| CommandRouter : routes_bot_commands
+    CommandRouter ||--|| GatewayHTTP : calls_with_shared_client
+    Diagnostics ||--o{ NotifierRouter : sends_alerts
+    Scheduler ||--o{ NotifierRouter : executes_notify_jobs
 ```
 
-## ⚙️ Detaylı Karar Mantığı (if/else)
+## Detaylı Karar Mantığı
 
-1. **Ağ Çökmesi Koruması**
-   - Robot internetsiz bir alana girdiğinde (örneğin fuar alanı), Telegram bildirimleri patlayacaktır.
-   - Bu modül içindeki tüm HTTP POST işlemleri **`try / except requests.exceptions.RequestException`** bloğu ile sarmalanır. Ağ yanıt vermezse (`Timeout`), fonksiyon uygulamayı kitlemeden `"Bildirim Gönderilemedi"` iç logunu (logger.error) basıp çıkar.
-2. **Kuyruklama ve Taşkın (Flood) Önleme**
-   - Saniyede 100 kere `CRITICAL` hatası çıkarsa robota ait Telegram API adresi spam sebepli banlanacaktır.
-   - Bildirimler gönderilirken, son 10 saniye içinde **`if`** "Aynı Bildirim Gönderildiyse" o bildirimi engeller (Rate Limiting).
+1. **Varsayılan Reddet (`allow_public` + `allowed_user_ids`)**
+   - `allowed_user_ids` boşsa `allow_public: true` açıkça ayarlanmadıkça hiçbir Telegram kullanıcısı komut yürütemez; geçersiz env ID girdileri başlangıcı çökertmeden uyarı loguyla atlanır.
+2. **Ortak Sessiz Saat ve Flood Koruması**
+   - `QuietHours` ve HTTP router aynı `modules.common.time_utils` (`parse_hhmm`, `is_time_in_window`) mantığını kullanır; `/notify/send` `priority="critical"` dışında tüm kanalları susturur ve başarılı gönderimler için `send.cooldown_sec` süresince aynı mesajı debounce eder.
+3. **Paylaşımlı İstemci ve Sır Maskeleme**
+   - `TelegramBot` tek `httpx.AsyncClient`, `senders.py` ise tek `httpx.Client` paylaşır; `xNotifierService.py` kapanışta ikisini de kapatır ve hata logları `redact_secrets` + token maskelemesiyle temizlenir.

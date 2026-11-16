@@ -4,27 +4,26 @@ SentryBOT'un paylaşılan global durum deposudur. Modüller arası operasyonel d
 
 ## Sorumluluklar
 
-- Thread-safe durum okuma ve güncelleme (`asyncio.Lock`)
-- `operational` ve `emotions` için kısa yol endpoint'leri
-- `subscribe()` ile süreç içi bildirim (`pubsub` pattern)
-- İsteğe bağlı kalıcılık: `memory`, `json`, `sqlite`
+- Thread-safe durum okuma ve güncelleme (`_lock` + ayrılmış `_persist_lock`)
+- `operational` (izinli durum doğrulamalı) ve `emotions` için kısa yol endpoint'leri
+- `subscribe()` / `unsubscribe()` ile süreç içi bildirim (`pubsub`) ve `GET /state/stream` SSE akışı
+- İsteğe bağlı kalıcılık: `memory`, `json` (atomik `os.replace`), `sqlite` (`WAL` + `close()`)
 
-## Mimari (Güncel: 2026-08-20)
+## Mimari
 
-- Giriş noktası: `xStateService.py`
+- Giriş noktası: `xStateService.py` (`lifespan` kapanışında `store.close()`)
 - **Router**: `api/router.py`
-- **Depo**: `services/store.py` → `StateStore` class
-- **Config**: `config_loader.py`
-
-`StateStore`, kilit korumalı bir sözlük üstüne kuruludur. Kalıcılık `sqlite` seçilirse `state` tablosuna, `json` seçilirse belirtilen dosyaya yazılır; `memory` modunda yalnızca süreç içi çalışır. `operational` / `emotions` değişince kayıtlı dinleyiciler (pubsub) çağrılır.
+- **Depo**: `services/store.py` → `StateStore` (`_apply_updates` ortak yazım hattı)
+- **Config**: `config_loader.py` → `modules.common.config_loader.load_module_config`
 
 ## API (Gateway altında `/state/*`)
 
 - `GET /state/healthz`
-- `GET /state/get` — tüm durum
+- `GET /state/get?key=` — tüm durum veya tek anahtar (`?key=<name>`)
+- `GET /state/stream` — Server-Sent Events (SSE) ile anlık snapshot ve durum değişim akışı
 - `POST /state/set` — serbest key/value
-- `POST /state/set/operational` — `idle|active|sleep|maintenance`
-- `POST /state/set/emotions` — `[{"name": "joy", "intensity": 0.8}]`
+- `POST /state/set/operational` — doğrulamalı operasyonel mod (`idle|active|busy|listening|speaking|thinking|sleep|sleeping|degraded|failed|maintenance|estop|error`)
+- `POST /state/set/emotions` — aktif duygular listesi
 
 ## Konfigürasyon
 

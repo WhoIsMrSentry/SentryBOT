@@ -3,6 +3,7 @@ server:
   port: 8094
 
 gateway_base_url: http://127.0.0.1:8080
+persistence_path: data/scheduler_jobs.json
 
 jobs:
   - id: gateway_health

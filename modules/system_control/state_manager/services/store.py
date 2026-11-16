@@ -3,8 +3,12 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 import copy
 import json
+import logging
+import os
 import sqlite3
 import threading
+
+logger = logging.getLogger("state_manager.store")
 
 
 def _project_root() -> Path:
@@ -46,12 +50,22 @@ class StateStore:
         elif self._persist_type == "json":
             self._load_from_json()
 
+    def close(self) -> None:
+        """Close the SQLite persistence connection idempotently."""
+        with self._persist_lock:
+            conn = self._sqlite_conn
+            if conn is not None:
+                self._sqlite_conn = None
+                try:
+                    conn.close()
+                except Exception as exc:
+                    logger.debug("SQLite close failed: %s", exc)
+
     def __del__(self) -> None:
-        if self._sqlite_conn is not None:
-            try:
-                self._sqlite_conn.close()
-            except Exception:
-                pass
+        try:
+            self.close()
+        except Exception:
+            pass
 
     @staticmethod
     def _resolve_path(path: str) -> Path:
@@ -70,8 +84,8 @@ class StateStore:
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA busy_timeout=5000")
             cur.execute("PRAGMA synchronous=NORMAL")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("SQLite PRAGMA initialization failed: %s", exc)
         cur.execute(
             """
             CREATE TABLE IF NOT EXISTS state (
@@ -96,13 +110,14 @@ class StateStore:
             for key, value_json in rows:
                 try:
                     loaded[str(key)] = json.loads(value_json)
-                except Exception:
+                except Exception as exc:
+                    logger.debug("Skipping corrupt state row %r: %s", key, exc)
                     continue
             if loaded:
                 self._state.update(loaded)
-        except Exception:
+        except Exception as exc:
             # Keep in-memory defaults if db is unreadable.
-            pass
+            logger.warning("Failed to load SQLite state from %s: %s", self._persist_path, exc)
 
     def _load_from_json(self) -> None:
         if not self._persist_path.exists():
@@ -112,8 +127,8 @@ class StateStore:
             data = json.loads(self._persist_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 self._state.update(data)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to load JSON state from %s: %s", self._persist_path, exc)
 
     def _snapshot_locked(self, keys: Iterable[str] | None = None) -> Dict[str, Any]:
         if keys is None:
@@ -128,14 +143,9 @@ class StateStore:
 
     def _persist_snapshot(self, snapshot: Dict[str, Any], *, only_keys: bool = False) -> None:
         """Write a snapshot to disk without holding the state lock (R41)."""
-        if self._persist_type == "memory":
-            return
-        if only_keys and self._persist_type == "sqlite":
-            self._write_rows(snapshot)
-            return
-        self._write_snapshot(snapshot)
+        self._write_snapshot(snapshot, only_keys=only_keys)
 
-    def _write_snapshot(self, snapshot: Dict[str, Any]) -> None:
+    def _write_snapshot(self, snapshot: Dict[str, Any], *, only_keys: bool = False) -> None:
         if self._persist_type == "memory":
             return
         with self._persist_lock:
@@ -143,13 +153,24 @@ class StateStore:
                 self._write_rows(snapshot)
                 return
             if self._persist_type == "json":
+                payload = snapshot
+                if only_keys:
+                    with self._lock:
+                        payload = copy.deepcopy(self._state)
                 self._persist_path.parent.mkdir(parents=True, exist_ok=True)
-                tmp_path = self._persist_path.with_suffix(".tmp")
-                tmp_path.write_text(
-                    json.dumps(snapshot, ensure_ascii=True, indent=2),
-                    encoding="utf-8",
+                tmp_path = self._persist_path.with_name(
+                    f".{self._persist_path.name}.{threading.get_ident()}.tmp"
                 )
-                tmp_path.replace(self._persist_path)
+                try:
+                    tmp_path.write_text(
+                        json.dumps(payload, ensure_ascii=True, indent=2),
+                        encoding="utf-8",
+                    )
+                    os.replace(tmp_path, self._persist_path)
+                except Exception:
+                    if tmp_path.exists():
+                        tmp_path.unlink(missing_ok=True)
+                    raise
 
     def _write_rows(self, rows: Dict[str, Any]) -> None:
         if self._sqlite_conn is None:
@@ -168,16 +189,25 @@ class StateStore:
         with self._lock:
             self._listeners.append(listener)
 
+    def unsubscribe(self, listener: Callable[[str, Any], None]) -> None:
+        with self._lock:
+            self._listeners = [fn for fn in self._listeners if fn is not listener]
+
+    def has_key(self, key: str) -> bool:
+        with self._lock:
+            return key in self._state
+
     def _notify(self, changes: Dict[str, Any]) -> None:
         if not self._pubsub_enabled or not changes:
             return
-        listeners = list(self._listeners)
+        with self._lock:
+            listeners = list(self._listeners)
         for key, value in changes.items():
             for fn in listeners:
                 try:
                     fn(key, value)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("State listener for key %r raised: %s", key, exc)
 
     def get(self, key: Optional[str] = None, *, deep: bool = True) -> Any:
         # Fast copy/primitive return when key is requested, avoiding 798 fan-in full deepcopy churn
@@ -191,7 +221,7 @@ class StateStore:
                 return dict(self._state)
             return copy.deepcopy(self._state)
 
-    def update(self, patch: Dict[str, Any]) -> None:
+    def _apply_updates(self, patch: Dict[str, Any]) -> None:
         changes: Dict[str, Any] = {}
         with self._lock:
             names: List[str] = []
@@ -205,28 +235,14 @@ class StateStore:
         self._persist_snapshot(snapshot, only_keys=True)
         self._notify(changes)
 
+    def update(self, patch: Dict[str, Any]) -> None:
+        self._apply_updates(patch)
+
     def set_value(self, key: str, value: Any) -> None:
-        name = str(key)
-        with self._lock:
-            self._state[name] = value
-            snapshot = self._snapshot_locked([name])
-        self._persist_snapshot(snapshot, only_keys=True)
-        if name in self._pubsub_keys:
-            self._notify({name: copy.deepcopy(value)})
+        self._apply_updates({str(key): value})
 
     def set_operational(self, val: str) -> None:
-        with self._lock:
-            self._state["operational"] = val
-            snapshot = self._snapshot_locked(["operational"])
-        self._persist_snapshot(snapshot, only_keys=True)
-        if "operational" in self._pubsub_keys:
-            self._notify({"operational": val})
+        self._apply_updates({"operational": val})
 
     def set_emotions(self, vals: List[str]) -> None:
-        values = list(vals)
-        with self._lock:
-            self._state["emotions"] = values
-            snapshot = self._snapshot_locked(["emotions"])
-        self._persist_snapshot(snapshot, only_keys=True)
-        if "emotions" in self._pubsub_keys:
-            self._notify({"emotions": list(values)})
+        self._apply_updates({"emotions": list(vals)})

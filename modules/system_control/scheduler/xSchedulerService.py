@@ -8,11 +8,18 @@ from .api.router import get_router
 from .services.runner import Scheduler
 
 
-def create_app(config_path: str | None = None) -> FastAPI:
+from typing import Any, Dict, Optional
+
+def create_app(
+    config_path: str | None = None,
+    services: Optional[Dict[str, Any]] = None,
+) -> FastAPI:
     cfg = load_config(config_path)
     sched = Scheduler(
         jobs=cfg.get("jobs", []),
         gateway_base_url=str(cfg.get("gateway_base_url", "http://127.0.0.1:8080")),
+        services=services,
+        persist_path=cfg.get("persistence_path"),
     )
 
     @asynccontextmanager

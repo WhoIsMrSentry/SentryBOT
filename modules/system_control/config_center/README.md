@@ -1,28 +1,23 @@
 # Platform - Config Center
 
-SentryBOT'un merkezi yapılandırma yönetim modülüdür. Modül YAML dosyalarını görüntüler/düzenler, runtime anahtarlarını yönetir ve `config/agent.yaml` için **tek kaynak** yükleme katmanını sağlar.
+SentryBOT'un merkezi yapılandırma yönetim modülüdür. Modül `config.yml` dosyalarını görüntüler/doğrular/atomik günceller, geri alma (`/config/rollback`) sunar ve çalışma zamanı anahtarlarını yönetir (`modules.common.config_loader` ile entegre).
 
 ## Sorumluluklar
 
-- **Merkezi `config/agent.yaml` yükleme** (`agent_yaml_loader.load_agent_config`) — **TEK KAYNAK**
-- Modül `config.yml` dosyalarını listeleme, okuma, yazma (CRUD)
-- Web tabanlı config UI (`/config/ui`)
-- Runtime config registry (canlı anahtar/değer yönetimi + `apply_fn`)
-- YAML runtime apply (modül davranışını anında güncelleme)
-- Google API key enjeksiyonu, runtime auth token env overlay ve loopback URL rewrite
+- **Merkezi `config/agent.yaml` yükleme:** Tek kaynak `modules.common.config_loader` üzerinden sağlanır (`config_center` altındaki 6 eski shim dosyası kaldırılmıştır).
+- Modül `config.yml` dosyalarını listeleme, okuma, doğrulama (`dry_run`), atomik yazma (`os.replace`) ve geri alma (`POST /config/rollback`)
+- Modül keşfi (`POST /config/scan` — çok katmanlı `rglob("config/config.yml")`)
+- Opsiyonel Web UI (`/config/ui` — yalnız `static/index.html` mevcutken bağlanır)
+- Runtime config registry (`services/runtime_registry.py` — non-blocking `apply_fn` + sıkı `_coerce_bool`)
+- YAML runtime apply (`services/yaml_runtime_apply.py` — `clear_agent_config_cache()` + çoklu modül anahtar eşleme)
 
-## Mimari (Güncel: 2026-08-20)
+## Mimari
 
-- Giriş noktası: `xConfigCenterService.py`
-- **Agent YAML Loader**: `agent_yaml_loader.py` (~84 satır) — büyük duplication giderildi, ayrıca aşağıdaki nota bakın
-- **Runtime Registry**: `services/runtime_registry.py` → `RuntimeConfigRegistry` (register, set, apply_fn)
-- **Runtime Apply**: `services/yaml_runtime_apply.py` → `apply_runtime_config()`
-- **API Parçaları**: `api/config_routes.py`, `api/write.py`, `api/runtime.py`, `api/scan.py`, `api/views.py`
-- **Secrets**: `runtime_secrets.py` — env token inject, redaction
-- **Google Keys**: `google_keys.py` — Google AI Studio key validation
-- **Runtime Profile**: `runtime_profile.py` — profile merge/resolve
-
-`load_agent_config()` graph'ta **40+ çağrıcıya** sahiptir; `agent_core`, `voice/speech`, `voice/speak`, `ai_provider`, `gateway`, `vlm_bridge`, `voice/wakeword` gibi modüller merkezi config'i buradan okur.
+- Giriş noktası: `xConfigCenterService.py` (varsayılan port: `8109` — `ollama_service:8099` çakışması giderildi)
+- **Config Yükleyici**: `config_loader.py` → `modules.common.config_loader.load_module_config`
+- **Runtime Registry**: `services/runtime_registry.py` → `RuntimeConfigRegistry` (`_apply_lock` + `_lock` ayrımı)
+- **Runtime Apply**: `services/yaml_runtime_apply.py` → `apply_module_yaml()`
+- **API Parçaları**: `api/_helpers.py` (`resolve_module_config_path`, `atomic_write_text`, 5 yedeğe kadar `backup_file`, `list_backups`), `api/config_routes.py`, `api/write.py`, `api/runtime.py`, `api/scan.py`, `api/views.py`
 
 ## API (Gateway altında `/config/*`)
 
@@ -30,10 +25,11 @@ SentryBOT'un merkezi yapılandırma yönetim modülüdür. Modül YAML dosyalar�
 - `GET /config/list` — modül config dosyaları
 - `GET /config/get?module=<name>` — parsed config
 - `GET /config/raw?module=<name>` — raw YAML
-- `PUT /config/set?module=<name>` — config güncelle (backup + validate)
+- `PUT /config/set?module=<name>&dry_run=false` — YAML doğrula, `dry_run=true` ise yazmadan sonuç dön; aksi halde son 5 yedeği koruyarak atomik yaz + runtime apply
+- `POST /config/rollback?module=<name>&backup_name=` — son (veya seçili) `.bak-*` yedeğini atomik geri yükle + runtime apply
 - `POST /config/register` — yeni modül config kaydet
-- `POST /config/scan` — modül keşfi
-- `GET /config/ui` — Web UI
+- `POST /config/scan` — `modules/**/config/config.yml` özyinelemeli keşfi
+- `GET /config/ui` — Web UI (yalnız `static/index.html` varsa aktif)
 
 ### Runtime Registry
 - `GET /config/runtime/list` — tüm runtime key'ler
