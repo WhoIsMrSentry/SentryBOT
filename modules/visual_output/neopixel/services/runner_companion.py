@@ -22,16 +22,16 @@ class RunnerCompanionMixin:
         if self._companion is None:
             return False
         active = str(mode or "").strip().lower() not in {"", "off"}
+        was_active = self.companion_is_active()
         if active and hasattr(self, "_cancel_animations"):
             self._cancel_animations()
-        ok = self._companion.set_mode(mode)
-        if active and ok:
+        if active and not was_active:
             try:
                 with self._frame_lock:
                     self.driver.clear()
             except Exception:
                 pass
-        return bool(ok)
+        return bool(self._companion.set_mode(mode))
 
     def companion_is_active(self) -> bool:
         if self._companion is None:

@@ -29,8 +29,18 @@ class xOledFacesService:
         state_store: Any = None,
         config_overrides: Optional[Dict[str, Any]] = None,
         expression_arbiter: Any = None,
+        cfg: Optional[Dict[str, Any]] = None,
     ):
-        self.cfg = load_config(overrides=config_overrides)
+        if cfg is not None:
+            if config_overrides:
+                from modules.common.config_loader import _deep_update
+                from .services.catalog_registry import expand_config
+
+                self.cfg = expand_config(_deep_update(dict(cfg), config_overrides))
+            else:
+                self.cfg = dict(cfg)
+        else:
+            self.cfg = load_config(overrides=config_overrides)
         self.state_store = state_store
         self._expression_arbiter = expression_arbiter
         self.mapper = FaceMapper(self.cfg)
@@ -80,16 +90,19 @@ class xOledFacesService:
         self.display.close()
 
     def status(self) -> Dict[str, Any]:
+        display_st = self.display.status()
+        has_display = bool(display_st.get("ok", False))
+        enabled = bool(self.cfg.get("enabled", True))
         return {
-            "ok": True,
-            "enabled": bool(self.cfg.get("enabled", True)),
-            "has_display": bool(self.display.status().get("ok", False)),
+            "ok": bool(enabled and has_display),
+            "enabled": enabled,
+            "has_display": has_display,
             "has_state_store": self.state_store is not None,
             "last_sent": self._last_sent,
             "session_active": self.coordinator.session_active(),
             "listen_session_active": self.coordinator.listen_session_active(),
             "speak_session_active": self.coordinator.speak_session_active(),
-            "display": self.display.status(),
+            "display": display_st,
             "catalog": {
                 "bitmaps": self.mapper.catalog_bitmaps,
                 "animations": self.mapper.catalog_animations,
@@ -99,16 +112,22 @@ class xOledFacesService:
     def on_interaction_event(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
         if not self.cfg.get("enabled", True):
             return
-        # STT final transcription text display on OLED face
-        if event_type in {"speech.final", "speech.transcription", "stt.final", "speech.text"}:
-            txt = (data or {}).get("text") if isinstance(data, dict) else str(data or "")
-            if txt and hasattr(self.display, "_engine") and self.display._engine:
-                self.display._engine.set_stt_text(str(txt), duration_s=4.5)
+        key = str(event_type or "").strip().lower()
+        # STT transcription text display/clear on OLED face (do not overwrite face mood)
+        if key in {"speech.final", "speech.transcription", "stt.final", "speech.text"}:
+            txt = (data or {}).get("text", "") if isinstance(data, dict) else str(data or "")
+            dur = float((data or {}).get("duration_s", 4.5)) if isinstance(data, dict) else 4.5
+            eng = getattr(self.display, "_engine", None)
+            if eng is not None:
+                eng.set_stt_text(str(txt or ""), duration_s=dur)
+                drv = getattr(self.display, "_driver", None)
+                if str(txt or "").strip() and drv is not None and hasattr(drv, "notify_activity"):
+                    drv.notify_activity()
+            return
         if self._event_rate_limited(event_type):
             return
         action = self.mapper.from_interaction_event(event_type)
         pri = self._priority_for(source="event", event_type=event_type, action=action)
-        key = str(event_type or "").strip().lower()
         baseline = self._baseline_from_store() if key in {"speech.end", "speech.listen.end"} else None
         decision = self.coordinator.on_event(event_type, action, pri, baseline=baseline)
         if decision.apply:
@@ -133,7 +152,7 @@ class xOledFacesService:
             time.sleep(max(0.05, interval_s))
 
     def _enforce_session_activity(self) -> None:
-        now = time.time()
+        now = time.monotonic()
         if self.coordinator.listen_session_active():
             self.display.pin_activity("listening")
             want = OledAction(mode="animation", name="listening")
@@ -155,7 +174,7 @@ class xOledFacesService:
         self.display.pin_activity(None)
 
     def _maybe_idle_ambient(self) -> None:
-        now = time.time()
+        now = time.monotonic()
         blocked = self.coordinator.session_active()
         if not blocked and now < self._active_hold_until and self._active_priority > self._ambient.priority:
             blocked = True
@@ -164,7 +183,7 @@ class xOledFacesService:
             self._apply(action, priority=self._ambient.priority)
 
     def _maybe_clear_activity(self) -> None:
-        now = time.time()
+        now = time.monotonic()
         if self._last_mode != "animation":
             return
         if not self.coordinator.should_clear_activity(now, self._active_hold_until):
@@ -248,7 +267,7 @@ class xOledFacesService:
         return OledAction(mode=boot_mode, name=boot_name)
 
     def _event_rate_limited(self, event_type: str) -> bool:
-        now = time.time()
+        now = time.monotonic()
         cooldown_s = float(self.cfg.get("event_cooldown_s", 0.8))
         key = str(event_type or "").strip().lower()
         if not key:
@@ -284,11 +303,20 @@ class xOledFacesService:
             return 40 if mode == "bitmap" else 50
         return 50
 
+    def _release_oled_lease(self) -> None:
+        if self._expression_arbiter is None:
+            return
+        try:
+            if hasattr(self._expression_arbiter, "release"):
+                self._expression_arbiter.release("oled_faces")
+        except Exception as exc:
+            logger.debug("oled_faces lease release failed: %s", exc)
+
     def _apply(self, action: OledAction, priority: int = 50, force: bool = False) -> bool:
         if not bool(self.cfg.get("enabled", True)):
             return False
         with self._apply_lock:
-            now = time.time()
+            now = time.monotonic()
             mode = action.mode.strip().lower()
             name = action.name.strip().lower()
             sent_key = (mode, name)
@@ -308,6 +336,7 @@ class xOledFacesService:
                 ) else max(0.5, float(self.cfg.get("animation_hold_s", 1.2)))
             else:
                 ttl_s = max(0.5, float(self.cfg.get("bitmap_hold_s", 0.25)))
+            claimed = False
             if self._expression_arbiter is not None:
                 try:
                     from modules.common.led_write_policy import to_canonical_priority
@@ -319,11 +348,15 @@ class xOledFacesService:
                         ttl_s=ttl_s,
                     ):
                         return False
-                except Exception:
-                    pass
+                    claimed = True
+                except Exception as exc:
+                    logger.warning("oled_faces claim_oled failed (denying write): %s", exc)
+                    return False
             try:
                 ok = self.display.apply(mode, name)
                 if not ok:
+                    if claimed:
+                        self._release_oled_lease()
                     return False
                 self._last_sent = sent_key
                 self._last_apply_ts = now
@@ -339,13 +372,16 @@ class xOledFacesService:
                 if mode == "bitmap":
                     self.coordinator.note_applied_mood(resolve_mood(name))
                 return True
-            except Exception:
+            except Exception as exc:
+                logger.warning("oled_faces apply failed: %s", exc)
+                if claimed:
+                    self._release_oled_lease()
                 return False
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
-    svc = xOledFacesService(config_overrides=cfg)
+    svc = xOledFacesService(cfg=cfg)
     
     @asynccontextmanager
     async def lifespan(app: FastAPI):

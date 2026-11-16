@@ -7,7 +7,13 @@ from modules.expression.interactions.services.engine import InteractionEngine
 
 
 def test_smoke():
-    svc = xInteractionsService()
+    svc = xInteractionsService(
+        config_overrides={
+            "adapter": {"mode": "noop", "http_base_url": ""},
+            "monitor": {"arduino": None},
+            "output": {"via_expression": False},
+        }
+    )
     svc.start()
     state = svc.engine.get_state()
     assert "metrics" in state

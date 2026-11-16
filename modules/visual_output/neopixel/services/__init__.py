@@ -1,5 +1,5 @@
 from __future__ import annotations
 
-from .animations import run_animation, ANIMATIONS  # re-export helpers
+from .animations import ANIMATIONS  # re-export helpers
 
-__all__ = ["run_animation", "ANIMATIONS"]
+__all__ = ["ANIMATIONS"]

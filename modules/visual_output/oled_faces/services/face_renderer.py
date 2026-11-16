@@ -15,7 +15,8 @@ class FaceRenderer:
     def __init__(self, cfg: Optional[Dict[str, Any]] = None):
         display_cfg = dict(cfg or {})
         self._fps = int(display_cfg.pop("fps", 24))
-        self._brightness = int(display_cfg.pop("brightness", 255))
+        raw_bright = display_cfg.pop("brightness", None)
+        self._brightness: Optional[int] = int(raw_bright) if raw_bright is not None else None
         self._widgets = bool(display_cfg.get("widgets", True))
         self._driver = PiSsd1306Driver(display_cfg)
         self._engine: Optional[EyeEngine] = None
@@ -32,6 +33,7 @@ class FaceRenderer:
             fps=self._fps,
             set_brightness=self._driver.set_brightness,
             bright=self._brightness,
+            initial_contrast=self._driver.contrast,
             widgets=self._widgets,
         )
         self._engine.start()
@@ -66,6 +68,7 @@ class FaceRenderer:
     def apply(self, mode: str, name: str) -> bool:
         if self._engine is None:
             return False
+        self._driver.notify_activity()
 
         m = str(mode or "bitmap").strip().lower()
         n = str(name or "").strip().lower()

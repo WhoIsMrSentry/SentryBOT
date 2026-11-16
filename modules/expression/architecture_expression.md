@@ -134,15 +134,17 @@ sequenceDiagram
 
 ---
 
-## 4. REST API Endpoint Tablosu (`:8080/expression`)
+## 4. REST API Endpoint Tablosu (`:8080/expression` & `:8080/interactions`)
 
 | Metot | Uç Nokta | Açıklama | Örnek İstek Gövdesi |
 |---|---|---|---|
-| `POST` | `/expression/express` | Bütünleşik çok modlu duygu tetikler | `{"emotion": "happy", "intensity": 0.85, "duration_s": 2.5}` |
+| `POST` | `/expression/express` | Bütünleşik çok modlu duygu tetikler (varsayılan `["leds","oled","voice","head","ears"]`; arbiter hazır değilse HTTP `503`) | `{"emotion": "happy", "intensity": 0.9, "duration_s": 2.5}` |
+| `POST` | `/expression/preview` | Donanımı tetiklemeden dry-run çıktı/hedef açı ve görsel kilit engelleme önizlemesi döner | `{"emotion": "anger", "intensity": 1.5, "duration_s": 2.0}` |
 | `POST` | `/expression/animate` | Anahtar kare hareketi oynatır | `{"pose": "nod", "duration_ms": 1000}` |
 | `POST` | `/expression/ears` | Kulak servolarını doğrudan ayarlar | `{"left_deg": 90.0, "right_deg": 90.0}` |
-| `GET` | `/expression/status` | Aktif duygu, görsel kilit ve servo durumunu döner | Yanıt: `{"active_emotion": "happy", "locked": true, ...}` |
+| `GET` | `/expression/status` | Aktif duygu, görsel kilit ve servo durumunu döner | Yanıt: `{"ok": true, "engine": ..., "arbiter": ...}` |
 | `POST` | `/expression/event` | Etkileşim olayı enjekte eder | `{"type": "vision.person_spotted"}` |
+| `GET` | `/interactions/rules/trace` | Etkin kuralların son tetiklenme/cooldown, lease, sessiz saat ve config uyarılarını döner | Yanıt: `{"ok": true, "rules": [...], "lease": ...}` |
 
 ---
 
@@ -163,11 +165,14 @@ expression:
       allowed_effects: ["subtle_led"]
 
   animate:
-    procedural_breathing: true
-    breathing_period_s: 4.0
+    interpolate: true
+    default_speed: 1.0
+    run_timeout_s: 30.0
+    idle_breathing_period_s: 4.5
 
   piservo:
-    driver: "pca9685"          # "pca9685", "pigpio" veya test için "dummy"
-    left_ear_channel: 0
-    right_ear_channel: 1
+    # Tek config kaynağı semantic/config/config.yml olup kulaklar Pi GPIO 12/13 (lgpio/pigpio) üzerinden sürülür
+    left_gpio: 12
+    right_gpio: 13
+    idle_detach_ms: 800
 ```

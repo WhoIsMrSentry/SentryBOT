@@ -1,6 +1,7 @@
 # Interactions Modülü Mimarisi
 
-Interactions modülü (`modules/interactions`), robotun pasif ve anlık tepkilerini kural tabanlı (rule-based) olarak yöneten arka plan motorudur. CPU sıcaklığı yükseldiğinde ışıkları kırmızı yapma, internet üzerinden yoğun indirme yaparken gözleri "Yükleniyor (wave)" animasyonuna sokma veya dışarıdan rastgele olaylar geldiğinde LED'leri tetikleme işlerinden sorumludur.
+Interactions modülü (`modules/expression/interactions`), robotun pasif ve anlık tepkilerini kural tabanlı (rule-based) olarak yöneten arka plan motorudur. CPU sıcaklığı yükseldiğinde ışıkları kırmızı yapma, internet üzerinden yoğun indirme yaparken gözleri "Yükleniyor (wave)" animasyonuna sokma veya dışarıdan olaylar geldiğinde LED/expression tepkisi üretme işlerinden sorumludur.
+Etkileşim motoru `self._lock` kilidi altında HTTP I/O çalıştırmaz; kural/uyum izleri `GET /interactions/rules/trace` ucu üzerinden izlenir ve `create_app()` FastAPI `lifespan` kapanışında `engine.stop()` çağırarak arka plan zamanlayıcılarını ve lease'i temizler.
 
 ## 🏗️ İş Akışı ve Karar Mekanizmaları (Flowchart)
 

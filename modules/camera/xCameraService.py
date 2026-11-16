@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import logging
 
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
     enabled = bool(cfg.get("enabled", True))
     picam_cfg = cfg.get("picamera2", {}) if isinstance(cfg.get("picamera2"), dict) else {}
+    res_cfg = cfg.get("resolution", {}) if isinstance(cfg.get("resolution"), dict) else {}
     size_cfg = picam_cfg.get("size", {}) if isinstance(picam_cfg.get("size"), dict) else {}
     imx_raw = cfg.get("imx500", {}) if isinstance(cfg.get("imx500"), dict) else {}
     tracker_raw = imx_raw.get("tracker", {}) if isinstance(imx_raw.get("tracker"), dict) else {}
@@ -42,12 +44,23 @@ def create_app(config_path: str | None = None) -> FastAPI:
         ),
         bus=bus,
     )
-    runner.prepare()
+    if enabled:
+        runner.prepare()
+
+    width = int(res_cfg.get("width") or size_cfg.get("width", 1280))
+    height = int(res_cfg.get("height") or size_cfg.get("height", 720))
+    fps_target = int(cfg.get("fps_target", picam_cfg.get("frame_rate", 30)))
+    backend = str(cfg.get("backend", "picamera2"))
+    source = cfg.get("source", 0)
+
     capture = CameraCapture(
         CaptureConfig(
-            size=(int(size_cfg.get("width", 1280)), int(size_cfg.get("height", 720))),
+            size=(width, height),
             pixel_format=str(picam_cfg.get("format", "RGB888")),
-            frame_rate=int(picam_cfg.get("frame_rate", cfg.get("fps_target", 30))),
+            frame_rate=int(picam_cfg.get("frame_rate", fps_target)),
+            target_fps=fps_target,
+            backend=backend,
+            source=source,
             jpeg_quality=int(cfg.get("jpeg_quality", 80)),
             flip=str(cfg.get("flip", "none")),
             camera_num=runner.camera_num,
@@ -61,11 +74,23 @@ def create_app(config_path: str | None = None) -> FastAPI:
     else:
         logger.info("camera disabled")
 
-    app = FastAPI()
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        yield
+        try:
+            runner.stop()
+        except Exception as exc:
+            logger.debug("IMX500 runner stop during shutdown: %s", exc)
+        try:
+            capture.stop()
+        except Exception as exc:
+            logger.debug("CameraCapture stop during shutdown: %s", exc)
+
+    app = FastAPI(title="Camera Service", lifespan=lifespan)
     app.include_router(
         get_router(
             capture,
-            int(cfg.get("fps_target", 30)),
+            fps_target,
             enabled=enabled,
             imx500_runner=runner,
             onsensor_bus=bus,

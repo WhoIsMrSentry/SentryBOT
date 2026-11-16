@@ -74,15 +74,3 @@ class _AnimationDriver:
         with self._runner._frame_lock:
             self._check()
             self._runner.driver.fill(r, g, b)
-
-    def animate(
-        self,
-        name: str,
-        r: int = 255,
-        g: int = 255,
-        b: int = 255,
-        iterations: int = 0,
-        speed_ms: int = 50,
-    ) -> bool:
-        self._check()
-        return False

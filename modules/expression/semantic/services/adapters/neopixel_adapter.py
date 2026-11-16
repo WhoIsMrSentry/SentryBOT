@@ -27,32 +27,32 @@ class NeopixelAdapter:
         duration_s: float = 3.0,
     ) -> bool:
         """Set a Neopixel effect with semantic color/animation."""
-        rgb = list(color)
-        try:
-            # Primary endpoint: POST /neopixel/emote takes QUERY params
-            # (emotion/duration), not a JSON body.
-            resp = await self._client.post(
-                "/neopixel/emote",
-                params={"emotion": effect.lower(), "duration": round(duration_s, 2)},
-            )
-            if resp.status_code == 200:
-                return True
-        except Exception as e:
-            logger.debug("Neopixel set_effect failed: %s", e)
-        # Fallback: POST /neopixel/animate expects color as "R,G,B" string
+        effect_name = str(effect or "BREATHE").strip().upper()
+        if effect_name == "OFF":
+            return await self.turn_off()
+        rgb = [int(c) & 255 for c in list(color)[:3]]
+        while len(rgb) < 3:
+            rgb.append(0)
+        iterations = max(1, int(round(max(0.5, float(duration_s)) / 2.0)))
         try:
             resp = await self._client.post(
                 "/neopixel/animate",
                 json={
-                    "name": effect,
-                    "color": ",".join(str(int(c) & 255) for c in rgb),
-                    "iterations": max(1, int(duration_s / 2)),
+                    "name": effect_name,
+                    "color": f"{rgb[0]},{rgb[1]},{rgb[2]}",
+                    "r": rgb[0],
+                    "g": rgb[1],
+                    "b": rgb[2],
+                    "iterations": iterations,
+                    "speed": float(speed),
                 },
             )
-            return resp.status_code == 200
-        except Exception as e2:
-            logger.warning("Neopixel fallback also failed: %s", e2)
-            return False
+            if resp.status_code == 200:
+                return True
+        except Exception as e:
+            logger.debug("Neopixel set_effect animate failed: %s", e)
+        # Fallback: direct RGB fill
+        return await self.set_color(rgb, duration_s=duration_s)
 
     async def set_color(
         self,
@@ -62,11 +62,11 @@ class NeopixelAdapter:
         """Direct RGB color set (no animation)."""
         rgb = list(color)
         try:
-            # POST /neopixel/fill takes QUERY params r,g,b (ints).
+            # POST /neopixel/fill takes query param `r_` (FastAPI alias avoiding Python keyword)
             resp = await self._client.post(
                 "/neopixel/fill",
                 params={
-                    "r": int(rgb[0]) & 255,
+                    "r_": int(rgb[0]) & 255,
                     "g": int(rgb[1]) & 255,
                     "b": int(rgb[2]) & 255,
                 },
@@ -75,10 +75,16 @@ class NeopixelAdapter:
         except Exception as e:
             logger.debug("Neopixel set_color failed: %s", e)
             return False
-    
+
     async def turn_off(self) -> bool:
-        """Turn off LEDs."""
-        return await self.set_effect("OFF", (0, 0, 0), speed=1.0, duration_s=0.5)
+        """Turn off LEDs cleanly via /neopixel/clear (or black fill fallback)."""
+        try:
+            resp = await self._client.post("/neopixel/clear")
+            if resp.status_code == 200:
+                return True
+        except Exception as e:
+            logger.debug("Neopixel turn_off clear failed: %s", e)
+        return await self.set_color((0, 0, 0))
 
 
 __all__ = ["NeopixelAdapter"]

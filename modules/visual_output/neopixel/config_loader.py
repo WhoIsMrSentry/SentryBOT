@@ -40,6 +40,12 @@ def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
     wspd = os.getenv("NEO_WS2812_SPI_KHZ")
     if wspd:
         env.setdefault("hardware", {})["ws2812_spi_khz"] = int(wspd)
+    mb = os.getenv("NEO_MAX_BRIGHTNESS")
+    if mb:
+        env.setdefault("hardware", {})["max_brightness"] = float(mb)
+    mc = os.getenv("NEO_MAX_CURRENT_MA")
+    if mc:
+        env.setdefault("hardware", {})["max_current_ma"] = int(mc)
     order = os.getenv("NEO_ORDER")
     if order:
         env.setdefault("hardware", {})["order"] = order

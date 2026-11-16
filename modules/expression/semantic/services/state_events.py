@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-_DEFAULT_MAPPINGS = {
-    "colors": {
+from modules.common.emotion_vocab import Emotion, get_vocab
+
+
+def _build_default_mappings() -> Dict[str, Dict[str, str]]:
+    colors: Dict[str, str] = {
         "neutral": "#4060ff",
         "curious": "#00bcd4",
         "happy": "#00ff88",
@@ -13,8 +16,8 @@ _DEFAULT_MAPPINGS = {
         "thinking": "#7a5cff",
         "listening": "#00aaff",
         "speaking": "#00ffcc",
-    },
-    "oled_moods": {
+    }
+    oled_moods: Dict[str, str] = {
         "neutral": "neutral",
         "curious": "curious",
         "happy": "happy",
@@ -22,16 +25,35 @@ _DEFAULT_MAPPINGS = {
         "alert": "alert",
         "sad": "sad",
         "thinking": "thinking",
-    },
-    "led_modes": {
-        "idle": "breathe",
-        "user": "listen",
-        "sound": "pulse",
-        "object": "eye",
-        "sleep": "off",
-        "internal": "thinking",
-    },
-}
+    }
+    try:
+        vocab = get_vocab()
+        for emo in Emotion:
+            r = vocab.render(emo)
+            rgb = r.neopixel_rgb
+            colors.setdefault(
+                emo.value,
+                f"#{int(rgb[0]) & 255:02x}{int(rgb[1]) & 255:02x}{int(rgb[2]) & 255:02x}",
+            )
+            oled_moods.setdefault(emo.value, str(r.oled_animation or emo.value))
+    except Exception:
+        pass
+    return {
+        "colors": colors,
+        "oled_moods": oled_moods,
+        "led_modes": {
+            "idle": "breathe",
+            "user": "listen",
+            "sound": "pulse",
+            "object": "eye",
+            "sleep": "off",
+            "internal": "thinking",
+            "camera": "eye",
+        },
+    }
+
+
+_DEFAULT_MAPPINGS = _build_default_mappings()
 
 
 class ExpressionStateEventsMixin:
@@ -47,7 +69,6 @@ class ExpressionStateEventsMixin:
 
         if evt.startswith("needs."):
             need = evt.split(".", 1)[1].strip().lower()
-            data.get("scores") if isinstance(data.get("scores"), dict) else {}
             goal = str(data.get("recommended_goal") or data.get("goal") or "").strip().lower()
             confidence = data.get("confidence", 0.75)
             try:
@@ -130,72 +151,126 @@ class ExpressionStateEventsMixin:
             }
 
         if evt in {"wakeword.detected", "wakeword.wake", "speech.wake"}:
-            return {"emotion": "listening", "arousal": "high", "attention": "user", "energy": "high", "listening": True, "confidence": 0.95}
+            return {
+                "emotion": "listening", "arousal": "high", "attention": "user",
+                "energy": "high", "listening": True, "confidence": 0.95,
+            }
         if evt in {"speech.listen.start", "speech.listening", "speech.started"}:
-            return {"emotion": "listening", "arousal": "medium", "attention": "user", "listening": True, "confidence": 0.85}
+            return {
+                "emotion": "listening", "arousal": "medium", "attention": "user",
+                "listening": True, "confidence": 0.85,
+            }
         if evt in {"speech.listen.stop", "speech.final", "speech.transcribed"}:
-            return {"emotion": "thinking", "arousal": "medium", "attention": "internal", "listening": False, "confidence": 0.85}
+            return {
+                "emotion": "thinking", "arousal": "medium", "attention": "internal",
+                "listening": False, "confidence": 0.85,
+            }
         if evt in {"speak.started", "tts.started", "speech.speaking"}:
-            return {"emotion": "speaking", "arousal": "medium", "attention": "user", "speaking": True, "listening": False, "confidence": 0.9}
+            return {
+                "emotion": "speaking", "arousal": "medium", "attention": "user",
+                "speaking": True, "listening": False, "confidence": 0.9,
+            }
         if evt in {"speak.finished", "tts.finished", "speech.done"}:
             return {"emotion": "neutral", "arousal": "low", "attention": "idle", "speaking": False, "confidence": 0.75}
 
         if evt in {"sound.detected", "audio.sound", "audio.clap", "audio.direction"}:
             return {"emotion": "alert", "arousal": "high", "attention": "sound", "energy": "high", "confidence": 0.9}
         if evt in {"vision.person", "vision.owner", "person.detected", "owner.seen", "owner.detected"}:
-            return {"emotion": "curious", "arousal": "medium", "attention": "user", "energy": "normal", "confidence": 0.85}
+            return {
+                "emotion": "curious", "arousal": "medium", "attention": "user",
+                "energy": "normal", "confidence": 0.85,
+            }
         if evt in {"vision.focus", "vision.object", "object.detected"}:
             return {"emotion": "curious", "arousal": "medium", "attention": "object", "confidence": 0.8}
         if evt in {"owner.scan", "vision.scan", "camera.scan"}:
-            return {"emotion": "curious", "arousal": "low", "attention": "camera", "energy": "normal", "confidence": 0.65}
+            return {
+                "emotion": "curious", "arousal": "low", "attention": "camera",
+                "energy": "normal", "confidence": 0.65,
+            }
 
         if evt in {"agent.thinking", "llm.thinking", "brain.thinking"}:
             return {"emotion": "thinking", "arousal": "medium", "attention": "internal", "confidence": 0.85}
         if evt in {"llm.unavailable", "llm.chat_unavailable", "ollama.unavailable", "ai.unavailable"}:
-            return {"emotion": "thinking", "arousal": "low", "attention": "internal", "confidence": 0.25, "reason": "llm_unavailable"}
+            return {
+                "emotion": "thinking", "arousal": "low", "attention": "internal",
+                "confidence": 0.25, "reason": "llm_unavailable",
+            }
         if evt == "error":
             src = str(data.get("source") or "").lower()
             reason = str(data.get("reason") or "").lower()
             if "ollama" in src or "llm" in src or "chat" in reason:
-                return {"emotion": "thinking", "arousal": "low", "attention": "internal", "confidence": 0.25, "reason": "llm_unavailable"}
+                return {
+                    "emotion": "thinking", "arousal": "low", "attention": "internal",
+                    "confidence": 0.25, "reason": "llm_unavailable",
+                }
             return {"emotion": "alert", "arousal": "high", "attention": "internal", "confidence": 0.4}
 
         if evt in {"autonomy.sleep", "sleep.start", "idle.sleep"}:
-            return {"emotion": "sleepy", "arousal": "low", "attention": "sleep", "energy": "low", "speaking": False, "listening": False, "confidence": 0.9}
+            return {
+                "emotion": "sleepy", "arousal": "low", "attention": "sleep",
+                "energy": "low", "speaking": False, "listening": False, "confidence": 0.9,
+            }
         if evt in {"autonomy.wake", "sleep.stop", "wake.start"}:
             return {"emotion": "alert", "arousal": "medium", "attention": "idle", "energy": "normal", "confidence": 0.8}
         if evt in {"autonomy.idle", "idle", "idle.tick"}:
             return {"emotion": "neutral", "arousal": "low", "attention": "idle", "energy": "normal", "confidence": 0.6}
 
         if evt in {"autonomy.look_around", "idle.look_around", "gesture:look_around"}:
-            return {"emotion": "curious", "arousal": "low", "attention": "camera", "energy": "normal", "confidence": 0.8}
+            return {
+                "emotion": "curious", "arousal": "low", "attention": "camera",
+                "energy": "normal", "confidence": 0.8,
+            }
         if evt in {"autonomy.blink", "idle.blink"}:
             return {"emotion": "neutral", "arousal": "low", "attention": "idle", "energy": "normal", "confidence": 0.65}
         if evt in {"autonomy.bored", "boredom.detected", "robot.bored"}:
-            return {"emotion": "curious", "arousal": "medium", "attention": "internal", "energy": "normal", "confidence": 0.85, "reason": "boredom"}
+            return {
+                "emotion": "curious", "arousal": "medium", "attention": "internal",
+                "energy": "normal", "confidence": 0.85, "reason": "boredom",
+            }
         if evt in {"autonomy.stretch", "idle.stretch"}:
-            return {"emotion": "neutral", "arousal": "medium", "attention": "idle", "energy": "high", "confidence": 0.75}
+            return {
+                "emotion": "neutral", "arousal": "medium", "attention": "idle",
+                "energy": "high", "confidence": 0.75,
+            }
         if evt in {"autonomy.monologue", "idle.monologue"}:
-            return {"emotion": "thinking", "arousal": "medium", "attention": "internal", "energy": "normal", "confidence": 0.75}
+            return {
+                "emotion": "thinking", "arousal": "medium", "attention": "internal",
+                "energy": "normal", "confidence": 0.75,
+            }
         if evt in {"autonomy.excited"}:
             return {"emotion": "happy", "arousal": "high", "attention": "user", "energy": "high", "confidence": 0.85}
         if evt in {"autonomy.offline"}:
             return {"emotion": "thinking", "arousal": "low", "attention": "internal", "confidence": 0.35}
 
         if evt in {"interactions.cpu_hot", "cpu.hot"}:
-            return {"emotion": "alert", "arousal": "high", "attention": "internal", "energy": "high", "confidence": 0.8, "reason": "cpu_hot"}
+            return {
+                "emotion": "alert", "arousal": "high", "attention": "internal",
+                "energy": "high", "confidence": 0.8, "reason": "cpu_hot",
+            }
         if evt in {"interactions.cpu_warm", "cpu.warm"}:
-            return {"emotion": "alert", "arousal": "medium", "attention": "internal", "confidence": 0.65, "reason": "cpu_warm"}
+            return {
+                "emotion": "alert", "arousal": "medium", "attention": "internal",
+                "confidence": 0.65, "reason": "cpu_warm",
+            }
         if evt in {"interactions.cpu_load_high", "cpu.load_high"}:
-            return {"emotion": "thinking", "arousal": "high", "attention": "internal", "confidence": 0.7, "reason": "cpu_load"}
+            return {
+                "emotion": "thinking", "arousal": "high", "attention": "internal",
+                "confidence": 0.7, "reason": "cpu_load",
+            }
         if evt in {"interactions.net_burst", "net.burst"}:
-            return {"emotion": "alert", "arousal": "medium", "attention": "sound", "confidence": 0.7, "reason": "net_burst"}
+            return {
+                "emotion": "alert", "arousal": "medium", "attention": "sound",
+                "confidence": 0.7, "reason": "net_burst",
+            }
         if evt in {"interactions.quiet_hours_idle"}:
             return {"emotion": "sleepy", "arousal": "low", "attention": "sleep", "energy": "low", "confidence": 0.7}
         if evt in {"interactions.idle"}:
             return {"emotion": "neutral", "arousal": "low", "attention": "idle", "energy": "normal", "confidence": 0.55}
         if evt in {"interactions.effect"}:
-            return {"emotion": "alert", "arousal": "medium", "attention": "idle", "confidence": 0.7, "reason": str(data.get("name") or "effect")}
+            return {
+                "emotion": "alert", "arousal": "medium", "attention": "idle",
+                "confidence": 0.7, "reason": str(data.get("name") or "effect"),
+            }
         if evt in {"interactions.base"}:
             return {"emotion": "neutral", "arousal": "low", "attention": "idle", "confidence": 0.5}
         if evt.startswith("interactions."):
@@ -204,7 +279,10 @@ class ExpressionStateEventsMixin:
         if evt in {"companion.proactive", "companion.event", "companion.curiosity", "companion.ritual"}:
             emotion = data.get("emotion") or data.get("mood") or "curious"
             text = str(data.get("text") or "").strip()
-            patch = {"emotion": emotion, "arousal": "medium", "attention": "internal", "energy": "normal", "confidence": 0.85}
+            patch = {
+                "emotion": emotion, "arousal": "medium", "attention": "internal",
+                "energy": "normal", "confidence": 0.85,
+            }
             if text:
                 patch["reason"] = "companion:" + text[:120]
             return patch
@@ -213,13 +291,25 @@ class ExpressionStateEventsMixin:
             if "sleep" in behavior or "sigh" in behavior:
                 return {"emotion": "sleepy", "arousal": "low", "attention": "idle", "energy": "low", "confidence": 0.75}
             if "look" in behavior:
-                return {"emotion": "curious", "arousal": "low", "attention": "camera", "energy": "normal", "confidence": 0.75}
+                return {
+                    "emotion": "curious", "arousal": "low", "attention": "camera",
+                    "energy": "normal", "confidence": 0.75,
+                }
             if "blink" in behavior:
-                return {"emotion": "neutral", "arousal": "low", "attention": "idle", "energy": "normal", "confidence": 0.65}
+                return {
+                    "emotion": "neutral", "arousal": "low", "attention": "idle",
+                    "energy": "normal", "confidence": 0.65,
+                }
             if "stretch" in behavior:
-                return {"emotion": "neutral", "arousal": "medium", "attention": "idle", "energy": "high", "confidence": 0.75}
+                return {
+                    "emotion": "neutral", "arousal": "medium", "attention": "idle",
+                    "energy": "high", "confidence": 0.75,
+                }
             if "monologue" in behavior:
-                return {"emotion": "thinking", "arousal": "medium", "attention": "internal", "energy": "normal", "confidence": 0.75}
+                return {
+                    "emotion": "thinking", "arousal": "medium", "attention": "internal",
+                    "energy": "normal", "confidence": 0.75,
+                }
             return {"emotion": "neutral", "arousal": "low", "attention": "idle", "energy": "normal", "confidence": 0.55}
 
         if evt.startswith("scene.emotion_"):
@@ -229,7 +319,11 @@ class ExpressionStateEventsMixin:
                 return {"emotion": "neutral", "arousal": "low", "attention": "idle", "confidence": 0.55}
             return {"emotion": emotion, "arousal": "medium", "attention": "camera", "confidence": 0.7}
         if evt.startswith("emotion:"):
-            return {"emotion": evt.split(":", 1)[1], "arousal": data.get("arousal", "medium"), "confidence": data.get("confidence", 0.75)}
+            return {
+                "emotion": evt.split(":", 1)[1],
+                "arousal": data.get("arousal", "medium"),
+                "confidence": data.get("confidence", 0.75),
+            }
         if evt.startswith("gesture:"):
             gesture = evt.split(":", 1)[1]
             if gesture in {"look", "look_around", "scan"}:

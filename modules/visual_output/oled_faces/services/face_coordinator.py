@@ -51,7 +51,7 @@ class FaceCoordinator:
         baseline: Optional[OledAction] = None,
     ) -> FaceDecision:
         key = str(event_type or "").strip().lower()
-        now = time.time()
+        now = time.monotonic()
 
         if key in _LISTEN_START:
             self._listen_until = now + float(self.cfg.get("listen_session_hold_s", 120.0))
@@ -98,7 +98,7 @@ class FaceCoordinator:
         op_changed: bool,
         emo_changed: bool,
     ) -> Optional[FaceDecision]:
-        now = time.time()
+        now = time.monotonic()
         op = str(operational or "idle").strip().lower()
 
         if self._listen_active(now) or self._speak_active(now):
@@ -124,23 +124,25 @@ class FaceCoordinator:
         return None
 
     def listen_session_active(self) -> bool:
-        return self._listen_active(time.time())
+        return self._listen_active(time.monotonic())
 
     def speak_session_active(self) -> bool:
-        return self._speak_active(time.time())
+        return self._speak_active(time.monotonic())
 
     def session_active(self) -> bool:
-        now = time.time()
+        now = time.monotonic()
         return self._listen_active(now) or self._speak_active(now)
 
-    def should_clear_activity(self, now: float, hold_until: float) -> bool:
-        if self._listen_active(now) or self._speak_active(now):
+    def should_clear_activity(self, now: Optional[float] = None, hold_until: float = 0.0) -> bool:
+        mono_now = time.monotonic()
+        if self._listen_active(mono_now) or self._speak_active(mono_now):
             return False
-        return now >= hold_until
+        ref_now = mono_now if now is None else float(now)
+        return ref_now >= hold_until
 
     def note_applied_mood(self, mood_name: str) -> None:
         self._last_resolved_mood = str(mood_name or "").strip().lower()
-        self._last_mood_apply_ts = time.time()
+        self._last_mood_apply_ts = time.monotonic()
 
     def _listen_active(self, now: float) -> bool:
         return now < self._listen_until
