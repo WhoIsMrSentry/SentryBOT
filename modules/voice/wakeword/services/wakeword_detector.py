@@ -1,10 +1,7 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import List, Optional
-
-
-def _normalize(text: str) -> List[str]:
-    return [t for t in text.lower().strip().split() if t]
+from typing import List
 
 
 @dataclass
@@ -24,20 +21,3 @@ class WakewordDetector:
             min_confidence=float(cfg.get("min_confidence", 0.0)),
             cooldown_sec=float(cfg.get("cooldown_sec", 2.0)),
         )
-        self._word_tokens = [
-            _normalize(w) for w in self.cfg.words if _normalize(w)
-        ]
-
-    def match(self, text: str) -> Optional[str]:
-        if not text:
-            return None
-        tokens = _normalize(text)
-        if not tokens:
-            return None
-        for idx, w_tokens in enumerate(self._word_tokens):
-            if not w_tokens:
-                continue
-            for i in range(0, len(tokens) - len(w_tokens) + 1):
-                if tokens[i:i + len(w_tokens)] == w_tokens:
-                    return self.cfg.words[idx]
-        return None

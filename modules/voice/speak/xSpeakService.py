@@ -14,9 +14,11 @@ except Exception:  # pragma: no cover
 
 from fastapi import FastAPI
 
+from modules.common.bind_host import apply_bind_host
 from modules.common.latency_trace import latency_trace
 from modules.voice.speak.config_loader import load_config
 from modules.voice.speak.services.player import AudioPlayer
+from modules.voice.speak.services.speech_queue import SpeechPriorityQueue
 from modules.voice.speak.services.tts import TextToSpeech, TTSUnavailableError
 
 try:
@@ -75,17 +77,60 @@ class SpeakService:
         self._play_lock = threading.RLock()
         self._speech_lock = self._synth_lock
         self._is_speaking = False
+        self._playback_listeners: list = []
+        self._playback_listeners_lock = threading.Lock()
+        self._expr_session: Any = None
         tts_cfg = self.cfg.get("tts", {}) if isinstance(self.cfg.get("tts"), dict) else {}
         self.stream_max_chunk_chars = max(40, int(tts_cfg.get("stream_max_chunk_chars", 180)))
+        self.priority_queue = SpeechPriorityQueue(stop_callback=self.stop)
+
+    def register_playback_listener(self, callback: Any) -> None:
+        """Register a listener ``cb(active: bool, estimated_rms: float)`` for TTS playback."""
+        if not callable(callback):
+            return
+        lock = getattr(self, "_playback_listeners_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._playback_listeners_lock = lock
+        with lock:
+            listeners = getattr(self, "_playback_listeners", None)
+            if listeners is None:
+                listeners = []
+                self._playback_listeners = listeners
+            if callback not in listeners:
+                listeners.append(callback)
+
+    def _notify_playback_listeners(self, active: bool, estimated_rms: float = 1200.0) -> None:
+        listeners = getattr(self, "_playback_listeners", None)
+        if not listeners:
+            return
+        lock = getattr(self, "_playback_listeners_lock", None)
+        if lock is not None:
+            with lock:
+                snapshot = list(listeners)
+        else:
+            snapshot = list(listeners)
+        for cb in snapshot:
+            try:
+                cb(bool(active), float(estimated_rms))
+            except Exception as exc:
+                logger.debug("playback listener error: %s", exc)
 
     @property
     def is_speaking(self) -> bool:
         return bool(self._is_speaking)
 
     def stop(self) -> None:
-        """Stop any running speech output instantly (0ms barge-in)."""
-        self.player.stop_playback()
+        """Stop synthesis and playback immediately (0ms barge-in)."""
         self._is_speaking = False
+        try:
+            from modules.voice.speak.services.tts import cancel_synthesis
+
+            cancel_synthesis()
+        except Exception:
+            pass
+        self.player.stop_playback()
+        self._notify_playback_listeners(False, 0.0)
 
     def set_stream_max_chunk_chars(self, value: int) -> Dict[str, Any]:
         self.stream_max_chunk_chars = max(40, int(value))
@@ -135,30 +180,51 @@ class SpeakService:
             clean.append(value.replace("*", ""))
         return re.sub(r"\s+", " ", " ".join(clean)).strip()
 
+    def _resolve_expression_url(self, raw_base: str) -> str:
+        base = str(raw_base or "").strip().rstrip("/")
+        if not base:
+            return ""
+        if base.startswith("@gateway"):
+            suffix = base[len("@gateway") :].lstrip("/")
+            try:
+                from modules.gateway.url import gateway_url, resolve_gateway_base_url
+
+                return gateway_url(resolve_gateway_base_url(self.cfg), f"/{suffix}").rstrip("/")
+            except Exception:
+                return f"http://127.0.0.1:8080/{suffix}".rstrip("/")
+        return base
+
     def _expression_event(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
         if requests is None or not bool(self._liveliness_cfg.get("enabled", True)):
             return
-        base = str(self._liveliness_cfg.get("expression_base_url", "")).strip().rstrip("/")
+        base = self._resolve_expression_url(self._liveliness_cfg.get("expression_base_url", ""))
         if not base:
             return
-        try:
-            requests.post(
-                f"{base}/event",
-                json={"type": event_type, "data": dict(data or {})},
-                timeout=float(self._liveliness_cfg.get("event_timeout_s", 0.35)),
-            )
-        except Exception:
-            logger.debug("expression event failed: %s", event_type, exc_info=True)
+        timeout_s = float(self._liveliness_cfg.get("event_timeout_s", 0.35))
+        payload = {"type": event_type, "data": dict(data or {})}
+
+        def _send() -> None:
+            try:
+                url = f"{base}/event"
+                post_fn = getattr(requests, "post", None)
+                if getattr(post_fn, "__module__", "") == "requests.api":
+                    sess = getattr(self, "_expr_session", None)
+                    if sess is None:
+                        sess = requests.Session()
+                        self._expr_session = sess
+                    sess.post(url, json=payload, timeout=timeout_s)
+                else:
+                    requests.post(url, json=payload, timeout=timeout_s)
+            except Exception:
+                logger.debug("expression event failed: %s", event_type, exc_info=True)
+
+        threading.Thread(target=_send, daemon=True).start()
 
     def stop_speaking(self) -> Dict[str, Any]:
-        self._is_speaking = False
-        try:
-            from modules.voice.speak.services.tts import cancel_synthesis
-
-            cancel_synthesis()
-        except Exception:
-            pass
-        self.player.stop_playback()
+        q = getattr(self, "priority_queue", None)
+        if q is not None:
+            q.clear()
+        self.stop()
         self._expression_event("speak.finished", {"interrupted": True})
         return {"ok": True, "stopped": True}
 
@@ -238,11 +304,13 @@ class SpeakService:
             {"trace_id": trace_id, "tone": tone if isinstance(tone, str) else "", "chars": len(cleaned_text)},
         )
         latency_trace.mark(trace_id, "audio.play_start")
+        self._notify_playback_listeners(True, 1200.0)
         try:
             with self._play_lock:
                 duration_sec = self.player.play_blocking(pcm)
         finally:
             self._is_speaking = False
+            self._notify_playback_listeners(False, 0.0)
             latency_trace.mark(trace_id, "audio.play_done")
             self._expression_event("speak.finished", {"trace_id": trace_id})
 
@@ -261,9 +329,11 @@ class SpeakService:
         trace_id = latency_trace.ensure(trace_id, {"component": "speak.play_wav"})
         self._expression_event("speak.started", {"trace_id": trace_id})
         latency_trace.mark(trace_id, "audio.play_start")
+        self._notify_playback_listeners(True, 1200.0)
         try:
             duration_sec = self.player.play_wav_bytes(data)
         finally:
+            self._notify_playback_listeners(False, 0.0)
             latency_trace.mark(trace_id, "audio.play_done")
             self._expression_event("speak.finished", {"trace_id": trace_id})
         latency_trace.finish(trace_id, "done", {"duration_sec": duration_sec})
@@ -290,11 +360,11 @@ def main() -> None:
     if args.api or not args.text:
         import uvicorn  # type: ignore
 
-        cfg = load_config(args.config)
+        cfg = apply_bind_host(load_config(args.config), "SPEAK_HOST")
         server = cfg.get("server", {})
         uvicorn.run(
             create_app(args.config),
-            host=str(server.get("host", "0.0.0.0")),
+            host=str(server.get("host", "127.0.0.1")),
             port=int(server.get("port", 8083)),
             log_config=None,
         )

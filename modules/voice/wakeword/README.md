@@ -10,21 +10,21 @@ SentryBOT'un düşük güçlü "her zaman dinle" katmanıdır. Wakeword algılan
 - `expression/interactions` ve `visual_output/neopixel` olay tetikleme
 - OpenWakeWord motor desteği (tek ve doğrudan uyandırma motoru)
 
-## Mimari (Güncel: 2026-08-20)
+## Mimari (Güncel: 2026-11-16)
 
 - Giriş noktası: `xWakewordService.py` → `WakewordService`
-- **OpenWakeWord Runner**: `services/openwakeword_runner.py` → `OpenWakeWordRunner` (tflite/onnx model, streaming inference)
-- **Kalibrasyon**: `services/openwakeword_calibration.py` → `OpenWakewordCalibrationMixin` (threshold auto-calibration)
-- **Model Varlıkları**: `services/openwakeword_assets.py` (pretrained model kataloğu, indirme ve path çözümleme)
-- **Wakeword Detector**: `services/wakeword_detector.py` → `WakewordDetector` (event orchestration)
-- **Aksiyon Orkestrasyonu**: `WakewordActions` (Gateway `_wire_wakeword_interactions` ile in-process servis çağrıları)
-- **Ses Yakalama**: **ORTAK** - `voice/speech/services/audio_capture` (paylaşımlı capture, ALSA çakışmasız) - `modules/voice/audio_router.py` üzerinden yönlendirilir
+- **OpenWakeWord Runner**: `services/openwakeword_runner.py` → `OpenWakeWordRunner` (onnx/tflite model, streaming inference)
+- **Kalibrasyon**: `services/openwakeword_calibration.py` → `OpenWakewordCalibrationMixin` (`sample_width` destekli `_parse_audio`, otomatik eşik kalibrasyonu)
+- **Model Varlıkları**: `services/openwakeword_assets.py` (timeout'lu atomik `.tmp`/`os.replace` tek-konum indirme ve path çözümleme)
+- **Aksiyon Orkestrasyonu**: `WakewordActions` (paylaşımlı `requests.Session`, `dict` ve nesne uyumlu `has_final_speech()`)
+- **Ses Yakalama**: **ORTAK** - `modules/voice/audio_router.py` → `AudioRouter` / `AudioCapture` (RT callback'ten lock-free `_raw_queue` ayrımı, ALSA/PyAudio/sounddevice desteği)
+- **Wakeword Yapılandırma**: `services/wakeword_detector.py` → `WakewordDetector`, `config_loader.py` (shared `load_audio_router_config`, `apply_bind_host`)
 
 ## API (Gateway altında `/wakeword/*`)
 
-- `GET /wakeword/healthz` / `/wakeword/status`
+- `GET /wakeword/healthz` / `/wakeword/status` (`service.status()` + `energy_gate` istatistikleri)
 - `POST /wakeword/start` - Dinleme başlat
-- `POST /wakeword/stop` - Dinleme durdur
+- `POST /wakeword/stop` - Anında kesilebilir dinleme durdurma (`stop_event` + thread `join`)
 
 ## Akış
 
@@ -45,9 +45,10 @@ Merkezi `config/agent.yaml` → `wakeword` section + modül-içi `config/config.
 - `openwakeword.input_channels` - Runner giriş kanal sayısı (verilmezse `audio.channels` enjekte edilir)
 - `openwakeword.auto_calibration.*` - Otomatik eşik kalibrasyonu (duration_sec, percentile, min/max_threshold)
 - `actions.*_url` - `speech`, `speak`, `agent_core`, `interactions`, `neopixel` gateway URL'leri
-- `listen_window_sec` - STT dinleme penceresi (default 5s)
+- `listen_window_sec` - STT dinleme penceresi (default 12s)
 - `recognition.vad` - Voice Activity Detection ayarları
 - `openwakeword.threshold` - OpenWakeWord algı eşiği (`sensitivity` yerine)
+- `openwakeword.vad_gate_enabled`, `vad_min_rms`, `vad_hangover_sec` - Sessizlikte ONNX CPU yükünü kesen ön enerji kapısı
 - `wakeword.trigger_on_partial` / `wakeword.cooldown_sec` - Kısmi sonuçla tetikleme ve tekrar tetiklenme bekleme süresi
 
 ## İlişkiler (Güncel Modül Yolları)

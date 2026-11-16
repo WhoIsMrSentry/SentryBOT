@@ -11,7 +11,8 @@ def get_router(service: "WakewordService") -> APIRouter:
 
     @router.get("/wakeword/healthz")
     async def healthz():
-        return {"ok": True}
+        st = service.status()
+        return {"ok": bool(st.get("ok", False)), **st}
 
     @router.get("/wakeword/status")
     async def status():

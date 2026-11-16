@@ -12,6 +12,14 @@ except Exception:
 from modules.voice.speech.services.wake_phrase import strip_wakewords
 
 logger = logging.getLogger("wakeword.actions")
+_HTTP_SESSION: Any | None = None
+
+
+def _http_session():
+    global _HTTP_SESSION
+    if _HTTP_SESSION is None and requests is not None:
+        _HTTP_SESSION = requests.Session()
+    return _HTTP_SESSION
 
 
 def _now() -> float:
@@ -22,7 +30,11 @@ def _post_json(url: str, payload: dict | None = None, timeout: float = 0.2) -> N
     if not url or requests is None:
         return
     try:
-        requests.post(url, json=payload or {}, timeout=timeout)
+        post_fn = getattr(requests, "post", None)
+        if getattr(post_fn, "__module__", "") == "requests.api":
+            _http_session().post(url, json=payload or {}, timeout=timeout)
+        else:
+            requests.post(url, json=payload or {}, timeout=timeout)
     except Exception as exc:
         logger.debug("wakeword http post failed: %s", exc)
 
@@ -31,7 +43,11 @@ def _get_json(url: str, timeout: float = 0.2) -> dict:
     if not url or requests is None:
         return {}
     try:
-        resp = requests.get(url, timeout=timeout)
+        get_fn = getattr(requests, "get", None)
+        if getattr(get_fn, "__module__", "") == "requests.api":
+            resp = _http_session().get(url, timeout=timeout)
+        else:
+            resp = requests.get(url, timeout=timeout)
         if resp.status_code == 200:
             return resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
     except Exception:
@@ -131,10 +147,27 @@ class WakewordActions:
     def has_final_speech(self, since_ts: float | None = None, wakeword: str = "") -> bool:
         if self._speech_service is not None:
             res = getattr(self._speech_service, "last_result", None)
-            if res is not None:
+            if isinstance(res, dict) and res:
+                text = str(res.get("text") or "").strip()
+                is_final = bool(res.get("final", res.get("is_final", False)))
+                try:
+                    ts = float(res.get("ts") or 0.0)
+                except Exception:
+                    ts = 0.0
+                if not is_final or not text:
+                    return False
+                if since_ts is not None and ts < float(since_ts):
+                    return False
+                if _is_wakeword_only(text, wakeword):
+                    return False
+                return True
+            if res is not None and not isinstance(res, dict):
                 text = str(getattr(res, "text", "") or "").strip()
-                is_final = bool(getattr(res, "final", False))
-                ts = float(getattr(res, "ts", 0.0) or 0.0)
+                is_final = bool(getattr(res, "final", getattr(res, "is_final", False)))
+                try:
+                    ts = float(getattr(res, "ts", 0.0) or 0.0)
+                except Exception:
+                    ts = 0.0
                 if not is_final or not text:
                     return False
                 if since_ts is not None and ts < float(since_ts):
@@ -160,12 +193,3 @@ class WakewordActions:
         if _is_wakeword_only(text, wakeword):
             return False
         return True
-
-    def _neopixel_post(self, endpoint: str, payload: dict | None = None) -> None:
-        if not self.neopixel_url or requests is None:
-            return
-        try:
-            url = f"{self.neopixel_url.rstrip('/')}/{endpoint.lstrip('/')}"
-            requests.post(url, json=payload or {}, timeout=0.2)
-        except Exception as exc:
-            logger.debug("neopixel http post failed: %s", exc)

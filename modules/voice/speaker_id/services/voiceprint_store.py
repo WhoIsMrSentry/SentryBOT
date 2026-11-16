@@ -53,13 +53,19 @@ class VoiceprintStore:
             raise ValueError("speaker name is empty")
         with self._lock:
             prev = self._profiles.get(name)
+            new_arr = np.asarray(vec, dtype=np.float32)
             merge = prev is not None and not replace
             if merge:
                 n_old = int(prev.get("n", 1))
                 old = np.asarray(prev["vec"], dtype=np.float32)
-                merged = ((old * n_old) + np.asarray(vec, dtype=np.float32)) / (n_old + 1)
-                norm = float(np.linalg.norm(merged)) or 1.0
-                vec_new = [round(float(x), 5) for x in (merged / norm)]
+                if old.shape != new_arr.shape:
+                    logger.warning("speaker profile %s dimension changed (%s -> %s); resetting", name, old.shape, new_arr.shape)
+                    merge = False
+                    vec_new = [round(float(x), 5) for x in vec]
+                else:
+                    merged = ((old * n_old) + new_arr) / (n_old + 1)
+                    norm = float(np.linalg.norm(merged)) or 1.0
+                    vec_new = [round(float(x), 5) for x in (merged / norm)]
             else:
                 vec_new = [round(float(x), 5) for x in vec]
             if name not in self._profiles and len(self._profiles) >= self.max_profiles:
@@ -72,6 +78,30 @@ class VoiceprintStore:
             }
             self._save_unlocked()
             return {"ok": True, "name": name, "samples": self._profiles[name]["n"]}
+
+    def update_ema(self, name: str, vec: List[float], alpha: float = 0.08) -> bool:
+        """Apply bounded EMA smoothing to an existing speaker voiceprint."""
+        key = str(name or "").strip()
+        if not key:
+            return False
+        a = max(0.01, min(0.5, float(alpha)))
+        with self._lock:
+            prev = self._profiles.get(key)
+            if not prev:
+                return False
+            old = np.asarray(prev.get("vec") or [], dtype=np.float32)
+            new_arr = np.asarray(vec, dtype=np.float32)
+            if old.shape != new_arr.shape or new_arr.size == 0:
+                return False
+            blended = (1.0 - a) * old + a * new_arr
+            norm = float(np.linalg.norm(blended)) or 1.0
+            self._profiles[key] = {
+                "vec": [round(float(x), 5) for x in (blended / norm)],
+                "n": int(prev.get("n", 1)) + 1,
+                "ts": int(time.time()),
+            }
+            self._save_unlocked()
+            return True
 
     def forget(self, name: str) -> Dict[str, Any]:
         with self._lock:

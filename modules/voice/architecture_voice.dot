@@ -20,11 +20,11 @@ digraph voice_subsystem {
             color = "#0369a1";
             fontcolor = "#7dd3fc";
 
-            audio_router [label="AudioRouter (Singleton)\n- Central Capture Lifecycle\n- Multicast Dispatcher\n- Pull Stream Generator", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
-            audio_capture [label="AudioCapture\n- PyAudio / ALSA I2S Stream\n- 16kHz Stereo PCM Capture\n- Lock-Free Frame Slicing", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
-            shared_vad [label="SharedVAD\n- Energy-Based Voice Activity\n- 500ms Hangover State\n- Unified Speaking Detector", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
-            oww_adapter [label="OpenWakeWordConsumerAdapter\n- Mono float32 Resampling\n- Frame Dispatcher", fillcolor="#0c4a6e", fontcolor="#e2e8f0", color="#0284c7"];
-            doa_adapter [label="DoAConsumerAdapter\n- Multi-Channel Frame Slicer\n- Spatial Audio Delivery", fillcolor="#0c4a6e", fontcolor="#e2e8f0", color="#0284c7"];
+            audio_router [label="AudioRouter (Singleton)\n- Central Capture Lifecycle\n- Worker Thread Dispatcher\n- Interruptible Stream (stop_event)", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            audio_capture [label="AudioCapture\n- PyAudio / ALSA / SoundDevice\n- 16kHz Stereo PCM Capture\n- Lock-Free _raw_queue Handoff", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            shared_vad [label="SharedVAD\n- Energy-Based Voice Activity\n- 500ms Hangover State\n- Worker-Thread Processing", fillcolor="#075985", fontcolor="#f8fafc", color="#38bdf8"];
+            oww_adapter [label="OpenWakeWordConsumerAdapter\n- Invokes _infer_chunk\n- Frame Dispatcher", fillcolor="#0c4a6e", fontcolor="#e2e8f0", color="#0284c7"];
+            doa_adapter [label="DoAConsumerAdapter\n- Multi-Channel Frame Slicer\n- Invokes estimate()", fillcolor="#0c4a6e", fontcolor="#e2e8f0", color="#0284c7"];
         }
 
         // 2. WakeWord Detection Subservice
@@ -34,9 +34,9 @@ digraph voice_subsystem {
             color = "#0891b2";
             fontcolor = "#67e8f9";
 
-            wakeword_service [label="WakewordService\n(xWakewordService.py)\n- Threaded Audio Stream Loop\n- Debounce & Cooldown Timer", fillcolor="#155e75", fontcolor="#f8fafc", color="#22d3ee"];
-            oww_runner [label="OpenWakewordRunner\n- ONNX Runtime Inference\n- Model: 'hey sentry'\n- Prob Thresholding (0.5+)", fillcolor="#155e75", fontcolor="#f8fafc", color="#22d3ee"];
-            wakeword_actions [label="WakewordActions\n- Instant Barge-In Trigger\n- Wake Chime / Sound Playback\n- Wake Event Emitter", fillcolor="#164e63", fontcolor="#f8fafc", color="#06b6d4"];
+            wakeword_service [label="WakewordService\n(xWakewordService.py)\n- VAD/RMS Energy Gate + Hangover\n- Unlock-Before-Retry Loop\n- Interruptible Stop & Join", fillcolor="#155e75", fontcolor="#f8fafc", color="#22d3ee"];
+            oww_runner [label="OpenWakewordRunner\n- ONNX Runtime Inference\n- Model: 'hey_mycroft'\n- Prob Threshold & Calibration", fillcolor="#155e75", fontcolor="#f8fafc", color="#22d3ee"];
+            wakeword_actions [label="WakewordActions\n- Shared requests.Session\n- dict/object has_final_speech()\n- Instant Barge-In Trigger", fillcolor="#164e63", fontcolor="#f8fafc", color="#06b6d4"];
         }
 
         // 3. Speech Recognition (STT) Subservice
@@ -46,11 +46,11 @@ digraph voice_subsystem {
             color = "#059669";
             fontcolor = "#6ee7b7";
 
-            speech_service [label="SpeechService\n(xSpeechService.py)\n- Capture Stream Ingestion\n- STT Suppression Watchdog\n- Sound Tracking State Machine", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
-            stt_recognizer [label="Recognizer\n- Faster-Whisper / Vosk Backend\n- Streaming Acoustic VAD\n- Dual-Decode Ambiguity Check", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
-            stt_lang [label="Language Resolver\n(stt_language.py)\n- Auto TR / EN Routing\n- Dynamic Model Switcher", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+            speech_service [label="SpeechService\n(xSpeechService.py)\n- Speak Playback Bridge (Echo Gate)\n- Pre-Filter Always Active\n- Single Google STT Path", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            stt_recognizer [label="Recognizer\n- Mono channels=1 + Google STT\n- DynamicTurnTakingEngine\n- Intonation / Pause Cue", fillcolor="#047857", fontcolor="#f8fafc", color="#34d399"];
+            stt_lang [label="Language Resolver\n(stt_language.py)\n- Tuple/Str Decode Safe\n- dual_decode_margin Check", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
             doa_estimator [label="DirectionEstimator\n- GCC-PHAT Algorithm\n- Stereo Time Delay Estimation\n- Angle Calculation (-90°..+90°)", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
-            pan_tilt_ctrl [label="PanTiltController\n- Head Saccade towards Sound\n- Deadband & Smoothing Filter", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
+            pan_tilt_ctrl [label="PanTiltController\n- Joined stop() Worker\n- Shared Session & min_delta_deg", fillcolor="#065f46", fontcolor="#f8fafc", color="#10b981"];
         }
 
         // 4. Speech Synthesis (TTS) Subservice
@@ -60,7 +60,7 @@ digraph voice_subsystem {
             color = "#7c3aed";
             fontcolor = "#c4b5fd";
 
-            speak_service [label="SpeakService\n(xSpeakService.py)\n- Split Synthesis & Play Locks\n- 0ms Immediate Barge-In Cancel\n- Sentence Stream Chunk Queue", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
+            speak_service [label="SpeakService\n(xSpeakService.py)\n- Split Synthesis & Play Locks\n- 0ms Immediate Barge-In Cancel\n- Playback Listener Hook", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
             thought_filter [label="ThoughtFilter\n- Monologue / Thinking Stripper\n- Code & Markdown Sanitizer", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#8b5cf6"];
             tts_engine [label="TextToSpeech (services/tts.py)\n- Piper ONNX (GLaDOS / TR Voice)\n- XTTS / Remote HTTP Fallback\n- eSpeak / Dummy Graceful Modes", fillcolor="#5b21b6", fontcolor="#f8fafc", color="#a78bfa"];
             prosody_mapper [label="Tone & Prosody Mapper\n- Emotion to Piper length_scale\n- 16 Tone Presets (Happy, Angry)", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#8b5cf6"];
@@ -74,8 +74,8 @@ digraph voice_subsystem {
             color = "#334155";
             fontcolor = "#cbd5e1";
 
-            wakeword_api [label="Wakeword Router (:8085)\n- GET /wakeword/status\n- POST /wakeword/start|stop", fillcolor="#1e293b", fontcolor="#94a3b8", color="#475569"];
-            speech_api [label="Speech Router (:8084)\n- POST /speech/recognize\n- GET /speech/direction\n- POST /speech/suppress", fillcolor="#1e293b", fontcolor="#94a3b8", color="#475569"];
+            wakeword_api [label="Wakeword Router (:8084)\n- GET /wakeword/healthz|status\n- POST /wakeword/start|stop", fillcolor="#1e293b", fontcolor="#94a3b8", color="#475569"];
+            speech_api [label="Speech Router (:8082)\n- GET /speech/status|last|direction\n- POST /speech/start|stop|track|stt/suppress", fillcolor="#1e293b", fontcolor="#94a3b8", color="#475569"];
             speak_api [label="Speak Router (:8083)\n- POST /speak/say\n- POST /speak/say_stream\n- POST /speak/stop\n- GET /speak/status", fillcolor="#1e293b", fontcolor="#94a3b8", color="#475569"];
         }
     }

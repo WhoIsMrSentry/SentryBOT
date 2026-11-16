@@ -14,6 +14,8 @@ class SpeechSoundTrackingMixin:
     _tracking: bool
     _last_angle: Optional[float]
     _head_arbiter: Any
+    _pan_http_session: Any
+    _last_sent_pan_deg: Optional[float]
 
     def track_start(self) -> None:
         if getattr(self, "_direction", None) is None:
@@ -47,6 +49,11 @@ class SpeechSoundTrackingMixin:
 
     def _send_pan(self, angle_deg: float) -> None:
         pt_cfg = self.cfg.get("pan_tilt", {}) if isinstance(self.cfg.get("pan_tilt"), dict) else {}
+        min_delta = float(pt_cfg.get("min_delta_deg", 1.5))
+        last_sent = getattr(self, "_last_sent_pan_deg", None)
+        if last_sent is not None and abs(float(angle_deg) - last_sent) < min_delta:
+            return
+
         if self._head_arbiter is not None and hasattr(self._head_arbiter, "move"):
             try:
                 res = self._head_arbiter.move(
@@ -56,6 +63,7 @@ class SpeechSoundTrackingMixin:
                     priority=int(pt_cfg.get("arbiter_priority", 60)),
                 )
                 if res and res.get("ok"):
+                    self._last_sent_pan_deg = float(angle_deg)
                     return
             except Exception as exc:
                 logger.debug("direct head arbiter pan move failed: %s", exc)
@@ -67,16 +75,22 @@ class SpeechSoundTrackingMixin:
 
                 base = resolve_gateway_base_url(self.cfg)
                 url = gateway_url(base, "/vlm/head/move")
-                requests.post(
-                    url,
-                    json={
-                        "pan": float(angle_deg),
-                        "tilt": float(pt_cfg.get("center_tilt_deg", 90.0)),
-                        "source": "sound_direction",
-                        "priority": int(pt_cfg.get("arbiter_priority", 60)),
-                    },
-                    timeout=0.25,
-                )
+                payload = {
+                    "pan": float(angle_deg),
+                    "tilt": float(pt_cfg.get("center_tilt_deg", 90.0)),
+                    "source": "sound_direction",
+                    "priority": int(pt_cfg.get("arbiter_priority", 60)),
+                }
+                post_fn = getattr(requests, "post", None)
+                if getattr(post_fn, "__module__", "") == "requests.api":
+                    sess = getattr(self, "_pan_http_session", None)
+                    if sess is None:
+                        sess = requests.Session()
+                        self._pan_http_session = sess
+                    sess.post(url, json=payload, timeout=0.25)
+                else:
+                    requests.post(url, json=payload, timeout=0.25)
+                self._last_sent_pan_deg = float(angle_deg)
                 return
             except Exception as exc:
                 # No raw set_servo fallback here: an ungated servo write would

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import logging
 import re
+import threading
 import time
 import uuid
 from typing import TYPE_CHECKING, Any, Dict
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Dict
 from fastapi import APIRouter
 
 from modules.common.latency_trace import latency_trace
+from modules.voice.speak.services.speech_queue import SpeechPriority, SpeechPriorityQueue
 
 if TYPE_CHECKING:
     from modules.voice.speak.xSpeakService import SpeakService
@@ -42,6 +44,11 @@ def _split_text_chunks(text: str, max_chars: int = 180) -> list[str]:
 def get_router(service: SpeakService) -> APIRouter:
     router = APIRouter()
     stream_jobs: Dict[str, Dict[str, Any]] = {}
+    queue_obj: SpeechPriorityQueue = getattr(service, "priority_queue", None) or SpeechPriorityQueue(
+        stop_callback=service.stop
+    )
+    worker_lock = threading.Lock()
+    worker_thread: threading.Thread | None = None
 
     def _prune_stream_jobs(max_items: int = 30, max_age_s: float = 180.0) -> None:
         now = time.time()
@@ -52,6 +59,68 @@ def get_router(service: SpeakService) -> APIRouter:
             sorted_keys = sorted(stream_jobs.keys(), key=lambda k: float(stream_jobs[k].get("created_at", 0)))
             for jid in sorted_keys[: len(stream_jobs) - max_items]:
                 stream_jobs.pop(jid, None)
+
+    def _run_stream_job(req_opts: Dict[str, Any]) -> None:
+        job_id = str(req_opts["job_id"])
+        trace_id = str(req_opts["trace_id"])
+        chunks = list(req_opts["chunks"])
+        payload = dict(req_opts["payload"])
+        job = stream_jobs.get(job_id)
+        if job is None:
+            return
+        try:
+            job["status"] = "running"
+            stop_evt = getattr(getattr(service, "player", None), "_play_stop", None)
+            if stop_evt is not None and hasattr(stop_evt, "clear"):
+                stop_evt.clear()
+            logger.info(
+                "Speaking stream (%s, %d chunks): %s",
+                payload.get("language") or "auto",
+                len(chunks),
+                str(req_opts.get("text") or "")[:80],
+            )
+            for index, chunk in enumerate(chunks, start=1):
+                if getattr(getattr(service, "player", None), "is_stopped", False):
+                    job["status"] = "interrupted"
+                    latency_trace.finish(trace_id, "interrupted", {"done_chunks": index - 1})
+                    return
+                latency_trace.mark(trace_id, "tts.chunk_start", {"index": index})
+                result = service.speak(
+                    chunk,
+                    engine=payload.get("engine"),
+                    tone=payload.get("tone"),
+                    speaker_wav=payload.get("speaker_wav"),
+                    language=payload.get("language"),
+                    trace_id=f"{trace_id}-c{index}",
+                )
+                if not result.get("ok"):
+                    raise RuntimeError(str(result.get("detail") or result.get("error") or "TTS failed"))
+                job["done_chunks"] = index
+            job["status"] = "done"
+            latency_trace.finish(trace_id, "done", {"chunks": len(chunks)})
+        except Exception as exc:
+            job["status"] = "failed"
+            job["error"] = repr(exc)
+            latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
+
+    def _queue_worker() -> None:
+        nonlocal worker_thread
+        while True:
+            req = queue_obj.get_next()
+            if req is None:
+                with worker_lock:
+                    if queue_obj.is_empty:
+                        worker_thread = None
+                        return
+                continue
+            _run_stream_job(req.options)
+
+    def _ensure_worker_started() -> None:
+        nonlocal worker_thread
+        with worker_lock:
+            if worker_thread is None or not worker_thread.is_alive():
+                worker_thread = threading.Thread(target=_queue_worker, daemon=True)
+                worker_thread.start()
 
     @router.get("/speak/status")
     async def status() -> Dict[str, Any]:
@@ -113,47 +182,28 @@ def get_router(service: SpeakService) -> APIRouter:
 
         job_id = uuid.uuid4().hex[:12]
         trace_id = str(payload.get("trace_id") or uuid.uuid4().hex[:16])
+        priority = int(payload.get("priority", SpeechPriority.USER_RESPONSE))
         latency_trace.ensure(trace_id, {"component": "speak.stream", "chunks": len(chunks)})
         stream_jobs[job_id] = {
-            "status": "running",
+            "status": "queued",
             "created_at": time.time(),
             "done_chunks": 0,
             "total_chunks": len(chunks),
             "trace_id": trace_id,
             "error": "",
         }
-
-        async def run() -> None:
-            try:
-                from modules.voice.speak.services.player import _play_stop
-
-                _play_stop.clear()
-                print(f"\n========================================\n🤖 [SentryBOT ({payload.get('language') or 'auto'})]:\n{text}\n========================================\n", flush=True)
-                for index, chunk in enumerate(chunks, start=1):
-                    if _play_stop.is_set():
-                        stream_jobs[job_id]["status"] = "interrupted"
-                        latency_trace.finish(trace_id, "interrupted")
-                        return
-                    latency_trace.mark(trace_id, "tts.chunk_start", {"index": index})
-                    result = await asyncio.to_thread(
-                        service.speak,
-                        chunk,
-                        engine=payload.get("engine"),
-                        tone=payload.get("tone"),
-                        speaker_wav=payload.get("speaker_wav"),
-                        language=payload.get("language"),
-                        trace_id=trace_id,
-                    )
-                    if not result.get("ok"):
-                        raise RuntimeError(str(result.get("detail") or result.get("error") or "TTS failed"))
-                    stream_jobs[job_id]["done_chunks"] = index
-                stream_jobs[job_id]["status"] = "done"
-            except Exception as exc:
-                stream_jobs[job_id]["status"] = "failed"
-                stream_jobs[job_id]["error"] = repr(exc)
-                latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
-
-        asyncio.create_task(run())
+        queue_obj.submit(
+            text,
+            priority=priority,
+            options={
+                "job_id": job_id,
+                "trace_id": trace_id,
+                "chunks": chunks,
+                "payload": dict(payload),
+                "text": text,
+            },
+        )
+        _ensure_worker_started()
         return {"ok": True, "job_id": job_id, "trace_id": trace_id, "chunks": len(chunks)}
 
     @router.get("/speak/jobs/{job_id}")

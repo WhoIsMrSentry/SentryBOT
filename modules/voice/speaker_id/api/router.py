@@ -1,12 +1,37 @@
 """FastAPI router for Speaker ID and Multi-Modal Identity Fusion."""
 from __future__ import annotations
 
-import base64
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
+from ..services.voiceprint import pcm_b64_to_f32
 from ..xSpeakerIdService import SpeakerIdError, SpeakerIdService, get_default
+
+
+class SignalPayload(BaseModel):
+    modality: str = ""
+    person_id: str = ""
+    name: str = ""
+    confidence: float = Field(default=0.75, ge=0.0, le=1.0)
+    ttl_s: Optional[float] = Field(default=None, gt=0.0)
+    uid: str = ""
+
+
+class EnrollPayload(BaseModel):
+    name: str = ""
+    person_id: str = ""
+    samplerate: int = Field(default=16000, gt=0, le=192000)
+    replace: bool = False
+    pcm: Optional[List[float]] = None
+    pcm_b64: Optional[str] = None
+
+
+class IdentifyPayload(BaseModel):
+    samplerate: int = Field(default=16000, gt=0, le=192000)
+    pcm: Optional[List[float]] = None
+    pcm_b64: Optional[str] = None
 
 
 def get_router(service: Optional[SpeakerIdService] = None) -> APIRouter:
@@ -45,45 +70,43 @@ def get_router(service: Optional[SpeakerIdService] = None) -> APIRouter:
         resolved = s.resolve_active_identity()
         return {"ok": True, **resolved}
 
-    def _signal_payload(body: Dict[str, Any]) -> Dict[str, Any]:
+    def _signal_payload(body: SignalPayload) -> Dict[str, Any]:
         s = _svc()
-        modality = str(body.get("modality") or "").strip().lower()
-        person_id = str(body.get("person_id") or body.get("name") or "").strip()
-        confidence = float(body.get("confidence", 0.75))
-        ttl_s = body.get("ttl_s")
-        uid = str(body.get("uid") or "")
         res = s.record_identity_signal(
-            modality=modality,
-            person_id=person_id,
-            confidence=confidence,
-            ttl_s=float(ttl_s) if ttl_s is not None else None,
-            uid=uid,
+            modality=body.modality.strip().lower(),
+            person_id=(body.person_id or body.name).strip(),
+            confidence=float(body.confidence),
+            ttl_s=float(body.ttl_s) if body.ttl_s is not None else None,
+            uid=str(body.uid or ""),
         )
         if res.get("ok") is False:
             return res
         return {"ok": True, **res}
 
-    def _enroll_payload(body: Dict[str, Any]) -> Dict[str, Any]:
+    def _decode_pcm(pcm: Optional[List[float]], pcm_b64: Optional[str]) -> Any:
+        if pcm is not None:
+            return pcm
+        if pcm_b64:
+            try:
+                return pcm_b64_to_f32(pcm_b64)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="pcm or pcm_b64 required")
+
+    def _enroll_payload(body: EnrollPayload) -> Dict[str, Any]:
         s = _svc()
-        name = str(body.get("name") or body.get("person_id") or "").strip()
-        samplerate = int(body.get("samplerate", 16000))
-        replace = bool(body.get("replace", False))
-        pcm = body.get("pcm")
-        if pcm is None and body.get("pcm_b64"):
-            pcm = base64.b64decode(str(body["pcm_b64"]))
+        name = (body.name or body.person_id).strip()
+        pcm = _decode_pcm(body.pcm, body.pcm_b64)
         try:
-            return s.enroll_speaker(name=name, speaker_pcm=pcm, samplerate=samplerate, replace=replace)
+            return s.enroll_speaker(name=name, speaker_pcm=pcm, samplerate=body.samplerate, replace=body.replace)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    def _identify_payload(body: Dict[str, Any]) -> Dict[str, Any]:
+    def _identify_payload(body: IdentifyPayload) -> Dict[str, Any]:
         s = _svc()
-        samplerate = int(body.get("samplerate", 16000))
-        pcm = body.get("pcm")
-        if pcm is None and body.get("pcm_b64"):
-            pcm = base64.b64decode(str(body["pcm_b64"]))
+        pcm = _decode_pcm(body.pcm, body.pcm_b64)
         try:
-            return s.identify(speaker_pcm=pcm, samplerate=samplerate)
+            return s.identify(speaker_pcm=pcm, samplerate=body.samplerate)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -94,20 +117,8 @@ def get_router(service: Optional[SpeakerIdService] = None) -> APIRouter:
         router.add_api_route(f"{prefix}/profiles/{{person_id}}", _forget_payload, methods=["DELETE"])
         router.add_api_route(f"{prefix}/forget/{{person_id}}", _forget_payload, methods=["DELETE", "POST"])
         router.add_api_route(f"{prefix}/active_identity", _active_identity_payload, methods=["GET"])
-        router.add_api_route(
-            f"{prefix}/signal",
-            lambda body=Body(default={}): _signal_payload(body if isinstance(body, dict) else {}),
-            methods=["POST"],
-        )
-        router.add_api_route(
-            f"{prefix}/enroll",
-            lambda body=Body(default={}): _enroll_payload(body if isinstance(body, dict) else {}),
-            methods=["POST"],
-        )
-        router.add_api_route(
-            f"{prefix}/identify",
-            lambda body=Body(default={}): _identify_payload(body if isinstance(body, dict) else {}),
-            methods=["POST"],
-        )
+        router.add_api_route(f"{prefix}/signal", _signal_payload, methods=["POST"])
+        router.add_api_route(f"{prefix}/enroll", _enroll_payload, methods=["POST"])
+        router.add_api_route(f"{prefix}/identify", _identify_payload, methods=["POST"])
 
     return router

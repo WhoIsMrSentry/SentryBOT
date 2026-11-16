@@ -70,7 +70,7 @@ class ActiveSpeakerResolver:
         mod = str(modality or "").strip().lower()
         if mod not in self.MODALITY_WEIGHTS:
             return {"ok": False, "reason": "unsupported_modality"}
-        now = time.time()
+        now = time.monotonic()
         conf = max(0.0, min(1.0, float(confidence)))
         ttl = max(0.5, float(ttl_s))
         sig = IdentitySignal(
@@ -91,7 +91,7 @@ class ActiveSpeakerResolver:
             self._signals.pop(m, None)
 
     def resolve(self) -> Dict[str, Any]:
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._prune_expired_unlocked(now)
             if not self._signals:
@@ -137,7 +137,7 @@ class ActiveSpeakerResolver:
             }
 
     def status(self) -> Dict[str, Any]:
-        now = time.time()
+        now = time.monotonic()
         with self._lock:
             self._prune_expired_unlocked(now)
             signals_info = {

@@ -141,7 +141,7 @@ def _openwakeword_models_dir() -> Path:
     return _openwakeword_pkg_dir() / "resources" / "models"
 
 
-def _download_url(url: str, dest: Path, min_bytes: int = 1024) -> None:
+def _download_url(url: str, dest: Path, min_bytes: int = 1024, timeout_s: float = 30.0) -> None:
     if dest.exists() and dest.stat().st_size >= min_bytes:
         return
     if dest.exists():
@@ -149,13 +149,40 @@ def _download_url(url: str, dest: Path, min_bytes: int = 1024) -> None:
             dest.unlink()
         except Exception:
             pass
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    import urllib.request
+    import os
 
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = dest.with_name(f"{dest.name}.tmp.{os.getpid()}")
     logger.info("downloading openwakeword asset: %s", dest.name)
-    urllib.request.urlretrieve(url, dest)
-    if not dest.exists() or dest.stat().st_size < min_bytes:
-        raise RuntimeError(f"openwakeword download incomplete: {dest.name}")
+    try:
+        try:
+            import requests  # type: ignore
+
+            with requests.get(url, stream=True, timeout=timeout_s) as resp:
+                resp.raise_for_status()
+                with open(tmp_path, "wb") as f:
+                    for chunk in resp.iter_content(chunk_size=65536):
+                        if chunk:
+                            f.write(chunk)
+        except ImportError:
+            import urllib.request
+
+            with urllib.request.urlopen(url, timeout=timeout_s) as resp, open(tmp_path, "wb") as f:
+                while True:
+                    block = resp.read(65536)
+                    if not block:
+                        break
+                    f.write(block)
+        if not tmp_path.exists() or tmp_path.stat().st_size < min_bytes:
+            raise RuntimeError(f"openwakeword download incomplete: {dest.name}")
+        os.replace(tmp_path, dest)
+    except Exception:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
+        raise
 
 
 def _framework_asset_url(url: str, use_onnx: bool) -> tuple[str, str]:
@@ -208,33 +235,25 @@ def _try_utils_download_models(model_names: list[str]) -> bool:
 
 
 def _ensure_openwakeword_assets(model_names: list[str], use_onnx: bool) -> None:
-    # sentrybot_batch06e_return_before_download
     if _sentrybot_batch06e_skip_wakeword_assets():
-        return {
-            "ok": True,
-            "skipped": True,
-            "reason": "hardware_disabled",
-        }
+        return None
 
     if _try_utils_download_models(model_names):
-        return
+        return None
 
-    targets = [_openwakeword_models_dir(), _module_models_dir()]
-    for target in targets:
-        target.mkdir(parents=True, exist_ok=True)
+    target = _module_models_dir()
+    target.mkdir(parents=True, exist_ok=True)
 
     for group in _feature_model_groups(use_onnx):
         for entry in group.values():
             if isinstance(entry, dict) and entry.get("download_url"):
-                for target in targets:
-                    _download_framework_asset(str(entry["download_url"]), target, use_onnx)
+                _download_framework_asset(str(entry["download_url"]), target, use_onnx)
 
     catalog = _openwakeword_catalog(use_onnx)
     for name in model_names:
         entry = catalog.get(name)
         if isinstance(entry, dict) and entry.get("download_url"):
-            for target in targets:
-                _download_framework_asset(str(entry["download_url"]), target, use_onnx)
+            _download_framework_asset(str(entry["download_url"]), target, use_onnx)
 
 
 def _normalize_pretrained_names(model_names: list, catalog: dict) -> list[str]:

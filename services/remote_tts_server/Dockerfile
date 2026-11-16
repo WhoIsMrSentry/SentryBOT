@@ -26,7 +26,7 @@ EXPOSE 5000
 # Set environment variables
 ENV SENTRYBOT_HOST=0.0.0.0
 ENV SENTRYBOT_PORT=5000
-ENV SENTRYBOT_OLLAMA_TAGS_ENDPOINT=https://localhost:5000/api/tags
+ENV SENTRYBOT_OLLAMA_TAGS_ENDPOINT=http://host.docker.internal:11434/api/tags
 # Volume paths for persistence
 ENV SENTRYBOT_TTS_ROOT=/app/runtime
 ENV SENTRYBOT_PIPER_ROOT=/app/runtime/piper_models

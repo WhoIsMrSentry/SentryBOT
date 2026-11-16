@@ -52,6 +52,10 @@ class PanTiltController:
     def stop(self):
         self._stop.set()
         self._active = False
+        thr = self._thr
+        self._thr = None
+        if thr is not None and thr is not threading.current_thread() and thr.is_alive():
+            thr.join(timeout=1.0)
 
     def set_target(self, angle_deg: float):
         # clamp
