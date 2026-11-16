@@ -48,13 +48,19 @@ class BrainInitMixin:
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self._agentic_decision_in_progress: bool = False
+        self._agentic_decision_started_at: float = 0.0
         self._agentic_decision_lock = threading.Lock()
+        self._state_lock = threading.RLock()
+        self._cache_lock = threading.RLock()
+        self._visual_ctx_cache: Any = None
+        self._person_mem_cache: dict[str, tuple[float, Any]] = {}
         self._laya_vision_event_lock = threading.Lock()
         self._worker_executor: Optional[ThreadPoolExecutor] = ThreadPoolExecutor(
             max_workers=2, thread_name_prefix="autonomy_worker"
         )
 
         self.mood = MoodManager(config)
+        self.social_db = getattr(self.mood, "_social_db", None)
         self.laya_engine = None
         try:
             from modules.agent_core.services.laya_engine import LayaEngine
@@ -95,11 +101,17 @@ class BrainInitMixin:
             if isinstance(self.config.get("companion_goals", {}), dict)
             else {}
         )
-        # Wire root sibling policies into selector/formation cfg (audit gap fix).
+        # Wire root sibling policies & planner/LLM settings into selector/formation cfg (audit gap fix).
         if isinstance(self.config.get("outcome_learning"), dict):
             goal_cfg.setdefault("outcome_learning", dict(self.config.get("outcome_learning")))
         if isinstance(self.config.get("social_policy"), dict):
             goal_cfg.setdefault("social_policy", dict(self.config.get("social_policy")))
+        for root_key in ("llm", "agent", "world_memory"):
+            if isinstance(self.config.get(root_key), dict):
+                goal_cfg.setdefault(root_key, dict(self.config.get(root_key)))
+        for scalar_key in ("planner_model", "llm_planning_enabled"):
+            if scalar_key in self.config:
+                goal_cfg.setdefault(scalar_key, self.config.get(scalar_key))
         if "goal_formation" not in goal_cfg:
             goal_cfg["goal_formation"] = {
                 "enabled": True,
