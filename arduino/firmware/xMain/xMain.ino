@@ -1,4 +1,7 @@
 #include <Arduino.h>
+#if defined(ARDUINO_ARCH_AVR)
+#include <avr/wdt.h>
+#endif
 #include "xConfig.h"
 #include "xProtocol.h"
 #include "xRobot.h"
@@ -108,24 +111,27 @@ uint16_t g_buzzerFreqLoud = 1500;
 uint16_t g_buzzerFreqQuiet = 1200;
 #endif
 #endif
-#if IR_ENABLED
-// IrKeyReader g_ir; // Disabled: Migrating to Virtual ESP Web Remote
-#endif
-
-#if IR_ENABLED
+#if VIRTUAL_MENU_ENABLED
 IrMenuController g_irMenu;
 void pushAlert(const String &msg) { g_irMenu.addAlert(msg); }
 #else
-void pushAlert(const String &msg) { /* silence */ }
+void pushAlert(const String &) { /* silence */ }
 #endif
 
 #if HALL_ENCODER_ENABLED
 HallEncoder g_hall0;
 HallEncoder g_hall1;
+struct HallCalState {
+  bool active{false};
+  bool updateLcd{false};
+  unsigned long startMs{0};
+  unsigned long durationMs{5000UL};
+  unsigned long lastUiMs{0};
+};
+static HallCalState g_hallCal;
 #endif
 
 static String g_rxLine;
-static String g_irKey;
 static String g_lcdLineTmp;
 
 static inline void printJsonEscaped(const String &s){
@@ -142,13 +148,114 @@ static inline void printJsonEscaped(const String &s){
   }
 }
 
-static inline bool isOwnerUid(const char *uid){
-  // "F3A186A5" (8 chars)
-  return uid[0]=='F' && uid[1]=='3' && uid[2]=='A' && uid[3]=='1' && uid[4]=='8' && uid[5]=='6' && uid[6]=='A' && uid[7]=='5' && uid[8]=='\0';
+void triggerSafetyEstop(const __FlashStringHelper *reason){
+  bool wasEstopped = robot.isEstopped();
+  robot.estop();
+  g_nema.setEnabled(false);
+  g_livOn = false;
+#if LASER_ENABLED
+  g_lasers.off();
+#endif
+#if ULTRA_ENABLED && BUZZER_ENABLED
+  if (g_proxContinuousOn){
+    g_buzzer.stop();
+    g_proxContinuousOn = false;
+  }
+#endif
+  if (!wasEstopped){
+    SERIAL_IO.print(F("{\"ok\":true,\"event\":\"estop\",\"reason\":\""));
+    SERIAL_IO.print(reason ? reason : F("unknown"));
+    SERIAL_IO.println(F("\"}"));
+  }
+}
+
+void clearSafetyEstop(){
+  robot.clearEstop();
+  g_nema.setEnabled(true);
+  lastHeartbeatMs = millis();
+}
+
+void startEncoderCalibration(unsigned long durMs, bool updateLcd){
+#if HALL_ENCODER_ENABLED
+  g_hallCal.durationMs = constrain(durMs, 500UL, 30000UL);
+  g_hall0.reset();
+  g_hall1.reset();
+  g_hallCal.active = true;
+  g_hallCal.updateLcd = updateLcd;
+  g_hallCal.startMs = millis();
+  g_hallCal.lastUiMs = 0;
+#if VIRTUAL_MENU_ENABLED && LCD_ENABLED
+  if (updateLcd){
+    g_irMenu.lcdPrint(F("CALIBRATE"), F("Rotate wheel..."));
+  }
+#endif
+#else
+  (void)durMs; (void)updateLcd;
+#endif
+}
+
+static inline void tickEncoderCalibration(){
+#if HALL_ENCODER_ENABLED
+  if (!g_hallCal.active) return;
+  unsigned long now = millis();
+  unsigned long elapsed = now - g_hallCal.startMs;
+
+#if VIRTUAL_MENU_ENABLED && LCD_ENABLED
+  if (g_hallCal.updateLcd && (now - g_hallCal.lastUiMs >= 200UL)){
+    g_hallCal.lastUiMs = now;
+    int pct = (int)constrain((elapsed * 100UL) / g_hallCal.durationMs, 0UL, 100UL);
+    char topBuf[17];
+    char botBuf[21];
+    snprintf_P(topBuf, sizeof(topBuf), PSTR("CALIB %d%%"), pct);
+    snprintf_P(botBuf, sizeof(botBuf), PSTR("p0:%lu p1:%lu"), g_hall0.getCount(), g_hall1.getCount());
+    g_irMenu.lcdPrint(String(topBuf), String(botBuf));
+  }
+#endif
+
+  if (elapsed < g_hallCal.durationMs) return;
+  g_hallCal.active = false;
+
+  unsigned long c0 = g_hall0.getCount();
+  unsigned long c1 = g_hall1.getCount();
+  uint16_t v0 = (uint16_t)constrain(c0, 0UL, 65535UL);
+  uint16_t v1 = (uint16_t)constrain(c1, 0UL, 65535UL);
+  EEPROM.update(EEPROM_ADDR_HALL_MAGIC, EEPROM_HALL_MAGIC);
+  EEPROM.put(EEPROM_ADDR_HALL_PPR_0, v0);
+  EEPROM.put(EEPROM_ADDR_HALL_PPR_1, v1);
+  if (v0 > 0) g_hall0.setPulsesPerRev((uint8_t)min(v0, (uint16_t)255));
+  if (v1 > 0) g_hall1.setPulsesPerRev((uint8_t)min(v1, (uint16_t)255));
+
+  float sp0 = (c0 > 0) ? (STEPPER_STEPS_PER_REV / (float)c0) : 0.0f;
+  float sp1 = (c1 > 0) ? (STEPPER_STEPS_PER_REV / (float)c1) : 0.0f;
+  SERIAL_IO.print(F("{\"ok\":true,\"event\":\"encoder_calibrated\",\"p0\":"));
+  SERIAL_IO.print(c0);
+  SERIAL_IO.print(F(",\"p1\":"));
+  SERIAL_IO.print(c1);
+  SERIAL_IO.print(F(",\"stepsPerPulse0\":"));
+  SERIAL_IO.print(sp0, 3);
+  SERIAL_IO.print(F(",\"stepsPerPulse1\":"));
+  SERIAL_IO.print(sp1, 3);
+  SERIAL_IO.println('}');
+
+#if VIRTUAL_MENU_ENABLED && LCD_ENABLED
+  if (g_hallCal.updateLcd){
+    char doneBuf[21];
+    snprintf_P(doneBuf, sizeof(doneBuf), PSTR("p0:%lu p1:%lu"), c0, c1);
+    g_irMenu.lcdPrint(String(F("CAL DONE")), String(doneBuf));
+#if BUZZER_ENABLED
+    g_buzzer.beepOn(g_buzzerDefaultOut, g_buzzerFreqLoud, 200);
+#endif
+  }
+#endif
+#endif
 }
 
 static inline void printTelemetryJson(){
-  SERIAL_IO.print(F("{\"ok\":true,\"telemetry\":true,\"pitch\":"));
+  SERIAL_IO.print(F("{\"ok\":true,\"telemetry\":true,\"estop\":"));
+  SERIAL_IO.print(robot.isEstopped() ? F("true") : F("false"));
+  SERIAL_IO.print(F(",\"i2c_errors\":"));
+  SERIAL_IO.print((unsigned long)Protocol::getI2cErrorCount());
+  SERIAL_IO.print(F(",\"pitch\":"));
   SERIAL_IO.print(robot.imu.getPitch(), 2);
   SERIAL_IO.print(F(",\"roll\":"));
   SERIAL_IO.print(robot.imu.getRoll(), 2);
@@ -230,10 +337,19 @@ static inline void detectReflexEvents(){
 }
 
 void setup(){
+#if defined(ARDUINO_ARCH_AVR)
+  uint8_t mcusr = MCUSR;
+  MCUSR = 0;
+  wdt_disable();
+#endif
   SERIAL_IO.begin(ROBOT_SERIAL_BAUD);
   SERIAL_IO.println(F("{\"info\":\"boot_start\"}"));
+#if defined(ARDUINO_ARCH_AVR)
+  if (mcusr & _BV(WDRF)) {
+    SERIAL_IO.println(F("{\"warn\":\"wdt_reset_recovered\"}"));
+  }
+#endif
   g_rxLine.reserve(128);
-  g_irKey.reserve(12);
   g_lcdLineTmp.reserve(22);
 #if RFID_ENABLED
   g_lastRfid.reserve(16);
@@ -327,8 +443,10 @@ void setup(){
 
   // LCD yoksa firmware çalışmaya devam eder; sadece LCD yazımı atlanır.
   g_lcdStatus.begin("", 0);
+#if VIRTUAL_MENU_ENABLED
   g_irMenu.reset();
   g_irMenu.showHome();
+#endif
 
     if (BOOT_STATUS_ENABLED && lcdHubAny()){
     bootUiStep(F("SentryBOT"), (const __FlashStringHelper*)F("BOOT"), BOOT_SPLASH_MS);
@@ -355,7 +473,11 @@ void setup(){
   #endif
 
     // Compile-time features (to give a bit of "liveliness")
-    String feat = String("") + (IR_ENABLED?"IR ":"") + (RFID_ENABLED?"RFID ":"") + (ULTRA_ENABLED?"ULTRA ":"") + (LASER_ENABLED?"LASER ":"");
+    String feat = "";
+    if (VIRTUAL_MENU_ENABLED) feat += F("MENU ");
+    if (RFID_ENABLED) feat += F("RFID ");
+    if (ULTRA_ENABLED) feat += F("ULTRA ");
+    if (LASER_ENABLED) feat += F("LASER ");
     if (feat.length() > 0) bootUiStep(F("FEATURES"), feat, BOOT_STATUS_STEP_MS);
 
 
@@ -384,12 +506,11 @@ void setup(){
   // Start DS18B20 OneWire sensors (all devices on single pin)
   g_ds18.begin(DS18_PIN);
 #endif
-#if IR_ENABLED
-  // g_ir.begin(IR_PIN); // Disabled: Physical IR removed
+#if VIRTUAL_MENU_ENABLED
   #if LCD_ENABLED
-  // IR menü olayları ana LCD'de gösterilsin
+  // Menu events rendered on primary LCD
   g_irMenu.setLcdPrint([](const String &top, const String &bottom){ g_lcdStatus.showTo(LCD_TGT_1, top, bottom, true); });
-#endif
+  #endif
   g_irMenu.reset();
 #endif
 #if BOOT_CALIBRATION_PROMPT
@@ -400,23 +521,31 @@ void setup(){
       String ln = SERIAL_IO.readStringUntil('\n'); ln.trim();
       if (ln.equalsIgnoreCase("c") || ln.indexOf("\"cmd\":\"calibrate\"")>=0){
         robot.calibrateNeutral();
-        Protocol::sendOk("boot_calibrated");
+        Protocol::sendOk(F("boot_calibrated"));
       }
       break;
     }
     delay(5);
   }
 #endif
+  // Initialize heartbeat timer AFTER all boot prompts/steps finish so loop() does not
+  // immediately trip HEARTBEAT_TIMEOUT_MS=500ms on first iteration, then arm AVR WDT.
+  lastHeartbeatMs = millis();
+#if defined(ARDUINO_ARCH_AVR)
+  wdt_enable(WDTO_2S);
+#endif
 }
 
 void loop(){
+#if VIRTUAL_MENU_ENABLED
   g_irMenu.countLoop();
+#endif
   if (Protocol::readLine(SERIAL_IO, g_rxLine)) handleJson(g_rxLine);
+  Protocol::pollWireTimeout();
   robot.update();
     // Peripherals polling
   #if RFID_ENABLED
     if (g_rfid.poll()){
-      g_irMenu.recordRfid();
       g_lastRfid = g_rfid.lastUid();
       SERIAL_IO.print(F("{\"ok\":true,\"event\":\"rfid\",\"uid\":\""));
       printJsonEscaped(g_lastRfid);
@@ -434,31 +563,7 @@ void loop(){
         g_lcdStatus.showTo(LCD_TGT_1, "RFID", g_lcdLineTmp);
       }
 
-      // Normalize UID (remove non-alnum, uppercase)
-      char norm[17];
-      uint8_t ni = 0;
-      for (size_t _i = 0; _i < g_lastRfid.length(); ++_i){
-        char c = g_lastRfid[_i];
-        if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')){
-          if (c >= 'a' && c <= 'f') c = c - ('a' - 'A');
-          if (ni < sizeof(norm) - 1) norm[ni++] = c;
-        }
-      }
-      norm[ni] = '\0';
-
-      // Owner UID (uppercase, no separators)
-      if (isOwnerUid(norm)){
-        // Greet owner only when LCD is not pinned by menu UI.
-        if (!g_lcdStatus.isPinned()){
-          g_lcdStatus.showTo(LCD_TGT_1, "Merhaba", "Sahip");
-        }
-        playCuteSound(CUTE_SUPER_HAPPY, true);
-        // Enqueue sequence: walle then three bb8 variants
-        enqueueSong(SONG_WALLE);
-        enqueueSong(SONG_BB8_1);
-        enqueueSong(SONG_BB8_2);
-        enqueueSong(SONG_BB8_3);
-      }
+      // Owner authorization lives on Pi (`rfid.allowed_uids`); Mega only forwards event & displays UID.
   #endif
     }
   #endif
@@ -489,8 +594,7 @@ void loop(){
           // Very close: start a sustained/continuous tone
           if (!g_proxContinuousOn){
             if (g_buzzerBothEnabled){
-              g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 0);
-              g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 0);
+              g_buzzer.beepBoth(g_buzzerFreqLoud, 0);
             } else {
               uint16_t f = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
               g_buzzer.beepOn(g_buzzerDefaultOut, f, 0);
@@ -506,8 +610,7 @@ void loop(){
           if (nowp - g_lastProxBeepMs >= interval){
             g_lastProxBeepMs = nowp;
             if (g_buzzerBothEnabled){
-              g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 40);
-              g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 40);
+              g_buzzer.beepBoth(g_buzzerFreqLoud, 40);
             } else {
               uint16_t f = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
               g_buzzer.beepOn(g_buzzerDefaultOut, f, 40);
@@ -529,10 +632,7 @@ void loop(){
 #endif
   #endif
 
-#if IR_ENABLED
-  // if (g_ir.poll(g_irKey)){
-  //   g_irMenu.onKey(g_irKey, robot);
-  // }
+#if VIRTUAL_MENU_ENABLED
   g_irMenu.tick(robot);
 #endif
 
@@ -558,11 +658,11 @@ void loop(){
       g_linkAlive = false;
       playCuteSound(CUTE_DISCONNECTION, true);
     }
+    if (!linkNow){
+      triggerSafetyEstop(F("hb_timeout"));
+    }
   }
-  if (HEARTBEAT_TIMEOUT_MS>0 && (millis() - lastHeartbeatMs > HEARTBEAT_TIMEOUT_MS)){
-    robot.estop();
-  }
-  // Poll radio and update NEMA controller
+  // Poll radio and update NEMA controller (steppers stepped once per loop inside robot.update())
   #if EBYTE_ENABLED
   g_ebyteRadio.poll();
   #endif
@@ -570,10 +670,7 @@ void loop(){
   #if DS18_ENABLED
   g_ds18.update();
   #endif
-  #if HALL_ENCODER_ENABLED
-  g_hall0.update();
-  g_hall1.update();
-  #endif
+  tickEncoderCalibration();
   // Telemetry periodic output
   if (telemetryOn && millis() - lastTelemetryMs >= telemetryInterval){
     lastTelemetryMs = millis(); robot.imu.read();
@@ -584,4 +681,7 @@ void loop(){
   neopixelTick();
   // subtle idle breathing / micro-motion when enabled by the bridge
   livelinessTick();
+#if defined(ARDUINO_ARCH_AVR)
+  wdt_reset();
+#endif
 }

@@ -346,9 +346,12 @@ const char* INDEX_HTML = R"=====(
 
     <!-- TAB 1: REMOTE -->
     <div id="tab-remote" class="tab-content active">
-        <button class="btn" onclick="sendCmd({cmd:'estop'})"
-            style="background: var(--danger); width: 100%; padding: 1rem; font-size: 1.2rem; margin-bottom: 10px; box-shadow: 0 0 15px rgba(239, 68, 68, 0.5);">EMERGENCY
-            STOP</button>
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+            <button class="btn" onclick="sendCmd({cmd:'estop'})"
+                style="background: var(--danger); flex:2; padding: 1rem; font-size: 1.1rem; box-shadow: 0 0 15px rgba(239, 68, 68, 0.5);">EMERGENCY STOP</button>
+            <button class="btn" onclick="sendCmd({cmd:'estop_clear'})"
+                style="background: var(--success); color:#000; flex:1; padding: 1rem; font-size: 0.95rem;">RE-ARM</button>
+        </div>
 
         <div class="action-row">
             <button class="btn" onclick="sendIrKey('*')">HOME</button>
@@ -538,12 +541,12 @@ const char* INDEX_HTML = R"=====(
         <div class="panel">
             <h2>Raw Servos (Head)</h2>
             <div class="grid-3">
-                <button class="btn" onclick="sendCmd({cmd:'set_servo', index:0, deg:0})">Pan Left</button>
+                <button class="btn" onclick="sendCmd({cmd:'set_servo', index:0, deg:30})">Pan Left (30)</button>
                 <button class="btn" onclick="sendCmd({cmd:'set_servo', index:0, deg:90})">Pan Center</button>
-                <button class="btn" onclick="sendCmd({cmd:'set_servo', index:0, deg:180})">Pan Right</button>
-                <button class="btn" onclick="sendCmd({cmd:'set_servo', index:1, deg:45})">Tilt Up</button>
+                <button class="btn" onclick="sendCmd({cmd:'set_servo', index:0, deg:150})">Pan Right (150)</button>
+                <button class="btn" onclick="sendCmd({cmd:'set_servo', index:1, deg:60})">Tilt Up (60)</button>
                 <button class="btn" onclick="sendCmd({cmd:'set_servo', index:1, deg:90})">Tilt Center</button>
-                <button class="btn" onclick="sendCmd({cmd:'set_servo', index:1, deg:135})">Tilt Down</button>
+                <button class="btn" onclick="sendCmd({cmd:'set_servo', index:1, deg:120})">Tilt Down (120)</button>
             </div>
         </div>
 
@@ -564,6 +567,10 @@ const char* INDEX_HTML = R"=====(
             <div class="grid-2">
                 <button class="btn" onclick="sendCmd({cmd:'encoder_calibrate', duration_ms:5000})">Calibrate Encoders</button>
                 <button class="btn" onclick="sendCmd({cmd:'hello'})" style="background: var(--success);">Get Sys Info</button>
+            </div>
+            <div style="display:flex; gap:8px; margin-top:10px;">
+                <input type="password" id="bridge-token" placeholder="Bridge API Token (optional)">
+                <button class="btn" onclick="saveBridgeToken()">Save Key</button>
             </div>
         </div>
     </div>
@@ -602,15 +609,33 @@ const char* INDEX_HTML = R"=====(
             if (navigator.vibrate) navigator.vibrate(40);
         }
 
+        function authHeaders() {
+            const headers = { 'Content-Type': 'application/json' };
+            const tok = localStorage.getItem('sb_bridge_token') || '';
+            if (tok) headers['X-API-Key'] = tok;
+            return headers;
+        }
+
+        function saveBridgeToken() {
+            const el = document.getElementById('bridge-token');
+            localStorage.setItem('sb_bridge_token', (el && el.value) ? el.value.trim() : '');
+            updateStatus(true, 'Token Saved');
+        }
+        (function initTokenField() {
+            const el = document.getElementById('bridge-token');
+            if (el) el.value = localStorage.getItem('sb_bridge_token') || '';
+        })();
+
         async function sendCmd(payloadObj) {
             haptic();
             try {
                 const res = await fetch('/send', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: authHeaders(),
                     body: JSON.stringify(payloadObj)
                 });
-                if (!res.ok) updateStatus(false, 'Send Error');
+                if (res.status === 401) updateStatus(false, 'Auth Required');
+                else if (!res.ok) updateStatus(false, 'Send Error');
             } catch (e) {
                 updateStatus(false, 'Network Error');
             }
@@ -642,79 +667,55 @@ const char* INDEX_HTML = R"=====(
             document.getElementById('morse-text').value = '';
         }
 
-        // Polling Logic
-        async function fetchRequest(payloadObj) {
-            try {
-                const res = await fetch('/request', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payloadObj)
-                });
-                if (res.ok) {
-                    updateStatus(true, 'Bridge Ready');
-                    return await res.json();
-                }
-            } catch (e) {
-                // Ignore timeout visually to prevent flickering, just return null
-            }
-            return null;
-        }
-
+        // Cached telemetry polling via GET /state (keeps Mega UART idle)
         let isPolling = false;
         async function pollSensors() {
             if (currentTab !== 'sensors' || isPolling) return;
             isPolling = true;
 
             try {
-                // Poll IMU and State
-                const state = await fetchRequest({ cmd: "get_state" });
-                if (state && state.ok) {
+                const res = await fetch('/state');
+                if (!res.ok) return;
+                const state = await res.json();
+                if (!state) return;
+
+                if (typeof state.pitch === 'number') {
                     document.getElementById('val-pitch').textContent = state.pitch.toFixed(1) + '°';
+                }
+                if (typeof state.roll === 'number') {
                     document.getElementById('val-roll').textContent = state.roll.toFixed(1) + '°';
-                    document.getElementById('val-mode').textContent = state.mode ? state.mode.toUpperCase() : 'UNKNOWN';
+                }
+                document.getElementById('val-mode').textContent = state.estop
+                    ? 'E-STOP'
+                    : (state.mode ? String(state.mode).toUpperCase() : 'UNKNOWN');
+
+                const cmEl = document.getElementById('val-ultra');
+                if (state.ultra_cm === null || state.ultra_cm === undefined || state.ultra_cm <= 0) {
+                    cmEl.textContent = 'Out of Range';
+                    cmEl.className = 'metric-value';
+                } else {
+                    cmEl.textContent = Number(state.ultra_cm).toFixed(1) + ' cm';
+                    if (state.ultra_cm < 10) cmEl.className = 'metric-value danger';
+                    else if (state.ultra_cm < 25) cmEl.className = 'metric-value warning';
+                    else cmEl.className = 'metric-value success';
                 }
 
-                await new Promise(r => setTimeout(r, 50));
-
-                // Poll Ultrasonic
-                const ultra = await fetchRequest({ cmd: "ultra_read" });
-                if (ultra && ultra.ok) {
-                    const cmEl = document.getElementById('val-ultra');
-                    if (ultra.cm === null || ultra.cm === 0) {
-                        cmEl.textContent = 'Out of Range';
-                        cmEl.className = 'metric-value';
-                    } else {
-                        cmEl.textContent = ultra.cm.toFixed(1) + ' cm';
-                        if (ultra.cm < 10) cmEl.className = 'metric-value danger';
-                        else if (ultra.cm < 25) cmEl.className = 'metric-value warning';
-                        else cmEl.className = 'metric-value success';
-                    }
+                if (state.rfid) {
+                    document.getElementById('val-rfid').textContent = state.rfid;
                 }
 
-                await new Promise(r => setTimeout(r, 50));
-
-                // Poll RFID
-                const rfid = await fetchRequest({ cmd: "rfid_last" });
-                if (rfid && rfid.ok && rfid.rfid) {
-                    document.getElementById('val-rfid').textContent = rfid.rfid || 'NO TAG';
-                }
-
-                await new Promise(r => setTimeout(r, 50));
-
-                // Poll Temperatures
-                const temp = await fetchRequest({ cmd: "temp_read" });
-                if (temp && temp.ok && temp.temps) {
+                if (Array.isArray(state.temps)) {
                     const container = document.getElementById('temp-list-container');
-                    container.innerHTML = '';
                     let tempHtml = '';
-                    temp.temps.forEach((t, i) => {
-                        let tStr = t === null ? '--.-' : t.toFixed(1);
+                    state.temps.forEach((t, i) => {
+                        const tStr = (t === null || t === undefined) ? '--.-' : Number(t).toFixed(1);
                         tempHtml += `<div class="temp-item"><span>Sensor ${i + 1}</span><span class="temp-val">${tStr} °C</span></div>`;
                     });
-                    if (tempHtml === '') tempHtml = '<div class="temp-item"><span>No sensors found</span></div>';
+                    if (tempHtml === '') tempHtml = '<div class="temp-item"><span>Waiting for cached temps</span></div>';
                     container.innerHTML = tempHtml;
                 }
-
+            } catch (e) {
+                // Ignore transient network errors
             } finally {
                 isPolling = false;
             }

@@ -12,7 +12,7 @@ void EbyteRadio::begin(uint8_t cePin, uint8_t csnPin, uint8_t channel){
   _ce = cePin; _csn = csnPin;
   radio = new RF24(_ce, _csn);
   if (!radio->begin()){
-    SERIAL_IO.println(F("EbyteRadio: radio begin failed"));
+    SERIAL_IO.println(F("{\"info\":\"ebyte_init_failed\"}"));
     return;
   }
   radio->setPALevel(RF24_PA_LOW);
@@ -23,7 +23,7 @@ void EbyteRadio::begin(uint8_t cePin, uint8_t csnPin, uint8_t channel){
   radio->openReadingPipe(1, masterAddr);
   radio->openWritingPipe(slaveAddr);
   radio->startListening();
-  SERIAL_IO.println(F("EbyteRadio: initialized"));
+  SERIAL_IO.println(F("{\"info\":\"ebyte_initialized\"}"));
 }
 
 void EbyteRadio::poll(){
@@ -39,8 +39,13 @@ void EbyteRadio::poll(){
     lastSource = "RF_EBYTE";
     newPacket = true;
     sendAck(0, lastPkt, 0);
-    String s = String("pkt R(Raw): X=") + lastPkt.Rstick_X + ",Y=" + lastPkt.Rstick_Y + ",B=0x" + String(lastPkt.Buttons, HEX);
-    SERIAL_IO.println(s);
+    SERIAL_IO.print(F("{\"event\":\"radio_rx\",\"fmt\":\"raw\",\"x\":"));
+    SERIAL_IO.print((int)lastPkt.Rstick_X);
+    SERIAL_IO.print(F(",\"y\":"));
+    SERIAL_IO.print((int)lastPkt.Rstick_Y);
+    SERIAL_IO.print(F(",\"btn\":"));
+    SERIAL_IO.print((unsigned int)lastPkt.Buttons);
+    SERIAL_IO.println('}');
   } else if (size == (1 + sizeof(MasterPacket1) + 2)){
     uint8_t buf[1 + sizeof(MasterPacket1) + 2];
     radio->read(buf, sizeof(buf));
@@ -49,14 +54,21 @@ void EbyteRadio::poll(){
     uint16_t rxCrc = (uint16_t)buf[1 + sizeof(MasterPacket1)] | ((uint16_t)buf[1 + sizeof(MasterPacket1) + 1] << 8);
     uint16_t calc = crc16(buf, 1 + sizeof(MasterPacket1));
     if (calc == rxCrc){
-      lastSource = String("RF_EBYTE") + "#" + String(seq);
+      lastSource = String("RF_EBYTE#") + String(seq);
       newPacket = true;
       sendAck(seq, lastPkt, 0);
-      String s = String("pkt R(Framed): seq=") + seq + " X=" + lastPkt.Rstick_X + ",Y=" + lastPkt.Rstick_Y + ",B=0x" + String(lastPkt.Buttons, HEX);
-      SERIAL_IO.println(s);
+      SERIAL_IO.print(F("{\"event\":\"radio_rx\",\"fmt\":\"framed\",\"seq\":"));
+      SERIAL_IO.print((unsigned int)seq);
+      SERIAL_IO.print(F(",\"x\":"));
+      SERIAL_IO.print((int)lastPkt.Rstick_X);
+      SERIAL_IO.print(F(",\"y\":"));
+      SERIAL_IO.print((int)lastPkt.Rstick_Y);
+      SERIAL_IO.print(F(",\"btn\":"));
+      SERIAL_IO.print((unsigned int)lastPkt.Buttons);
+      SERIAL_IO.println('}');
     } else {
       sendAck(seq, lastPkt, 1);
-      SERIAL_IO.println(F("pkt R: CRC FAIL"));
+      SERIAL_IO.println(F("{\"warn\":\"ebyte_crc_fail\"}"));
     }
   } else {
     radio->flush_rx();
@@ -76,7 +88,7 @@ void EbyteRadio::sendAck(uint8_t seq, const MasterPacket1 &echo, uint8_t status)
 
   radio->stopListening();
   bool ok = radio->write(out, sizeof(out));
-  if (!ok){ SERIAL_IO.println(F("EbyteRadio: ACK send failed")); }
+  if (!ok){ SERIAL_IO.println(F("{\"warn\":\"ebyte_ack_failed\"}")); }
   radio->startListening();
 }
 

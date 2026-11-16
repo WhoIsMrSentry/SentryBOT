@@ -23,13 +23,15 @@ class HardwareSafetyWatchdog:
         timeout_s: float = 2.5,
         check_interval_s: float = 0.5,
         on_estop_callback: Optional[Callable[[str], None]] = None,
+        only_while_moving: bool = False,
     ) -> None:
         self.timeout_s = max(0.05, float(timeout_s))
         self.check_interval_s = max(0.01, float(check_interval_s))
         self.on_estop_callback = on_estop_callback
+        self.only_while_moving = bool(only_while_moving)
 
         self._lock = threading.RLock()
-        self._last_feed_ts: float = time.time()
+        self._last_feed_ts: float = time.monotonic()
         self._is_tripped: bool = False
         self._trip_reason: str = ""
         self._is_moving: bool = False
@@ -41,8 +43,9 @@ class HardwareSafetyWatchdog:
             if self._thread is not None and self._thread.is_alive():
                 return
             self._stop_event.clear()
-            self._last_feed_ts = time.time()
+            self._last_feed_ts = time.monotonic()
             self._is_tripped = False
+            self._trip_reason = ""
             self._thread = threading.Thread(
                 target=self._watchdog_loop,
                 name="SentryBOT-SafetyWatchdog",
@@ -60,20 +63,20 @@ class HardwareSafetyWatchdog:
     def feed(self, source: str = "hb") -> None:
         """Feed the watchdog to refresh link liveness timestamp."""
         with self._lock:
-            self._last_feed_ts = time.time()
+            self._last_feed_ts = time.monotonic()
 
     def set_motion_state(self, is_moving: bool) -> None:
         with self._lock:
             self._is_moving = bool(is_moving)
             if self._is_moving:
-                self._last_feed_ts = time.time()
+                self._last_feed_ts = time.monotonic()
 
     def reset_trip(self) -> bool:
         """Re-arm the watchdog after an emergency stop condition is cleared."""
         with self._lock:
             self._is_tripped = False
             self._trip_reason = ""
-            self._last_feed_ts = time.time()
+            self._last_feed_ts = time.monotonic()
             logger.info("HardwareSafetyWatchdog re-armed.")
             return True
 
@@ -91,25 +94,32 @@ class HardwareSafetyWatchdog:
                 logger.error("Error executing safety watchdog on_estop_callback: %s", exc)
 
     def _watchdog_loop(self) -> None:
-        while not self._stop_event.is_set():
-            time.sleep(self.check_interval_s)
-            now = time.time()
+        while not self._stop_event.wait(self.check_interval_s):
+            now = time.monotonic()
             with self._lock:
                 elapsed = now - self._last_feed_ts
                 tripped = self._is_tripped
+                moving = self._is_moving
+
+            if self.only_while_moving and not moving:
+                continue
 
             if not tripped and elapsed > self.timeout_s:
-                reason = f"Watchdog timeout: no heartbeat received for {elapsed:.2f}s (threshold={self.timeout_s:.1f}s)"
+                reason = (
+                    f"Watchdog timeout (moving={moving}): no heartbeat received for "
+                    f"{elapsed:.2f}s (threshold={self.timeout_s:.1f}s)"
+                )
                 self._trigger_estop(reason)
 
     def status(self) -> Dict[str, Any]:
         with self._lock:
-            elapsed = time.time() - self._last_feed_ts
+            elapsed = time.monotonic() - self._last_feed_ts
             return {
                 "active": self._thread is not None and self._thread.is_alive(),
                 "tripped": self._is_tripped,
                 "trip_reason": self._trip_reason,
                 "timeout_s": self.timeout_s,
+                "only_while_moving": self.only_while_moving,
                 "time_since_last_feed_s": round(elapsed, 3),
                 "is_moving": self._is_moving,
             }

@@ -1,5 +1,6 @@
 #include "actuators/xNemaController.h"
 #include "xConfig.h"
+#include "xProtocol.h"
 #include "xRobot.h"
 
 extern Robot robot;
@@ -40,11 +41,15 @@ void NemaController::update(){
     rightEnabled = (pkt.Buttons & BTN_MOTOR1);
     leftEnabled  = (pkt.Buttons & BTN_MOTOR2);
     applyJoystick(pkt.Rstick_X, pkt.Rstick_Y);
-    String s = String("SRC:") + radio->lastSource + " ";
-    s += String("X=") + pkt.Rstick_X + ",Y=" + pkt.Rstick_Y;
-    SERIAL_IO.println(s);
+    SERIAL_IO.print(F("{\"event\":\"nema_radio\",\"src\":\""));
+    Protocol::printEscaped(SERIAL_IO, radio->lastSource);
+    SERIAL_IO.print(F("\",\"x\":"));
+    SERIAL_IO.print((int)pkt.Rstick_X);
+    SERIAL_IO.print(F(",\"y\":"));
+    SERIAL_IO.print((int)pkt.Rstick_Y);
+    SERIAL_IO.println('}');
   }
-  if (steppers) steppers->update();
+  // Steppers are stepped once per loop inside robot.update().
 }
 
 void NemaController::setEnabled(bool en){

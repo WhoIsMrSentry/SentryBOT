@@ -2,6 +2,9 @@
 #define SENTRY_APP_CUTE_BUZZER_H
 
 #include <Arduino.h>
+#if defined(ARDUINO_ARCH_AVR)
+#include <avr/pgmspace.h>
+#endif
 #include "../xConfig.h"
 #include "../xProtocol.h"
 
@@ -28,35 +31,17 @@ enum CuteSoundKey : uint8_t {
   CUTE_JUMP,
 };
 
-#if BUZZER_ENABLED
-#include "../xPeripherals.h"
-
-extern BuzzerPair g_buzzer;
-extern BuzzerSongPlayer g_song;
-extern BuzzerOut g_buzzerDefaultOut;
-extern bool g_buzzerBothEnabled;
-extern uint16_t g_buzzerFreqLoud;
-extern uint16_t g_buzzerFreqQuiet;
-
-// Optional external library controlled by config.
-#if defined(CUTE_BUZZER_LIB_ENABLED) && CUTE_BUZZER_LIB_ENABLED
-#include <CuteBuzzerSounds.h>
-#define SENTRY_CUTE_BUZZER_LIB 1
-#else
-#define SENTRY_CUTE_BUZZER_LIB 0
-#endif
-
-// Forward declarations for inline helpers (declared later in this header)
-static const int _CUTE_PENDING_MAX = 4;
-static const size_t _CUTE_PENDING_PAYLOAD_MAX = 140;
+// NeoPixel request retry queue is transport-only and works even with BUZZER_ENABLED=0.
+static constexpr int _CUTE_PENDING_MAX = 4;
+static constexpr size_t _CUTE_PENDING_PAYLOAD_MAX = 140;
 static inline void enqueueNeopixelPending(uint16_t seq, const char *payload);
 static inline void markNeopixelAck(uint16_t seq);
 static inline void neopixelTick();
-static inline void _cuteBufAppendRaw(char *dst, size_t dstSize, size_t &pos, const char *src);
+static inline void _cuteBufAppendRaw_P(char *dst, size_t dstSize, size_t &pos, PGM_P src);
 static inline void _cuteBufAppendEscaped(char *dst, size_t dstSize, size_t &pos, const String &src);
 static inline void _cuteBufAppendInt(char *dst, size_t dstSize, size_t &pos, int v);
 
-static inline void emitNeopixelRequest(const String &name, const String &color = "", int iterations = 1){
+inline void emitNeopixelRequest(const String &name, const String &color, int iterations){
   // Validate iterations and color to avoid malformed or harmful values
   const int MAX_ITER = 10;
   if (iterations < 1) iterations = 1;
@@ -78,11 +63,7 @@ static inline void emitNeopixelRequest(const String &name, const String &color =
     return parts==3;
   };
 
-  if (!isValidColor(color)){
-    // If invalid color, clear it so Pi uses default behavior
-  }
-
-  // Build payload once and enqueue for retry management (seq assigned by helper)
+  // Build payload once and enqueue for retry management
   static uint16_t g_neopixel_seq = 1;
   uint16_t seq = g_neopixel_seq++;
   if (g_neopixel_seq == 0) g_neopixel_seq = 1; // avoid zero
@@ -90,25 +71,42 @@ static inline void emitNeopixelRequest(const String &name, const String &color =
   char payload[_CUTE_PENDING_PAYLOAD_MAX];
   size_t pos = 0;
   payload[0] = '\0';
-  _cuteBufAppendRaw(payload, sizeof(payload), pos, "{\"ok\":true,\"event\":\"neopixel_request\",\"name\":\"");
+  _cuteBufAppendRaw_P(payload, sizeof(payload), pos, PSTR("{\"ok\":true,\"event\":\"neopixel_request\",\"name\":\""));
   _cuteBufAppendEscaped(payload, sizeof(payload), pos, name);
-  _cuteBufAppendRaw(payload, sizeof(payload), pos, "\"");
+  _cuteBufAppendRaw_P(payload, sizeof(payload), pos, PSTR("\""));
   if (color.length()>0 && isValidColor(color)){
-    _cuteBufAppendRaw(payload, sizeof(payload), pos, ",\"color\":\"");
+    _cuteBufAppendRaw_P(payload, sizeof(payload), pos, PSTR(",\"color\":\""));
     _cuteBufAppendEscaped(payload, sizeof(payload), pos, color);
-    _cuteBufAppendRaw(payload, sizeof(payload), pos, "\"");
+    _cuteBufAppendRaw_P(payload, sizeof(payload), pos, PSTR("\""));
   }
-  _cuteBufAppendRaw(payload, sizeof(payload), pos, ",\"iterations\":");
+  _cuteBufAppendRaw_P(payload, sizeof(payload), pos, PSTR(",\"iterations\":"));
   _cuteBufAppendInt(payload, sizeof(payload), pos, iterations);
-  _cuteBufAppendRaw(payload, sizeof(payload), pos, ",\"seq\":");
+  _cuteBufAppendRaw_P(payload, sizeof(payload), pos, PSTR(",\"seq\":"));
   _cuteBufAppendInt(payload, sizeof(payload), pos, (int)seq);
-  _cuteBufAppendRaw(payload, sizeof(payload), pos, "}");
+  _cuteBufAppendRaw_P(payload, sizeof(payload), pos, PSTR("}"));
 
-  // Enqueue pending payload for the retry engine (inline implementation below)
   enqueueNeopixelPending(seq, payload);
 
   SERIAL_IO.println(payload);
 }
+
+#if BUZZER_ENABLED
+#include "../xPeripherals.h"
+
+extern BuzzerPair g_buzzer;
+extern BuzzerSongPlayer g_song;
+extern BuzzerOut g_buzzerDefaultOut;
+extern bool g_buzzerBothEnabled;
+extern uint16_t g_buzzerFreqLoud;
+extern uint16_t g_buzzerFreqQuiet;
+
+// Optional external library controlled by config.
+#if defined(CUTE_BUZZER_LIB_ENABLED) && CUTE_BUZZER_LIB_ENABLED
+#include <CuteBuzzerSounds.h>
+#define SENTRY_CUTE_BUZZER_LIB 1
+#else
+#define SENTRY_CUTE_BUZZER_LIB 0
+#endif
 
 static inline void emitCutePlayed(const String &name){
   SERIAL_IO.print(F("{\"ok\":true,\"event\":\"cute_sound\",\"name\":\""));
@@ -208,26 +206,26 @@ static inline const char* cuteMenuLabel(CuteSoundKey key){
 
 static inline void cuteNeopixelFor(CuteSoundKey key){
   switch (key){
-    case CUTE_CONNECTION: emitNeopixelRequest("PULSE", "0,180,80", 1); break;
-    case CUTE_DISCONNECTION: emitNeopixelRequest("THEATER_CHASE", "220,30,30", 1); break;
-    case CUTE_BUTTON_PUSHED: emitNeopixelRequest("PULSE", "180,180,180", 1); break;
-    case CUTE_MODE1: emitNeopixelRequest("WAVE", "0,180,255", 1); break;
-    case CUTE_MODE2: emitNeopixelRequest("WAVE", "180,0,255", 1); break;
-    case CUTE_MODE3: emitNeopixelRequest("WAVE", "255,80,0", 1); break;
-    case CUTE_HAPPY: emitNeopixelRequest("WAVE", "255,220,0", 2); break;
-    case CUTE_HAPPY_SHORT: emitNeopixelRequest("PULSE", "255,220,0", 1); break;
-    case CUTE_SUPER_HAPPY: emitNeopixelRequest("RAINBOW", "", 1); break;
-    case CUTE_SAD: emitNeopixelRequest("BREATHE", "0,70,255", 2); break;
-    case CUTE_SURPRISE: emitNeopixelRequest("TWINKLE", "255,255,255", 2); break;
-    case CUTE_OHOOH: emitNeopixelRequest("THEATER_CHASE", "255,255,255", 1); break;
-    case CUTE_OHOOH2: emitNeopixelRequest("THEATER_CHASE", "255,255,255", 2); break;
-    case CUTE_CUDDLY: emitNeopixelRequest("BREATHE", "255,50,150", 2); break;
-    case CUTE_CONFUSED: emitNeopixelRequest("PULSE", "170,0,255", 2); break;
-    case CUTE_SLEEPING: emitNeopixelRequest("BREATHE", "20,40,120", 2); break;
-    case CUTE_FART1: emitNeopixelRequest("ALTERNATING", "20,180,20", 2); break;
-    case CUTE_FART2: emitNeopixelRequest("ALTERNATING", "40,220,40", 2); break;
-    case CUTE_FART3: emitNeopixelRequest("ALTERNATING", "10,120,10", 2); break;
-    case CUTE_JUMP: emitNeopixelRequest("COMET", "255,255,255", 2); break;
+    case CUTE_CONNECTION: emitNeopixelRequest(F("PULSE"), F("0,180,80"), 1); break;
+    case CUTE_DISCONNECTION: emitNeopixelRequest(F("THEATER_CHASE"), F("220,30,30"), 1); break;
+    case CUTE_BUTTON_PUSHED: emitNeopixelRequest(F("PULSE"), F("180,180,180"), 1); break;
+    case CUTE_MODE1: emitNeopixelRequest(F("WAVE"), F("0,180,255"), 1); break;
+    case CUTE_MODE2: emitNeopixelRequest(F("WAVE"), F("180,0,255"), 1); break;
+    case CUTE_MODE3: emitNeopixelRequest(F("WAVE"), F("255,80,0"), 1); break;
+    case CUTE_HAPPY: emitNeopixelRequest(F("WAVE"), F("255,220,0"), 2); break;
+    case CUTE_HAPPY_SHORT: emitNeopixelRequest(F("PULSE"), F("255,220,0"), 1); break;
+    case CUTE_SUPER_HAPPY: emitNeopixelRequest(F("RAINBOW"), "", 1); break;
+    case CUTE_SAD: emitNeopixelRequest(F("BREATHE"), F("0,70,255"), 2); break;
+    case CUTE_SURPRISE: emitNeopixelRequest(F("TWINKLE"), F("255,255,255"), 2); break;
+    case CUTE_OHOOH: emitNeopixelRequest(F("THEATER_CHASE"), F("255,255,255"), 1); break;
+    case CUTE_OHOOH2: emitNeopixelRequest(F("THEATER_CHASE"), F("255,255,255"), 2); break;
+    case CUTE_CUDDLY: emitNeopixelRequest(F("BREATHE"), F("255,50,150"), 2); break;
+    case CUTE_CONFUSED: emitNeopixelRequest(F("PULSE"), F("170,0,255"), 2); break;
+    case CUTE_SLEEPING: emitNeopixelRequest(F("BREATHE"), F("20,40,120"), 2); break;
+    case CUTE_FART1: emitNeopixelRequest(F("ALTERNATING"), F("20,180,20"), 2); break;
+    case CUTE_FART2: emitNeopixelRequest(F("ALTERNATING"), F("40,220,40"), 2); break;
+    case CUTE_FART3: emitNeopixelRequest(F("ALTERNATING"), F("10,120,10"), 2); break;
+    case CUTE_JUMP: emitNeopixelRequest(F("COMET"), F("255,255,255"), 2); break;
     default: break;
   }
 }
@@ -294,15 +292,53 @@ static inline void playCuteSound(CuteSoundKey key, bool emitNeopixel = true){
   if (emitNeopixel) cuteNeopixelFor(key);
 }
 
-// Mark a pending neopixel seq as acknowledged by Pi
-// Retry/ack helpers implemented inline to ensure availability during AVR link
+static inline bool playCuteSoundByName(const String &name, bool emitNeopixel = true){
+  String n = name;
+  n.toLowerCase();
+  if (n == "connection") { playCuteSound(CUTE_CONNECTION, emitNeopixel); return true; }
+  if (n == "disconnection" || n == "disconnect") { playCuteSound(CUTE_DISCONNECTION, emitNeopixel); return true; }
+  if (n == "button_pushed" || n == "button") { playCuteSound(CUTE_BUTTON_PUSHED, emitNeopixel); return true; }
+  if (n == "mode1") { playCuteSound(CUTE_MODE1, emitNeopixel); return true; }
+  if (n == "mode2") { playCuteSound(CUTE_MODE2, emitNeopixel); return true; }
+  if (n == "mode3") { playCuteSound(CUTE_MODE3, emitNeopixel); return true; }
+  if (n == "happy") { playCuteSound(CUTE_HAPPY, emitNeopixel); return true; }
+  if (n == "happy_short") { playCuteSound(CUTE_HAPPY_SHORT, emitNeopixel); return true; }
+  if (n == "super_happy" || n == "superhappy") { playCuteSound(CUTE_SUPER_HAPPY, emitNeopixel); return true; }
+  if (n == "sad") { playCuteSound(CUTE_SAD, emitNeopixel); return true; }
+  if (n == "surprise") { playCuteSound(CUTE_SURPRISE, emitNeopixel); return true; }
+  if (n == "ohooh") { playCuteSound(CUTE_OHOOH, emitNeopixel); return true; }
+  if (n == "ohooh2") { playCuteSound(CUTE_OHOOH2, emitNeopixel); return true; }
+  if (n == "cuddly") { playCuteSound(CUTE_CUDDLY, emitNeopixel); return true; }
+  if (n == "confused") { playCuteSound(CUTE_CONFUSED, emitNeopixel); return true; }
+  if (n == "sleeping" || n == "sleep") { playCuteSound(CUTE_SLEEPING, emitNeopixel); return true; }
+  if (n == "fart1") { playCuteSound(CUTE_FART1, emitNeopixel); return true; }
+  if (n == "fart2") { playCuteSound(CUTE_FART2, emitNeopixel); return true; }
+  if (n == "fart3") { playCuteSound(CUTE_FART3, emitNeopixel); return true; }
+  if (n == "jump") { playCuteSound(CUTE_JUMP, emitNeopixel); return true; }
+  return false;
+}
+
+#else
+static inline void emitCutePlayed(const String &){}
+static inline void cuteBuzzerInit(){}
+static inline void playCuteSound(CuteSoundKey, bool = true){}
+static inline bool playCuteSoundByName(const String &, bool = true){ return false; }
+#endif
+
+// Pending neopixel queue implementation (shared regardless of BUZZER_ENABLED)
 struct _CutePendingItem { uint16_t seq; char payload[_CUTE_PENDING_PAYLOAD_MAX]; uint8_t retries; unsigned long lastMs; bool done; };
 static _CutePendingItem _g_cute_pending[_CUTE_PENDING_MAX] = {};
 
-static inline void _cuteBufAppendRaw(char *dst, size_t dstSize, size_t &pos, const char *src){
+static inline void _cuteBufAppendRaw_P(char *dst, size_t dstSize, size_t &pos, PGM_P src){
   if (dstSize == 0 || pos >= dstSize - 1) return;
-  while (*src && pos < dstSize - 1) {
-    dst[pos++] = *src++;
+  while (pos < dstSize - 1) {
+#if defined(ARDUINO_ARCH_AVR)
+    char c = (char)pgm_read_byte(src++);
+#else
+    char c = *src++;
+#endif
+    if (c == '\0') break;
+    dst[pos++] = c;
   }
   dst[pos] = '\0';
 }
@@ -341,7 +377,11 @@ static inline void _cuteBufAppendEscaped(char *dst, size_t dstSize, size_t &pos,
 static inline void _cuteBufAppendInt(char *dst, size_t dstSize, size_t &pos, int v){
   char num[16];
   snprintf(num, sizeof(num), "%d", v);
-  _cuteBufAppendRaw(dst, dstSize, pos, num);
+  size_t i = 0;
+  while (num[i] && pos < dstSize - 1) {
+    dst[pos++] = num[i++];
+  }
+  dst[pos] = '\0';
 }
 
 static inline void _cuteCopyPayload(char *dst, size_t dstSize, const char *src){
@@ -406,39 +446,5 @@ static inline void neopixelTick(){
     }
   }
 }
-
-static inline bool playCuteSoundByName(const String &name, bool emitNeopixel = true){
-  String n = name;
-  n.toLowerCase();
-  if (n == "connection") { playCuteSound(CUTE_CONNECTION, emitNeopixel); return true; }
-  if (n == "disconnection" || n == "disconnect") { playCuteSound(CUTE_DISCONNECTION, emitNeopixel); return true; }
-  if (n == "button_pushed" || n == "button") { playCuteSound(CUTE_BUTTON_PUSHED, emitNeopixel); return true; }
-  if (n == "mode1") { playCuteSound(CUTE_MODE1, emitNeopixel); return true; }
-  if (n == "mode2") { playCuteSound(CUTE_MODE2, emitNeopixel); return true; }
-  if (n == "mode3") { playCuteSound(CUTE_MODE3, emitNeopixel); return true; }
-  if (n == "happy") { playCuteSound(CUTE_HAPPY, emitNeopixel); return true; }
-  if (n == "happy_short") { playCuteSound(CUTE_HAPPY_SHORT, emitNeopixel); return true; }
-  if (n == "super_happy" || n == "superhappy") { playCuteSound(CUTE_SUPER_HAPPY, emitNeopixel); return true; }
-  if (n == "sad") { playCuteSound(CUTE_SAD, emitNeopixel); return true; }
-  if (n == "surprise") { playCuteSound(CUTE_SURPRISE, emitNeopixel); return true; }
-  if (n == "ohooh") { playCuteSound(CUTE_OHOOH, emitNeopixel); return true; }
-  if (n == "ohooh2") { playCuteSound(CUTE_OHOOH2, emitNeopixel); return true; }
-  if (n == "cuddly") { playCuteSound(CUTE_CUDDLY, emitNeopixel); return true; }
-  if (n == "confused") { playCuteSound(CUTE_CONFUSED, emitNeopixel); return true; }
-  if (n == "sleeping" || n == "sleep") { playCuteSound(CUTE_SLEEPING, emitNeopixel); return true; }
-  if (n == "fart1") { playCuteSound(CUTE_FART1, emitNeopixel); return true; }
-  if (n == "fart2") { playCuteSound(CUTE_FART2, emitNeopixel); return true; }
-  if (n == "fart3") { playCuteSound(CUTE_FART3, emitNeopixel); return true; }
-  if (n == "jump") { playCuteSound(CUTE_JUMP, emitNeopixel); return true; }
-  return false;
-}
-
-#else
-static inline void emitNeopixelRequest(const String &, const String & = "", int = 1){}
-static inline void emitCutePlayed(const String &){}
-static inline void cuteBuzzerInit(){}
-static inline void playCuteSound(CuteSoundKey, bool = true){}
-static inline bool playCuteSoundByName(const String &, bool = true){ return false; }
-#endif
 
 #endif // SENTRY_APP_CUTE_BUZZER_H

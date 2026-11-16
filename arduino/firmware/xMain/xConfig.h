@@ -110,18 +110,9 @@
 // Link safety & telemetry
 #define HEARTBEAT_TIMEOUT_MS 500   // hb gelmezse bu sürede estop
 #define TELEMETRY_MIN_INTERVAL_MS 20 // 50 Hz üstü riskli, altını öner
-
-// PID (balance)
-#define PID_PITCH_KP  0.8f
-#define PID_PITCH_KI  0.02f
-#define PID_PITCH_KD  0.05f
-#define PID_ROLL_KP   0.8f
-#define PID_ROLL_KI   0.02f
-#define PID_ROLL_KD   0.05f
-#define PID_OUT_LIMIT 15.0f  // deg of corrective hip offset cap
-#define PID_SAMPLE_MS 10
-#define PID_DEADBAND_DEG 2.0f
-#define PID_MAX_ANGLE_DEG 45.0f
+#ifndef I2C_WIRE_TIMEOUT_US
+#define I2C_WIRE_TIMEOUT_US 25000UL
+#endif
 
 // Optional: enable serial-boot calibration prompt
 #define BOOT_CALIBRATION_PROMPT 1
@@ -174,10 +165,6 @@ static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] PROGMEM = {90,90, 90,90};
 #ifndef GEARBOX_RATIO_DEN
 #define GEARBOX_RATIO_DEN 14
 #endif
-// Steps per output-shaft revolution (float) = MOTOR_FULLSTEPS * (1 + NUM/DEN)
-#ifndef STEPPER_STEPS_PER_REV
-#endif
-
 // Microstepping (A4988 MS1/MS2/MS3). If MS pins are set to 5V for 1/16, set MICROSTEP=16.
 #ifndef MICROSTEP
 #define MICROSTEP 1
@@ -186,6 +173,9 @@ static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] PROGMEM = {90,90, 90,90};
 // Steps per output-shaft revolution (float) = MOTOR_FULLSTEPS * MICROSTEP * (1 + NUM/DEN)
 #ifndef STEPPER_STEPS_PER_REV
 #define STEPPER_STEPS_PER_REV ( (float)STEPPER_MOTOR_FULLSTEPS * (float)MICROSTEP * (1.0f + ((float)GEARBOX_RATIO_NUM / (float)GEARBOX_RATIO_DEN) ) )
+#endif
+#ifndef STEPPER_HOME_TIMEOUT_MS
+#define STEPPER_HOME_TIMEOUT_MS 10000UL
 #endif
 
 
@@ -306,6 +296,10 @@ static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] PROGMEM = {90,90, 90,90};
 #ifndef ULTRA_MEASURE_INTERVAL_MS
 #define ULTRA_MEASURE_INTERVAL_MS 50
 #endif
+#ifndef ULTRA_PULSE_TIMEOUT_US
+// 10ms pulseIn cap (~172cm range) keeps stepper/heartbeat loop responsive
+#define ULTRA_PULSE_TIMEOUT_US 10000UL
+#endif
 #ifndef AVOID_ENABLE_DEFAULT
 #define AVOID_ENABLE_DEFAULT 1
 #endif
@@ -337,13 +331,21 @@ static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] PROGMEM = {90,90, 90,90};
 #endif
 
 // =====================
-// IR Remote (optional)
+// Virtual Menu / Physical IR Remote (optional)
 // =====================
+// Virtual menu controller driven via ESP Web UI / JSON ("ir_key", "menu_goto")
 #ifndef IR_ENABLED
 #define IR_ENABLED 1
 #endif
+#ifndef VIRTUAL_MENU_ENABLED
+#define VIRTUAL_MENU_ENABLED IR_ENABLED
+#endif
+// Physical IR receiver hardware (IRremote). Disabled by default when hardware IR is not fitted.
+#ifndef IR_HW_ENABLED
+#define IR_HW_ENABLED 0
+#endif
 #ifndef IR_PIN
-// IR receiver OUT pin
+// IR receiver OUT pin (used only when IR_HW_ENABLED==1)
 #define IR_PIN 23
 #endif
 // =====================
@@ -378,11 +380,11 @@ static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] PROGMEM = {90,90, 90,90};
 #define BUZZER_DISABLE_TONE_WHEN_IR 0
 #endif
 
-// If tone() is used while IR is enabled (BUZZER_DISABLE_TONE_WHEN_IR=0),
+// If tone() is used while physical IR is enabled (BUZZER_DISABLE_TONE_WHEN_IR=0),
 // AVR timers can leave IRremote in a stuck state. Re-initialize IR receiver
-// shortly after tone() finishes to resume IR decoding.
+// shortly after tone() finishes only when physical IR hardware is active.
 #ifndef BUZZER_REINIT_IR_AFTER_TONE
-#define BUZZER_REINIT_IR_AFTER_TONE 1
+#define BUZZER_REINIT_IR_AFTER_TONE 0
 #endif
 
 #ifndef BOOT_BEEP
@@ -432,6 +434,23 @@ static const uint8_t POSE_STAND[SERVO_COUNT_TOTAL] PROGMEM = {90,90, 90,90};
 #endif
 #ifndef SERVO_MAX_US
 #define SERVO_MAX_US 2500
+#endif
+
+// Guard direct-pin servo mode against hardware pin collisions (PCA channels 6..9 overlap laser/stepper pins 6..9)
+#if !SERVO_USE_PCA9685
+  #if defined(PIN_STEPPER_ENABLE) && (PIN_PAN == PIN_STEPPER_ENABLE || PIN_TILT == PIN_STEPPER_ENABLE || PIN_PI_SERVO_1 == PIN_STEPPER_ENABLE || PIN_PI_SERVO_2 == PIN_STEPPER_ENABLE)
+    #error "SERVO_USE_PCA9685=0 servo pin overlaps PIN_STEPPER_ENABLE; remap servo pins in xConfig.h"
+  #endif
+  #if (PIN_PAN == PIN_STEPPER2_STEP || PIN_TILT == PIN_STEPPER2_STEP || PIN_PI_SERVO_1 == PIN_STEPPER2_STEP || PIN_PI_SERVO_2 == PIN_STEPPER2_STEP || \
+       PIN_PAN == PIN_STEPPER2_DIR  || PIN_TILT == PIN_STEPPER2_DIR  || PIN_PI_SERVO_1 == PIN_STEPPER2_DIR  || PIN_PI_SERVO_2 == PIN_STEPPER2_DIR  || \
+       PIN_PAN == PIN_STEPPER1_STEP || PIN_TILT == PIN_STEPPER1_STEP || PIN_PI_SERVO_1 == PIN_STEPPER1_STEP || PIN_PI_SERVO_2 == PIN_STEPPER1_STEP || \
+       PIN_PAN == PIN_STEPPER1_DIR  || PIN_TILT == PIN_STEPPER1_DIR  || PIN_PI_SERVO_1 == PIN_STEPPER1_DIR  || PIN_PI_SERVO_2 == PIN_STEPPER1_DIR)
+    #error "SERVO_USE_PCA9685=0 servo pin overlaps stepper pins; remap servo pins in xConfig.h"
+  #endif
+  #if LASER_ENABLED && (PIN_PAN == LASER1_PIN || PIN_TILT == LASER1_PIN || PIN_PI_SERVO_1 == LASER1_PIN || PIN_PI_SERVO_2 == LASER1_PIN || \
+                        PIN_PAN == LASER2_PIN || PIN_TILT == LASER2_PIN || PIN_PI_SERVO_1 == LASER2_PIN || PIN_PI_SERVO_2 == LASER2_PIN)
+    #error "SERVO_USE_PCA9685=0 servo pin overlaps laser pins; remap servo pins in xConfig.h"
+  #endif
 #endif
 
 // NeoPixel (WS2812) removed from this firmware build.

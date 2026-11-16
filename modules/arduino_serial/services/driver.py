@@ -45,10 +45,8 @@ class ArduinoDriver:
     def hello(self) -> Dict[str, Any]:
         return self.svc.hello()
 
-    def set_head(self, tilt: float, pan: float) -> Dict[str, Any]:
-        # Current firmware mapping: index 0=pan, 1=tilt.
-        self.svc.set_servo(0, float(pan))
-        return self.svc.set_servo(1, float(tilt))
+    def set_head(self, tilt: float, pan: float, source: str = "autonomy") -> Dict[str, Any]:
+        return self.svc.track(pan=float(pan), tilt=float(tilt), source=source)
 
     def estop(self) -> Dict[str, Any]:
         return self.svc.estop()

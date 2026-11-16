@@ -1,28 +1,72 @@
 #include "UartHandler.h"
 #include <ctype.h>
+#include <string.h>
 #include <ArduinoJson.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 extern HardwareSerial MegaUart;
-extern volatile bool g_linkAlive;
-extern StaticJsonDocument<2048> g_responseBuffer;  // Response buffer
-extern volatile bool g_responseReady;               // Response ready flag
 
-// Robust line buffer with validation
-static char lineBuffer[SERIAL_BUF_SIZE];
-static int lineIdx = 0;
+namespace {
+struct UartRxLine {
+    char text[SERIAL_BUF_SIZE];
+};
 
-static inline bool isValidJsonStart(char c) {
-    return c == '{' || isspace(c);
+SemaphoreHandle_t s_uartTxMutex = nullptr;
+QueueHandle_t s_responseQueue = nullptr;
+volatile bool s_waitingResponse = false;
+
+char lineBuffer[SERIAL_BUF_SIZE];
+int lineIdx = 0;
+
+inline bool isValidJsonChar(char c) {
+    return (c >= 32 && c < 127) || c == '\n' || c == '\r';
+}
+} // namespace
+
+bool uartSendLine(const char* line) {
+    if (!line || !s_uartTxMutex) return false;
+    if (xSemaphoreTake(s_uartTxMutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return false;
+    }
+    MegaUart.println(line);
+    xSemaphoreGive(s_uartTxMutex);
+    return true;
 }
 
-static inline bool isValidJsonChar(char c) {
-    return (c >= 32 && c < 127) || c == '\n' || c == '\r';
+bool uartSendLine(const String& line) {
+    return uartSendLine(line.c_str());
+}
+
+void uartBeginResponseWindow() {
+    if (s_responseQueue) {
+        xQueueReset(s_responseQueue);
+    }
+    s_waitingResponse = true;
+}
+
+void uartEndResponseWindow() {
+    s_waitingResponse = false;
+    if (s_responseQueue) {
+        xQueueReset(s_responseQueue);
+    }
+}
+
+bool uartReceiveResponseLine(char* outBuf, size_t maxLen, TickType_t waitTicks) {
+    if (!s_responseQueue || !outBuf || maxLen == 0) return false;
+    UartRxLine item;
+    if (xQueueReceive(s_responseQueue, &item, waitTicks) != pdTRUE) {
+        return false;
+    }
+    strlcpy(outBuf, item.text, maxLen);
+    return true;
 }
 
 void uartTask(void* pvParameters) {
     (void)pvParameters;
     unsigned long lastValidMs = millis();
     const unsigned long RESET_TIMEOUT = 2000; // Reset buffer after 2s silence
+    StaticJsonDocument<JSON_DOC_SIZE> rxDoc;
 
     while (true) {
         if (!MegaUart.available()) {
@@ -35,35 +79,36 @@ void uartTask(void* pvParameters) {
         }
 
         char c = (char)MegaUart.read();
-        
-        // Validate character
         if (!isValidJsonChar(c)) {
-            // Invalid char: skip and reset if buffer is empty
-            if (lineIdx == 0) continue;
-            // Otherwise drop this char but keep buffer
+            if (lineIdx > 0) g_robotState.recordRxError();
             continue;
         }
 
         // Skip leading whitespace
-        if (lineIdx == 0 && isspace(c)) continue;
+        if (lineIdx == 0 && isspace((unsigned char)c)) continue;
 
         // Handle line ending
         if (c == '\n' || c == '\r') {
             if (lineIdx > 0) {
                 lineBuffer[lineIdx] = '\0';
-                // Validate and parse
                 if (lineBuffer[0] == '{' && lineIdx > 2) {
-                    g_robotState.updateFromJson(String(lineBuffer));
-                    
-                    // TWO-WAY ROUTING: Parse JSON and store in response buffer
-                    DeserializationError error = deserializeJson(g_responseBuffer, lineBuffer);
-                    if (!error) {
-                        g_responseReady = true;  // Signal response ready for HTTP handler
+                    rxDoc.clear();
+                    DeserializationError error = deserializeJson(rxDoc, lineBuffer);
+                    if (!error && rxDoc.is<JsonObject>()) {
+                        g_robotState.updateFromDoc(rxDoc);
+                        if (s_waitingResponse && s_responseQueue) {
+                            UartRxLine msg;
+                            strlcpy(msg.text, lineBuffer, sizeof(msg.text));
+                            xQueueSend(s_responseQueue, &msg, 0);
+                        }
+                        Serial.print("Mega: ");
+                        Serial.println(lineBuffer);
+                        lastValidMs = millis();
+                    } else {
+                        g_robotState.recordRxError();
                     }
-                    
-                    Serial.print("Mega: ");
-                    Serial.println(lineBuffer);
-                    lastValidMs = millis();
+                } else {
+                    g_robotState.recordRxError();
                 }
                 lineIdx = 0;
             }
@@ -72,13 +117,12 @@ void uartTask(void* pvParameters) {
 
         // Buffer management: prevent overflow
         if (lineIdx >= SERIAL_BUF_SIZE - 2) {
-            // Buffer full without closing: reset and skip
             lineIdx = 0;
+            g_robotState.recordOverflow();
             Serial.println("[UART] Buffer overflow, reset");
             continue;
         }
 
-        // Add character to buffer
         lineBuffer[lineIdx++] = c;
         lastValidMs = millis();
     }
@@ -86,33 +130,33 @@ void uartTask(void* pvParameters) {
 
 void linkTask(void* pvParameters) {
     (void)pvParameters;
-    vTaskDelay(pdMS_TO_TICKS(500)); // Wait for Mega to be ready
-    
-    // Send initial telemetry start command
-    MegaUart.println(F("{\"cmd\":\"telemetry_start\"}"));
-    g_linkAlive = true;  // Mark link as established
-    
+    vTaskDelay(pdMS_TO_TICKS(500)); // Wait for Mega boot
+
+    uartSendLine("{\"cmd\":\"telemetry_start\"}");
     unsigned long lastHbMs = millis();
-    
+
     while (true) {
         unsigned long nowMs = millis();
-        
-        // Send heartbeat every HB_INTERVAL_MS (200ms)
         if (nowMs - lastHbMs >= HB_INTERVAL_MS) {
-            MegaUart.println(F("{\"cmd\":\"hb\"}"));
+            uartSendLine("{\"cmd\":\"hb\"}");
             lastHbMs = nowMs;
         }
-        
-        vTaskDelay(pdMS_TO_TICKS(50)); // Small delay to avoid hogging CPU
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
 void initUartTask() {
+    if (!s_uartTxMutex) {
+        s_uartTxMutex = xSemaphoreCreateMutex();
+    }
+    if (!s_responseQueue) {
+        s_responseQueue = xQueueCreate(RX_QUEUE_DEPTH, sizeof(UartRxLine));
+    }
     MegaUart.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
     xTaskCreate(
         uartTask,
         "UartTask",
-        4096,
+        8192,
         NULL,
         PRIORITY_UART,
         NULL

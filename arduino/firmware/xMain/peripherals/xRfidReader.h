@@ -43,7 +43,6 @@ public:
     _mfrc->PCD_StopCrypto1();
 
     if (isNew){
-      _lastEventUid = uid;
       _lastEventMs = now;
       return true;
     }
@@ -51,13 +50,6 @@ public:
   }
 
   const String &lastUid() const { return _lastUid; }
-
-  // If a new UID was just read in poll(), returns it once; else empty.
-  String takeLastEvent(){
-    String t = _lastEventUid;
-    _lastEventUid = "";
-    return t;
-  }
 
 private:
   static String uidToHex(const MFRC522::Uid &u){
@@ -72,7 +64,6 @@ private:
 
   MFRC522 *_mfrc{nullptr};
   String _lastUid;
-  String _lastEventUid;
   unsigned long _lastSeenMs{0};
   unsigned long _lastEventMs{0};
 };

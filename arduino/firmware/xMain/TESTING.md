@@ -19,7 +19,16 @@ Seri Komutlar (NDJSON)
   - `{"cmd":"pid_load","id":<0|1>}`
   - `{"cmd":"pid_clear_stall","id":<0|1>}`
   - `{"cmd":"stepper_cfg","maxSpeed":<float>,"accel":<float>}`
-  - `{"cmd":"home"}` ve `{"cmd":"zero_now"}` için pozisyon testleri
+  - `{"cmd":"home"}` (zamanaşımı `home_timeout` / `no_limit_switches` kontrollü) ve `{"cmd":"zero_now"}` için pozisyon testleri
+  - `{"cmd":"estop"}` ve `{"cmd":"estop_clear"}` E-STOP kilitleme/yeniden-kurma döngüsü
+  - `{"cmd":"encoder_calibrate","duration_ms":5000}` non-blocking enkoder kalibrasyonu (`encoder_calibrating` + bitişte `event:"encoder_calibrated"`)
+  - İsteklerde opsiyonel `"seq":<int>` gönderilerek yanıtta `"seq"` yankı doğrulaması ve `get_state`/telemetride `"estop"`, `"i2c_errors"` izleme
+
+Derleme Doğrulaması (Arduino CLI)
+```powershell
+arduino-cli compile --fqbn arduino:avr:mega arduino/firmware/xMain
+arduino-cli compile --fqbn arduino:avr:mega --build-property "build.extra_flags=-DLCD_ENABLED=0" arduino/firmware/xMain
+```
 
 Manuel hızlı test akışı
 1. Seri bağlantıyı açın (ör: `Serial3` bağlıysa uygun USB-UART ile) ve baud: 115200.

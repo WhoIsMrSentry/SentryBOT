@@ -28,7 +28,7 @@ public:
     delayMicroseconds(10);
     digitalWrite(_trig, LOW);
 
-    unsigned long dur = pulseIn(_echo, HIGH, 30000UL); // 30ms timeout ≈ ~5m
+    unsigned long dur = pulseIn(_echo, HIGH, ULTRA_PULSE_TIMEOUT_US);
     if (dur == 0){
       _lastCm = NAN;
     } else {

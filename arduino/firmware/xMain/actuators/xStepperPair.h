@@ -3,12 +3,16 @@
 
 #include <Arduino.h>
 #include <AccelStepper.h>
+#if defined(ARDUINO_ARCH_AVR)
+#include <avr/wdt.h>
+#endif
 #include "../xConfig.h"
 #include "../peripherals/xHallEncoder.h"
 #include <EEPROM.h>
 
 class StepperPair {
 public:
+  enum HomeResult : uint8_t { HOME_OK = 0, HOME_NO_LIMITS = 1, HOME_TIMEOUT = 2 };
   void begin(){
     s1 = AccelStepper(AccelStepper::DRIVER, PIN_STEPPER1_STEP, PIN_STEPPER1_DIR);
     s2 = AccelStepper(AccelStepper::DRIVER, PIN_STEPPER2_STEP, PIN_STEPPER2_DIR);
@@ -76,6 +80,15 @@ public:
   // Closed-loop speed control uses Hall encoder feedback.
 
   void stopRampedDrive(uint8_t id){ if (id>1) return; ramps[id].active = false; }
+  void stopAllRamps(){ ramps[0].active = false; ramps[1].active = false; }
+  void disableAllPid(){
+    for (int i=0;i<2;i++){
+      _pid[i].enabled = false;
+      _pid[i].targetSpeed = 0.0f;
+      _pid[i].integral = 0.0f;
+      _pid[i].lastError = 0.0f;
+    }
+  }
 
   void update(){
     unsigned long now = micros();
@@ -112,7 +125,9 @@ public:
       if (_hall[i]) _hall[i]->update();
     }
 
-    // Closed-loop PID speed control using Hall encoder feedback
+    // Closed-loop PID speed control using single-channel (non-quadrature) Hall encoder feedback.
+    // Single-channel sensors count magnitude only (dCount >= 0), so PID runs on speed magnitude
+    // and applies the targetSpeed sign safely to prevent negative-target positive-feedback runaway.
     unsigned long nowMs = millis();
     for (int i=0;i<2;i++){
       if (!_pid[i].enabled) continue;
@@ -125,29 +140,38 @@ public:
       unsigned long dCount = countNow - _pid[i].lastCount;
       // Movement detection: update lastMovementMs when pulses observed
       if (dCount >= (unsigned long)STEPPER_STALL_MIN_PULSES_PER_INTERVAL){ _lastMovementMs[i] = nowMs; _stalled[i] = false; }
-      float pulsesPerSec = 0.0f;
-      if (dt > 0) pulsesPerSec = ((float)dCount) * 1000.0f / (float)dt;
-      float measuredStepsPerSec = pulsesPerSec * stepsPerHallPulse(i);
+      float pulsesPerSec = (dt > 0) ? (((float)dCount) * 1000.0f / (float)dt) : 0.0f;
+      float measuredMag = pulsesPerSec * stepsPerHallPulse(i);
+      float targetMag = fabs(_pid[i].targetSpeed);
 
-      float error = _pid[i].targetSpeed - measuredStepsPerSec;
+      if (targetMag < 1.0f){
+        _pid[i].integral = 0.0f;
+        _pid[i].lastError = 0.0f;
+        _pid[i].lastCount = countNow;
+        _pid[i].lastMs = nowMs;
+        _lastMovementMs[i] = nowMs;
+        if (!ramps[i].active){
+          if (i==0) s1.setSpeed(0.0f); else s2.setSpeed(0.0f);
+        }
+        continue;
+      }
+
+      float error = targetMag - measuredMag;
       float dtSec = (float)dt / 1000.0f;
-      // Integrator with anti-windup clamp
+      // Integrator with anti-windup clamp (non-negative speed magnitude domain)
       _pid[i].integral += error * dtSec;
       if (_pid[i].integral > STEPPER_PID_INTEGRAL_LIMIT) _pid[i].integral = STEPPER_PID_INTEGRAL_LIMIT;
-      if (_pid[i].integral < -STEPPER_PID_INTEGRAL_LIMIT) _pid[i].integral = -STEPPER_PID_INTEGRAL_LIMIT;
-      float derivative = 0.0f;
-      if (dtSec > 0.0f) derivative = (error - _pid[i].lastError) / dtSec;
+      if (_pid[i].integral < 0.0f) _pid[i].integral = 0.0f;
+      float derivative = (dtSec > 0.0f) ? ((error - _pid[i].lastError) / dtSec) : 0.0f;
 
-      float out = _pid[i].kp * error + _pid[i].ki * _pid[i].integral + _pid[i].kd * derivative;
-      // Clamp output to allowed speed range
+      float outMag = _pid[i].kp * error + _pid[i].ki * _pid[i].integral + _pid[i].kd * derivative;
       float outLimit = (float)STEPPER_PID_MAX_OUTPUT;
-      if (out > outLimit) out = outLimit;
-      if (out < -outLimit) out = -outLimit;
+      outMag = constrain(outMag, 0.0f, outLimit);
+      float signedOut = (_pid[i].targetSpeed >= 0.0f) ? outMag : -outMag;
 
       // Apply to AccelStepper as commanded speed (steps/sec). If motor currently in raw ramp mode, skip.
       if (!ramps[i].active){
-        if (i==0) s1.setSpeed(out); else s2.setSpeed(out);
-        // if in velocity mode, runSpeed() will use this speed in the next section
+        if (i==0) s1.setSpeed(signedOut); else s2.setSpeed(signedOut);
       }
 
       // Persist last state for next iteration
@@ -155,19 +179,17 @@ public:
       _pid[i].lastCount = countNow;
       _pid[i].lastMs = nowMs;
 
-      // Stall detection: if we have a non-zero target but no movement for timeout, declare stall
-      if (fabs(_pid[i].targetSpeed) > 1.0f){
-        if ((long)(nowMs - _lastMovementMs[i]) > (long)STEPPER_STALL_TIMEOUT_MS){
-          _stalled[i] = true;
-          // Disable PID and stop motors to be safe
-          _pid[i].enabled = false;
-          if (!ramps[0].active && !ramps[1].active){ setEnable(false); }
-          if (i==0) s1.setSpeed(0); else s2.setSpeed(0);
-          // Emit a host-visible stall event so the controller can react
-          SERIAL_IO.print(F("{\"evt\":\"stall\",\"id\":"));
-          SERIAL_IO.print(i);
-          SERIAL_IO.println('}');
-        }
+      // Stall detection: non-zero target without pulses for timeout declares stall
+      if ((long)(nowMs - _lastMovementMs[i]) > (long)STEPPER_STALL_TIMEOUT_MS){
+        _stalled[i] = true;
+        // Disable PID and stop motors to be safe
+        _pid[i].enabled = false;
+        if (!ramps[0].active && !ramps[1].active){ setEnable(false); }
+        if (i==0) s1.setSpeed(0); else s2.setSpeed(0);
+        // Emit a host-visible stall event so the controller can react
+        SERIAL_IO.print(F("{\"evt\":\"stall\",\"id\":"));
+        SERIAL_IO.print(i);
+        SERIAL_IO.println('}');
       }
     }
   }
@@ -200,18 +222,28 @@ public:
   void zeroNow(){ s1.setCurrentPosition(0); s2.setCurrentPosition(0); }
   void zeroSet(long p1, long p2){ s1.setCurrentPosition(p1); s2.setCurrentPosition(p2); }
 
-  // Blocking simple homing towards negative direction until limit switch is hit
-  void homeBoth(long speed = -400){
-    if (PIN_LIMIT1<0 && PIN_LIMIT2<0) return;
+  // Homing towards negative direction until limit switch is hit (timeout protected)
+  HomeResult homeBoth(long speed = -400, unsigned long timeoutMs = STEPPER_HOME_TIMEOUT_MS){
+    if (PIN_LIMIT1<0 && PIN_LIMIT2<0) return HOME_NO_LIMITS;
+    setEnable(true);
     s1.setSpeed(speed); s2.setSpeed(speed);
     mode1 = MODE_VEL; mode2 = MODE_VEL;
+    unsigned long startMs = millis();
     while (true){
+      if ((unsigned long)(millis() - startMs) >= timeoutMs){
+        stop();
+        return HOME_TIMEOUT;
+      }
       if (PIN_LIMIT1>=0){ if (digitalRead(PIN_LIMIT1)==(LIMIT_ACTIVE_LOW?LOW:HIGH)) { s1.setSpeed(0); s1.setCurrentPosition(0); } }
       if (PIN_LIMIT2>=0){ if (digitalRead(PIN_LIMIT2)==(LIMIT_ACTIVE_LOW?LOW:HIGH)) { s2.setSpeed(0); s2.setCurrentPosition(0); } }
       if ((PIN_LIMIT1<0 || s1.speed()==0) && (PIN_LIMIT2<0 || s2.speed()==0)) break;
       s1.runSpeed(); s2.runSpeed();
-      delay(2);
+#if defined(ARDUINO_ARCH_AVR)
+      wdt_reset();
+#endif
+      delay(1);
     }
+    return HOME_OK;
   }
 
 private:
@@ -253,7 +285,9 @@ private:
 public:
   // Convert: how many motor/output steps correspond to one hall pulse for given id
   float stepsPerHallPulse(uint8_t id) const {
-    float ppr = (id==0) ? (float)HALL_PULSES_PER_REV_0 : (float)HALL_PULSES_PER_REV_1;
+    float ppr = (_hall[id] && _hall[id]->getPulsesPerRev() > 0)
+                  ? (float)_hall[id]->getPulsesPerRev()
+                  : ((id==0) ? (float)HALL_PULSES_PER_REV_0 : (float)HALL_PULSES_PER_REV_1);
     if (ppr <= 0.0f) ppr = 1.0f;
     return STEPPER_STEPS_PER_REV / ppr;
   }

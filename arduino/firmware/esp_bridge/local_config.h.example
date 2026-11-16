@@ -1,0 +1,6 @@
+// Copy this file to local_config.h (untracked) to supply local Wi-Fi and auth settings.
+#pragma once
+
+#define WIFI_SSID "YOUR_WIFI_SSID"
+#define WIFI_PASS "YOUR_WIFI_PASSWORD"
+#define BRIDGE_AUTH_TOKEN ""

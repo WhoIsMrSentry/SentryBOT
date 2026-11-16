@@ -9,7 +9,10 @@
 #include "../actuators/xNemaController.h"
 #include "xCuteBuzzer.h"
 
-#if IR_ENABLED
+// Asynchronous hall calibration helper implemented in xMain.ino
+void startEncoderCalibration(unsigned long durMs, bool updateLcd);
+
+#if VIRTUAL_MENU_ENABLED
 
 #if LCD_ENABLED
 #include "xLcdHub.h"
@@ -68,8 +71,6 @@ public:
     _lastUiMs = 0;
     _imuSub = 0;
 
-    _sysSub = 0;
-
     _soundIndex = 0;
     _morseMode = false;
     _morsePattern = "";
@@ -92,14 +93,13 @@ public:
     if (k == "UNKNOWN") return;
 
 #if BUZZER_ENABLED
-  // Feedback beep for every valid key — use per-buzzer frequencies; both optional
-  if (g_buzzerBothEnabled){
-    g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 30);
-    g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 30);
-  } else {
-    uint16_t f = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? g_buzzerFreqLoud : g_buzzerFreqQuiet;
-    g_buzzer.beepOn(g_buzzerDefaultOut, f, 30);
-  }
+    // Feedback beep for every valid key
+    if (g_buzzerBothEnabled){
+      g_buzzer.beepBoth(g_buzzerFreqLoud, 30);
+    } else {
+      uint16_t f = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? g_buzzerFreqLoud : g_buzzerFreqQuiet;
+      g_buzzer.beepOn(g_buzzerDefaultOut, f, 30);
+    }
 #endif
 
     // Global back/cancel (hierarchical navigation)
@@ -288,71 +288,58 @@ public:
         }
       }
 
-      // STAR '*' enters/exits freq-adjust mode when on BUZZER or BUZZER_SETTINGS
+      // '*' enters freq-adjust mode (or numeric capture when already adjusting)
       if (k == "*" && (_soundIndex == SOUND_BUZZER || _soundIndex == SOUND_BUZZER_SETTINGS)){
-        _freqAdjustMode = !_freqAdjustMode;
-        _buzzerNumCapture = false;
-        _buzzerNumToken = "";
         if (!_freqAdjustMode){
-#if BUZZER_ENABLED
-          EEPROM.put(EEPROM_ADDR_BUZZER_FREQ_LOUD, g_buzzerFreqLoud);
-          EEPROM.put(EEPROM_ADDR_BUZZER_FREQ_QUIET, g_buzzerFreqQuiet);
-          EEPROM.update(EEPROM_ADDR_BUZZER_FREQ_MAGIC, EEPROM_BUZZER_MAGIC);
-#endif
-          lcdPrint("SOUND", "FREQ SAVED");
+          _freqAdjustMode = true;
+          _buzzerNumCapture = false;
+          _buzzerNumToken = "";
+          showSound();
+        } else if (!_buzzerNumCapture){
+          _buzzerNumCapture = true;
+          _buzzerNumToken = "";
+          lcdPrint(F("ENTER NUM"), F("(OK=SAVE)"));
         } else {
+          _buzzerNumCapture = false;
+          _buzzerNumToken = "";
           showSound();
         }
         return;
       }
 
-      // If in freq-adjust mode, handle numeric entry and exit by '#'
+      // If in freq-adjust mode, handle numeric capture, UP/DOWN step, and '#' save-and-exit
       if (_freqAdjustMode){
         if (k == "#"){
-          // exit and persist
 #if BUZZER_ENABLED
           EEPROM.put(EEPROM_ADDR_BUZZER_FREQ_LOUD, g_buzzerFreqLoud);
           EEPROM.put(EEPROM_ADDR_BUZZER_FREQ_QUIET, g_buzzerFreqQuiet);
           EEPROM.update(EEPROM_ADDR_BUZZER_FREQ_MAGIC, EEPROM_BUZZER_MAGIC);
 #endif
-          _freqAdjustMode = false; _buzzerNumCapture = false; _buzzerNumToken = ""; showSound(); return;
+          _freqAdjustMode = false;
+          _buzzerNumCapture = false;
+          _buzzerNumToken = "";
+          lcdPrint(F("SOUND"), F("FREQ SAVED"));
+          return;
         }
 
         if (_buzzerNumCapture){
-          // collect digits; OK commits
           if (isDigitKey(k)){
-            _buzzerNumToken += k;
-            lcdPrint("NUM:" , _buzzerNumToken);
-            return;
-          }
-          if (k == "OK"){
+            if (_buzzerNumToken.length() < 4) _buzzerNumToken += k;
+            lcdPrint(String(F("NUM:")), _buzzerNumToken);
+          } else if (k == "OK"){
             long v = _buzzerNumToken.toInt();
             if (v >= 200 && v <= 4000){
               if (_buzzerSel == SEL_BUZZER_LOUD) g_buzzerFreqLoud = (uint16_t)v;
               else g_buzzerFreqQuiet = (uint16_t)v;
             }
-            _buzzerNumCapture = false; _buzzerNumToken = ""; showSound(); return;
+            _buzzerNumCapture = false;
+            _buzzerNumToken = "";
+            showSound();
           }
-          if (k == "#"){
-            _buzzerNumCapture = false; _buzzerNumToken = ""; showSound(); return;
-          }
-          // ignore others while in numeric capture
           return;
         }
 
-        // '*' during adjust enters numeric capture
-        if (k == "*"){
-          _buzzerNumCapture = true; _buzzerNumToken = ""; lcdPrint("ENTER NUM","(OK=SAVE)"); return;
-        }
-
-        // otherwise UP/DOWN adjust selected buzzer (handled later by existing code path)
-      }
-
-      // Normal UP/DOWN navigation when not in freq-adjust mode
-      if (_freqAdjustMode){
-        // Adjust runtime freq in 100Hz steps for selected buzzer (default selects LOUD)
-        int sel = SEL_BUZZER_LOUD; // default
-        if (_buzzerSel == SEL_BUZZER_QUIET) sel = SEL_BUZZER_QUIET;
+        int sel = (_buzzerSel == SEL_BUZZER_QUIET) ? SEL_BUZZER_QUIET : SEL_BUZZER_LOUD;
         if (k == "UP"){
           if (sel == SEL_BUZZER_LOUD) g_buzzerFreqLoud = (uint16_t)constrain((int)g_buzzerFreqLoud + 100, 200, 4000);
           else g_buzzerFreqQuiet = (uint16_t)constrain((int)g_buzzerFreqQuiet + 100, 200, 4000);
@@ -368,15 +355,14 @@ public:
         if (k == "OK"){
 #if BUZZER_ENABLED
           if (g_buzzerBothEnabled){
-            g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 80);
-            g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 80);
+            g_buzzer.beepBoth(g_buzzerFreqLoud, 80);
           } else {
-            uint16_t f = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
+            uint16_t f = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? g_buzzerFreqLoud : g_buzzerFreqQuiet;
             g_buzzer.beepOn(g_buzzerDefaultOut, f, 80);
           }
 #endif
-          return;
         }
+        return;
       }
 
       if (k == "UP"){
@@ -398,21 +384,13 @@ public:
         showSound();
         return;
       }
-      if (k == "LEFT" || k == "RIGHT"){
-#if BUZZER_ENABLED
-        g_buzzerDefaultOut = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? BUZZER_OUT_QUIET : BUZZER_OUT_LOUD;
-        g_song.setDefaultOut(g_buzzerDefaultOut);
-#endif
-        showSound();
-        return;
-      }
 
       // Morse mode: digits (and OK) produce deterministic patterns.
       if (_morseMode){
         String pat = morsePatternForKey(k);
         if (pat.length() > 0){
           startMorse(pat);
-          lcdPrint("MORSE:" + k, pat);
+          lcdPrint(String(F("MORSE:")) + k, pat);
         }
       }
       return;
@@ -422,14 +400,6 @@ public:
     if (_state == STATE_IMU){
       if (k == "UP" || k == "DOWN"){
         _imuSub = (_imuSub + 1) % 3;
-        _lastUiMs = 0;
-      }
-      return;
-    }
-
-    if (_state == STATE_SYSTEM){
-      if (k == "UP" || k == "DOWN"){
-        _sysSub = (_sysSub + 1) % 3;
         _lastUiMs = 0;
       }
       return;
@@ -457,8 +427,7 @@ public:
       if (now2 - _lastProxBeepMs >= interval){
         _lastProxBeepMs = now2;
         if (g_buzzerBothEnabled){
-          g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 30);
-          g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 30);
+          g_buzzer.beepBoth(g_buzzerFreqLoud, 30);
         } else {
           g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 30);
         }
@@ -613,12 +582,12 @@ public:
   void showHome(){
     // Plain ASCII rows so that no part of the home screen depends on CGRAM
     // custom characters being intact (which is fragile across menu repaints).
-    char l1[21], l2[21], l3[21], l4[21];
-    snprintf_P(l1, sizeof(l1), PSTR("   SentryBOT  V7    "));
-    snprintf_P(l2, sizeof(l2), PSTR("===================="));
-    snprintf_P(l3, sizeof(l3), PSTR("  STATUS: ONLINE    "));
-    snprintf_P(l4, sizeof(l4), PSTR(" [OK] OPEN MENU     "));
-    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+    lcdHubShow4(
+      F("   SentryBOT  V7    "),
+      F("===================="),
+      F("  STATUS: ONLINE    "),
+      F(" [OK] OPEN MENU     ")
+    );
   }
 
   void showMenu(){
@@ -627,33 +596,30 @@ public:
       int idx = _menuScroll + i;
       if (idx < MENU_COUNT){
         // Use custom arrow icon (0) for selection
-        rows[i] = (idx == _menuIndex) ? "\x00 " : "  ";
+        rows[i] = (idx == _menuIndex) ? F("\x00 ") : F("  ");
         rows[i] += menuName(idx);
       } else {
         rows[i] = "";
       }
     }
-    g_lcdStatus.show4To(LCD_TGT_1, rows[0], rows[1], rows[2], rows[3], true);
+    lcdHubShow4(rows[0], rows[1], rows[2], rows[3]);
   }
 
-  // Render one temperature cell: "<icon><Name>:<value>C" where <value> is one
-  // decimal of precision. Avoid %f because the default AVR `printf` family does
-  // not link float support, which produces blank/garbage cells in the LCD.
+  // Render one temperature cell: "<icon><Name>:<value>C" without %f (unsupported in AVR libc by default).
   static void formatTempCell(char *out, size_t outSz, const char *name, float t){
     if (isnan(t)){
       snprintf_P(out, outSz, PSTR("\x01" "%s:--.-C"), name);
       return;
     }
     char num[10];
-    dtostrf(t, 4, 1, num); // e.g. "23.4" or " 5.0"
-    // dtostrf may pad the front with spaces; strip leading spaces so the cell
-    // doesn't look hollow.
+    dtostrf(t, 4, 1, num);
     char *p = num;
     while (*p == ' ') p++;
     snprintf_P(out, outSz, PSTR("\x01" "%s:%sC"), name, p);
   }
 
   void showTemperatures(){
+#if DS18_ENABLED
     String rows[4];
     for (int r=0;r<4;r++){
       uint8_t leftIdx = 4 + r;
@@ -676,7 +642,10 @@ public:
       }
       rows[r] = leftStr + rightStr;
     }
-    g_lcdStatus.show4To(LCD_TGT_1, rows[0], rows[1], rows[2], rows[3], true);
+    lcdHubShow4(rows[0], rows[1], rows[2], rows[3]);
+#else
+    lcdPrint(F("TEMPS"), F("DISABLED"));
+#endif
   }
 
   void enterSelected(Robot &robot){
@@ -750,44 +719,11 @@ public:
 
       case MENU_CALIBRATE:
 #if HALL_ENCODER_ENABLED
-        _state = STATE_SYSTEM; // reuse system screen to show progress
-        {
-          unsigned long dur = 5000UL;
-          lcdPrint("CALIBRATE", "Rotate wheel...");
-          // reset and sample counts
-          extern HallEncoder g_hall0; extern HallEncoder g_hall1;
-          g_hall0.reset(); g_hall1.reset();
-          unsigned long t0 = millis();
-          while (millis() - t0 < dur){
-            g_hall0.update(); g_hall1.update();
-            // show simple progress
-            unsigned long el = millis() - t0;
-            int pct = (int)constrain((el*100)/dur, 0, 100);
-            char topBuf[16];
-            char botBuf[24];
-            snprintf(topBuf, sizeof(topBuf), "CALIB %d%%", pct);
-            snprintf(botBuf, sizeof(botBuf), "p0:%lu p1:%lu", (unsigned long)g_hall0.getCount(), (unsigned long)g_hall1.getCount());
-            lcdPrint(String(topBuf), String(botBuf));
-            delay(100);
-          }
-          unsigned long c0 = g_hall0.getCount();
-          unsigned long c1 = g_hall1.getCount();
-          uint16_t v0 = (uint16_t)constrain((unsigned long)c0, 0UL, 65535UL);
-          uint16_t v1 = (uint16_t)constrain((unsigned long)c1, 0UL, 65535UL);
-          EEPROM.update(EEPROM_ADDR_HALL_MAGIC, EEPROM_HALL_MAGIC);
-          EEPROM.put(EEPROM_ADDR_HALL_PPR_0, v0);
-          EEPROM.put(EEPROM_ADDR_HALL_PPR_1, v1);
-          char doneBuf[24];
-          snprintf(doneBuf, sizeof(doneBuf), "p0:%lu p1:%lu", (unsigned long)c0, (unsigned long)c1);
-          lcdPrint("CAL DONE", String(doneBuf));
-#if BUZZER_ENABLED
-          g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 200);
-#endif
-          Protocol::sendOk("encoder_calibrated");
-        }
+        _state = STATE_SYSTEM;
+        startEncoderCalibration(5000UL, true);
         return;
 #else
-        lcdPrint("CAL", "HALL DISABLED");
+        lcdPrint(F("CAL"), F("HALL DISABLED"));
         return;
 #endif
 
@@ -819,12 +755,12 @@ public:
 
   void showLaser(){
     char l1[21], l2[21], l3[21], l4[21];
-    const char* modes[] = {"  ALL OFF   ", " LASER 1 ON ", " LASER 2 ON ", " BOTH ON    "};
+    const char* const modes[] = {"  ALL OFF   ", " LASER 1 ON ", " LASER 2 ON ", " BOTH ON    "};
     snprintf_P(l1, sizeof(l1), PSTR("   LASER CONTROL    "));
     snprintf_P(l2, sizeof(l2), PSTR("--------------------"));
     snprintf_P(l3, sizeof(l3), PSTR("  MODE: %-12s"), modes[_laserMode % 4]);
     snprintf_P(l4, sizeof(l4), PSTR(" [UP/DN]=CHG [OK]=SET"));
-    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+    lcdHubShow4(l1, l2, l3, l4);
   }
 
   static String soundName(uint8_t idx);
@@ -844,7 +780,6 @@ public:
 #endif
   }
 
-  void startToken();
   void cancelToken();
   void commitTokenIfAny(Robot &robot);
   void applyToken(long v, Robot &robot){
@@ -859,24 +794,19 @@ public:
       float deg = (float)constrain(v, 0, 180);
       robot.writeServoLimited(_servoSel, deg);
       emitEvent("servo_set", _servoSel, (long)deg);
-      String top;
-      top.reserve(12);
-      top = "SERVO:";
-      top += String(_servoSel + 1);
-      String bottom;
-      bottom.reserve(12);
-      bottom = "DEG:";
-      bottom += String((int)deg);
-      lcdPrint(top, bottom);
+      char top[16]; char bottom[16];
+      snprintf_P(top, sizeof(top), PSTR("SERVO:%d"), _servoSel + 1);
+      snprintf_P(bottom, sizeof(bottom), PSTR("DEG:%d"), (int)deg);
+      lcdPrint(String(top), String(bottom));
 #if BUZZER_ENABLED
-    if (g_buzzerBothEnabled){
-      g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 40);
-      g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, 40);
-    } else g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, 40);
+      if (g_buzzerBothEnabled){
+        g_buzzer.beepBoth(g_buzzerFreqLoud, 40);
+      } else {
+        g_buzzer.beepOn(g_buzzerDefaultOut, (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? g_buzzerFreqLoud : g_buzzerFreqQuiet, 40);
+      }
 #endif
       return;
     }
-    
   }
 
   void addAlert(const String &msg){
@@ -889,14 +819,18 @@ public:
   void showAlerts(){
     char l1[21];
     snprintf_P(l1, sizeof(l1), PSTR("   ALERT HISTORY    "));
-    g_lcdStatus.show4To(LCD_TGT_1, l1, _alerts[0], _alerts[1], _alerts[2], true);
+    lcdHubShow4(String(l1), String(_alerts[0]), String(_alerts[1]), String(_alerts[2]));
   }
 
   void showStats(){
     char l1[21], l2[21], l3[21], l4[21];
     snprintf_P(l1, sizeof(l1), PSTR("    SENTRY STATS    "));
     snprintf_P(l2, sizeof(l2), PSTR("--------------------"));
+#if HALL_ENCODER_ENABLED
     snprintf_P(l3, sizeof(l3), PSTR("H0:%lu H1:%lu       "), g_hall0.getCount(), g_hall1.getCount());
+#else
+    snprintf_P(l3, sizeof(l3), PSTR("HALL: DISABLED      "));
+#endif
     // Rough loops per second
     unsigned long now = millis();
     unsigned long elapsed = now - _lastStatMs;
@@ -906,12 +840,25 @@ public:
       _lastStatMs = now;
     }
     snprintf_P(l4, sizeof(l4), PSTR("PERF: %lu LPS       "), _lastLps);
-    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+    lcdHubShow4(l1, l2, l3, l4);
   }
 
-  void recordRfid() { _rfidCount++; }
   void countLoop() { _loopCount++; }
 
+  static void lcdHubShow4(const String &l1, const String &l2, const String &l3, const String &l4){
+#if LCD_ENABLED
+    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+#else
+    (void)l1; (void)l2; (void)l3; (void)l4;
+#endif
+  }
+  static void lcdHubShow4(const __FlashStringHelper *l1, const __FlashStringHelper *l2, const __FlashStringHelper *l3, const __FlashStringHelper *l4){
+#if LCD_ENABLED
+    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+#else
+    (void)l1; (void)l2; (void)l3; (void)l4;
+#endif
+  }
 
 #if LCD_ENABLED
   void lcdPrint(const String &top, const String &bottom = ""){
@@ -925,6 +872,7 @@ public:
   LcdPrintFn _lcdPrint{nullptr};
 #else
   void lcdPrint(const String &, const String & = ""){ }
+  void lcdPrint(const __FlashStringHelper *, const __FlashStringHelper * = nullptr){ }
 #endif
 
   void refreshLive(Robot &robot);
@@ -957,24 +905,12 @@ private:
     return (int)constrain(v, 0, SERVO_COUNT_TOTAL - 1);
   }
 
-  static void emitMenu(int menu){
-    SERIAL_IO.print(F("{\"ok\":true,\"event\":\"ir_menu\",\"id\":"));
-    SERIAL_IO.print(menu);
-    SERIAL_IO.println(F("}"));
-  }
-
-  static void emitEvent(const char *name){
-    SERIAL_IO.print(F("{\"ok\":true,\"event\":\"ir\",\"name\":\""));
-    SERIAL_IO.print(name);
-    SERIAL_IO.println(F("\"}"));
-  }
-
   static void emitEvent(const char *name, long v){
     SERIAL_IO.print(F("{\"ok\":true,\"event\":\"ir\",\"name\":\""));
     SERIAL_IO.print(name);
     SERIAL_IO.print(F("\",\"v\":"));
     SERIAL_IO.print(v);
-    SERIAL_IO.println(F("}"));
+    SERIAL_IO.println('}');
   }
 
   static void emitEvent(const char *name, long a, long b){
@@ -984,7 +920,7 @@ private:
     SERIAL_IO.print(a);
     SERIAL_IO.print(F(",\"b\":"));
     SERIAL_IO.print(b);
-    SERIAL_IO.println(F("}"));
+    SERIAL_IO.println('}');
   }
 
   State _state{STATE_HOME};
@@ -1001,8 +937,6 @@ private:
   unsigned long _lastUiMs{0};
   uint8_t _imuSub{0};
 
-  uint8_t _sysSub{0};
-
   uint8_t _soundIndex{0};
   bool _morseMode{false};
   String _morsePattern;
@@ -1017,18 +951,16 @@ private:
 
   unsigned long _lastProxBeepMs{0};
   char _alerts[4][21] = {"NONE", "NONE", "NONE", "NONE"};
-  uint16_t _rfidCount{0};
   uint32_t _loopCount{0};
   uint32_t _lastLps{0};
   unsigned long _lastStatMs{0};
   unsigned long _lastInputMs{0};
-  // Motion is position-based in current drive flow.
 };
 
 #include "menus/xIrMenuController_sound.h"
 #include "menus/xIrMenuController_servo.h"
 #include "menus/xIrMenuController_sensors.h"
 
-#endif // IR_ENABLED
+#endif // VIRTUAL_MENU_ENABLED
 
 #endif // SENTRY_APP_IR_MENU_CONTROLLER_H

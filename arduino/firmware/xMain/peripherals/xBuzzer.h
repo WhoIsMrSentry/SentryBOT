@@ -7,8 +7,8 @@
 #if BUZZER_ENABLED
 #include <avr/pgmspace.h>
 
-#if IR_ENABLED
-// Only needed for the optional IR re-init fail-safe when using tone().
+#if IR_HW_ENABLED
+// Only needed for the optional physical IR re-init fail-safe when using tone().
 #include <IRremote.hpp>
 #endif
 
@@ -28,7 +28,7 @@ public:
   }
 
   void update(){
-#if !(BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR))
+#if !(BUZZER_USE_TONE && !(IR_HW_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR))
     if (_activeMask != 0){
       unsigned long now = millis();
       // millis() overflow safe compare
@@ -41,7 +41,7 @@ public:
     }
 #endif
 
-#if IR_ENABLED && BUZZER_USE_TONE && BUZZER_REINIT_IR_AFTER_TONE
+#if IR_HW_ENABLED && BUZZER_USE_TONE && BUZZER_REINIT_IR_AFTER_TONE
     if (_irReinitAtMs != 0){
       unsigned long now2 = millis();
       if ((long)(now2 - _irReinitAtMs) >= 0){
@@ -57,12 +57,12 @@ public:
     uint8_t pin = selectPin(out);
     if (pin == 255) return;
 
-#if BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR)
+#if BUZZER_USE_TONE && !(IR_HW_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR)
   // If ms==0 request an indefinite tone until `stop()` is called.
   if (ms == 0) tone(pin, freqHz);
   else tone(pin, freqHz, ms);
 
-#if IR_ENABLED && BUZZER_REINIT_IR_AFTER_TONE
+#if IR_HW_ENABLED && BUZZER_REINIT_IR_AFTER_TONE
     // tone() may disturb IRremote timers on AVR; re-init IR after the tone ends.
     unsigned long target = millis() + (unsigned long)ms + 5UL;
     if (_irReinitAtMs == 0 || (long)(target - _irReinitAtMs) > 0){
@@ -87,13 +87,19 @@ public:
 #endif
   }
 
-  // Beep both outputs simultaneously
+  // Beep both outputs; AVR tone() only supports one active hardware channel at a time,
+  // so avoid calling tone() twice back-to-back which would cancel the loud channel.
   void beepBoth(uint16_t freqHz = 2200, uint16_t ms = 60){
     if (_loud == 255 && _quiet == 255) return;
-#if BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR)
-  if (_loud != 255){ if (ms == 0) tone(_loud, freqHz); else tone(_loud, freqHz, ms); }
-  if (_quiet != 255){ if (ms == 0) tone(_quiet, freqHz); else tone(_quiet, freqHz, ms); }
-#if IR_ENABLED && BUZZER_REINIT_IR_AFTER_TONE
+#if BUZZER_USE_TONE && !(IR_HW_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR)
+#if defined(ARDUINO_ARCH_AVR)
+    uint8_t primaryPin = (_loud != 255) ? _loud : _quiet;
+    if (ms == 0) tone(primaryPin, freqHz); else tone(primaryPin, freqHz, ms);
+#else
+    if (_loud != 255){ if (ms == 0) tone(_loud, freqHz); else tone(_loud, freqHz, ms); }
+    if (_quiet != 255){ if (ms == 0) tone(_quiet, freqHz); else tone(_quiet, freqHz, ms); }
+#endif
+#if IR_HW_ENABLED && BUZZER_REINIT_IR_AFTER_TONE
     unsigned long target = millis() + (unsigned long)ms + 5UL;
     if (_irReinitAtMs == 0 || (long)(target - _irReinitAtMs) > 0){
       _irReinitAtMs = target;
@@ -112,19 +118,19 @@ public:
   }
 
   void stop(){
-#if BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR)
+#if BUZZER_USE_TONE && !(IR_HW_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR)
     if (_loud != 255) noTone(_loud);
     if (_quiet != 255) noTone(_quiet);
 #endif
     if (_loud != 255) digitalWrite(_loud, LOW);
     if (_quiet != 255) digitalWrite(_quiet, LOW);
 
-#if !(BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR))
+#if !(BUZZER_USE_TONE && !(IR_HW_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR))
   _activeMask = 0;
   _activeUntilMs = 0;
 #endif
 
-#if IR_ENABLED && BUZZER_USE_TONE && BUZZER_REINIT_IR_AFTER_TONE
+#if IR_HW_ENABLED && BUZZER_USE_TONE && BUZZER_REINIT_IR_AFTER_TONE
     _irReinitAtMs = 0;
 #endif
   }
@@ -137,12 +143,12 @@ private:
   uint8_t _loud{255};
   uint8_t _quiet{255};
 
-#if !(BUZZER_USE_TONE && !(IR_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR))
+#if !(BUZZER_USE_TONE && !(IR_HW_ENABLED && BUZZER_DISABLE_TONE_WHEN_IR))
   uint8_t _activeMask{0};
   unsigned long _activeUntilMs{0};
 #endif
 
-#if IR_ENABLED && BUZZER_USE_TONE && BUZZER_REINIT_IR_AFTER_TONE
+#if IR_HW_ENABLED && BUZZER_USE_TONE && BUZZER_REINIT_IR_AFTER_TONE
   unsigned long _irReinitAtMs{0};
 #endif
 };
