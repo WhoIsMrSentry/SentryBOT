@@ -18,12 +18,6 @@ def render_startup_panel(renderer: ConsoleRenderer, *, mode: str = "dashboard") 
     return renderer.box("SENTRYBOT RUNTIME", lines)
 
 
-def render_event_panel(renderer: ConsoleRenderer, events: list[RuntimeEvent]) -> str:
-    if not events:
-        return renderer.box("EVENT STREAM", ["waiting for runtime events..."])
-    return renderer.box("EVENT STREAM", [renderer.event_line(event) for event in events])
-
-
 def render_warning_panel(renderer: ConsoleRenderer, event: RuntimeEvent) -> str:
     details = []
     for key, value in sorted(event.details.items()):
