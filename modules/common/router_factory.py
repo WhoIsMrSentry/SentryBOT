@@ -10,8 +10,9 @@ Provides standardized FastAPI router creation with:
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 import logging
+import threading
 import time
 import uuid
 from collections import defaultdict
@@ -22,7 +23,7 @@ from typing import Any, Callable, Dict, List, Optional, Type
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("common.router_factory")
 
@@ -36,7 +37,7 @@ class ErrorResponse(BaseModel):
     ok: bool = False
     error: str
     error_code: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
+    details: Dict[str, Any] = Field(default_factory=dict)
 
 
 class HealthResponse(BaseModel):
@@ -46,8 +47,8 @@ class HealthResponse(BaseModel):
     service: str
     version: str = "1.0.0"
     uptime_seconds: Optional[float] = None
-    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    checks: Dict[str, Any] = field(default_factory=dict)
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    checks: Dict[str, Any] = Field(default_factory=dict)
 
 
 # =============================================================================
@@ -130,24 +131,37 @@ class RequestLoggerMiddleware:
 
 
 class RateLimitMiddleware:
-    """Simple in-memory rate limiter."""
-    
+    """Simple in-memory sliding-window rate limiter per client IP."""
+
     def __init__(self, max_requests: int = 100, window_seconds: int = 60):
-        self.max_requests = max_requests
-        self.window_seconds = window_seconds
+        self.max_requests = max(1, int(max_requests))
+        self.window_seconds = max(1, int(window_seconds))
         self._requests: Dict[str, List[float]] = defaultdict(list)
-        self._lock = asyncio.Lock()
-    
+        self._lock = threading.Lock()
+
     async def __call__(self, request: Request, call_next):
-        
-        async with self._lock:
-            now = time.time()
-            # Clean old entries
-            now - 60  # 60 second window
-            # We'll use the global store with a lock
-        
-        # For simplicity, use a simple counter per IP
-        # In production, use Redis
+        client_ip = request.client.host if request.client else "unknown"
+        now = time.monotonic()
+        cutoff = now - self.window_seconds
+
+        with self._lock:
+            timestamps = [ts for ts in self._requests[client_ip] if ts > cutoff]
+            if not timestamps:
+                self._requests.pop(client_ip, None)
+            else:
+                self._requests[client_ip] = timestamps
+
+            if len(timestamps) >= self.max_requests:
+                return JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content=ErrorResponse(
+                        error="Rate limit exceeded",
+                        error_code="RATE_LIMITED",
+                    ).model_dump(),
+                    headers={"Retry-After": str(self.window_seconds)},
+                )
+            self._requests[client_ip].append(now)
+
         return await call_next(request)
 
 
@@ -193,6 +207,7 @@ class RouterFactory:
             description=description,
             tags=tags or [],
             dependencies=dependencies or [],
+            deprecated=deprecated,
         ))
         return self
     
@@ -231,7 +246,9 @@ class RouterFactory:
         """Default health check implementation."""
         if self._health_check_fn:
             try:
-                result = await self._health_check_fn()
+                result = self._health_check_fn()
+                if inspect.isawaitable(result):
+                    result = await result
                 if isinstance(result, dict):
                     return HealthResponse(**result)
             except Exception as e:
@@ -239,7 +256,7 @@ class RouterFactory:
                 return HealthResponse(
                     ok=False,
                     status="unhealthy",
-                    service="unknown",
+                    service=self.config.service_name,
                     checks={"error": {"status": "unhealthy", "message": str(e)}},
                 )
         
@@ -257,23 +274,6 @@ class RouterFactory:
             prefix=self.config.prefix,
             tags=self.config.tags,
         )
-        
-        # Add request ID middleware
-        @router.middleware("http")
-        async def add_request_id(request: Request, call_next):
-            request.headers.get("X-Request-ID", str(uuid.uuid4()))
-            time.perf_counter()
-            
-            if self.config.log_requests:
-                logger.info("Request: %s %s", request.method, request.url.path)
-            
-            response = await call_next(request)
-            
-            (time.perf_counter() - time.time()) * 1000
-            response.headers["X-Request-ID"] = request.headers.get("X-Request-ID", str(uuid.uuid4()))
-            response.headers["X-Response-Time-MS"] = f"{(time.perf_counter() - time.time()) * 1000:.2f}"
-            
-            return response
         
         # Add routes
         for route_config in self._routes:
@@ -340,6 +340,7 @@ def create_router(
         version=version,
         prefix=prefix,
         tags=tags or [],
+        **config_kwargs,
     ))
     
     if health_check_fn:
@@ -364,9 +365,9 @@ def create_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=exc.status_code,
             content=ErrorResponse(
-                error=exc.detail,
+                error=str(exc.detail),
                 error_code=f"HTTP_{exc.status_code}",
-            ).dict(),
+            ).model_dump(),
         )
     
     @app.exception_handler(ValueError)
@@ -376,7 +377,7 @@ def create_error_handlers(app: FastAPI) -> None:
             content=ErrorResponse(
                 error=str(exc),
                 error_code="VALIDATION_ERROR",
-            ).dict(),
+            ).model_dump(),
         )
     
     @app.exception_handler(Exception)
@@ -387,7 +388,7 @@ def create_error_handlers(app: FastAPI) -> None:
             content=ErrorResponse(
                 error="Internal server error",
                 error_code="INTERNAL_ERROR",
-            ).dict(),
+            ).model_dump(),
         )
 
 
@@ -428,7 +429,7 @@ class FilterParams(BaseModel):
     search: Optional[str] = None
     sort_by: Optional[str] = None
     sort_order: str = "asc"
-    filters: Dict[str, Any] = field(default_factory=dict)
+    filters: Dict[str, Any] = Field(default_factory=dict)
 
 
 def get_filters(
@@ -474,7 +475,7 @@ def error_response(
             error=error,
             error_code=error_code,
             details=details or {},
-        ).dict(),
+        ).model_dump(),
     )
 
 
@@ -485,6 +486,7 @@ def paginated_response(
     page_size: int,
 ) -> JSONResponse:
     """Create a paginated response."""
+    safe_page_size = max(1, int(page_size))
     return JSONResponse(
         content={
             "ok": True,
@@ -492,9 +494,9 @@ def paginated_response(
                 "items": items,
                 "pagination": {
                     "page": page,
-                    "page_size": page_size,
+                    "page_size": safe_page_size,
                     "total": total,
-                    "pages": (total + page_size - 1) // page_size,
+                    "pages": (total + safe_page_size - 1) // safe_page_size,
                 },
             },
         }
@@ -576,10 +578,13 @@ def create_crud_router(
     if update_handler:
         factory.add_route("/items/{item_id}", "PUT", update_handler, summary="Update item")
     if delete_handler:
-        factory.add_route("/items/{item_id}", "DELETE", delete_handler, status_code=status.HTTP_204_NO_CONTENT, summary="Delete item")
-    
-    if health_check_fn:
-        factory.set_health_check(health_check_fn)
+        factory.add_route(
+            "/items/{item_id}",
+            "DELETE",
+            delete_handler,
+            status_code=status.HTTP_204_NO_CONTENT,
+            summary="Delete item",
+        )
     
     return factory.build()
 

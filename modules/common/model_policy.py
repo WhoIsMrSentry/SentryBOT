@@ -5,15 +5,20 @@ All LLM/VLM routing is forced to local Ollama.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from modules.common.ollama_url import (
+    DEFAULT_REMOTE_OLLAMA_URL,
+    is_bad_ollama_url,
+    unwrap_url,
+)
+
 LOCAL_MODEL = "qwen3.5:9b"
 LOCAL_PROVIDER = "ollama"
-LOCAL_OLLAMA_URL = "http://whoismrsentry.local:11434"
+LOCAL_OLLAMA_URL = DEFAULT_REMOTE_OLLAMA_URL
 
 
 @dataclass
@@ -136,18 +141,29 @@ class ModelPolicy:
         return str(active).strip() if active else None
 
     def set_required_model(self, model_name: str, provider: str = "") -> None:
-        self._required_model = LOCAL_MODEL
+        self._required_model = str(model_name or "").strip() or LOCAL_MODEL
 
     def set_strict_single_model(self, enabled: bool) -> None:
         self._strict_single_model = bool(enabled)
+
+    def _effective_model(self, config: Dict[str, Any]) -> str:
+        if self._strict_single_model:
+            return self._required_model or LOCAL_MODEL
+        llm_cfg = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
+        agent_cfg = config.get("agent", {}) if isinstance(config.get("agent"), dict) else {}
+        for candidate in (llm_cfg.get("model"), agent_cfg.get("model"), self._required_model):
+            name = str(candidate or "").strip()
+            if name:
+                return name
+        return LOCAL_MODEL
 
     def resolve_model(self, config: Dict[str, Any]) -> Dict[str, Any]:
         llm_cfg = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
         return {
             "provider": LOCAL_PROVIDER,
-            "model": LOCAL_MODEL,
+            "model": self._effective_model(config),
             "temperature": llm_cfg.get("temperature", 0.3),
-            "enforced": True,
+            "enforced": self._strict_single_model,
         }
 
     def get_provider_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -155,7 +171,7 @@ class ModelPolicy:
         provider_cfg = config.get(LOCAL_PROVIDER, {})
         merged = {**resolved, **provider_cfg} if isinstance(provider_cfg, dict) else dict(resolved)
         merged["provider"] = LOCAL_PROVIDER
-        merged["model"] = LOCAL_MODEL
+        merged["model"] = resolved["model"]
         merged["base_url"] = self._resolve_ollama_base_url(config)
         return merged
 
@@ -172,24 +188,18 @@ class ModelPolicy:
             os.getenv("SENTRYBOT_REMOTE_OLLAMA_URL"),
             os.getenv("OLLAMA_BASE_URL"),
             os.getenv("AGENT_OLLAMA_BASE_URL"),
-            LOCAL_OLLAMA_URL,
         ]
 
         for source in candidates:
-            if not source:
-                continue
-            url = str(source).strip().rstrip("/")
-            lowered = url.lower()
-            if "@gateway" in lowered or ":8080" in lowered:
-                continue
-            return url
+            url = unwrap_url(source)
+            if url and not is_bad_ollama_url(url):
+                return url
 
         return LOCAL_OLLAMA_URL
 
 
 _global_policy: Optional[ModelPolicy] = None
 _sync_policy_lock = threading.Lock()
-_async_policy_lock = asyncio.Lock()
 
 
 def get_model_policy() -> ModelPolicy:
@@ -202,11 +212,7 @@ def get_model_policy() -> ModelPolicy:
 
 
 async def get_model_policy_async() -> ModelPolicy:
-    global _global_policy
-    async with _async_policy_lock:
-        if _global_policy is None:
-            _global_policy = ModelPolicy()
-    return _global_policy
+    return get_model_policy()
 
 
 def set_model_policy(policy: ModelPolicy) -> None:

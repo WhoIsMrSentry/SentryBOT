@@ -249,14 +249,14 @@ class ServiceBase(abc.ABC):
         )
         self._health_check_task.start()
     
-    def _stop_health_check(self) -> None:
-        pass  # Thread is daemon, will exit when main exits
-    
+    def _stop_health_check(self, timeout: float = 2.0) -> None:
+        thread = self._health_check_task
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=timeout)
+        self._health_check_task = None
+
     def _health_check_loop(self) -> None:
-        while not self._stop_event.is_set():
-            time.sleep(self._health_check_interval)
-            if self._stop_event.is_set():
-                break
+        while not self._stop_event.wait(timeout=self._health_check_interval):
             try:
                 health = self.health_check()
                 if health.get("status") != "healthy":
@@ -289,8 +289,7 @@ class AsyncServiceBase(abc.ABC):
     def __init__(self, config: Optional[Dict[str, Any]] = None, name: str = ""):
         self._config = ServiceConfig(name=name or self.__class__.__name__, **(config or {}))
         self._state = ServiceState.UNINITIALIZED
-        self._state_lock = asyncio.Lock()
-        self._stop_event = asyncio.Event()
+        self._stop_event = threading.Event()
         self._error: Optional[Exception] = None
         self._start_time: Optional[float] = None
         self._initialized = False
@@ -350,6 +349,7 @@ class AsyncServiceBase(abc.ABC):
             await self.initialize()
         
         self._state = ServiceState.STARTING
+        self._stop_event.clear()
         try:
             await self._do_start()
             self._start_time = time.time()
@@ -370,6 +370,7 @@ class AsyncServiceBase(abc.ABC):
             return
         
         self._state = ServiceState.STOPPING
+        self._stop_event.set()
         try:
             await self._do_stop(timeout or 10.0)
             self._state = ServiceState.STOPPED
@@ -405,7 +406,6 @@ class BackgroundTaskMixin:
     
     def __init__(self):
         self._background_tasks: Set[asyncio.Task] = set()
-        self._task_lock = asyncio.Lock()
     
     async def create_background_task(
         self,
@@ -414,22 +414,34 @@ class BackgroundTaskMixin:
         restart: bool = False,
         restart_delay: float = 1.0,
     ) -> asyncio.Task:
-        """Create and track a background task."""
+        """Create and track a background task.
+
+        When ``restart=True``, pass a callable coroutine factory so each restart
+        creates a fresh coroutine instance.
+        """
+        is_factory = callable(coro)
+        if restart and not is_factory:
+            if hasattr(coro, "close"):
+                coro.close()
+            raise TypeError("restart=True requires a callable coroutine factory")
+
+        task_name = name or getattr(coro, "__name__", "background-task")
+
         async def wrapped():
             while True:
                 try:
-                    await coro
+                    return await (coro() if is_factory else coro)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.error("Background task %s error: %s", name, e)
-                    if not self._stop_event.is_set():
-                        await asyncio.sleep(1)
-                        if restart:
-                            continue
+                    logger.error("Background task %s error: %s", task_name, e)
+                    stop_event = getattr(self, "_stop_event", None)
+                    if restart and (stop_event is None or not stop_event.is_set()):
+                        await asyncio.sleep(restart_delay)
+                        continue
                 break
         
-        task = asyncio.create_task(wrapped(), name=name or coro.__name__)
+        task = asyncio.create_task(wrapped(), name=task_name)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task

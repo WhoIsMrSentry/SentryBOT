@@ -15,7 +15,8 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, AsyncIterator
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -65,53 +66,50 @@ class CircuitBreaker:
         self._states: dict[str, CircuitBreakerState] = {}
         self._lock = threading.Lock()
     
-    def _get_state(self, host: str) -> CircuitBreakerState:
-        with self._lock:
-            if host not in self._states:
-                self._states[host] = CircuitBreakerState()
-            return self._states[host]
-    
     def can_execute(self, host: str) -> bool:
-        state = self._get_state(host)
-        now = time.time()
-        
-        if state.state == "closed":
-            return True
-        
-        if state.state == "open":
-            if now - state.last_failure >= self.recovery_timeout:
-                with self._lock:
+        now = time.monotonic()
+        with self._lock:
+            state = self._states.setdefault(host, CircuitBreakerState())
+            if state.state == "closed":
+                return True
+            if state.state == "open":
+                if now - state.last_failure >= self.recovery_timeout:
                     state.state = "half-open"
                     state.success_count = 0
                     logger.info("Circuit breaker for %s: half-open", host)
                     return True
-            return False
-        
-        # half-open
-        return state.success_count < self.half_open_max_calls
-    
+                return False
+            return state.success_count < self.half_open_max_calls
+
     def record_success(self, host: str) -> None:
-        state = self._get_state(host)
-        if state.state == "half-open":
-            state.success_count += 1
-            if state.success_count >= self.half_open_max_calls:
-                state.state = "closed"
-                state.failures = 0
-                logger.info("Circuit breaker for %s: closed", host)
-        elif state.state == "closed":
-            state.failures = max(0, state.failures - 1)
-    
+        with self._lock:
+            state = self._states.setdefault(host, CircuitBreakerState())
+            if state.state == "half-open":
+                state.success_count += 1
+                if state.success_count >= self.half_open_max_calls:
+                    state.state = "closed"
+                    state.failures = 0
+                    logger.info("Circuit breaker for %s: closed", host)
+            elif state.state == "closed":
+                state.failures = max(0, state.failures - 1)
+
     def record_failure(self, host: str) -> None:
-        state = self._get_state(host)
-        state.failures += 1
-        state.last_failure = time.time()
-        
-        if state.state == "half-open":
-            state.state = "open"
-            logger.warning("Circuit breaker for %s: open (half-open failure)", host)
-        elif state.state == "closed" and state.failures >= self.failure_threshold:
-            state.state = "open"
-            logger.warning("Circuit breaker for %s: open", host)
+        now = time.monotonic()
+        with self._lock:
+            state = self._states.setdefault(host, CircuitBreakerState())
+            state.failures += 1
+            state.last_failure = now
+
+            if state.state == "half-open":
+                state.state = "open"
+                logger.warning("Circuit breaker for %s: open (half-open failure)", host)
+            elif state.state == "closed" and state.failures >= self.failure_threshold:
+                state.state = "open"
+                logger.warning("Circuit breaker for %s: open", host)
+
+    def snapshot_states(self) -> dict[str, str]:
+        with self._lock:
+            return {host: state.state for host, state in self._states.items()}
 
 
 class AsyncHTTPClient:
@@ -159,9 +157,7 @@ class AsyncHTTPClient:
             "requests": self._request_count,
             "errors": self._error_count,
             "avg_latency_ms": round(self._total_latency / self._request_count * 1000, 2) if self._request_count else 0,
-            "circuit_breakers": {
-                host: state.state for host, state in self.circuit_breaker._states.items()
-            },
+            "circuit_breakers": self.circuit_breaker.snapshot_states(),
         }
     
     def _build_url(self, path: str) -> str:
@@ -172,13 +168,14 @@ class AsyncHTTPClient:
         return path
     
     def _extract_host(self, url: str) -> str:
-        """Extract host:port from URL for circuit breaker."""
-        if url.startswith("http://"):
-            url = url[7:]
-        elif url.startswith("https://"):
-            url = url[8:]
-        host = url.split("/")[0]
-        return host
+        """Extract circuit-breaker key for an absolute URL or relative gateway path."""
+        if url.startswith(("http://", "https://")):
+            return urlsplit(url).netloc or url
+        base_host = urlsplit(self.base_url).netloc or self.base_url
+        segments = [seg for seg in url.split("?")[0].split("/") if seg]
+        if segments:
+            return f"{base_host}/{segments[0]}"
+        return base_host
     
     async def _request_with_retry(
         self,
@@ -236,12 +233,11 @@ class AsyncHTTPClient:
                 self.circuit_breaker.record_failure(host)
                 
             except httpx.HTTPStatusError as e:
-                last_exception = e
-                self.circuit_breaker.record_failure(host)
-                
-                # Don't retry 4xx errors (except 429)
+                # Client 4xx errors (except 429) must not retry or trip the circuit breaker.
                 if 400 <= e.response.status_code < 500 and e.response.status_code != 429:
                     raise
+                last_exception = e
+                self.circuit_breaker.record_failure(host)
                 
             except Exception as e:
                 last_exception = e
@@ -284,20 +280,29 @@ class AsyncHTTPClient:
         return await self._request_with_retry(method, path, **kwargs)
     
     @asynccontextmanager
-    async def stream(self, method: str, path: str, **kwargs):
+    async def stream(self, method: str, path: str, **kwargs) -> AsyncIterator[httpx.Response]:
         """Stream response for large payloads."""
         url = self._build_url(path)
         host = self._extract_host(url)
         
         if not self.circuit_breaker.can_execute(host):
             raise httpx.ConnectError(f"Circuit breaker open for {host}")
-        
-        async with self._client.stream(method, url, **kwargs) as resp:
-            try:
+
+        yielded = False
+        try:
+            async with self._client.stream(method, url, **kwargs) as resp:
                 resp.raise_for_status()
+                self.circuit_breaker.record_success(host)
+                yielded = True
                 yield resp
-            finally:
-                await resp.aclose()
+        except httpx.HTTPStatusError as exc:
+            if not yielded and not (400 <= exc.response.status_code < 500 and exc.response.status_code != 429):
+                self.circuit_breaker.record_failure(host)
+            raise
+        except Exception:
+            if not yielded:
+                self.circuit_breaker.record_failure(host)
+            raise
     
     async def close(self) -> None:
         await self._client.aclose()
@@ -326,9 +331,10 @@ def get_http_client(
 async def close_all_clients() -> None:
     """Close all registered clients. Call on shutdown."""
     with _client_lock:
-        for client in _clients.values():
-            await client.close()
+        clients = list(_clients.values())
         _clients.clear()
+    for client in clients:
+        await client.close()
 
 
 # For backward compatibility and sync-only contexts
