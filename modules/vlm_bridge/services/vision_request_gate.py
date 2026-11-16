@@ -90,12 +90,12 @@ class VisionRequestGate:
         scene_key = str(scene_key or "")
         cache_fresh = bool(has_cache and cache_age_s is not None and float(cache_age_s) <= self.cache_ttl_s)
 
-        if not self.enabled:
-            self._counter += 1
-            request_id = f"vlm-{int(now * 1000)}-{self._counter}"
-            return GateDecision(True, reason, request_id, priority, "disabled", "gate disabled")
-
         with self._lock:
+            if not self.enabled:
+                self._counter += 1
+                request_id = f"vlm-{int(now * 1000)}-{self._counter}"
+                return GateDecision(True, reason, request_id, priority, "disabled", "gate disabled")
+
             if len(self._inflight) >= self.max_inflight:
                 self._stats["denied"] += 1
                 if cache_fresh:

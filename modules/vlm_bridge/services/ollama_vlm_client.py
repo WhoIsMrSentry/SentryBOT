@@ -21,10 +21,11 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
+from modules.common.ollama_url import default_ollama_base_url, normalize_ollama_url
+
 logger = logging.getLogger("vlm_bridge.ollama_vlm")
 
-# â”€â”€ Defaults â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-_DEFAULT_BASE_URL = "http:"
+_DEFAULT_BASE_URL = default_ollama_base_url()
 _DEFAULT_MODEL = "qwen3.5:9b"
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_MAX_WIDTH = 640
@@ -154,7 +155,7 @@ class OllamaVLMClient:
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         cfg = config or {}
-        self.base_url = str(cfg.get("base_url", _DEFAULT_BASE_URL)).rstrip("/")
+        self.base_url = normalize_ollama_url(cfg.get("base_url") or _DEFAULT_BASE_URL).rstrip("/")
         self.model = str(cfg.get("model", _DEFAULT_MODEL))
         self.timeout = float(cfg.get("timeout_s", _DEFAULT_TIMEOUT))
         self.max_image_width = int(cfg.get("max_image_width", _DEFAULT_MAX_WIDTH))
@@ -168,6 +169,14 @@ class OllamaVLMClient:
         self._last_call: float = 0.0
         self._call_count: int = 0
         self._error_count: int = 0
+        self._session = None
+
+    def _http_session(self):
+        if self._session is None:
+            import requests
+
+            self._session = requests.Session()
+        return self._session
 
     # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -252,8 +261,7 @@ class OllamaVLMClient:
     def is_available(self) -> bool:
         """Quick health check against the remote Ollama server."""
         try:
-            import requests
-            resp = requests.get(f"{self.base_url}/api/tags", timeout=3.0)
+            resp = self._http_session().get(f"{self.base_url}/api/tags", timeout=3.0)
             return resp.status_code == 200
         except Exception:
             return False
@@ -272,8 +280,6 @@ class OllamaVLMClient:
 
     def _call_ollama(self, prompt: str, image_b64: str) -> Optional[Dict[str, Any]]:
         """Make the actual HTTP request to Ollama /api/chat."""
-        import requests
-
         payload = {
             "model": self.model,
             "messages": [
@@ -292,7 +298,7 @@ class OllamaVLMClient:
             },
         }
 
-        resp = requests.post(
+        resp = self._http_session().post(
             f"{self.base_url}/api/chat",
             json=payload,
             timeout=self.timeout,

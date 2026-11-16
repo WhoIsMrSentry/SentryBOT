@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 try:
@@ -89,26 +88,9 @@ try:
 except Exception:
     HeadControlArbiter = None  # type: ignore
 
-logger = logging.getLogger("vlm_bridge")
-
+from ..config_loader import _dotenv_value
 
 logger = logging.getLogger("vlm_bridge.processor")
-
-_REPO_DOTENV = Path(__file__).resolve().parents[3] / ".env"
-
-
-def _dotenv_value(key: str) -> str:
-    try:
-        if _REPO_DOTENV.is_file():
-            for line in _REPO_DOTENV.read_text(encoding="utf-8", errors="replace").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, _, v = line.partition("=")
-                    if k.strip() == key:
-                        return v.strip().strip('"').strip("'")
-    except Exception:
-        pass
-    return ""
 
 
 class ProcessorInitMixin:
@@ -202,6 +184,13 @@ class ProcessorInitMixin:
             "min_tilt": int(follow_cfg.get("min_tilt", 65)),
             "max_tilt": int(follow_cfg.get("max_tilt", 125)),
             "max_lost_frames": int(follow_cfg.get("max_lost_frames", 18)),
+            "pd_kp": float(follow_cfg.get("pd_kp", 0.85)),
+            "pd_kd": float(follow_cfg.get("pd_kd", 0.12)),
+            "sweep_enabled": bool(follow_cfg.get("sweep_enabled", True)),
+            "sweep_after_lost_frames": int(follow_cfg.get("sweep_after_lost_frames", 4)),
+            "sweep_max_steps": int(follow_cfg.get("sweep_max_steps", 12)),
+            "sweep_step_deg": float(follow_cfg.get("sweep_step_deg", 4.0)),
+            "sweep_span_deg": float(follow_cfg.get("sweep_span_deg", 24.0)),
         }
         self._follow_active = False
         self._follow_target = None

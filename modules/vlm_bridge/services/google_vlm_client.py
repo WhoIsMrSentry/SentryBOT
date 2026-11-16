@@ -42,7 +42,7 @@ class GoogleVLMClient:
         if not api_key:
             raise RuntimeError("Google AI Studio vision selected but api_key is missing")
 
-        from modules.system_control.config_center.gemini_model import DEFAULT_GEMINI_MODEL
+        from modules.common.config_loader import DEFAULT_GEMINI_MODEL
 
         model = str(google_cfg.get("model", cfg.get("model", DEFAULT_GEMINI_MODEL))).strip() or DEFAULT_GEMINI_MODEL
         base_url = str(

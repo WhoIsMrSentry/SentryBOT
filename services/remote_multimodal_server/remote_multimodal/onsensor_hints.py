@@ -41,8 +41,8 @@ def parse_onsensor_hints(
     }
     try:
         age_s = float(data.get("age_s", 0.0) or 0.0)
-        header["age_s"] = round(max(0.0, age_s), 3)
-        stale = age_s > max_age_s
+        stale = age_s < 0.0 or age_s > max_age_s
+        header["age_s"] = round(age_s, 3) if not stale else 0.0
     except Exception:
         stale = False
     if stale:

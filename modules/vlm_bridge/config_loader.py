@@ -6,6 +6,11 @@ from typing import Any, Dict, Optional
 
 from modules.common.bind_host import apply_bind_host
 from modules.common.config_loader import deep_merge, load_agent_config, require_dict_section, DEFAULT_GEMINI_MODEL
+from modules.common.ollama_url import (
+    default_ollama_base_url,
+    is_bad_ollama_url,
+    normalize_ollama_url,
+)
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "server": {"host": "127.0.0.1", "port": 8101},
@@ -84,6 +89,21 @@ def _to_float(raw: Any, fallback: float) -> float:
         return fallback
 
 
+def _dotenv_value(key: str) -> str:
+    dotenv_path = Path(__file__).resolve().parents[2] / ".env"
+    try:
+        if dotenv_path.is_file():
+            for line in dotenv_path.read_text(encoding="utf-8", errors="replace").splitlines():
+                s = line.strip()
+                if s and not s.startswith("#") and "=" in s:
+                    k, _, v = s.partition("=")
+                    if k.strip() == key:
+                        return v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return ""
+
+
 def _normalize_ollama_base_url(raw: Any) -> str:
     value = str(raw or "").strip().rstrip("/")
     if not value:
@@ -91,8 +111,8 @@ def _normalize_ollama_base_url(raw: Any) -> str:
     lowered = value.lower()
     for suffix in ("/api/chat", "/api/generate", "/api/tags", "/ollama/chat"):
         if lowered.endswith(suffix):
-            return value[: -len(suffix)].rstrip("/")
-    return value
+            return normalize_ollama_url(value[: -len(suffix)].rstrip("/"))
+    return normalize_ollama_url(value)
 
 
 def _to_vlm_chat_endpoint(raw: Any) -> str:
@@ -190,45 +210,69 @@ def _enforce_google_policy(cfg: Dict[str, Any], root_cfg: Dict[str, Any]) -> Dic
     return cfg
 
 
-def _enforce_ollama_policy(cfg: Dict[str, Any], root_cfg: Dict[str, Any]) -> Dict[str, Any]:
+def _enforce_ollama_policy(
+    cfg: Dict[str, Any],
+    root_cfg: Dict[str, Any],
+    overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     root_agent = require_dict_section(root_cfg, "agent")
     root_llm = require_dict_section(root_cfg, "llm")
     root_ollama = require_dict_section(root_cfg, "ollama")
+    vlm_root = require_dict_section(root_cfg, "vlm_bridge")
+    vlm_llm = vlm_root.get("llm", {}) if isinstance(vlm_root.get("llm"), dict) else {}
+    ov_llm = overrides.get("llm", {}) if isinstance((overrides or {}).get("llm"), dict) else {}
 
-    model = _pick_model(root_agent, root_llm, root_ollama) or _REQUIRED_OLLAMA_MODEL
-    if model != _REQUIRED_OLLAMA_MODEL:
-        raise ValueError(
-            f"Ollama profile requires model '{_REQUIRED_OLLAMA_MODEL}', got '{model}'"
+    single_model_mode = bool(
+        ov_llm.get(
+            "single_model_mode",
+            vlm_llm.get("single_model_mode", root_llm.get("single_model_mode", True)),
         )
+    )
+    required_model = (
+        str(
+            ov_llm.get("required_model")
+            or vlm_llm.get("required_model")
+            or root_llm.get("required_model")
+            or _REQUIRED_OLLAMA_MODEL
+        ).strip()
+        or _REQUIRED_OLLAMA_MODEL
+    )
+    ov_model = str(ov_llm.get("model") or ov_llm.get("primary_model") or "").strip()
+    vlm_model = str(vlm_llm.get("model") or vlm_llm.get("primary_model") or "").strip()
+    model = ov_model or vlm_model or _pick_model(root_agent, root_llm, root_ollama) or required_model
+    if single_model_mode and model != required_model:
+        raise ValueError(
+            f"Ollama profile requires model '{required_model}', got '{model}'"
+        )
+    active_model = required_model if single_model_mode else (model or required_model)
 
-    base_url = _normalize_ollama_base_url(
+    raw_base = (
         root_agent.get("ollama_base_url")
         or root_llm.get("base_url")
         or root_ollama.get("base_url")
         or os.getenv("AGENT_OLLAMA_BASE_URL")
-        or "http:"
+        or os.getenv("OLLAMA_BASE_URL")
+        or ""
     )
-    if not base_url:
-        raise ValueError("agent.ollama_base_url is required")
+    base_url = _normalize_ollama_base_url(raw_base) if str(raw_base or "").strip() else default_ollama_base_url()
 
     llm_cfg = cfg.setdefault("llm", {})
     ollama_cfg = cfg.setdefault("ollama", {})
     vision_cfg = cfg.setdefault("vision_llm", {})
 
     llm_cfg["provider"] = "ollama"
-    llm_cfg["single_model_mode"] = True
-    llm_cfg["primary_model"] = _REQUIRED_OLLAMA_MODEL
-    llm_cfg["model"] = _REQUIRED_OLLAMA_MODEL
+    llm_cfg["single_model_mode"] = single_model_mode
+    llm_cfg["primary_model"] = active_model
+    llm_cfg["model"] = active_model
     llm_cfg["clm_fallback_enabled"] = False
     llm_cfg["clm_fallback_model"] = ""
     llm_cfg["fallback_on_missing_model"] = False
     llm_cfg["fallback_on_error"] = False
 
-    vlm_root = require_dict_section(root_cfg, "vlm_bridge")
     vlm_ollama = vlm_root.get("ollama", {}) if isinstance(vlm_root.get("ollama"), dict) else {}
     explicit_endpoint = str(vlm_ollama.get("endpoint", "")).strip()
     ollama_cfg["endpoint"] = _to_vlm_chat_endpoint(explicit_endpoint or base_url)
-    ollama_cfg["model"] = _REQUIRED_OLLAMA_MODEL
+    ollama_cfg["model"] = active_model
     ollama_cfg["timeout"] = _to_float(
         ollama_cfg.get("timeout", root_ollama.get("request_timeout", 12.0)),
         12.0,
@@ -244,12 +288,16 @@ def _enforce_ollama_policy(cfg: Dict[str, Any], root_cfg: Dict[str, Any]) -> Dic
     return cfg
 
 
-def _enforce_policy(cfg: Dict[str, Any], root_cfg: Dict[str, Any]) -> Dict[str, Any]:
+def _enforce_policy(
+    cfg: Dict[str, Any],
+    root_cfg: Dict[str, Any],
+    overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     root_llm = require_dict_section(root_cfg, "llm")
     provider = str(root_llm.get("provider", "ollama")).strip().lower() or "ollama"
     if provider in _GOOGLE_PROVIDERS:
         return _enforce_google_policy(cfg, root_cfg)
-    return _enforce_ollama_policy(cfg, root_cfg)
+    return _enforce_ollama_policy(cfg, root_cfg, overrides=overrides)
 
 
 def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -268,7 +316,7 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
             root_google,
         )
 
-    cfg = _enforce_policy(cfg, root_cfg)
+    cfg = _enforce_policy(cfg, root_cfg, overrides=overrides)
     from modules.gateway.url import gateway_base_from_agent_cfg, rewrite_loopback_urls
 
     cfg = rewrite_loopback_urls(cfg, gateway_base_from_agent_cfg(root_cfg))
@@ -277,17 +325,7 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
 
 
 def _apply_ollama_url_guard(cfg: Dict[str, Any]) -> None:
-    """Single-pass Ollama URL guard (former batch06d wrapper, inlined).
-
-    Picks the first usable URL among the known config locations and writes it
-    back to both ``ollama.base_url`` and ``agent.ollama_base_url``.
-    """
-    from modules.common.ollama_url import (
-        default_ollama_base_url,
-        is_bad_ollama_url,
-        normalize_ollama_url,
-    )
-
+    """Single-pass Ollama URL guard using canonical ollama_url helpers."""
     agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
     ollama_cfg = cfg.get("ollama") if isinstance(cfg.get("ollama"), dict) else {}
 

@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from remote_multimodal.server import create_app, run_app
-
-app = create_app()
+from remote_multimodal.server import run_app
 
 
 if __name__ == "__main__":

@@ -35,6 +35,13 @@ vision:
     min_tilt: 65
     max_tilt: 125
     max_lost_frames: 18
+    pd_kp: 0.85
+    pd_kd: 0.12
+    sweep_enabled: true
+    sweep_after_lost_frames: 4
+    sweep_max_steps: 12
+    sweep_step_deg: 4.0
+    sweep_span_deg: 24.0
   blind_mode:
     enabled: false
     interval_seconds: 5.0

@@ -64,12 +64,26 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
     remote_mm_ocr_languages: List[str]
     remote_mm_auth_token: str
 
-    def _identify_face_in_roi(self, face_roi: Any) -> Tuple[str, float]:
+    def _identify_face_in_roi(
+        self,
+        face_roi: Any,
+        *,
+        full_frame: Optional[Any] = None,
+        raw_face: Optional[Any] = None,
+    ) -> Tuple[str, float]:
         if self.face_manager is None:
             return "Unknown", 0.5
         try:
             if hasattr(self.face_manager, "identify_face_with_score"):
-                name, score = self.face_manager.identify_face_with_score(face_roi)
+                try:
+                    name, score = self.face_manager.identify_face_with_score(
+                        face_roi,
+                        full_frame=full_frame,
+                        raw_face=raw_face,
+                        is_cropped=True,
+                    )
+                except TypeError:
+                    name, score = self.face_manager.identify_face_with_score(face_roi)
                 return name, max(0.0, min(1.0, float(score)))
             name = self.face_manager.identify_face(face_roi)
             return name, 0.9 if name != "Unknown" else 0.5
@@ -92,16 +106,27 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
             tag += " [CSRT]"
         cv2.putText(annotated, tag, (x1, max(14, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-    def _process_face_boxes(self, frame: Any, boxes: List[Tuple[int, int, int, int]], tracked_box: Optional[Tuple[int, int, int, int]] = None) -> Tuple[List[Dict[str, Any]], Any]:
+    def _process_face_boxes(
+        self,
+        frame: Any,
+        boxes: List[Tuple[int, int, int, int]],
+        tracked_box: Optional[Tuple[int, int, int, int]] = None,
+        raw_faces: Optional[Dict[int, Any]] = None,
+    ) -> Tuple[List[Dict[str, Any]], Any]:
         parsed: List[Dict[str, Any]] = []
         annotated = frame.copy() if hasattr(frame, "copy") else frame
         current_keys: set[str] = set()
+        raw_map = raw_faces or {}
         for idx, bbox in enumerate(boxes):
             x1, y1, x2, y2 = bbox
             if x2 <= x1 or y2 <= y1:
                 continue
             face_roi = frame[y1:y2, x1:x2]
-            name, conf = self._identify_face_in_roi(face_roi)
+            name, conf = self._identify_face_in_roi(
+                face_roi,
+                full_frame=frame,
+                raw_face=raw_map.get(idx),
+            )
             distance = self._estimate_face_distance_m(y2 - y1)
             emotion = ""
             emotion_confidence = 0.0
@@ -164,6 +189,7 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
     def _analyze_frame(self, frame: Any, enable_follow: bool) -> Tuple[List[Dict[str, Any]], Any]:
         tracked_box = None
         boxes: List[Tuple[int, int, int, int]] = []
+        raw_faces: Dict[int, Any] = {}
         onsensor_active = self._onsensor_active()
 
         if enable_follow and getattr(self, "_follow_active", False):
@@ -173,14 +199,17 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
         if not boxes and onsensor_active:
             boxes = self._onsensor_boxes_for_label(frame.shape, "person")
         if not boxes and not onsensor_active:
-            boxes = self._detect_face_boxes(frame)
+            boxes, raw_faces = self._detect_face_boxes_with_raw(frame)
 
-        parsed, annotated = self._process_face_boxes(frame, boxes, tracked_box)
+        parsed, annotated = self._process_face_boxes(frame, boxes, tracked_box, raw_faces=raw_faces)
 
         if enable_follow and getattr(self, "_follow_active", False):
             if getattr(self, "_follow_tracker", None) is None and parsed:
                 self._lock_tracker_from_candidates(frame, parsed)
-            self._drive_follow(parsed, frame.shape)
+            if parsed:
+                self._drive_follow(parsed, frame.shape)
+            elif hasattr(self, "_sweep_on_target_lost"):
+                self._sweep_on_target_lost()
 
         if not self.mode_flags.get("people", True):
             parsed = []
@@ -190,9 +219,11 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
 
         return parsed, annotated
 
-    def _detect_face_boxes(self, frame: Any) -> List[Tuple[int, int, int, int]]:
+    def _detect_face_boxes_with_raw(
+        self, frame: Any
+    ) -> Tuple[List[Tuple[int, int, int, int]], Dict[int, Any]]:
         if cv2 is None or frame is None or not getattr(frame, "size", 0):
-            return []
+            return [], {}
 
         # 1. Try YuNet deep learning detector first (<15ms, landmark-aware)
         try:
@@ -201,13 +232,23 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
             if yunet is not None and yunet.is_available:
                 detections = yunet.detect(frame)
                 if detections:
-                    return [tuple(d["bbox"]) for d in detections if len(d.get("bbox", [])) == 4]  # type: ignore
+                    boxes: List[Tuple[int, int, int, int]] = []
+                    raw_faces: Dict[int, Any] = {}
+                    for d in detections:
+                        bbox = d.get("bbox", [])
+                        if len(bbox) == 4:
+                            idx = len(boxes)
+                            boxes.append(tuple(bbox))  # type: ignore[arg-type]
+                            if d.get("raw_face") is not None:
+                                raw_faces[idx] = d["raw_face"]
+                    if boxes:
+                        return boxes, raw_faces
         except Exception as exc:
             logger.debug("YuNet face detection fallback: %s", exc)
 
         # 2. Fallback to Haar Cascade
         if self._face_cascade is None or self._face_cascade.empty():
-            return []
+            return [], {}
         try:
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             gray = cv2.equalizeHist(gray)
@@ -218,7 +259,7 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
                 minSize=(56, 56),
             )
         except Exception:
-            return []
+            return [], {}
 
         out: List[Tuple[int, int, int, int]] = []
         h, w = frame.shape[:2]
@@ -229,7 +270,11 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
             y2 = _clamp(int(y + fh), 0, h)
             if x2 > x1 and y2 > y1:
                 out.append((x1, y1, x2, y2))
-        return out
+        return out, {}
+
+    def _detect_face_boxes(self, frame: Any) -> List[Tuple[int, int, int, int]]:
+        boxes, _raw = self._detect_face_boxes_with_raw(frame)
+        return boxes
 
     def _estimate_face_distance_m(self, box_h: int) -> Optional[float]:
         if box_h <= 0:
@@ -309,21 +354,34 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
                 boxes.append((x1, y1, x2, y2))
         return boxes
 
-    def _onsensor_object_results(self) -> List[Dict[str, Any]]:
+    def _onsensor_object_results(self, frame_shape: Optional[Tuple[int, ...]] = None) -> List[Dict[str, Any]]:
         snap = self._latest_onsensor_snapshot()
         if snap is None:
             return []
+        w = int(frame_shape[1]) if frame_shape is not None and len(frame_shape) >= 2 else int(getattr(snap, "width", 0) or 0)
+        h = int(frame_shape[0]) if frame_shape is not None and len(frame_shape) >= 2 else int(getattr(snap, "height", 0) or 0)
         results: List[Dict[str, Any]] = []
         for det in getattr(snap, "detections", []) or []:
             label = str(getattr(det, "label", "")).strip()
             if not label or label.lower() == "person":
                 continue
-            bbox = list(getattr(det, "bbox_xyxy_norm", []) or [])
+            raw_norm = [float(v) for v in (getattr(det, "bbox_xyxy_norm", []) or [])]
+            bbox: List[Any] = raw_norm
+            coord_space = "norm"
+            if len(raw_norm) == 4 and w > 0 and h > 0 and max(raw_norm) <= 1.5:
+                x1 = _clamp(int(raw_norm[0] * w), 0, w - 1)
+                y1 = _clamp(int(raw_norm[1] * h), 0, h - 1)
+                x2 = _clamp(int(raw_norm[2] * w), x1 + 1, w)
+                y2 = _clamp(int(raw_norm[3] * h), y1 + 1, h)
+                bbox = [x1, y1, x2, y2]
+                coord_space = "px"
             results.append(
                 {
                     "label": label,
                     "confidence": float(getattr(det, "score", 0.0) or 0.0),
                     "bbox": bbox,
+                    "bbox_xyxy_norm": raw_norm,
+                    "coord_space": coord_space,
                     "distance_m": None,
                     "name": "",
                     "source": "imx500",

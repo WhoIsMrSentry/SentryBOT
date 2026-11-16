@@ -12,25 +12,13 @@ def test_gateway_url_helper_for_vlm_clients():
 
 
 def test_camera_gave_up_blocks_local_vision():
-    """Mirror VisionProcessor.is_camera_input_available local-path without importing cv2."""
-    processing_mode = "local"
-    is_http = False
-    camera_gave_up = True
-    latest_frame = None
-    capture_alive = False
+    """Verify real VisionProcessor.is_local_camera_available when camera hardware gave up."""
+    from modules.vlm_bridge.services.processor import VisionProcessor
 
-    available = True
-    if str(processing_mode).strip().lower() == "local":
-        if is_http:
-            available = False
-        elif camera_gave_up:
-            available = False
-        elif latest_frame is not None:
-            available = True
-        else:
-            available = capture_alive
-
-    assert available is False
+    proc = VisionProcessor({"vision": {"processing_mode": "local"}, "vision_llm": {"enabled": False}})
+    proc._camera_hardware_available = True
+    proc._camera_gave_up = True
+    assert proc.is_local_camera_available() is False
 
 
 def test_vision_event_bus_does_not_mutate_caller_dict():

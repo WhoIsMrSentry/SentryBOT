@@ -31,25 +31,9 @@ logger = logging.getLogger("vlm_bridge.follow")
 
 
 def _create_csrt_tracker() -> Optional[Any]:
-    try:
-        from . import processor
-        active_cv2 = getattr(processor, "cv2", cv2)
-    except Exception:
-        active_cv2 = cv2
-    if active_cv2 is None:
-        return None
-    if hasattr(active_cv2, "TrackerCSRT_create"):
-        try:
-            return active_cv2.TrackerCSRT_create()
-        except Exception:
-            pass
-    legacy = getattr(active_cv2, "legacy", None)
-    if legacy is not None and hasattr(legacy, "TrackerCSRT_create"):
-        try:
-            return legacy.TrackerCSRT_create()
-        except Exception:
-            pass
-    return None
+    from . import processor
+
+    return processor._create_csrt_tracker()
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -126,6 +110,15 @@ class ProcessorFollowMixin:
             self._follow_tracker = None
             self._follow_lost_frames = 0
             self._follow_current_bbox = None
+            self._pd_prev_dx = 0.0
+            self._pd_prev_dy = 0.0
+            self._pd_prev_ts = 0.0
+            self._sweep_step = 0
+        if self.head_arbiter is not None and hasattr(self.head_arbiter, "unlock"):
+            try:
+                self.head_arbiter.unlock()
+            except Exception:
+                pass
         if self.event_bus is not None:
             self.event_bus.publish(EVENT_FOLLOW_STOP, {})
         return {"ok": True, **self.follow_status()}
@@ -234,77 +227,174 @@ class ProcessorFollowMixin:
 
     def _drive_follow(self, results: List[Dict[str, Any]], frame_shape: Tuple[int, ...]) -> None:
         with self._follow_lock_obj():
-            if not self._follow_active or not results:
+            if not self._follow_active:
                 return
+            if not results:
+                pass
+            else:
+                now = time.monotonic()
+                if now - self._follow_last_track_ts < float(self._follow_cfg.get("track_interval_s", 0.12)):
+                    return
 
-            now = time.time()
-            if now - self._follow_last_track_ts < float(self._follow_cfg.get("track_interval_s", 0.12)):
-                return
-
-            selected = None
-            if self._follow_current_bbox is not None:
-                for res in results:
-                    b = res.get("bbox") or []
-                    if len(b) == 4 and tuple(int(v) for v in b) == self._follow_current_bbox:
-                        selected = res
-                        break
-            if selected is None:
-                target = str(self._follow_target or "").strip().lower()
-                if target:
+                selected = None
+                if self._follow_current_bbox is not None:
                     for res in results:
-                        name = str(res.get("name") or "").strip().lower()
-                        if name == target:
+                        b = res.get("bbox") or []
+                        if len(b) == 4 and tuple(int(v) for v in b) == self._follow_current_bbox:
                             selected = res
                             break
-            if selected is None:
-                selected = results[0]
+                if selected is None:
+                    target = str(self._follow_target or "").strip().lower()
+                    if target:
+                        for res in results:
+                            name = str(res.get("name") or "").strip().lower()
+                            if name == target:
+                                selected = res
+                                break
+                if selected is None:
+                    selected = results[0]
 
-            bbox = selected.get("bbox") or []
-            if len(bbox) != 4:
-                return
-            x1, y1, x2, y2 = [int(v) for v in bbox]
-            h, w = frame_shape[:2]
-            cx = (x1 + x2) * 0.5
-            cy = (y1 + y2) * 0.5
+                bbox = selected.get("bbox") or []
+                if len(bbox) != 4:
+                    return
+                x1, y1, x2, y2 = [int(v) for v in bbox]
+                h, w = frame_shape[:2]
+                cx = (x1 + x2) * 0.5
+                cy = (y1 + y2) * 0.5
 
-            dx_norm = (cx - (w * 0.5)) / max(1.0, w * 0.5)
-            dy_norm = (cy - (h * 0.5)) / max(1.0, h * 0.5)
+                dx_norm = (cx - (w * 0.5)) / max(1.0, w * 0.5)
+                dy_norm = (cy - (h * 0.5)) / max(1.0, h * 0.5)
 
-            pan = int(
-                round(
-                    float(self._follow_cfg.get("center_pan", 90))
-                    + dx_norm * float(self._follow_cfg.get("pan_gain_deg", 50.0))
+                # PD control term: proportional + damped derivative over normalized error
+                prev_ts = float(getattr(self, "_pd_prev_ts", 0.0) or 0.0)
+                dt = max(0.02, min(0.5, now - prev_ts)) if prev_ts > 0.0 else 0.12
+                prev_dx = float(getattr(self, "_pd_prev_dx", dx_norm)) if prev_ts > 0.0 else dx_norm
+                prev_dy = float(getattr(self, "_pd_prev_dy", dy_norm)) if prev_ts > 0.0 else dy_norm
+                d_dx = (dx_norm - prev_dx) / dt
+                d_dy = (dy_norm - prev_dy) / dt
+                self._pd_prev_dx = dx_norm
+                self._pd_prev_dy = dy_norm
+                self._pd_prev_ts = now
+                if abs(dx_norm) > 0.05:
+                    self._last_target_dir_x = 1 if dx_norm > 0 else -1
+                self._sweep_step = 0
+                self._follow_lost_frames = 0
+
+                kp = float(self._follow_cfg.get("pd_kp", 0.85))
+                kd = float(self._follow_cfg.get("pd_kd", 0.12))
+                ctrl_x = kp * dx_norm + kd * d_dx
+                ctrl_y = kp * dy_norm + kd * d_dy
+
+                pan = int(
+                    round(
+                        float(self._follow_cfg.get("center_pan", 90))
+                        + ctrl_x * float(self._follow_cfg.get("pan_gain_deg", 50.0))
+                    )
                 )
-            )
-            tilt = int(
-                round(
-                    float(self._follow_cfg.get("center_tilt", 90))
-                    + dy_norm * float(self._follow_cfg.get("tilt_gain_deg", 32.0))
+                tilt = int(
+                    round(
+                        float(self._follow_cfg.get("center_tilt", 90))
+                        + ctrl_y * float(self._follow_cfg.get("tilt_gain_deg", 32.0))
+                    )
                 )
-            )
 
-            pan = _clamp(
-                pan,
-                int(self._follow_cfg.get("min_pan", 35)),
-                int(self._follow_cfg.get("max_pan", 145)),
-            )
-            tilt = _clamp(
-                tilt,
-                int(self._follow_cfg.get("min_tilt", 65)),
-                int(self._follow_cfg.get("max_tilt", 125)),
-            )
+                pan = _clamp(
+                    pan,
+                    int(self._follow_cfg.get("min_pan", 35)),
+                    int(self._follow_cfg.get("max_pan", 145)),
+                )
+                tilt = _clamp(
+                    tilt,
+                    int(self._follow_cfg.get("min_tilt", 65)),
+                    int(self._follow_cfg.get("max_tilt", 125)),
+                )
 
-            target_name = str(self._follow_target or "").lower()
-            self._follow_last_track_ts = now
+                self._last_known_pan = float(pan)
+                self._last_known_tilt = float(tilt)
+                target_name = str(self._follow_target or "").lower()
+                self._follow_last_track_ts = now
 
+                if self.head_arbiter is not None and HeadCommand is not None:
+                    source = "owner_follow" if target_name in {"owner", "emir"} else "active_speaker"
+                    priority = 85 if source == "owner_follow" else 75
+                    lock_ttl = float(self._follow_cfg.get("active_lock_ttl_s", 2.0))
+                    if lock_ttl > 0.0 and hasattr(self.head_arbiter, "lock_source"):
+                        self.head_arbiter.lock_source(source, duration_s=lock_ttl)
+                else:
+                    source = ""
+                    priority = 0
+
+        if not results:
+            return
         if self.head_arbiter is not None and HeadCommand is not None:
-            source = "owner_follow" if target_name in {"owner", "emir"} else "active_speaker"
-            priority = 85 if source == "owner_follow" else 75
             self.head_arbiter.request_move(
                 HeadCommand(pan=float(pan), tilt=float(tilt), source=source, priority=priority, ttl_s=1.0)
             )
         else:
             self._send_track(pan=pan, tilt=tilt, drive=0)
+
+    def _sweep_on_target_lost(self) -> Optional[Dict[str, Any]]:
+        """Perform a bounded gentle sweep toward last known target direction when lost."""
+        with self._follow_lock_obj():
+            if not self._follow_active or not bool(self._follow_cfg.get("sweep_enabled", True)):
+                return None
+            self._follow_lost_frames += 1
+            after_n = max(1, int(self._follow_cfg.get("sweep_after_lost_frames", 4)))
+            max_steps = max(1, int(self._follow_cfg.get("sweep_max_steps", 12)))
+            if self._follow_lost_frames < after_n:
+                return None
+            step = int(getattr(self, "_sweep_step", 0))
+            if step >= max_steps:
+                return None
+            now = time.monotonic()
+            interval = max(float(self._follow_cfg.get("track_interval_s", 0.12)), 0.18)
+            if now - self._follow_last_track_ts < interval:
+                return None
+            self._sweep_step = step + 1
+            self._follow_last_track_ts = now
+
+            direction = int(getattr(self, "_last_target_dir_x", 1) or 1)
+            step_deg = float(self._follow_cfg.get("sweep_step_deg", 4.0))
+            span_deg = float(self._follow_cfg.get("sweep_span_deg", 24.0))
+            half_cycle = max(1, int(round(span_deg / max(1.0, step_deg))))
+            phase = step % (half_cycle * 2)
+            signed_offset = (phase if phase <= half_cycle else (half_cycle * 2 - phase)) * step_deg * direction
+            base_pan = float(getattr(self, "_last_known_pan", self._follow_cfg.get("center_pan", 90)))
+            base_tilt = float(getattr(self, "_last_known_tilt", self._follow_cfg.get("center_tilt", 90)))
+            pan = float(
+                _clamp(
+                    int(round(base_pan + signed_offset)),
+                    int(self._follow_cfg.get("min_pan", 35)),
+                    int(self._follow_cfg.get("max_pan", 145)),
+                )
+            )
+            tilt = float(
+                _clamp(
+                    int(round(base_tilt)),
+                    int(self._follow_cfg.get("min_tilt", 65)),
+                    int(self._follow_cfg.get("max_tilt", 125)),
+                )
+            )
+            target_name = str(self._follow_target or "").lower()
+            source = "owner_follow" if target_name in {"owner", "emir"} else "active_speaker"
+            priority = 80 if source == "owner_follow" else 72
+
+        if self.head_arbiter is not None and HeadCommand is not None:
+            return self.head_arbiter.request_move(
+                HeadCommand(pan=pan, tilt=tilt, source=source, priority=priority, ttl_s=1.0)
+            )
+        self._send_track(pan=int(pan), tilt=int(tilt), drive=0)
+        return {"ok": True, "pan": pan, "tilt": tilt, "sweep_step": step + 1}
+
+    def _track_http_session(self) -> requests.Session:
+        sess = getattr(self, "_track_session", None)
+        if sess is None:
+            with _FOLLOW_LOCK_INIT_LOCK:
+                sess = getattr(self, "_track_session", None)
+                if sess is None:
+                    sess = requests.Session()
+                    self._track_session = sess
+        return sess
 
     def _send_track(self, pan: int, tilt: int, drive: int = 0) -> None:
         if self._track_callback is not None:
@@ -317,7 +407,7 @@ class ProcessorFollowMixin:
         try:
             from modules.gateway.url import gateway_url
 
-            requests.post(
+            self._track_http_session().post(
                 gateway_url(self._gateway_base, "/vlm/track"),
                 params={"head_pan": float(pan), "head_tilt": float(tilt), "drive": int(drive)},
                 timeout=0.25,

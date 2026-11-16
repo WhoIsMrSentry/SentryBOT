@@ -84,16 +84,30 @@ class HeadControlArbiter:
         self._last_cmd_time: float = 0.0
         self._last_pan_sent: float = self.center_pan
         self._last_tilt_sent: float = self.center_tilt
+        self._last_target_pan: float = self.center_pan
+        self._last_target_tilt: float = self.center_tilt
         self._source_lock: Optional[str] = None
         self._source_lock_until: float = 0.0
+        self._source_lock_explicit: bool = False
         self._move_fn: Optional[Callable] = None
+        self._active_lock_ttl_s = max(0.0, float(follow_cfg.get("active_lock_ttl_s", 2.0)))
 
     def set_move_callback(self, fn: Callable) -> None:
-        self._move_fn = fn
+        with self._lock:
+            self._move_fn = fn
 
     def request_move(self, cmd: HeadCommand) -> Dict[str, Any]:
+        move_fn: Optional[Callable] = None
         with self._lock:
-            return self._evaluate(cmd)
+            result, pan, tilt, move_fn = self._evaluate_locked(cmd)
+        if not result.get("ok") or move_fn is None:
+            return result
+        try:
+            move_fn(pan, tilt)
+        except Exception as exc:
+            logger.warning("Head move callback failed: %s", exc)
+            return {"ok": False, "reason": "move_error", "error": str(exc)}
+        return result
 
     def move(self, pan: float, tilt: float, source: str = "autonomy", priority: int = 30) -> Dict[str, Any]:
         return self.request_move(HeadCommand(pan=pan, tilt=tilt, source=source, priority=priority))
@@ -102,11 +116,13 @@ class HeadControlArbiter:
         with self._lock:
             self._source_lock = source
             self._source_lock_until = time.time() + duration_s
+            self._source_lock_explicit = True
 
     def unlock(self) -> None:
         with self._lock:
             self._source_lock = None
             self._source_lock_until = 0.0
+            self._source_lock_explicit = False
 
     @property
     def current_position(self) -> Dict[str, float]:
@@ -121,54 +137,77 @@ class HeadControlArbiter:
                 "lock_remaining_s": max(0, self._source_lock_until - time.time()),
             }
 
-    def _evaluate(self, cmd: HeadCommand) -> Dict[str, Any]:
+    def _evaluate_locked(self, cmd: HeadCommand) -> tuple[Dict[str, Any], float, float, Optional[Callable]]:
         now = time.time()
         if cmd.expired:
-            return {"ok": False, "reason": "expired"}
+            return {"ok": False, "reason": "expired"}, 0.0, 0.0, None
 
         # Source lock check
         if self._source_lock and self._source_lock_until > now:
             locked_pri = _SOURCE_PRIORITY.get(self._source_lock, 0)
             cmd_pri = cmd.priority or _SOURCE_PRIORITY.get(cmd.source, 0)
             if cmd_pri < locked_pri and cmd.source != self._source_lock:
-                return {"ok": False, "reason": "source_locked", "locked_by": self._source_lock}
+                return {"ok": False, "reason": "source_locked", "locked_by": self._source_lock}, 0.0, 0.0, None
         elif self._source_lock and self._source_lock_until <= now:
             self._source_lock = None
+            self._source_lock_explicit = False
 
         # Rate limit
         min_interval = 1.0 / max(1, self.max_rate_hz)
         if now - self._last_cmd_time < min_interval:
-            return {"ok": False, "reason": "rate_limited"}
+            return {"ok": False, "reason": "rate_limited"}, 0.0, 0.0, None
 
-        # Clamp
-        pan = max(self.min_pan, min(self.max_pan, cmd.pan))
-        tilt = max(self.min_tilt, min(self.max_tilt, cmd.tilt))
+        # Clamp requested target
+        target_pan = max(self.min_pan, min(self.max_pan, float(cmd.pan)))
+        target_tilt = max(self.min_tilt, min(self.max_tilt, float(cmd.tilt)))
 
-        # Deadband
-        if (abs(pan - self._last_pan_sent) < self.deadband_deg and
-                abs(tilt - self._last_tilt_sent) < self.deadband_deg):
-            return {"ok": False, "reason": "deadband"}
+        # Deadband: allow settling when target stays the same until within 0.5 deg,
+        # while suppressing small target jitter inside deadband around last sent pose.
+        same_target = (
+            abs(target_pan - self._last_target_pan) < 0.25
+            and abs(target_tilt - self._last_target_tilt) < 0.25
+        )
+        pan_err = abs(target_pan - self._last_pan_sent)
+        tilt_err = abs(target_tilt - self._last_tilt_sent)
+        if same_target:
+            if pan_err < 0.5 and tilt_err < 0.5:
+                return {"ok": False, "reason": "deadband"}, 0.0, 0.0, None
+        elif pan_err < self.deadband_deg and tilt_err < self.deadband_deg:
+            return {"ok": False, "reason": "deadband"}, 0.0, 0.0, None
 
-        # Smooth interpolation
-        pan = self._current_pan * self.smooth_alpha + pan * (1 - self.smooth_alpha)
-        tilt = self._current_tilt * self.smooth_alpha + tilt * (1 - self.smooth_alpha)
+        # Smooth interpolation toward target; snap the final small residual to avoid lock-out
+        pan = self._current_pan * self.smooth_alpha + target_pan * (1.0 - self.smooth_alpha)
+        tilt = self._current_tilt * self.smooth_alpha + target_tilt * (1.0 - self.smooth_alpha)
+        if abs(target_pan - pan) < 0.5:
+            pan = target_pan
+        if abs(target_tilt - tilt) < 0.5:
+            tilt = target_tilt
         pan = max(self.min_pan, min(self.max_pan, round(pan, 1)))
         tilt = max(self.min_tilt, min(self.max_tilt, round(tilt, 1)))
 
-        # Execute
+        # Auto-protect active high-priority follow/speaker leases against background idle drift
+        # without clobbering an explicit lock_source() lease from another caller.
+        eff_pri = cmd.priority or _SOURCE_PRIORITY.get(cmd.source, 0)
+        if self._active_lock_ttl_s > 0.0 and cmd.source in ("active_speaker", "owner_follow"):
+            locked_pri = _SOURCE_PRIORITY.get(self._source_lock or "", 0)
+            if not self._source_lock or self._source_lock_until <= now:
+                self._source_lock = cmd.source
+                self._source_lock_until = now + self._active_lock_ttl_s
+                self._source_lock_explicit = False
+            elif self._source_lock == cmd.source:
+                self._source_lock_until = max(self._source_lock_until, now + self._active_lock_ttl_s)
+            elif not self._source_lock_explicit and eff_pri > locked_pri:
+                self._source_lock = cmd.source
+                self._source_lock_until = now + self._active_lock_ttl_s
+
         self._current_pan = pan
         self._current_tilt = tilt
         self._last_pan_sent = pan
         self._last_tilt_sent = tilt
+        self._last_target_pan = target_pan
+        self._last_target_tilt = target_tilt
         self._last_cmd_time = now
 
-        if self._move_fn:
-            try:
-                self._move_fn(pan, tilt)
-            except Exception as exc:
-                logger.warning("Head move callback failed: %s", exc)
-                return {"ok": False, "reason": "move_error", "error": str(exc)}
-
-        return {"ok": True, "pan": pan, "tilt": tilt}
+        return {"ok": True, "pan": pan, "tilt": tilt}, pan, tilt, self._move_fn
 
 __all__ = ["HeadControlArbiter", "HeadCommand"]

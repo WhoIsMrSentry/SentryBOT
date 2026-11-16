@@ -11,11 +11,11 @@ Mimari detaylar, sınıf yapıları ve veri akış diyagramları için:
 
 ## 🚀 Temel Yetenekler
 
-1. **Hibrit Çok Modlu Çıkarım:** Hem yerel Ollama (`qwen2.5-vl`, `llama3.2-vision`) hem de bulut Google AI Studio (`gemini-2.5-flash`) desteği.
-2. **Çıkarım Bütçe Yöneticisi (`InferenceBudgetManager`):** Token tüketimini, kare hızını ve API maliyetlerini koruyan hız sınırlayıcı (rate limiter).
-3. **Görsel Bağlam Önbelleği (`VisualContext`):** Ajanın anlık kararlar alabilmesi için son sahne açıklamasını ve nesneleri RAM'de hazır tutar.
-4. **Yüz ve Duygu Algılama (`FaceEmotionClassifier`):** İnsan yüzlerini ve yüzdeki duygusal ifadeleri algılayarak robotun anlık tepki vermesini sağlar.
-5. **Kafa Yönlendirme:** İnsan yüzüne veya hareketli nesnelere odaklanmak için pan/tilt açı farkları üretir.
+1. **Hibrit Çok Modlu Çıkarım:** Yerel Ollama (`qwen3.5:9b`, `single_model_mode: false` ile özelleştirilebilir), bulut Google AI Studio (`gemini`) ve uzak GPU sunucusu (`remote_multimodal_server` — cheap/semantic ayrımı) desteği.
+2. **Görsel Örnekleme ve Bütçe Kapısı (`VisionSampler`, `VisionRequestGate`):** Hareket/sahne değişikliği debouncing'i ve thread-safe `vision_semantic_budget` ile gereksiz VLM çağrılarını önler.
+3. **Kilitli Yüz Tanıma ve Kimlik Hafızası (`YuNetDetector`, `FaceManager`, `PersonIdentityManager`):** RLock korumalı yüz tespiti/eşleme (kırpılmış ROI'de tek tarama), yüz duygu kestirimi ve atomik JSON / `SocialDB` kişi kaydı.
+4. **PD Takip & Kafa Yönlendirme Hakemi (`HeadControlArbiter`, `ProcessorFollowMixin`):** Kilit dışında çalışan non-blocking pan/tilt komutu, otomatik öncelik kilidi koruması, PD yumuşatma ve hedef kaybında yönlü tarama (sweep).
+5. **Asenkron Yan Etki & Talep Odaklı MJPEG:** TTS/Ollama/action ağ çağrıları ayrı `_side_effect_queue` işçisinde çalışır; `/vlm/video_feed` yalnız aktif izleyici varken JPEG kodlar.
 
 ---
 
@@ -26,14 +26,16 @@ Mimari detaylar, sınıf yapıları ve veri akış diyagramları için:
 import httpx
 
 resp = httpx.get("http://127.0.0.1:8080/vlm/context/latest")
-context = resp.json()
+context = (resp.json() or {}).get("context") or {}
 print("Son Sahne Özeti:", context.get("scene"))
 print("Görülen Nesneler:", context.get("objects"))
 ```
 
-### 2. Anlık Sahne Açıklaması Tetikleme (cURL)
+### 2. Anlık Sahne Sorusu Tetikleme (cURL)
 ```bash
-curl -X POST http://127.0.0.1:8080/vlm/describe
+curl -X POST http://127.0.0.1:8080/vlm/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Önümde ne görüyorsun?"}'
 ```
 
 ---
@@ -42,11 +44,20 @@ curl -X POST http://127.0.0.1:8080/vlm/describe
 
 | Metot | Endpoint | Açıklama |
 |---|---|---|
-| `GET` | `/vlm/healthz` | VLM köprüsü ve model bağlantı durumu |
 | `GET` | `/vlm/context/latest` | En son çıkarılan sahne bağlamı ve nesneler |
-| `GET` | `/vlm/results/latest` | Ham model yanıtı ve ayrıntılı çıkarım çıktısı |
-| `POST` | `/vlm/describe` | Anlık kare yakalayıp sahneyi VLM'e tarif ettirir |
-| `POST` | `/vlm/target/follow` | Kafa takibini belirli bir hedefe odaklar |
+| `POST` | `/vlm/context/refresh` | Güncel karede VLM sahne özetini yeniler |
+| `GET` | `/vlm/results/latest` | Son tespit edilen nesne/kişi sonuçları |
+| `POST` | `/vlm/results` | Uzak algılama sonuçlarını alır (`X-Auth-Token` fail-closed + Pydantic şema doğrulama) |
+| `POST` | `/vlm/ask` | Güncel kare hakkında doğrudan VLM sorusu yanıtlar |
+| `POST` | `/vlm/analyze` | Tek kare yerel yüz/nesne/duygu analizi yapar |
+| `POST` | `/vlm/ocr` | Uzak sunucu üzerinden metin okuma (OCR) çalıştırır |
+| `POST` | `/vlm/follow/start` | Yüz/kişi takibini (ve `owner` takibini) başlatır |
+| `POST` | `/vlm/follow/stop` | Kafa takibini durdurur |
+| `GET` | `/vlm/follow/status` | Takip ve PD/sweep durumunu döner |
+| `GET` / `POST` | `/vlm/head/status`, `/vlm/head/move` | `HeadControlArbiter` durumunu okur veya pan/tilt ister |
+| `GET` / `POST` | `/vlm/people`, `/vlm/person/remember`, `/vlm/person/relationship` | Kilitli kişi hafızası ve ilişki yönetimi |
+| `GET` | `/vlm/video_feed` | Talep odaklı açıklamalı MJPEG kamera akışı |
+| `GET` | `/vlm/remote_mm/health` | Uzak multimodal GPU sunucusu erişim ve görev ayrımı durumu |
 
 ---
 
