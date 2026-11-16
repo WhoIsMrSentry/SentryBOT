@@ -33,7 +33,8 @@ class ConsoleRenderer:
     def __init__(self, *, colors: bool = True, max_width: int = 92, border: str = "rounded") -> None:
         self.colors = colors and self._stream_supports_color()
         self.max_width = max(54, int(max_width or 92))
-        self.border = UNICODE_BORDER if border != "ascii" and self._stream_supports_unicode() else ASCII_BORDER
+        self.ascii_mode = (border == "ascii") or (not self._stream_supports_unicode())
+        self.border = ASCII_BORDER if self.ascii_mode else UNICODE_BORDER
 
     def _stream_supports_color(self) -> bool:
         if os.getenv("NO_COLOR"):
@@ -106,7 +107,9 @@ class ConsoleRenderer:
     def progress(self, ratio: float, width: int = 12) -> str:
         ratio = max(0.0, min(1.0, float(ratio)))
         filled = int(round(width * ratio))
-        return "█" * filled + "░" * (width - filled)
+        full_ch = "#" if self.ascii_mode else "█"
+        empty_ch = "-" if self.ascii_mode else "░"
+        return full_ch * filled + empty_ch * (width - filled)
 
     def event_line(self, event: RuntimeEvent) -> str:
         created = time_label(event.created_at)

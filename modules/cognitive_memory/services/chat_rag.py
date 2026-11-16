@@ -6,10 +6,10 @@ import math
 import sqlite3
 import threading
 import time
-from contextlib import closing
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from ..utils import backup_sqlite_connection, resolve_repo_path
 from .text_utils import _stem_tokens, _tokens
 
 logger = logging.getLogger("cognitive_memory.chat_rag")
@@ -18,13 +18,7 @@ EmbedFn = Callable[[str], Any]
 
 
 class ChatRAG:
-    """Semantic long-term chat memory store (SQLite + optional embedding provider).
-
-    Stores chat chunks that outlive the 16-episode per-person window in
-    SocialDB chat_episodes, then recalls them with FTS5 keyword ranking plus an
-    optional embedding-based semantic rerank. Runs on Raspberry Pi without any
-    external vector database.
-    """
+    """Semantic long-term chat memory store (persistent SQLite + FTS5 + embedding rerank)."""
 
     DEFAULTS: Dict[str, Any] = {
         "enabled": True,
@@ -39,22 +33,29 @@ class ChatRAG:
         self.cfg = dict(self.DEFAULTS)
         self.cfg.update(cfg)
         self.enabled = bool(self.cfg.get("enabled", True))
-        self.path = Path(str(self.cfg.get("db_path") or self.DEFAULTS["db_path"]))
-        if not self.path.is_absolute():
-            self.path = Path.cwd() / self.path
+        self.path = resolve_repo_path(str(self.cfg.get("db_path") or self.DEFAULTS["db_path"]))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fts_available = False
         self._embed_fn: Optional[EmbedFn] = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._conn = self._open_conn()
         self._init_db()
 
-    def _connect(self) -> sqlite3.Connection:
-        con = sqlite3.connect(str(self.path), timeout=10.0)
+    def _open_conn(self) -> sqlite3.Connection:
+        con = sqlite3.connect(str(self.path), timeout=10.0, check_same_thread=False)
         con.row_factory = sqlite3.Row
         return con
 
+    def close(self) -> None:
+        with self._lock:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+
     def _init_db(self) -> None:
-        with closing(self._connect()) as con:
+        with self._lock:
+            con = self._conn
             con.execute("PRAGMA journal_mode=WAL")
             con.execute("PRAGMA synchronous=NORMAL")
             con.execute(
@@ -109,6 +110,19 @@ class ChatRAG:
         raw = f"{person_id}|{role}|{text}|{ts:.3f}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
+    def _compute_embedding(self, text: str) -> tuple[Optional[bytes], int]:
+        if self._embed_fn is None:
+            return None, 0
+        try:
+            vec = self._embed_fn(f"passage: {text}")
+            if vec is not None:
+                import numpy as np
+
+                return np.asarray(vec, dtype="float32").tobytes(), 1
+        except Exception:
+            pass
+        return None, 0
+
     def ingest(
         self,
         *,
@@ -126,21 +140,10 @@ class ChatRAG:
         pid = str(person_id or "")
         t = float(ts if ts is not None else time.time())
         key = self._episode_key(pid, str(role or ""), cleaned[:400], t)
-        embedding = None
-        embed_state = 0
+        embedding, embed_state = self._compute_embedding(cleaned)
         try:
-            if self._embed_fn is not None:
-                embedding = self._embed_fn(f"passage: {cleaned}")
-                if embedding is not None:
-                    import numpy as np
-
-                    embedding = np.asarray(embedding, dtype="float32").tobytes()
-                    embed_state = 1
-        except Exception:
-            embedding = None
-            embed_state = 0
-        try:
-            with closing(self._connect()) as con:
+            with self._lock:
+                con = self._conn
                 con.execute(
                     """
                     INSERT OR IGNORE INTO chat_chunks
@@ -156,10 +159,7 @@ class ChatRAG:
                     )
                     row = cur.fetchone()
                     if row is not None:
-                        con.execute(
-                            "DELETE FROM chat_fts WHERE id=?",
-                            (int(row["id"]),),
-                        )
+                        con.execute("DELETE FROM chat_fts WHERE id=?", (int(row["id"]),))
                         con.execute(
                             "INSERT INTO chat_fts(id, role, text, kind) VALUES (?, ?, ?, ?)",
                             (int(row["id"]), str(row["role"]), str(row["text"]), str(row["kind"])),
@@ -174,7 +174,8 @@ class ChatRAG:
         if not self.enabled or not str(text or "").strip():
             return False
         try:
-            with closing(self._connect()) as con:
+            with self._lock:
+                con = self._conn
                 con.execute(
                     """
                     INSERT INTO chat_summaries (person_id, day, text, ts)
@@ -190,16 +191,12 @@ class ChatRAG:
             return False
 
     def day_summaries(self, *, person_id: Any, limit: int = 7) -> List[Dict[str, Any]]:
-        with closing(self._connect()) as con:
-            rows = con.execute(
-                "SELECT day, text, ts FROM chat_summaries WHERE person_id=? "
-                "ORDER BY day DESC LIMIT ?",
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT day, text, ts FROM chat_summaries WHERE person_id=? ORDER BY day DESC LIMIT ?",
                 (str(person_id or ""), max(1, min(60, int(limit)))),
             ).fetchall()
-        return [
-            {"day": str(row["day"]), "text": str(row["text"]), "ts": float(row["ts"])}
-            for row in rows
-        ]
+        return [{"day": str(row["day"]), "text": str(row["text"]), "ts": float(row["ts"])} for row in rows]
 
     def recall(
         self,
@@ -213,33 +210,47 @@ class ChatRAG:
             return []
         q = str(query or "").strip()
         k = max(1, min(30, int(limit or self.cfg.get("recall_limit", 6))))
+        pid_str = str(person_id or "")
         q_tokens = set(_tokens(q))
-        kind_set = {str(x).strip().lower() for x in (kinds or []) if str(x).strip()}
+        kind_list = sorted({str(x).strip().lower() for x in (kinds or []) if str(x).strip()})
+
         rows: List[sqlite3.Row] = []
-        with closing(self._connect()) as con:
+        with self._lock:
+            con = self._conn
             if q and self._fts_available and q_tokens:
                 try:
-                    fts_query = " OR ".join(f'"{t}"' for t in sorted(q_tokens))
-                    sql = """
+                    fts_query = " OR ".join(f'"{t.replace(chr(34), "")}"' for t in sorted(q_tokens))
+                    clauses = ["chat_fts MATCH ?"]
+                    params: List[Any] = [fts_query]
+                    if pid_str:
+                        clauses.append("c.person_id = ?")
+                        params.append(pid_str)
+                    if kind_list:
+                        clauses.append(f"LOWER(c.kind) IN ({','.join(['?'] * len(kind_list))})")
+                        params.extend(kind_list)
+                    sql = f"""
                         SELECT c.* FROM chat_fts f JOIN chat_chunks c ON c.id=f.id
-                        WHERE chat_fts MATCH ?
+                        WHERE {' AND '.join(clauses)}
                         ORDER BY bm25(chat_fts), c.ts DESC
-                        LIMIT 200
+                        LIMIT ?
                     """
-                    rows = con.execute(sql, (fts_query,)).fetchall()
+                    params.append(k * 6)
+                    rows = con.execute(sql, params).fetchall()
                 except Exception:
                     rows = []
-            # Merge recent/embedded chunks so semantic reranking works even with zero keyword overlap
             if not rows or self._embed_fn is not None:
-                if person_id:
-                    extra_rows = con.execute(
-                        "SELECT * FROM chat_chunks WHERE person_id=? ORDER BY ts DESC LIMIT 200",
-                        (str(person_id),),
-                    ).fetchall()
-                else:
-                    extra_rows = con.execute(
-                        "SELECT * FROM chat_chunks ORDER BY ts DESC LIMIT 200"
-                    ).fetchall()
+                clauses2: List[str] = []
+                params2: List[Any] = []
+                if pid_str:
+                    clauses2.append("person_id = ?")
+                    params2.append(pid_str)
+                if kind_list:
+                    clauses2.append(f"LOWER(kind) IN ({','.join(['?'] * len(kind_list))})")
+                    params2.extend(kind_list)
+                where_sql = f"WHERE {' AND '.join(clauses2)} " if clauses2 else ""
+                sql_extra = f"SELECT * FROM chat_chunks {where_sql}ORDER BY ts DESC LIMIT ?"
+                params2.append(max(40, k * 8))
+                extra_rows = con.execute(sql_extra, params2).fetchall()
                 seen_ids = {int(r["id"]) for r in rows}
                 for r in extra_rows:
                     if int(r["id"]) not in seen_ids:
@@ -248,33 +259,32 @@ class ChatRAG:
 
         now = time.time()
         q_stems = _stem_tokens(q)
-        scored = []
+        scored: List[Dict[str, Any]] = []
         for row in rows:
-            if person_id and str(row["person_id"] or "") != str(person_id):
-                continue
-            if kind_set and str(row["kind"] or "").lower() not in kind_set:
-                continue
             chunk_tokens = _stem_tokens(str(row["text"])) | _stem_tokens(str(row["role"]))
             overlap = len(q_stems & chunk_tokens) / max(1, len(q_stems)) if q_stems else 0.0
             age_hours = max(0.0, (now - float(row["ts"] or now)) / 3600.0)
             recency = 1.0 / (1.0 + math.log1p(age_hours))
             score = 0.65 * overlap + 0.35 * recency
-            typed: Dict[str, Any] = {
-                "id": int(row["id"]),
-                "ts": float(row["ts"]),
-                "person_id": str(row["person_id"] or ""),
-                "role": str(row["role"] or ""),
-                "kind": str(row["kind"] or ""),
-                "text": str(row["text"] or ""),
-                "embed_state": int(row["embed_state"] or 0),
-                "score": round(max(0.0, min(1.0, score)), 4),
-            }
-            scored.append(typed)
+            scored.append(
+                {
+                    "id": int(row["id"]),
+                    "ts": float(row["ts"]),
+                    "person_id": str(row["person_id"] or ""),
+                    "role": str(row["role"] or ""),
+                    "kind": str(row["kind"] or ""),
+                    "text": str(row["text"] or ""),
+                    "embed_state": int(row["embed_state"] or 0),
+                    "score": round(max(0.0, min(1.0, score)), 4),
+                    "_blob": row["embedding"],
+                }
+            )
 
-        semantic = self._semantic_rerank(q, scored, person_id)
-        if semantic is not None:
-            for item in scored:
-                item["semantic"] = round(float(semantic.get(item["id"], 0.0)), 4)
+        semantic = self._semantic_rerank(q, scored)
+        for item in scored:
+            item.pop("_blob", None)
+            if semantic is not None and item["id"] in semantic:
+                item["semantic"] = round(float(semantic[item["id"]]), 4)
                 item["score"] = round(
                     max(0.0, min(1.0, 0.35 * item["score"] + 0.65 * max(0.0, item["semantic"]))),
                     4,
@@ -282,37 +292,33 @@ class ChatRAG:
         scored.sort(key=lambda x: (x["score"], x["ts"]), reverse=True)
         return scored[:k]
 
-    def _semantic_rerank(
-        self, query: str, scored: List[Dict[str, Any]], person_id: Any
-    ) -> Optional[Dict[int, float]]:
+    def _semantic_rerank(self, query: str, scored: List[Dict[str, Any]]) -> Optional[Dict[int, float]]:
         if self._embed_fn is None or not scored or not str(query or "").strip():
             return None
         try:
             import numpy as np
 
             q_vec = np.asarray(self._embed_fn(f"query: {query}"), dtype="float32")
+            q_norm = max(1e-9, float(np.linalg.norm(q_vec)))
+            q_vec = q_vec / q_norm
+
             ids: List[int] = []
             vecs: List[Any] = []
-            with closing(self._connect()) as con:
-                placeholders = ",".join(["?"] * len(scored))
-                rows = con.execute(
-                    f"SELECT id, embedding FROM chat_chunks WHERE id IN ({placeholders})",
-                    [item["id"] for item in scored],
-                ).fetchall()
-            for row in rows:
-                blob = row["embedding"]
+            for item in scored:
+                blob = item.get("_blob")
                 if not blob:
                     continue
                 vec = np.frombuffer(blob, dtype="float32")
+                if vec.shape != q_vec.shape:
+                    continue
                 vecs.append(vec / max(1e-9, float(np.linalg.norm(vec))))
-                ids.append(int(row["id"]))
+                ids.append(int(item["id"]))
             if not vecs:
                 return None
             sim = np.asarray(vecs, dtype="float32") @ q_vec
             out_scores: Dict[int, float] = {}
             for i, raw_s in zip(ids, sim):
                 s = float(raw_s)
-                # E5 cosine similarities lie in [0.72, 0.94]; calibrate to [0.0, 1.0]
                 calibrated = max(0.0, min(1.0, (s - 0.72) / 0.18)) if s > 0.65 else max(0.0, s)
                 out_scores[i] = calibrated
             return out_scores
@@ -320,11 +326,37 @@ class ChatRAG:
             logger.debug("semantic rerank failed: %s", exc)
             return None
 
+    def backfill_embeddings(self, batch_size: int = 32) -> int:
+        """Compute embeddings in background for chunks left with embed_state=0."""
+        if not self.enabled or self._embed_fn is None:
+            return 0
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, text FROM chat_chunks WHERE embed_state = 0 ORDER BY ts DESC LIMIT ?",
+                (max(1, int(batch_size)),),
+            ).fetchall()
+        updates: List[tuple[bytes, int]] = []
+        for row in rows:
+            blob, ok = self._compute_embedding(str(row["text"] or ""))
+            if ok and blob is not None:
+                updates.append((blob, int(row["id"])))
+        if not updates:
+            return 0
+        with self._lock:
+            self._conn.executemany(
+                "UPDATE chat_chunks SET embedding = ?, embed_state = 1 WHERE id = ?",
+                updates,
+            )
+            self._conn.commit()
+        return len(updates)
+
+    def backup(self, dest_path: str | Path) -> Path:
+        """Create a safe online SQLite snapshot via sqlite3.Connection.backup()."""
+        return backup_sqlite_connection(self._conn, self._lock, dest_path)
+
     def build_context(self, query: str, *, person_id: Any = "", limit: Optional[int] = None) -> Dict[str, Any]:
         items = self.recall(query, person_id=person_id, limit=limit)
-        lines = []
-        for item in items:
-            lines.append(f"- [{item['role']}] {item['text']}")
+        lines = [f"- [{item['role']}] {item['text']}" for item in items]
         return {
             "ok": True,
             "available": self.enabled,
@@ -336,14 +368,15 @@ class ChatRAG:
     def prune(self) -> int:
         max_per_person = int(self.cfg.get("max_per_person", self.DEFAULTS["max_per_person"]))
         try:
-            with closing(self._connect()) as con:
+            with self._lock:
+                con = self._conn
                 cur = con.execute(
                     """
                     DELETE FROM chat_chunks
                     WHERE id IN (
                         SELECT id FROM (
                             SELECT id, ROW_NUMBER() OVER (
-                                PARTITION BY person_id ORDER BY ts DESC
+                                PARTITION BY person_id ORDER BY ts DESC, id DESC
                             ) AS rn
                             FROM chat_chunks
                         ) WHERE rn > ?
@@ -359,14 +392,13 @@ class ChatRAG:
             return 0
 
     def stats(self) -> Dict[str, Any]:
-        with closing(self._connect()) as con:
+        with self._lock:
+            con = self._conn
             total = int(con.execute("SELECT COUNT(*) FROM chat_chunks").fetchone()[0])
             by_person: Dict[str, int] = {}
             for row in con.execute("SELECT person_id, COUNT(*) FROM chat_chunks GROUP BY person_id").fetchall():
                 by_person[str(row[0] or "?")] = int(row[1])
-            embedded = int(
-                con.execute("SELECT COUNT(*) FROM chat_chunks WHERE embed_state=1").fetchone()[0]
-            )
+            embedded = int(con.execute("SELECT COUNT(*) FROM chat_chunks WHERE embed_state=1").fetchone()[0])
             summaries = int(con.execute("SELECT COUNT(*) FROM chat_summaries").fetchone()[0])
         return {
             "ok": True,
@@ -375,23 +407,25 @@ class ChatRAG:
             "fts": self._fts_available,
             "total_chunks": total,
             "embedded_chunks": embedded,
+            "pending_embeddings": max(0, total - embedded),
             "summaries": summaries,
             "by_person": by_person,
         }
 
     def reset(self) -> int:
         try:
-            with closing(self._connect()) as con:
+            with self._lock:
+                con = self._conn
                 deleted = int(con.execute("DELETE FROM chat_chunks").rowcount or 0)
                 con.execute("DELETE FROM chat_fts")
                 con.commit()
-            return deleted
+                return deleted
         except Exception as exc:
             logger.debug("chat_rag reset failed: %s", exc)
             return 0
 
 
-__all__ = ["ChatRAG", "get_default"]
+__all__ = ["ChatRAG", "get_default", "reset_default"]
 
 _default_rag: Optional[ChatRAG] = None
 _default_lock = threading.Lock()
@@ -416,6 +450,15 @@ def get_default(cfg: Optional[Dict[str, Any]] = None) -> ChatRAG:
         return _default_rag
 
 
+def reset_default() -> None:
+    global _default_rag
+    with _default_lock:
+        if _default_rag is not None:
+            _default_rag.close()
+        _default_rag = None
+
+
 def _hook_embedding_provider(rag: ChatRAG) -> None:
     from .embedding_hook import hook_embedding_provider
+
     hook_embedding_provider(rag, name="chat_rag")

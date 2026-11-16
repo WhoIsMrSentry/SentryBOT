@@ -22,10 +22,20 @@ except Exception:
     from modules.vlm_bridge.services.llm_client import generate_text  # type: ignore
 
 logger = logging.getLogger("vlm_bridge.identity_events")
+_ORIG_REQUESTS_POST = requests.post
 
 
 class ProcessorIdentityEventsMixin:
     """Blind mode speech, proximity hazards, person greetings, and LLM followups."""
+
+    def _http_post(self, url: str, **kwargs: Any):
+        if requests.post is not _ORIG_REQUESTS_POST:
+            return requests.post(url, **kwargs)
+        sess = getattr(self, "_identity_http_session", None)
+        if sess is None:
+            sess = requests.Session()
+            self._identity_http_session = sess
+        return sess.post(url, **kwargs)
 
     config: Dict[str, Any]
     semantic: Any
@@ -64,7 +74,7 @@ class ProcessorIdentityEventsMixin:
             target_lang = str(tcfg.get("target_lang", "tr"))
             timeout = float(tcfg.get("timeout", 1.5))
             try:
-                resp = requests.post(
+                resp = self._http_post(
                     endpoint,
                     params={"text": out_text, "source_lang": source_lang, "target_lang": target_lang},
                     timeout=timeout,
@@ -78,7 +88,7 @@ class ProcessorIdentityEventsMixin:
 
         url = self.config.get("speak", {}).get("endpoint") or "http://127.0.0.1:8080/speak/say"
         try:
-            requests.post(url, json={"text": out_text}, timeout=1.0)
+            self._http_post(url, json={"text": out_text}, timeout=1.0)
         except Exception as exc:
             logger.debug("Failed to send TTS: %s", exc)
 
@@ -117,7 +127,7 @@ class ProcessorIdentityEventsMixin:
         try:
             from modules.gateway.url import gateway_url
 
-            requests.post(
+            self._http_post(
                 gateway_url(self._gateway_base, "/interactions/event"),
                 json={"type": f"autonomy.{emotion}"},
                 timeout=0.5,

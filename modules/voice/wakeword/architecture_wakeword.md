@@ -7,35 +7,28 @@ Wakeword modülü (`modules/wakeword`), arka planda sürekli olarak dinleyerek r
 ```mermaid
 flowchart TD
     %% Ana Giriş
-    START([Arka Plan Dinleme Thread'i]) --> SETUP_WW_ENGINE(Wakeword Motorunu Başlat <br> Porcupine / Snowboy)
+    START([Arka Plan Dinleme Thread'i]) --> SETUP_WW_ENGINE(AudioRouter + OpenWakewordRunner<br>ONNX / TFLite Başlat)
     
-    SETUP_WW_ENGINE --> WAIT_AUDIO[Mikrofondan Küçük<br>PCM Chunk'lar Oku]
+    SETUP_WW_ENGINE --> WAIT_AUDIO["AudioCapture.stream(stop_event)<br>Kilit-Dışı Worker Kuyruğu"]
     
     %% Arka Plan Döngüsü
-    subgraph Background Listening [Srekli Dinleme ve Tetikleme]
+    subgraph Background Listening [Enerji Kapılı Sürekli Dinleme]
         direction TB
-        WAIT_AUDIO --> CHK_WAKEWORD{"Motor: 'Hey Sentry'<br>dedi mi?"}
-        
-        CHK_WAKEWORD -- Hayır --> DISCARD_CHUNK[Sesi Çöpe At] --> WAIT_AUDIO
-        
-        CHK_WAKEWORD -- Evet --> TRIGGER_ACT(Wakeword Algılandı <br> '_on_wakeword')
+        WAIT_AUDIO --> RMS_GATE{"RMS / SharedVAD<br>Aktivite Var mı?"}
+        RMS_GATE -- Hayır --> DISCARD_CHUNK[ONNX Atla / CPU Koru] --> WAIT_AUDIO
+        RMS_GATE -- Evet --> CHK_WAKEWORD{"OpenWakewordRunner:<br>Uyandırma Algılandı mı?"}
+        CHK_WAKEWORD -- Hayır --> WAIT_AUDIO
+        CHK_WAKEWORD -- Evet --> TRIGGER_ACT("Wakeword Algılandı <br> _on_wakeword")
     end
     
     %% Tetikleme Sonrası İşlemler
-    subgraph Trigger Actions [Tetikleme Aksiyonları]
+    subgraph Trigger Actions [Tetikleme & Barge-In]
         direction TB
-        TRIGGER_ACT --> START_SPEECH_API(POST /speech/start <br> Konuşma Tanımayı Aç)
-        START_SPEECH_API --> PUSH_EVENT(POST /interactions/event <br> 'wakeword.detected')
-        
-        PUSH_EVENT --> SOUND_CB{"Bip Sesi <br> Açıksa"}
-        SOUND_CB -- Evet --> ARDU_BEEP(POST /arduino/send <br> buzzer bip)
-        SOUND_CB -- Hayır --> START_WINDOW(Komut Dinleme Süresi Başlat)
-        
-        ARDU_BEEP --> START_WINDOW
-        
-        START_WINDOW --> TIMER_WAIT{"Bekle:<br>command_window_s <br>(Örn: 5 sn)"}
-        
-        TIMER_WAIT -- Süre Dolduğunda --> STOP_SPEECH_API(POST /speech/stop <br> Konuşma Tanımayı Kapat)
+        TRIGGER_ACT --> INTERRUPT["interrupt_robot_speech() <br> Speak Stop + Agent Interrupt"]
+        INTERRUPT --> START_SPEECH_API["start_speech() & emit_event('wakeword.detected')"]
+        START_SPEECH_API --> START_WINDOW["Komut Penceresi (listen_window_sec)"]
+        START_WINDOW --> FINAL_CHK{"stop_on_final &<br>has_final_speech()?"}
+        FINAL_CHK -- Evet / Süre Doldu --> STOP_SPEECH_API["stop_speech()"]
     end
     
     STOP_SPEECH_API --> WAIT_AUDIO

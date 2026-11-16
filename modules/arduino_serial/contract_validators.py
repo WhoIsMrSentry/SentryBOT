@@ -94,13 +94,11 @@ def _validate_set_servo(payload: Dict[str, Any]) -> Optional[str]:
         return "set_servo requires 'index'"
     if "deg" not in payload:
         return "set_servo requires 'deg'"
-    try:
-        index = int(payload.get("index"))
-    except Exception:
+    index = _as_int(payload.get("index"))
+    if index is None:
         return "set_servo 'index' must be an integer"
-    try:
-        deg = float(payload.get("deg"))
-    except Exception:
+    deg = _as_float(payload.get("deg"))
+    if deg is None:
         return "set_servo 'deg' must be numeric"
     if index < 0 or index >= SERVO_COUNT:
         return f"set_servo 'index' must be in [0,{SERVO_COUNT - 1}]"
@@ -234,32 +232,32 @@ def _validate_tune(payload: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-_VALIDATORS: dict[str, tuple[str, Any]] = {
-    "set_servo": ("_validate_set_servo", _validate_set_servo),
-    "set_pose": ("_validate_set_pose", _validate_set_pose),
-    "stepper": ("_validate_stepper", _validate_stepper),
-    "zero_set": ("_validate_zero_set", _validate_zero_set),
-    "stepper_cfg": ("_validate_stepper_cfg", _validate_stepper_cfg),
-    "pid_enable": ("_validate_pid_enable", _validate_pid_enable),
-    "pid_set": ("_validate_pid_set", _validate_pid_set),
-    "policy": ("_validate_policy", _validate_policy),
-    "tune": ("_validate_tune", _validate_tune),
-    "track": ("_validate_track", _validate_track),
-    "drive": ("_validate_drive", _validate_drive),
-    "liveliness": ("_validate_liveliness", _validate_liveliness),
-    "encoder_calibrate": ("_validate_encoder_calibrate", _validate_encoder_calibrate),
-    "telemetry_start": ("_validate_telemetry_start", _validate_telemetry_start),
-    "laser": ("_validate_laser", _validate_laser),
-    "sound": ("_validate_sound", _validate_sound),
-    "buzzer": ("_validate_buzzer", _validate_buzzer),
-    "sound_play": ("_validate_sound_play", _validate_sound_play),
-    "speech": ("_validate_speech", _validate_speech),
-    "cute": ("_validate_cute", _validate_cute),
-    "lcd": ("_validate_lcd", _validate_lcd),
-    "avoid": ("_validate_avoid", _validate_avoid),
-    "ir_key": ("_validate_ir_key", _validate_ir_key),
-    "menu_goto": ("_validate_menu_goto", _validate_menu_goto),
-    "temp_read": ("_validate_temp_read", _validate_temp_read),
+_VALIDATORS: dict[str, Any] = {
+    "set_servo": _validate_set_servo,
+    "set_pose": _validate_set_pose,
+    "stepper": _validate_stepper,
+    "zero_set": _validate_zero_set,
+    "stepper_cfg": _validate_stepper_cfg,
+    "pid_enable": _validate_pid_enable,
+    "pid_set": _validate_pid_set,
+    "policy": _validate_policy,
+    "tune": _validate_tune,
+    "track": _validate_track,
+    "drive": _validate_drive,
+    "liveliness": _validate_liveliness,
+    "encoder_calibrate": _validate_encoder_calibrate,
+    "telemetry_start": _validate_telemetry_start,
+    "laser": _validate_laser,
+    "sound": _validate_sound,
+    "buzzer": _validate_buzzer,
+    "sound_play": _validate_sound_play,
+    "speech": _validate_speech,
+    "cute": _validate_cute,
+    "lcd": _validate_lcd,
+    "avoid": _validate_avoid,
+    "ir_key": _validate_ir_key,
+    "menu_goto": _validate_menu_goto,
+    "temp_read": _validate_temp_read,
 }
 
 
@@ -277,14 +275,8 @@ def validate_arduino_payload(payload: Dict[str, Any]) -> Optional[str]:
         return _validate_pid_action(payload)
     validator = _VALIDATORS.get(cmd)
     if validator is not None:
-        return validator[1](payload)
+        return validator(payload)
     return f"unsupported cmd '{cmd}'"
-
-
-def validate_set_servo_cmd(payload: Dict[str, Any]) -> Optional[str]:
-    if payload.get("cmd") != "set_servo":
-        return None
-    return _validate_set_servo(payload)
 
 
 def validate_liveliness_cmd(payload: Dict[str, Any]) -> Optional[str]:

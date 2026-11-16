@@ -32,16 +32,33 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
         self.speech_stream_cfg = dict(speech_cfg)
         self._availability_cache: Dict[str, tuple[float, bool]] = {}
         self.head_arbiter = None
+        self._session = requests.Session()
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="autonomy_client_worker")
+
+    def _get_session(self) -> requests.Session:
+        session = getattr(self, "_session", None)
+        if session is None:
+            session = requests.Session()
+            self._session = session
+        return session
 
     def submit_background(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
         return self._executor.submit(fn, *args, **kwargs)
 
     def close(self) -> None:
-        try:
-            self._executor.shutdown(wait=False)
-        except Exception:
-            pass
+        session = getattr(self, "_session", None)
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+            self._session = None
+        executor = getattr(self, "_executor", None)
+        if executor is not None:
+            try:
+                executor.shutdown(wait=False)
+            except Exception:
+                pass
 
     def attach_head_arbiter(self, arbiter: Any) -> None:
         self.head_arbiter = arbiter
@@ -60,8 +77,13 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
         try:
             full_url = f"{url}{endpoint}"
             timeout = float(timeout_s) if timeout_s is not None else float(self.request_timeouts.get("default_post_s", 1.0))
-            resp = requests.post(full_url, json=json, params=params, timeout=timeout)
-            return resp.json() if resp.status_code == 200 else None
+            resp = self._get_session().post(full_url, json=json, params=params, timeout=timeout)
+            if resp.status_code != 200:
+                return None
+            try:
+                return resp.json()
+            except ValueError:
+                return {"ok": True}
         except Exception as e:
             logger.debug("Failed to post to %s: %s", service, e)
             return None
@@ -73,7 +95,7 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
         try:
             full_url = f"{url}{endpoint}"
             timeout = float(timeout_s) if timeout_s is not None else float(self.request_timeouts.get("default_get_s", 1.0))
-            resp = requests.get(full_url, params=params, timeout=timeout)
+            resp = self._get_session().get(full_url, params=params, timeout=timeout)
             return resp.json() if resp.status_code == 200 else None
         except Exception as e:
             logger.debug("Failed to get from %s: %s", service, e)
@@ -124,7 +146,7 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
 
         endpoint = "/status" if svc in ("speak", "speech") else "/healthz"
         try:
-            resp = requests.get(f"{url}{endpoint}", timeout=0.6)
+            resp = self._get_session().get(f"{url}{endpoint}", timeout=0.6)
             ok = resp.status_code == 200
             if ok and svc == "ollama":
                 try:
@@ -154,7 +176,7 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
             if url.startswith("@gateway"):
                 url = f"http://127.0.0.1:8080{url[len('@gateway'):]}"
         try:
-            resp = requests.get(url, timeout=1.0)
+            resp = self._get_session().get(url, timeout=1.0)
             if resp.status_code != 200:
                 return False
             data = resp.json()
@@ -170,7 +192,7 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
             payload = {}
         url = self._agent_core_url()
         try:
-            resp = requests.post(f"{url}/actions/queue", json={
+            resp = self._get_session().post(f"{url}/actions/queue", json={
                 "type": action_type,
                 "priority": priority,
                 "ttl_ms": ttl_ms,
@@ -198,7 +220,7 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
             payload = {}
         url = self._agent_core_url()
         try:
-            resp = requests.post(
+            resp = self._get_session().post(
                 f"{url}/events",
                 json={"type": str(event_type), "payload": payload},
                 timeout=1.0,
@@ -263,7 +285,7 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
     async def async_set_operational_mode(self, mode: str) -> dict:
         return await self._async_post(
             "state_manager", "/set/operational",
-            json={"mode": str(mode)},
+            json={"value": str(mode)},
             timeout=1.0,
         )
 
@@ -311,4 +333,4 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
         return await self._async_get("agent_core", "/memory/search", params={"query": query, "limit": limit})
 
     async def async_close(self) -> None:
-        return None
+        self.close()

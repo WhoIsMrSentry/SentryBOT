@@ -48,7 +48,9 @@ display:
   width: 128
   height: 64
   contrast: 143 # 0x8F
-  brightness: 255
+  dim_contrast: 16
+  burn_in_dim_s: 180.0
+  burn_in_sleep_s: 600.0
   fps: 24
   column_offset: 0
   seg_remap: true
@@ -190,22 +192,15 @@ event_map:
 
   # --- legacy emotion event labels (backward compatible) ---
   emotion:happy: { mode: bitmap, name: happy }
-  emotion:joy: { mode: bitmap, name: happy }
   emotion:sad: { mode: bitmap, name: sad }
   emotion:surprised: { mode: bitmap, name: surprised }
   emotion:sleepy: { mode: bitmap, name: sleepy }
   emotion:confused: { mode: bitmap, name: disoriented }
   emotion:angry: { mode: bitmap, name: angry }
-  emotion:anger: { mode: bitmap, name: angry }
-  emotion:furious: { mode: bitmap, name: furious }
-  emotion:bored: { mode: bitmap, name: bored }
   emotion:scared: { mode: bitmap, name: scared }
   emotion:focused: { mode: bitmap, name: focused }
   emotion:excited: { mode: bitmap, name: wired }
-  emotion:love: { mode: bitmap, name: lovely }
-  emotion:curiosity: { mode: bitmap, name: attentive }
   emotion:despair: { mode: bitmap, name: despair }
-  emotion:worried: { mode: bitmap, name: nervous }
 
   # --- emotion scenes (autonomy config scenes) ---
   scene.emotion_joy: { mode: bitmap, name: happy }
@@ -215,7 +210,3 @@ event_map:
   scene.emotion_sad: { mode: bitmap, name: sad }
   scene.emotion_angry: { mode: bitmap, name: angry }
   scene.emotion_furious: { mode: bitmap, name: furious }
-
-arduino_event_map:
-  rfid: { mode: gesture, name: wink }
-  neopixel_request: { mode: bitmap, name: mode }

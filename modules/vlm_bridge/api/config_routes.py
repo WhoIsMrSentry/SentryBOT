@@ -1,6 +1,25 @@
 from __future__ import annotations
+
+import hmac
+import os
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, HTTPException, Request
-from typing import Any
+from pydantic import BaseModel, Field
+
+
+class RemoteDetectionItem(BaseModel):
+    label: str = Field(default="unknown", min_length=1, max_length=64)
+    name: str = Field(default="Unknown", max_length=64)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    bbox: List[float] = Field(default_factory=list, max_length=4)
+    distance_m: float | None = Field(default=None, ge=0.0, le=100.0)
+    emotion: str = Field(default="", max_length=64)
+
+
+class IngestResultsPayload(BaseModel):
+    objects: List[Dict[str, Any]] = Field(default_factory=list, max_length=200)
+    timestamp: float | None = None
 
 
 def get_config_router(processor: Any, base_url: str) -> APIRouter:
@@ -113,23 +132,51 @@ def get_config_router(processor: Any, base_url: str) -> APIRouter:
         return {"results": results, "count": len(results)}
 
     @r.post("/results", tags=["remote"], summary="Ingest remote detection results")
-    def ingest_results(request: Request, payload: dict):
+    def ingest_results(request: Request, payload: IngestResultsPayload):
         if not processor:
             raise HTTPException(status_code=503, detail="Vision processor not initialized")
         if not hasattr(processor, "config") or not hasattr(processor, "ingest_remote_results"):
             raise HTTPException(status_code=503, detail="Vision processor missing remote ingestion interface")
 
-        cfg_remote = processor.config.get("remote", {})
+        cfg_remote = processor.config.get("remote", {}) if isinstance(processor.config, dict) else {}
         if not cfg_remote.get("accept_results", True):
             raise HTTPException(status_code=403, detail="Remote result ingestion disabled")
 
-        auth_required = cfg_remote.get("auth_token")
-        provided = request.headers.get("X-Auth-Token")
-        if auth_required and auth_required != "changeme" and auth_required != provided:
+        cfg_tok = str(cfg_remote.get("auth_token") or "").strip()
+        if cfg_tok in {"", "changeme"}:
+            cfg_tok = ""
+        env_tok = str(
+            os.getenv("SENTRYBOT_VLM_AUTH_TOKEN") or os.getenv("MM_AUTH_TOKEN") or ""
+        ).strip()
+        if env_tok in {"", "changeme"}:
+            env_tok = ""
+        auth_required = cfg_tok or env_tok
+        if not auth_required:
+            raise HTTPException(status_code=401, detail="VLM auth token not configured")
+
+        provided = str(request.headers.get("X-Auth-Token") or "").strip()
+        if not provided or not hmac.compare_digest(auth_required, provided):
             raise HTTPException(status_code=401, detail="Invalid auth token")
 
-        objects = payload.get("objects", [])
-        summary = processor.ingest_remote_results(objects)
+        validated_objects: List[Dict[str, Any]] = []
+        for item in payload.objects:
+            if not isinstance(item, dict):
+                continue
+            model_item = RemoteDetectionItem(
+                label=str(item.get("label") or item.get("name") or "unknown")[:64],
+                name=str(item.get("name") or "Unknown")[:64],
+                confidence=max(0.0, min(1.0, float(item.get("confidence", item.get("conf", 0.0)) or 0.0))),
+                bbox=[float(v) for v in (item.get("bbox") or item.get("box") or [])[:4]],
+                distance_m=(
+                    float(item["distance_m"])
+                    if item.get("distance_m") is not None
+                    else (float(item["distance"]) if item.get("distance") is not None else None)
+                ),
+                emotion=str(item.get("emotion") or item.get("face_emotion") or "")[:64],
+            )
+            validated_objects.append(model_item.model_dump())
+
+        summary = processor.ingest_remote_results(validated_objects)
         return {"ok": True, "summary": summary}
 
     @r.get("/context/latest", tags=["vision"], summary="Get latest visual context cache")

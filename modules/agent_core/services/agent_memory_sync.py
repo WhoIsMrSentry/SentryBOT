@@ -19,13 +19,43 @@ class AgentMemorySyncMixin(AgentFastPathMixin):
     def _build_memory_consolidator(self) -> Any:
         try:
             from .memory_consolidator import MemoryConsolidator
-            return MemoryConsolidator(
+
+            world_memory = None
+            social_db = None
+            try:
+                from modules.cognitive_memory.services.world_memory import get_default as _wm_default
+
+                world_memory = _wm_default()
+            except Exception:
+                world_memory = None
+            try:
+                from modules.cognitive_memory import get_default as _social_default
+
+                social_db = _social_default()
+            except Exception:
+                social_db = None
+
+            consolidator = MemoryConsolidator(
                 memory=getattr(self, "memory", None),
+                social_db=social_db,
                 autonomy_client=getattr(self, "autonomy_client", None),
+                world_memory=world_memory,
+                llm_client=getattr(self, "ollama_client", None) or getattr(self, "provider_client", None),
             )
+            if getattr(self, "model", None):
+                consolidator.llm_model = self.model
+            return consolidator
         except Exception as exc:
             logger.warning("MemoryConsolidator not available: %s", exc)
             return None
+
+    def _shutdown_memory_consolidator(self) -> None:
+        consolidator = getattr(self, "memory_consolidator", None)
+        if consolidator is not None and hasattr(consolidator, "shutdown"):
+            try:
+                consolidator.shutdown()
+            except Exception as exc:
+                logger.debug("MemoryConsolidator shutdown failed: %s", exc)
 
     def _get_world_memory_context(self, query: str = "") -> str:
         consolidator = getattr(self, "memory_consolidator", None)

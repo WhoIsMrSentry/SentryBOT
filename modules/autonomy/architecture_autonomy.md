@@ -1,36 +1,30 @@
 # Otonomi Modülü Mimari ve Teknik Dokümantasyonu (Autonomous Life & Companion Engine)
 
 > **Modül:** `modules/autonomy`  
-> **Kapsam:** `services/needs_engine.py`, `services/mood.py`, `services/companion_goal_selector.py`, `services/system1_reflex.py`, `services/topomap_motion_executor.py`, `services/saliency_map.py`, `api/`  
-> **Tasarım Deseni:** Homeostatic Needs Drive, 2D Valence-Arousal Mood Space, Behavior Tree / Policy Selector, Saliency Attention Map  
+> **Kapsam:** `services/needs_engine.py`, `services/living_needs.py`, `services/mood.py`, `services/companion_goal_selector.py`, `services/behavior_composer.py`, `services/spinal_cord_reflex.py`, `services/topomap_motion_executor.py`, `services/saliency_map.py`, `services/client.py`, `api/`  
+> **Tasarım Deseni:** Homeostatic Needs Drive, Thread-Safe Mood Space, Policy-Gated Companion Goal Selector, TTL Shared Perception Cache, Atomic JSON Stores  
 > **Varsayılan Port:** Gateway (`:8080`) altında `/autonomy/*` olarak sunulur  
-> **Temel Rol:** Kullanıcıdan bağımsız kendi kendine yaşayan, ihtiyaçları olan, merak duyan, devriye gezen ve sahibine bağlanan otonom yoldaş motoru
+> **Temel Rol:** Kullanıcıdan bağımsız kendi kendine yaşayan, risk/güvenlik semantiği birleşik yoldaş karar & yaşam döngüsü motoru
 
 ---
 
 ## 1. Genel Bakış ve Modül Sorumlulukları
 
-`modules/autonomy`, SentryBOT V5'in pasif bir komut dinleyicisi olmaktan çıkıp canlı bir yoldaş robot (companion robot) gibi davranmasını sağlayan otonom yaşam motorudur. Robot, herhangi bir kullanıcı komutu gelmediğinde boşta durmaz; içsel ihtiyaçlarına (`living_needs`), o anki ruh haline (`mood`) ve çevresindeki görsel/işitsel uyaranlara göre kendi hedeflerini belirler.
+`modules/autonomy`, SentryBOT V5'in canlı bir yoldaş robot (companion robot) gibi davranmasını sağlayan otonom yaşam motorudur. `config_loader.py` modül `config/config.yml` ile `agent.yaml` paylaşım bloklarını (`llm`, `agent`, `tri_layer`, `autonomy`) ve `behaviors.idle_tree.path` (`idle_behaviors.yml`) yapılandırmasını derin birleştirme (`deep_merge`) ile yükler.
 
 Modülün temel sorumlulukları şunlardır:
 
-1. **Canlı İhtiyaçlar Motoru (`NeedsEngine`):**
-   - Robotun biyolojik benzeri homeostatik ihtiyaçlarını modeller: `energy` (enerji/batarya), `social` (sahibiyle konuşma isteği), `curiosity` (yeni yerleri/nesneleri keşfetme merakı), `play` (oyun/etkileşim) ve `rest` (dinlenme/uyku).
-   - Zaman geçtikçe sosyal ihtiyaç ve merak artar; batarya azaldıkça dinlenme/şarj arayışı tetiklenir.
-2. **Duygusal Değerlendirme ve Ruh Hali (`MoodEngine`):**
-   - 2 boyutlu **Değerlik-Uyarılma (Valence - Arousal)** uzayında robotun anlık ruh halini hesaplar.
-   - Tanıdık bir yüz gördüğünde pozitif değerlik artar (`happy`); tehlikeli veya bilinmeyen bir ses duyduğunda uyarılma tavan yapar (`alarmed`); uzun süre yalnız kaldığında canı sıkılır (`bored`).
-3. **Kendiliğinden Hedef Seçimi (`CompanionGoalSelector`):**
-   - İhtiyaç seviyelerine göre otonom davranış belirler:
-     - Sahibi odaya girdiğinde yanına gitme ve selamlama (`seek_owner`).
-     - Yeni bir nesne fark ettiğinde merakla yaklaşıp inceleme (`curiosity_inspection`).
-     - Yorgun veya gece olduğunda uyku moduna geçme (`rest_recharge`).
-     - Belirlenmiş saatlerde esneme, sabah rutini gibi ritüelleri gerçekleştirme (`companion_rituals`).
-4. **Kendiliğinden Konuşma (`CompanionLines`):**
-   - Kullanıcı soru sormasa dahi ortam durumuna uygun samimi yorumlar üretir (`"Hava karardı, bugün nasıldı?"`, `"O tarafta yeni bir şey gördüm sanırım..."`).
-5. **Güvenli Otonom Hareket ve Refleksler:**
-   - **Hızlı Refleks (`System1Reflex`):** Önüne aniden bir engel veya evcil hayvan çıktığında $<50$ ms içinde acil fren yapar.
-   - **Topolojik Navigasyon (`TopomapMotionExecutor`):** Haritalandırılmış oda noktaları (düğüm grafiği) arasında güvenli rota takibi yapar.
+1. **İhtiyaç Motorları & Birleşik Risk/Güvenlik Semantiği (`CompanionNeedsEngine` & `LivingNeedsEngine`):**
+   - `CompanionNeedsEngine` (`0..100`, yüksek = güvende) ve `LivingNeedsEngine` (`0..1`, yüksek = tehlike) artık ortak `risk` (`0..1`, yüksek = tehlike) ve `safety_level` (`0..1`, yüksek = güvende) alanlarıyla normalize edilmiş arayüz (`extract_risk_and_safety`, `normalize_unit_score`) üzerinden çalışır.
+2. **Ruh Hali Yöneticisi (`MoodManager`):**
+   - `RLock` korumalı `happiness`, `energy`, `curiosity`, `fear`, `anger`, `social`, `stimulation`, `rest` eksenlerini yönetir; `get_risk_and_safety()` ile risk özetini paylaşır.
+3. **Kendiliğinden Hedef Seçimi & Besteleme (`CompanionGoalSelector`, `BehaviorPlanner`, `BehaviorComposer`):**
+   - İhtiyaç anlık görüntüsü, `PetCompanionCore` sinyalleri ve gizlilik/sağlık/sosyal/çevre politikalarını uygular; `BehaviorPlanner`/`ReflectionPlanner` `WorldMemoryRAG.recent()` ve normalize edilmiş Ollama URL kullanır.
+4. **Algı Paylaşımı & İşçi Havuzu (`PerceptionContextMixin`, `VisionMixin`, `DecisionMixin`):**
+   - `get_visual_context()` ve `get_person_memory()` çağrıları kısa TTL önbelleği (`_get_cached_visual_context`, `_get_cached_person_memory`) ile aynı tick içinde paylaşılır; `step_event` ve `ReflectionPlanner` yavaş G/Ç işlemleri `_worker_executor` üzerinden `_memory_write_lock` tutulmadan yürütülür.
+5. **Güvenli Otonom Hareket & Kalıcılık (`SpinalCordReflexEngine`, `TopomapMotionExecutor`, `SafeNavigationMemory`, `OwnerPersonLearning`, `CloudBackupSync`):**
+   - `SpinalCordReflexEngine` hem donanım olaylarında hem Laya sesli acil durum kararlarında motor durdurmayı tetikler.
+   - `TopomapMotionExecutor`, `SafeNavigationMemory` ve `OwnerPersonLearning` yolları repo köküne göre çözer ve `storage_utils.atomic_write_json` ile kilitli atomik yazım yapar (`stepper` modu varsayılan `'pos'`). `CloudBackupSync` SQLite dosyalarını `sqlite3.Connection.backup()` ile sıcak yedekler.
 
 ---
 
@@ -102,82 +96,49 @@ sequenceDiagram
 
 ## 3. Sınıf, Fonksiyon ve Metot Seviyesi Teknik Referans
 
-### 3.1 `NeedsEngine` (`services/needs_engine.py`)
+### 3.1 `CompanionNeedsEngine` (`services/needs_engine.py`) & `LivingNeedsEngine` (`services/living_needs.py`)
 
-Homeostatik ihtiyaç modeli:
-```python
-@dataclass
-class LivingNeedsState:
-    energy: float = 1.0       # 0.0 (Tükenmiş) .. 1.0 (Dolu)
-    social: float = 0.5       # 0.0 (Yalnız/İlgisiz) .. 1.0 (Sosyal Doygun)
-    curiosity: float = 0.6    # 0.0 (Bıkkın) .. 1.0 (Çok Meraklı)
-    play: float = 0.5         # 0.0 .. 1.0
-    rest: float = 0.8         # 0.0 (Uykusuz) .. 1.0 (Dinç)
-```
-
-- `decay_step(delta_time_s: float) -> None`:
-  - `social` ihtiyacı saatte $\approx 0.15$ oranında azalır.
-  - `curiosity` ihtiyacı durağan ortamda saatte $\approx 0.20$ oranında yükselir.
-- `satisfy_need(need_name: str, amount: float) -> None`: İlgili ihtiyacı pozitif yönde günceller ve $0.0 - 1.0$ aralığında sınırlar.
+- `CompanionNeedsEngine.tick(...) -> dict`: `scores` (`0..100`, `safety` yüksek = güvende) ile birlikte `scale="0..100"`, `risk` (`0..1`), `safety_level` (`0..1`) ve `normalized_scores` döndürür.
+- `LivingNeedsEngine.tick(...) -> dict`: `scores` (`0..1`, `safety` yüksek = tehlike) ile birlikte ortak `risk` ve `safety_level` alanlarını döndürür.
+- `extract_risk_and_safety(snapshot, scores)` ve `normalize_unit_score(...)`: Politika katmanlarının iki ölçeği de tutarlı yorumlamasını sağlar.
 
 ---
 
-### 3.2 `MoodEngine` (`services/mood.py`)
+### 3.2 `MoodManager` (`services/mood.py`)
 
-- **Valence (Değerlik):** $[-1.0, +1.0]$. $-1.0$ (Çok Üzgün / Rahatsız), $0.0$ (Nötr), $+1.0$ (Çok Mutlu).
-- **Arousal (Uyarılma):** $[0.0, 1.0]$. $0.0$ (Uykulu / Hareketsiz), $1.0$ (Aşırı Heyecanlı / Tetikte).
-- `appraise_event(event_type: str, data: dict) -> Tuple[float, float]`:
-  - `visual_hazard`: Valence $-0.6$, Arousal $+0.8$ (Korku / Alarm).
-  - `owner_detected`: Valence $+0.8$, Arousal $+0.4$ (Neşe / Sevgi).
-  - `idle_timeout`: Valence $-0.2$, Arousal $-0.3$ (Can Sıkıntısı).
+- `RLock` korumalı `snapshot()`, `modify(mood, delta)`, `satisfy_need(need, amount)`, `apply_affective_event(event)`, `apply_laya_decision(decision)`, `get_risk_and_safety()`.
 
 ---
 
-### 3.3 `CompanionGoalSelector` & `AutoExecuteGate`
+### 3.3 `CompanionGoalSelector` & `CompanionAutoExecuteGate`
 
-- `select_next_goal(state: AutonomyState) -> Optional[CompanionGoal]`:
-  - Mevcut ihtiyaç vektörü ve ruh haline göre en yüksek fayda skoruna (`utility score`) sahip hedefi belirler.
-- `AutoExecuteGate.can_execute(goal: CompanionGoal) -> bool`:
-  - Güvenlik denetimi: Batarya kritik seviyedeyse fiziksel hareket yasaklanır; sessiz saatlerde (quiet hours) sesli konuşma engellenir.
+- `CompanionGoalSelector.select(needs_snapshot, owner_present=False, now=None)`: `PetCompanionCore` kararları ile gizlilik, belirsizlik, kişiselleştirme, sağlık, sosyal ve öğrenme politikalarını uygular (`risk` / `safety_level` taşır).
+- `CompanionAutoExecuteGate`: Cooldown ve politika izinlerine göre güvenli otomatik yürütmeyi denetler.
 
 ---
 
-### 3.4 `SaliencyMap` (`services/saliency_map.py`)
+### 3.4 `SaliencyMapEngine` (`services/saliency_map.py`)
 
-- Kameradaki tüm algılanan nesneleri dikkat çekicilik puanına göre sıralar:
-  $$\text{Skor} = w_{\text{owner}} \times P(\text{sahip}) + w_{\text{motion}} \times \Delta_{\text{hareket}} + w_{\text{novelty}} \times \text{yenilik}$$
-- En yüksek puanlı nesneye doğru kafa yönlendirilir (Visual Focus).
+- Sahip yüzü (`1.0`), bilinmeyen yüz (`0.85`), ses yönü (`0.70 * energy`) ve hareket (`0.40`) adaylarını sıralar; kilit penceresiyle titreşimi önler.
 
 ---
 
 ## 4. REST API Endpoint Tablosu (`:8080/autonomy`)
 
-| Metot | Uç Nokta | Açıklama | Örnek İstek / Yanıt |
+| Metot | Uç Nokta | Açıklama | Örnek Yanıt / Parametreler |
 |---|---|---|---|
-| `GET` | `/autonomy/status` | Aktif otonomi modu, hedef ve ruh halini döner | `{"mode": "idle_companion", "mood": {"valence": 0.4}}` |
-| `GET` | `/autonomy/needs` | Tüm canlı ihtiyaç seviyelerini listeler | `{"energy": 0.85, "social": 0.42, "curiosity": 0.78}` |
-| `POST` | `/autonomy/goals/select` | Otonom hedef seçimini zorla tetikler | `{"force": true}` |
-| `POST` | `/autonomy/speech` | STT transkriptini otonomiye bildirir | `{"text": "Buraya gel", "final": true}` |
-| `POST` | `/autonomy/interaction`| Fiziksel veya işitsel etkileşimi kaydeder | `{"type": "touch_head"}` |
+| `GET` | `/autonomy/state` | Kilitli derin kopya `brain.state` ve `telemetry` (`laya_latency_ms`, `agent_latency_ms`, `worker.stalled`) | `{"is_bored": false, "telemetry": {"worker": {"stalled": false}}}` |
+| `GET` | `/autonomy/mood` | Thread-safe `mood.snapshot()` | `{"happiness": 50, "energy": 100, "fear": 0}` |
+| `GET` | `/autonomy/needs` | Yoldaş ihtiyaç anlık görüntüsü | `{"dominant_need": "balance", "risk": 0.0, "safety_level": 1.0}` |
+| `GET` | `/autonomy/living-needs` | Homeostatik canlı ihtiyaç durumu | `{"risk": 0.0, "safety_level": 1.0, "scores": {...}}` |
+| `POST` | `/autonomy/goal/simulate` | Yan etkisiz hedef simülasyonu | `{"dominant_need": "curiosity", "scores": {"curiosity": 0.8}}` |
+| `POST` | `/autonomy/speech` | Final STT transkriptini otonomiye iletir | `{"text": "Merhaba", "final": true}` |
+| `POST` | `/autonomy/interaction` | Fiziksel/API etkileşimi kaydeder | `{"status": "ok", "mood": 52}` |
 
 ---
 
-## 5. Konfigürasyon Referansı (`agent.yaml`)
+## 5. Konfigürasyon Referansı (`config/config.yml` & `agent.yaml`)
 
-```yaml
-autonomy:
-  enabled: true
-  companion:
-    spontaneous_lines_enabled: true
-    min_line_interval_s: 45.0
-    quiet_hours:
-      start: "23:00"
-      end: "07:30"
-  needs:
-    decay_rates:
-      social_per_hour: 0.15
-      curiosity_per_hour: 0.20
-  safety:
-    auto_motion_permitted: true
-    max_patrol_distance_m: 5.0
-```
+- Tek birleştirilmiş `owner:` bloğu (takma adlar, RFID ve varlık zaman aşımı).
+- `environment_policy.signals.safety: [risk, scores.safety, needs.safety]`.
+- `config_loader.py` üzerinden `agent.yaml` (`llm`, `agent`, `tri_layer`, `autonomy`) ve `behaviors.idle_tree.path` (`idle_behaviors.yml`) derin birleştirme (`deep_merge`).

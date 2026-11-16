@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 import logging
 import random
 import time
@@ -51,51 +50,14 @@ class VocalProsodyMixin:
         "neutral": {"rate": 170, "volume": 0.85},
     }
 
-    def _generate_monologue(self) -> None:
-        if not self.config.get("llm", {}).get("enabled", False):
-            return
-        if time.time() < float(getattr(self, "_llm_rate_limit_until", 0.0)):
-            logger.debug("Monologue skipped (LLM rate limit cooldown active)")
-            return
-
-        template = self.config.get("llm", {}).get("prompt_template", "")
-        now = time.time()
-        happiness = int(self.mood["happiness"])
-        energy = int(self.mood["energy"])
-        is_bored = "Evet" if self.state["is_bored"] else "Hayır"
-        last_interaction_ago = int(now - self.state["last_interaction"])
-        current_time = datetime.datetime.now().strftime("%H:%M")
-
-        try:
-            prompt = template.format(
-                happiness=happiness,
-                energy=energy,
-                is_bored=is_bored,
-                last_interaction_ago=last_interaction_ago,
-                time=current_time,
-            )
-
-            resp = self.client.chat(prompt)
-            if resp and "answer" in resp:
-                text = resp["answer"].strip('"')
-                logger.info("Monologue: %s", text)
-                self._speak_with_mood(text, emotion="neutral")
-                self.memory.add_event(f"Said to myself: {text}")
-        except Exception as exc:
-            from modules.system_control.config_center.log_redact import redact_secrets
-
-            msg = redact_secrets(exc)
-            if "429" in msg:
-                self._llm_rate_limit_until = time.time() + 90.0
-                logger.warning("Monologue skipped for 90s (Gemini rate limit)")
-                return
-            logger.error("Monologue failed: %s", msg)
-
     def _speak_with_mood(self, text: str, emotion: str | None = None, language: str | None = None) -> None:
         if not text:
             return
+        state_lang = str((getattr(self, "state", None) or {}).get("last_speech_language") or "tr")
         if not language and detect_text_language:
-            language = detect_text_language(text, default="tr")
+            language = detect_text_language(text, default=state_lang)
+        elif not language:
+            language = state_lang
         tone = self._tone_profile(emotion)
         try:
             self.client.queue_action("speak", priority=50, ttl_ms=10000, payload={
@@ -150,17 +112,21 @@ class VocalProsodyMixin:
         self.memory.add_event(f"Heard sound at angle {angle}")
 
         if getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
-            try:
-                prompt = (
-                    f"You just heard a sudden sound from angle {int(angle)} degrees. "
-                    f"Your head turned toward it (pan={int(target_pan)}). "
-                    f"React naturally - express curiosity, surprise, or caution. "
-                    f"Use your physical tools (express_emotion, move_head, look_around, speak). "
-                    f"Do not ask for permission."
-                )
-                self.agent.step_event("sound_detected", prompt, trace_id=f"sound_{int(time.time())}")
-            except Exception as exc:
-                logger.debug("Sound event step_event failed: %s", exc)
+            prompt = (
+                f"You just heard a sudden sound from angle {int(angle)} degrees. "
+                f"Your head turned toward it (pan={int(target_pan)}). "
+                f"React naturally - express curiosity, surprise, or caution. "
+                f"Use your physical tools (express_emotion, move_head, look_around, speak). "
+                f"Do not ask for permission."
+            )
+            trace_id = f"sound_{int(time.time())}"
+            if hasattr(self, "_dispatch_agent_step_event"):
+                self._dispatch_agent_step_event("sound_detected", prompt, trace_id=trace_id)
+            else:
+                try:
+                    self.agent.step_event("sound_detected", prompt, trace_id=trace_id)
+                except Exception as exc:
+                    logger.debug("Sound event step_event failed: %s", exc)
 
     def _barge_in_stop_speaking(self) -> None:
         try:

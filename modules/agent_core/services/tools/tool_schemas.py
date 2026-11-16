@@ -29,6 +29,7 @@ def get_all_tool_definitions() -> List[Dict[str, Any]]:
         "set_emotion",
         "interaction_event",
         "search_memory",
+        "remember_fact",
         "search_social_memory",
         "get_vision",
         "get_sensor_data",

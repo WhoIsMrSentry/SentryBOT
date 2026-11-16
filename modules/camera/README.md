@@ -23,13 +23,14 @@ Mimari detaylar, sınıf yapıları ve veri akış diyagramları için:
 
 ### 1. Servisi Başlatma ve Son Kareyi Alma (Python)
 ```python
-from modules.camera.xCameraService import xCameraService
+from modules.camera.services.capture import CameraCapture, CaptureConfig, FramePublisher
 
-camera_svc = xCameraService()
-camera_svc.start()
+pub = FramePublisher()
+cap = CameraCapture(CaptureConfig(backend="picamera2"), pub)
+cap.start()
 
-# En güncel JPEG karesini bayt olarak alma
-jpeg_bytes = camera_svc.get_frame(as_jpeg=True)
+# Yalnızca ihtiyaç duyulduğunda tembel JPEG kodlaması üretir
+jpeg_bytes = pub.get_jpeg()
 if jpeg_bytes:
     with open("snapshot.jpg", "wb") as f:
         f.write(jpeg_bytes)
@@ -37,7 +38,7 @@ if jpeg_bytes:
 
 ### 2. HTTP Üzerinden Kare Çekme (cURL)
 ```bash
-curl -o snapshot.jpg http://127.0.0.1:8080/camera/frame
+curl -o snapshot.jpg http://127.0.0.1:8000/camera/snap
 ```
 
 ---
@@ -47,9 +48,12 @@ curl -o snapshot.jpg http://127.0.0.1:8080/camera/frame
 | Metot | Endpoint | Açıklama |
 |---|---|---|
 | `GET` | `/camera/healthz` | Kamera servis ve donanım sağlık kontrolü |
-| `GET` | `/camera/frame` | Son yakalanan tekil JPEG görüntüsü |
-| `GET` | `/camera/status` | Aktif backend, gerçek FPS ve çözünürlük bilgisi |
-| `GET` | `/camera/imx500/status` | IMX500 on-sensor AI hızlandırıcısının durumu |
+| `GET` | `/camera/snap` | Son yakalanan tekil JPEG karesi (tembel kodlama) |
+| `GET` | `/camera/video` | MJPEG akışı (`FramePublisher` abone sayacı ve `Condition` ile) |
+| `GET` | `/camera/status` | Aktif backend, çözünürlük, FPS, abone sayısı ve IMX500 durumu |
+| `GET` | `/camera/onsensor/latest` | Son IMX500 on-sensor tespit özeti |
+| `GET/POST` | `/camera/tracking/tracks`, `/target`, `/select` | IMX500 hedef takibi ve seçimi |
+| `POST` | `/camera/start`, `/camera/stop` | Kilit korumalı akış başlatma/durdurma |
 
 ---
 

@@ -1,6 +1,6 @@
 # SentryBOT V5 — AI Provider Modülü (`modules/ai_provider`)
 
-SentryBOT V5'in merkezi büyük dil modeli (LLM) ağ geçidi ve bilişsel çıkarım servisidir. Robotun akıl yürütme, doğal dil anlama, diyalog yönetimi, çoklu sağlayıcı (Ollama & Google AI Studio Gemini) desteği ve araç/eylem (action calling) entegrasyonunu yürütür.
+SentryBOT V5'in merkezi büyük dil modeli (LLM) ağ geçidi ve bilişsel çıkarım servisidir. Yerel/uzak Ollama çıkarımı, öncelik kuyruğu, çok turlu sohbet belleği, TR/EN çeviri köprüsü ve yapılandırılmış eylem (action calling) entegrasyonunu yürütür (`GoogleAIStudioClient` uyumluluk stub'ı devre dışıdır ve başlangıçta güvenli biçimde Ollama'ya yönlendirilir).
 
 ---
 
@@ -36,20 +36,20 @@ modules/ai_provider/
 ├── architecture_ai_provider.md      # Kapsamlı Teknik & Sınıf Referansı
 ├── README.md                        # Bu doküman
 ├── api/                             # REST API Yönlendiricileri (Prefix: /ollama)
-│   ├── router.py                    # Ana API Montajı ve Servis Yaşam Döngüsü
-│   ├── chat_routes.py               # /ollama/chat, /ollama/generate, /ollama/stream
-│   ├── health.py                    # /ollama/health (Model Doğruluk & Gecikme Probu)
-│   ├── persona_routes.py            # /ollama/persona, /ollama/persona/set
-│   └── models_routes.py             # /ollama/models, /ollama/models/pull
+│   ├── router.py                    # Ana API Montajı, Kilitli Runtime Paylaşımı & Sağlayıcı Fallback
+│   ├── chat_routes.py               # /ollama/chat (stream/structured), /ollama/translate, /ollama/runtime/num_predict
+│   ├── health.py                    # /ollama/healthz (Model & Circuit Breaker Probu)
+│   ├── persona_routes.py            # /ollama/persona, /ollama/personas, /ollama/persona/select, /ollama/persona/create_from_url
+│   └── models_routes.py             # /ollama/models, /ollama/model/add, /ollama/warmup
 ├── services/                        # Temel İş Mantığı ve İstemciler
-│   ├── clients.py                   # create_llm_client, OllamaClient, PriorityInferenceLock
-│   ├── google_ai_client.py          # Google AI Studio Gemini REST İstemcisi
-│   ├── chat.py                      # OllamaChatService (Çok Turlu Sohbet & Bellek)
-│   ├── translator.py                # OllamaTranslator (TR/EN Çift Yönlü Çeviri Köprüsü)
-│   ├── tags.py                      # Regex Fallback XML/Tag Ayrıştırıcısı
-│   └── memory.py                    # Konuşma Geçmişi Önbelleği
+│   ├── clients.py                   # create_llm_client, OllamaClient (Session/Breaker/Stream), PriorityInferenceLock
+│   ├── google_ai_client.py          # Devre Dışı Google AI Studio Uyumluluk Stub'ı (ProviderDisabledError)
+│   ├── chat.py                      # Thread-Safe OllamaChatService (Chat & chat_stream)
+│   ├── translator.py                # Thread-Safe OllamaTranslator (TR/EN Çift Yönlü Çeviri Köprüsü)
+│   ├── tags.py                      # Regex Action Tag Ayrıştırıcısı
+│   └── memory.py                    # RLock Korumalı Konuşma Geçmişi Önbelleği
 └── models/                          # Pydantic Şemaları
-    └── sentry_schema.py             # SentryResponse, ActionCall Yapılandırılmış Çıktı
+    └── sentry_schema.py             # SentryResponse, RobotAction Yapılandırılmış Çıktı (`structured=True`)
 ```
 
 ---
@@ -104,28 +104,20 @@ print("Asistan Yanıtı:", reply)
 
 ## 🌐 HTTP REST API Örnekleri (cURL)
 
-### 1. Sohbet ve Eylem Yürütme (Chat)
+### 1. Sohbet, Akış (SSE) ve Eylem Yürütme (`Chat`)
 ```bash
-curl -X POST http://127.0.0.1:8099/ollama/chat \
-  -H "Content-Type: application/json" \
-  -d '{
-    "text": "Bana bak ve selam ver.",
-    "persona": "sentry",
-    "priority": 0,
-    "apply_actions": true
-  }'
+curl -X POST "http://127.0.0.1:8099/ollama/chat?query=Bana%20bak%20ve%20selam%20ver&structured=true&apply_actions=true"
+# Akış (SSE) için: ?query=Merhaba&stream=true
 ```
 
-### 2. Sağlık ve Model Doğruluk Kontrolü (Health Probe)
+### 2. Sağlık ve Devre Kesici Kontrolü (`Healthz`)
 ```bash
-curl -X GET http://127.0.0.1:8099/ollama/health
+curl -X GET http://127.0.0.1:8099/ollama/healthz
 ```
 
 ### 3. Aktif Kişiliği Değiştirme
 ```bash
-curl -X POST http://127.0.0.1:8099/ollama/persona/set \
-  -H "Content-Type: application/json" \
-  -d '{"persona": "glados"}'
+curl -X POST "http://127.0.0.1:8099/ollama/persona/select?name=sentry"
 ```
 
 ### 4. Yüklü Modelleri Listeleme

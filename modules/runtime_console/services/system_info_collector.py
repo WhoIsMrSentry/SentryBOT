@@ -140,15 +140,49 @@ def get_uptime() -> str:
 
 
 def get_local_ip() -> str:
+    """Resolve non-loopback local IPv4 address using local interfaces without external DNS."""
+    import ipaddress
     import socket
+
+    def _is_usable_ipv4(addr: str) -> bool:
+        try:
+            ip = ipaddress.IPv4Address(addr)
+            return not (ip.is_loopback or ip.is_link_local or ip.is_unspecified)
+        except Exception:
+            return False
+
+    if psutil is not None:
+        try:
+            stats = psutil.net_if_stats()
+            addrs = psutil.net_if_addrs()
+            for iface, iface_addrs in addrs.items():
+                st = stats.get(iface)
+                if st is not None and not st.isup:
+                    continue
+                for item in iface_addrs:
+                    if item.family == socket.AF_INET and _is_usable_ipv4(item.address):
+                        return item.address
+        except Exception:
+            pass
+
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
+        _host, _aliases, host_ips = socket.gethostbyname_ex(socket.gethostname())
+        for addr in host_ips:
+            if _is_usable_ipv4(addr):
+                return addr
     except Exception:
         pass
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.settimeout(0.2)
+            s.connect(("10.255.255.255", 1))
+            addr = s.getsockname()[0]
+            if _is_usable_ipv4(addr):
+                return addr
+    except Exception:
+        pass
+
     return "Unknown"
 
 

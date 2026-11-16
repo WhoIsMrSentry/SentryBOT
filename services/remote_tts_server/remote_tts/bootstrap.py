@@ -64,24 +64,59 @@ def relative_path_from_piper_link(url: str) -> Path:
 
 
 def download_file(url: str, target_path: Path, timeout_sec: float) -> None:
+    import os
+
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    with requests.get(url, timeout=timeout_sec, stream=True) as response:
-        response.raise_for_status()
-        with target_path.open("wb") as file_obj:
-            for chunk in response.iter_content(chunk_size=8192):
-                if chunk:
-                    file_obj.write(chunk)
+    tmp_path = target_path.with_name(f"{target_path.name}.tmp.{os.getpid()}")
+    try:
+        with requests.get(url, timeout=timeout_sec, stream=True) as response:
+            response.raise_for_status()
+            with tmp_path.open("wb") as file_obj:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        file_obj.write(chunk)
+        if not tmp_path.exists() or tmp_path.stat().st_size <= 0:
+            raise RuntimeError(f"Empty download for {target_path.name}")
+        os.replace(tmp_path, target_path)
+    except Exception:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except Exception:
+            pass
+        raise
 
 
-def bootstrap_piper_models(config: RuntimeConfig, force: bool) -> Dict[str, int]:
+def bootstrap_piper_models(config: RuntimeConfig, force: bool) -> Dict[str, Any]:
     source_url = config.piper_models_source_url
     timeout_sec = config.bootstrap_timeout_sec
 
-    resp = requests.get(source_url, timeout=timeout_sec)
-    resp.raise_for_status()
-    links = extract_piper_links(resp.text)
+    try:
+        resp = requests.get(source_url, timeout=timeout_sec)
+        resp.raise_for_status()
+        links = extract_piper_links(resp.text)
+    except Exception as exc:
+        available_models = sum(1 for _ in Path(config.piper_root).rglob("*.onnx"))
+        logger.warning("Piper model sync skipped (offline or fetch failed): %s", exc)
+        return {
+            "discovered": 0,
+            "downloaded": 0,
+            "skipped": 0,
+            "failed": 0,
+            "available_models": available_models,
+            "offline_error": str(exc),
+        }
+
     if not links:
-        raise RuntimeError(f"No Piper links found at {source_url}")
+        available_models = sum(1 for _ in Path(config.piper_root).rglob("*.onnx"))
+        logger.warning("No Piper links found at %s (local available=%d)", source_url, available_models)
+        return {
+            "discovered": 0,
+            "downloaded": 0,
+            "skipped": 0,
+            "failed": 0,
+            "available_models": available_models,
+        }
 
     downloaded = 0
     skipped = 0
@@ -101,15 +136,16 @@ def bootstrap_piper_models(config: RuntimeConfig, force: bool) -> Dict[str, int]
 
     available_models = sum(1 for _ in Path(config.piper_root).rglob("*.onnx"))
     logger.info(
-        "Piper model sync complete | discovered=%d downloaded=%d skipped=%d failed=%d",
+        "Piper model sync complete | discovered=%d downloaded=%d skipped=%d failed=%d available=%d",
         len(links),
         downloaded,
         skipped,
         failed,
+        available_models,
     )
 
     if available_models == 0:
-        raise RuntimeError("No Piper .onnx model available after sync")
+        logger.warning("No Piper .onnx model available after sync (continuing degraded)")
     if failed > 0:
         logger.warning("Piper sync finished with %d failed file(s)", failed)
 

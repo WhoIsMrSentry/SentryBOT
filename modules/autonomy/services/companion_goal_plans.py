@@ -3,6 +3,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
+from modules.autonomy.services.needs_engine import (
+    extract_risk_and_safety,
+    is_pct_scale_scores,
+    normalize_unit_score,
+)
 from modules.autonomy.services.pet_companion_core import PetCompanionCore
 
 logger = logging.getLogger("autonomy.companion_goal_plans")
@@ -64,12 +69,15 @@ class CompanionGoalPlansMixin:
         if not bool(self.cfg.get("pet_companion_enabled", True)):
             return {}
         score_map = _as_dict(scores)
+        pct_scale = is_pct_scale_scores(snap, score_map)
+        risk_need, _safety_level = extract_risk_and_safety(snap, score_map)
+        raw_energy = score_map.get("energy", snap.get("energy"))
         pet_needs = {
-            "safety": _as_float(score_map.get("safety"), 0.0),
-            "social": _as_float(score_map.get("social"), 0.0),
-            "curiosity": _as_float(score_map.get("curiosity"), 0.0),
-            "boredom": _as_float(score_map.get("boredom"), 0.0),
-            "energy": _as_float(score_map.get("energy"), _as_float(snap.get("energy"), 0.7)),
+            "safety": risk_need,
+            "social": normalize_unit_score(score_map.get("social"), scale_100=pct_scale, default=0.0),
+            "curiosity": normalize_unit_score(score_map.get("curiosity"), scale_100=pct_scale, default=0.0),
+            "boredom": normalize_unit_score(score_map.get("boredom"), scale_100=pct_scale, default=0.0),
+            "energy": normalize_unit_score(raw_energy, default=0.7) if raw_energy is not None else 0.7,
             "dominant_need": dominant,
             "recommended_goal": recommended,
         }

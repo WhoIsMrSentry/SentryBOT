@@ -11,6 +11,10 @@ try:
 except Exception:
     psutil = None
 
+_CACHED_CPU_NAME: str | None = None
+_CACHED_CPU_CORES: str | None = None
+_PSUTIL_PRIMED: bool = False
+
 
 def _cpu_name_from_windows_registry() -> str | None:
     try:
@@ -64,43 +68,56 @@ def _freq_from_sysfs() -> str | None:
 
 
 def _psutil_cpu_stats() -> tuple[str, str, str]:
-    """Returns (cores, freq, usage); '?' placeholders on any failure."""
-    cores, freq, usage = "?", "?", "?"
+    """Returns non-blocking (cores, freq, usage); '?' placeholders on any failure."""
+    global _CACHED_CPU_CORES, _PSUTIL_PRIMED
+    cores = _CACHED_CPU_CORES or "?"
+    freq, usage = "?", "?"
     if psutil:
         try:
-            cores = str(psutil.cpu_count(logical=True) or "?")
+            if cores == "?":
+                logical = psutil.cpu_count(logical=True)
+                cores = str(logical) if logical else "?"
+                if cores != "?":
+                    _CACHED_CPU_CORES = cores
             freq_info = psutil.cpu_freq()
             if freq_info:
                 freq = f"{freq_info.current:.0f} MHz"
-            usage = f"{psutil.cpu_percent(interval=0.1):.1f}%"
+            pct = psutil.cpu_percent(interval=None)
+            _PSUTIL_PRIMED = True
+            usage = f"{pct:.1f}%"
         except Exception:
             pass
     return cores, freq, usage
 
 
 def get_cpu_info() -> tuple[str, str, str, str]:
-    cpu_name = platform.processor() or "Unknown"
+    global _CACHED_CPU_NAME, _CACHED_CPU_CORES
     cores, freq, usage = _psutil_cpu_stats()
 
-    if os.name == "nt":
-        name = _cpu_name_from_windows_registry()
-        if name:
-            cpu_name = name
-        if cores == "?":
-            cores = _cores_fallback()
-    else:
-        if cpu_name in ("", "Unknown"):
-            cpu_name = (
-                _cpu_name_from_device_tree()
-                or _cpu_name_from_proc_cpuinfo()
-                or cpu_name
-            )
-        if cores == "?":
-            cores = _cores_fallback()
-        if freq == "?":
-            freq = _freq_from_sysfs() or "?"
+    if _CACHED_CPU_NAME is None:
+        cpu_name = platform.processor() or "Unknown"
+        if os.name == "nt":
+            name = _cpu_name_from_windows_registry()
+            if name:
+                cpu_name = name
+        else:
+            if cpu_name in ("", "Unknown"):
+                cpu_name = (
+                    _cpu_name_from_device_tree()
+                    or _cpu_name_from_proc_cpuinfo()
+                    or cpu_name
+                )
+        _CACHED_CPU_NAME = cpu_name.strip() or "Unknown"
 
-    return cpu_name.strip() or "Unknown", cores, freq, usage
+    if cores == "?":
+        if _CACHED_CPU_CORES is None:
+            _CACHED_CPU_CORES = _cores_fallback()
+        cores = _CACHED_CPU_CORES
+
+    if os.name != "nt" and freq == "?":
+        freq = _freq_from_sysfs() or "?"
+
+    return _CACHED_CPU_NAME, cores, freq, usage
 
 
 def get_memory_info() -> tuple[str, str]:

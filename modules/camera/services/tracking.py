@@ -118,11 +118,12 @@ class DetectionTracker:
             return {"ok": target is not None, "selection": self.selection(), "target": target.to_dict() if target else None}
 
     def selection(self) -> Dict[str, Any]:
-        return {
-            "label": self._target_label,
-            "strategy": self._target_strategy,
-            "track_id": self._target_track_id,
-        }
+        with self._lock:
+            return {
+                "label": self._target_label,
+                "strategy": self._target_strategy,
+                "track_id": self._target_track_id,
+            }
 
     def target(self) -> Optional[Track]:
         with self._lock:

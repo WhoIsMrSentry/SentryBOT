@@ -7,19 +7,27 @@ mcp_server:
   gateway_base: http://127.0.0.1:8080
   request_timeout_s: 6.0
   auth_token: ""
+  read_only: false
+  allowed_tools: []
   tools:
     - name: robot_state
       description: "Robotun anlik durumunu dondurur (mod, pil, hardware)."
       method: GET
       path: /autonomy/state
+      param_in: query
+      read_only: true
     - name: robot_mood
       description: "Robotun mevcut duygu durumunu dondurur."
       method: GET
       path: /autonomy/mood
+      param_in: query
+      read_only: true
     - name: speak
       description: "Robotun verilen metni sesli soylemesini ister."
       method: POST
       path: /speak/say
+      param_in: json
+      read_only: false
       args:
         text:
           type: string
@@ -29,8 +37,10 @@ mcp_server:
       description: "NeoPixel LED rengini ayarlar (0-255 rgb)."
       method: POST
       path: /neopixel/fill
+      param_in: query
+      read_only: false
       args:
-        r:
+        r_:
           type: integer
           required: true
           description: "Kirmizi 0-255"
@@ -50,10 +60,13 @@ mcp_server:
       description: "NeoPixel animasyonu baslatir (rainbow, theater_chase, clear)."
       method: POST
       path: /neopixel/{effect}
+      param_in: query
+      read_only: false
       args:
         effect:
           type: string
           required: true
+          enum: ["rainbow", "theater_chase", "clear"]
           description: "rainbow | theater_chase | clear"
         cycles:
           type: integer
@@ -67,12 +80,16 @@ mcp_server:
       description: "Robotun gorsel sahnesini veya son VLM baglamini dondurur."
       method: GET
       path: /autonomy/vision-context
+      param_in: query
+      read_only: true
     - name: arduino_send
       description: "Dogrudan Arduino komutu gonderir (contract dogrulamasi gateway tarafinda)."
       method: POST
       path: /arduino/send
+      param_in: body
+      read_only: false
       args:
         payload:
           type: object
           required: true
-          description: "Arduino contract payload"
+          description: "Arduino contract payload (ust duzey JSON nesnesi olarak gonderilir)"

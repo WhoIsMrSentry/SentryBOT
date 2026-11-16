@@ -2,25 +2,108 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+import threading
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger("gateway.bootstrap.config")
 
+_AGENT_CFG_LOCK = threading.RLock()
 _AGENT_CFG_CACHE: Optional[Dict[str, Any]] = None
+_AGENT_CFG_META: Optional[Tuple[str, Optional[int]]] = None
+
+
+def invalidate_agent_cfg_cache() -> None:
+    """Clear gateway cached root agent.yaml configuration."""
+    with _AGENT_CFG_LOCK:
+        global _AGENT_CFG_CACHE, _AGENT_CFG_META
+        _AGENT_CFG_CACHE = None
+        _AGENT_CFG_META = None
+    try:
+        from modules.common.config_loader import clear_agent_config_cache  # type: ignore
+
+        clear_agent_config_cache()
+    except Exception:
+        pass
+
+
+def _agent_cfg_signature() -> Tuple[str, Optional[int]]:
+    try:
+        from modules.common.config_loader import resolve_agent_cfg_path  # type: ignore
+
+        path = resolve_agent_cfg_path(None)
+        return str(path), path.stat().st_mtime_ns
+    except Exception:
+        return "", None
 
 
 def _root_agent_cfg() -> Dict[str, Any]:
-    global _AGENT_CFG_CACHE
-    if _AGENT_CFG_CACHE is not None:
-        return _AGENT_CFG_CACHE
-    try:
-        from modules.common.config_loader import load_agent_config  # type: ignore
+    global _AGENT_CFG_CACHE, _AGENT_CFG_META
+    sig = _agent_cfg_signature()
+    with _AGENT_CFG_LOCK:
+        if _AGENT_CFG_CACHE is not None and _AGENT_CFG_META == sig:
+            return _AGENT_CFG_CACHE
+        if _AGENT_CFG_META is not None and _AGENT_CFG_META != sig:
+            try:
+                from modules.common.config_loader import clear_agent_config_cache  # type: ignore
 
-        cfg = load_agent_config(None)
-        _AGENT_CFG_CACHE = cfg if isinstance(cfg, dict) else {}
-    except Exception:
-        _AGENT_CFG_CACHE = {}
-    return _AGENT_CFG_CACHE
+                clear_agent_config_cache()
+            except Exception:
+                pass
+        try:
+            from modules.common.config_loader import load_agent_config  # type: ignore
+
+            cfg = load_agent_config(None)
+            _AGENT_CFG_CACHE = cfg if isinstance(cfg, dict) else {}
+        except Exception:
+            _AGENT_CFG_CACHE = {}
+        _AGENT_CFG_META = sig
+        return _AGENT_CFG_CACHE
+
+
+def mount_module_stub(
+    app: Any,
+    started: Dict[str, object],
+    name: str,
+    *,
+    prefix: Optional[str] = None,
+    reason: str = "hardware_disabled",
+    mount_routes: bool = True,
+    extra_started: Optional[Dict[str, object]] = None,
+) -> Dict[str, Any]:
+    """Register a unified offline/stub entry in ``started`` and optionally mount healthz/status routes."""
+    stub_state: Dict[str, Any] = {
+        "kind": "stub",
+        "available": False,
+        "skipped": True,
+        "reason": reason,
+    }
+    if isinstance(started, dict):
+        started[name] = stub_state
+        if extra_started:
+            started.update(extra_started)
+
+    if mount_routes and app is not None and prefix:
+        norm_prefix = "/" + prefix.strip("/")
+        already = any(str(getattr(r, "path", "")).startswith(norm_prefix) for r in getattr(app, "routes", []))
+        if not already:
+            try:
+                from fastapi import APIRouter
+
+                router = APIRouter(prefix=norm_prefix, tags=[name])
+
+                @router.get("/healthz")
+                def _stub_healthz() -> Dict[str, Any]:
+                    return {"ok": True, "available": False, "skipped": True, "reason": reason}
+
+                @router.get("/status")
+                def _stub_status() -> Dict[str, Any]:
+                    return {"ok": True, "available": False, "skipped": True, "reason": reason}
+
+                app.include_router(router)
+            except Exception as exc:
+                logger.debug("stub route mount failed for %s: %s", name, exc)
+
+    return stub_state
 
 
 def _agent_section(name: str) -> Dict[str, Any]:

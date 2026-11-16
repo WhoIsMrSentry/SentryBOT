@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,7 +25,9 @@ class RelationshipMemory(RelationshipStorageMixin):
     ) -> None:
         self.enabled = bool(enabled)
         self.path = Path(path).resolve() if path else None
-        if social_db is None:
+        if social_db is False:
+            social_db = None
+        elif social_db is None:
             try:
                 from modules.cognitive_memory import get_default as _social_default  # type: ignore
 
@@ -32,6 +35,7 @@ class RelationshipMemory(RelationshipStorageMixin):
             except Exception:
                 social_db = None
         self._social_db = social_db
+        self._lock = threading.RLock()
         self._learner = None
         self._people: Dict[str, Dict[str, Any]] = {}
         if self.enabled and self._social_db is None:
@@ -114,41 +118,49 @@ class RelationshipMemory(RelationshipStorageMixin):
         if not key or not text_val:
             return
         if self._social_db is not None:
+            pid = ""
             try:
-                self.observe_person(name=name)
-                rec = self._social_db.persons.get_by_name(name)
-                if rec is None:
-                    return
-                pid = rec["id"]
-                self._social_db.chat_episodes.append(
-                    person_id=pid,
-                    role=str(role or "user"),
-                    text=text_val[:240],
-                )
-                self._index_chat_rag(pid=pid, role=role, text=text_val)
-                self._social_db.chat_episodes.prune_for_person(pid, keep_last=16)
-                if str(role or "").strip().lower() == "user":
-                    self._extract_preferences_db(pid, text_val)
-                    self._social_db.moments.add_or_boost(
+                with self._social_db.transaction():
+                    rec = self._social_db.persons.upsert(name=name, increment_seen=True)
+                    pid = str(rec.get("id") or "")
+                    if not pid:
+                        return
+                    self._social_db.sightings.record(
                         person_id=pid,
-                        text=f"user:{text_val}",
-                        salience=0.35,
+                        source="autonomy.relationship",
+                        mood="",
                     )
+                    self._social_db.chat_episodes.append(
+                        person_id=pid,
+                        role=str(role or "user"),
+                        text=text_val[:240],
+                    )
+                    self._social_db.chat_episodes.prune_for_person(pid, keep_last=16)
+                    if str(role or "").strip().lower() == "user":
+                        self._extract_preferences_db(pid, text_val)
+                        self._social_db.moments.add_or_boost(
+                            person_id=pid,
+                            text=f"user:{text_val}",
+                            salience=0.35,
+                        )
             except Exception:
-                pass
+                return
+            if pid:
+                self._index_chat_rag(pid=pid, role=role, text=text_val)
             return
-        self.observe_person(name=name)
-        rec = self._people.get(key)
-        if rec is None:
-            return
-        hist = rec.setdefault("chat_history", [])
-        hist.append({"ts": time.time(), "role": str(role or "user"), "text": text_val[:240]})
-        if len(hist) > 16:
-            del hist[:-16]
-        if str(role or "").strip().lower() == "user":
-            self._extract_preferences(rec, text_val)
-            self._add_moment(rec, text=f"user:{text_val}", salience=0.35)
-        self._persist()
+        with self._lock:
+            self.observe_person(name=name)
+            rec = self._people.get(key)
+            if rec is None:
+                return
+            hist = rec.setdefault("chat_history", [])
+            hist.append({"ts": time.time(), "role": str(role or "user"), "text": text_val[:240]})
+            if len(hist) > 16:
+                del hist[:-16]
+            if str(role or "").strip().lower() == "user":
+                self._extract_preferences(rec, text_val)
+                self._add_moment(rec, text=f"user:{text_val}", salience=0.35)
+            self._persist()
 
     def _index_chat_rag(self, *, pid: Any, role: Any, text: str) -> None:
         try:
@@ -253,7 +265,6 @@ class RelationshipMemory(RelationshipStorageMixin):
             if pid:
                 try:
                     prefs_grouped = self._social_db.relationships.list_grouped(pid)
-                    self._social_db.moments.decay(pid)
                     top = self._social_db.moments.top_for_person(pid, limit=1)
                     if top:
                         top_memory = str(top[0].get("text", "")).strip()
@@ -273,57 +284,48 @@ class RelationshipMemory(RelationshipStorageMixin):
                 "last_user_utterance": self.last_user_utterance(name),
                 "top_memory": top_memory[:180],
             }
-        rec = self.get(name) or {}
-        prefs = rec.get("preferences", {}) if isinstance(rec.get("preferences", {}), dict) else {}
-        likes = prefs.get("likes", []) if isinstance(prefs.get("likes", []), list) else []
-        dislikes = prefs.get("dislikes", []) if isinstance(prefs.get("dislikes", []), list) else []
-        topics = prefs.get("topics", []) if isinstance(prefs.get("topics", []), list) else []
-        self._decay_moments(rec)
-        moments = rec.get("moments", []) if isinstance(rec.get("moments", []), list) else []
-        top_memory = ""
-        if moments:
-            moments.sort(key=lambda m: float(m.get("score", 0.0)), reverse=True)
-            top_memory = str((moments[0] or {}).get("text", "")).strip()
-        return {
-            "name": rec.get("name", name),
-            "is_owner": bool(rec.get("is_owner", False)),
-            "seen_count": int(rec.get("seen_count", 0) or 0),
-            "trust_score": float(rec.get("trust_score", 0.0) or 0.0),
-            "likes": likes[:5],
-            "dislikes": dislikes[:5],
-            "topics": topics[:6],
-            "last_user_utterance": self.last_user_utterance(name),
-            "top_memory": top_memory[:180],
-        }
+        with self._lock:
+            rec = self.get(name) or {}
+            prefs = rec.get("preferences", {}) if isinstance(rec.get("preferences", {}), dict) else {}
+            likes = list(prefs.get("likes", []) if isinstance(prefs.get("likes", []), list) else [])
+            dislikes = list(prefs.get("dislikes", []) if isinstance(prefs.get("dislikes", []), list) else [])
+            topics = list(prefs.get("topics", []) if isinstance(prefs.get("topics", []), list) else [])
+            moments = list(rec.get("moments", []) if isinstance(rec.get("moments", []), list) else [])
+            top_memory = ""
+            if moments:
+                moments.sort(key=lambda m: float(m.get("score", 0.0)), reverse=True)
+                top_memory = str((moments[0] or {}).get("text", "")).strip()
+            return {
+                "name": rec.get("name", name),
+                "is_owner": bool(rec.get("is_owner", False)),
+                "seen_count": int(rec.get("seen_count", 0) or 0),
+                "trust_score": float(rec.get("trust_score", 0.0) or 0.0),
+                "likes": likes[:5],
+                "dislikes": dislikes[:5],
+                "topics": topics[:6],
+                "last_user_utterance": self.last_user_utterance(name),
+                "top_memory": top_memory[:180],
+            }
 
-    def get_relationship_personality_bias(self, name: str) -> Dict[str, Any]:
-        """Calculates personality and tone bias depending on person familiarity and bond score."""
-        prof = self.social_profile(name)
-        is_owner = prof.get("is_owner", False)
-        seen_count = prof.get("seen_count", 0)
-        trust_score = prof.get("trust_score", 0.0)
-
-        if is_owner:
-            return {
-                "status": "owner",
-                "tone": "affectionate_and_warm",
-                "greeting_prefix": "Efendim!",
-                "trust_level": 100,
-            }
-        elif seen_count > 8 or trust_score > 5.0:
-            return {
-                "status": "friend",
-                "tone": "friendly_and_playful",
-                "greeting_prefix": "Tekrar merhaba!",
-                "trust_level": 70,
-            }
-        else:
-            return {
-                "status": "stranger",
-                "tone": "polite_and_reserved",
-                "greeting_prefix": "Merhaba, sizi tanıyamadım.",
-                "trust_level": 20,
-            }
+    def decay_person(self, name: str) -> int:
+        """Explicit maintenance hook to apply moment decay without mutating read queries."""
+        if not self.enabled:
+            return 0
+        if self._social_db is not None:
+            rec = self.get(name) or {}
+            pid = str(rec.get("id") or "")
+            if not pid:
+                return 0
+            return int(self._social_db.moments.decay(pid))
+        with self._lock:
+            rec = self.get(name)
+            if not rec:
+                return 0
+            before = len(rec.get("moments") or [])
+            self._decay_moments(rec)
+            after = len(rec.get("moments") or [])
+            self._persist()
+            return max(0, before - after)
 
     def build_social_context(self, current_speaker: str = "") -> str:
         if not self.enabled:

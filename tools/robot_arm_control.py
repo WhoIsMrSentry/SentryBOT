@@ -15,7 +15,7 @@ from typing import Any, Dict, Tuple
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "config" / "robot_arm_policy.json"
-STATE_PATH = ROOT / ".sentrybot_state" / "robot_arm_state.json"
+STATE_PATH = ROOT / ".sentrybot_state" / "arm_state.json"
 
 CONFIRM_TEXT = "ARM_SENTRYBOT_HARDWARE"
 
@@ -32,7 +32,9 @@ def _read_json(path: Path, default: Dict[str, Any] | None = None) -> Dict[str, A
 
 def _write_json(path: Path, data: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def load_policy() -> Dict[str, Any]:
@@ -175,7 +177,7 @@ def cmd_arm(args: argparse.Namespace) -> int:
         # Never mutate state for blocked or dry-run arming.
         result["state"] = normalized_status()
     print(json.dumps(result, indent=2, ensure_ascii=False))
-    return 0 if (args.dry_run or not allowed) else 0
+    return 0 if (args.dry_run or allowed) else 2
 
 
 def build_parser() -> argparse.ArgumentParser:

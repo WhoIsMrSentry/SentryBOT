@@ -1,12 +1,38 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
+import tempfile
+import threading
 from typing import Any, Optional
 
 import yaml
 
+from modules.common.color_utils import parse_color as _common_parse_color
+
 logger = logging.getLogger("neopixel.runner_presets")
+
+
+def _strip_top_level_yaml_sections(text: str, keys: set[str]) -> str:
+    """Remove specified top-level YAML sections while preserving comments and other keys."""
+    lines = text.splitlines(keepends=True)
+    out: list[str] = []
+    skipping = False
+    for line in lines:
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped)
+        is_comment = stripped.startswith("#")
+        is_blank = stripped.strip() == ""
+        if indent == 0 and not is_comment and not is_blank:
+            top_key = stripped.split(":", 1)[0].strip() if ":" in stripped else ""
+            skipping = top_key in keys
+        if not skipping:
+            out.append(line)
+    result = "".join(out)
+    if result and not result.endswith("\n"):
+        result += "\n"
+    return result
 
 
 class RunnerPresetsMixin:
@@ -18,6 +44,7 @@ class RunnerPresetsMixin:
     _preset_store_path: Optional[Path]
     _preset_version: int
     _frame_lock: Any
+    _preset_io_lock: threading.Lock
 
     def _init_segments(self, segments: list[dict[str, Any]]) -> None:
         for item in segments:
@@ -75,42 +102,102 @@ class RunnerPresetsMixin:
     def _persist_presets(self) -> bool:
         if self._preset_store_path is None:
             return False
-        try:
-            data: dict[str, Any] = {}
-            if self._preset_store_path.exists():
-                with open(self._preset_store_path, "r", encoding="utf-8") as f:
-                    data = yaml.safe_load(f) or {}
-            if not isinstance(data, dict):
-                data = {}
-            self._preset_version += 1
-            meta = data.get("presets_meta") if isinstance(data.get("presets_meta"), dict) else {}
-            meta["version"] = self._preset_version
-            data["presets_meta"] = meta
-            data["presets"] = dict(self._presets)
-            self._preset_store_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._preset_store_path, "w", encoding="utf-8") as f:
-                yaml.safe_dump(data, f, sort_keys=False, allow_unicode=False)
-            return True
-        except Exception:
-            return False
+        io_lock = getattr(self, "_preset_io_lock", None)
+        if io_lock is None:
+            io_lock = threading.Lock()
+            self._preset_io_lock = io_lock
+        with io_lock:
+            try:
+                existing_text = ""
+                if self._preset_store_path.exists():
+                    existing_text = self._preset_store_path.read_text(encoding="utf-8")
+                self._preset_version += 1
+                preserved = _strip_top_level_yaml_sections(existing_text, {"presets", "presets_meta"})
+                updated_block = yaml.safe_dump(
+                    {
+                        "presets": dict(self._presets),
+                        "presets_meta": {"version": self._preset_version},
+                    },
+                    sort_keys=False,
+                    allow_unicode=False,
+                )
+                content = (preserved + "\n" + updated_block) if preserved.strip() else updated_block
+                self._preset_store_path.parent.mkdir(parents=True, exist_ok=True)
+                fd, tmp_name = tempfile.mkstemp(
+                    dir=str(self._preset_store_path.parent),
+                    prefix=".presets_",
+                    suffix=".yml.tmp",
+                )
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(content)
+                    os.replace(tmp_name, self._preset_store_path)
+                except Exception:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+                    raise
+                return True
+            except Exception as exc:
+                logger.warning("Failed to persist presets to %s: %s", self._preset_store_path, exc)
+                return False
+
+    def _segment_ranges(self, name: str | None) -> list[tuple[int, int]]:
+        if not name:
+            return []
+        key = str(name).strip().lower()
+        direct = self._segments.get(key)
+        if direct is not None:
+            return [direct]
+        aliases = {
+            "head": "jewel",
+            "jewel": "head",
+            "left_brow": "stick_left",
+            "right_brow": "stick_right",
+            "body": "stick",
+            "brows": "stick",
+            "eyebrows": "stick",
+        }
+        mapped = aliases.get(key, key)
+        if mapped in self._segments:
+            return [self._segments[mapped]]
+        if mapped == "stick":
+            ranges = [
+                self._segments[seg]
+                for seg in ("stick_left", "stick_right")
+                if seg in self._segments
+            ]
+            if not ranges:
+                ranges = [
+                    bounds
+                    for seg_key, bounds in sorted(self._segments.items())
+                    if seg_key.startswith("stick_")
+                ]
+            if ranges:
+                return ranges
+            if "body" in self._segments:
+                return [self._segments["body"]]
+        return []
 
     def _segment_bounds(self, name: str | None) -> tuple[int, int] | None:
-        if not name:
+        ranges = self._segment_ranges(name)
+        if not ranges:
             return None
-        key = str(name).strip().lower()
-        bounds = self._segments.get(key)
-        if bounds is not None:
-            return bounds
-        aliases = {"jewel": "head", "stick": "body", "head": "jewel", "body": "stick"}
-        alt = aliases.get(key)
-        if alt:
-            return self._segments.get(alt)
-        return None
+        if len(ranges) == 1:
+            return ranges[0]
+        ordered = sorted(ranges)
+        lo, hi = ordered[0]
+        for s, e in ordered[1:]:
+            if s <= hi:
+                hi = max(hi, e)
+            else:
+                return (ordered[0][0], ordered[-1][1])
+        return (lo, hi)
 
     @staticmethod
     def _parse_color(raw: Any) -> tuple[int, int, int] | None:
-        from modules.common.color_utils import parse_color
-        return parse_color(raw)
+        return _common_parse_color(raw)
 
     def apply_preset(self, name: str) -> bool:
         if hasattr(self, "companion_is_active") and self.companion_is_active():
@@ -130,13 +217,13 @@ class RunnerPresetsMixin:
                 animations.append((effect, color, str(seg_name)))
                 continue
             if color is not None:
-                bounds = self._segment_bounds(str(seg_name))
-                if bounds is None:
+                ranges = self._segment_ranges(str(seg_name))
+                if not ranges:
                     continue
-                start, end = bounds
                 with self._frame_lock:
-                    for idx in range(start, end):
-                        self.driver.set(idx, *color)
+                    for start, end in ranges:
+                        for idx in range(start, end):
+                            self.driver.set(idx, *color)
                     self.driver.show()
         for effect, color, segment in animations:
             if hasattr(self, "animate"):

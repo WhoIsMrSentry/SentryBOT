@@ -11,12 +11,12 @@
 `modules.camera`, SentryBOT'un fiziksel dünyayı görmesini sağlayan birincil optik girdi katmanıdır. USB web kameraları, Raspberry Pi Camera v2/v3 ve Raspberry Pi AI Camera (Sony IMX500) donanımlarını otomatik tespit eder; tekil süreç kilidi (`DeviceLock`) ile donanım çakışmalarını önler; kareleri JPEG olarak tamponlar ve REST API üzerinden diğer modüllere sunar.
 
 ### Temel Sorumluluk Alanları
-1. **Donanım Algılama ve Yönetim (`CameraDeviceManager`):** Linux V4L2 (`/dev/video*`) ve Windows indekslerini tarar, kamera mevcudiyetini doğrular ve uygun arka ucu (backend: Picamera2, OpenCV VideoCapture veya Simülasyon) seçer.
-2. **Süreçler Arası Kilit Mekanizması (`DeviceLock`):** Aynı kamera donanımına birden fazla sürecin aynı anda erişerek kaynak kilidine (busy lock) yol açmasını engeller.
-3. **Kare Yakalama Döngüsü (`CaptureWorker`, `services/capture.py`):** Hedef kare hızında (varsayılan 15-30 FPS) arka planda kesintisiz kare çeker, RGB/BGR dönüşümü ve JPEG sıkıştırması uygular, en güncel kareyi thread-safe tamponda saklar.
-4. **On-Sensor AI Hızlandırması (`IMX500Runner`):** Raspberry Pi AI Camera (Sony IMX500) üzerindeki gömülü sinir ağı işlemcisini (NPU) yönetir; host CPU'ya sıfır yük bindirerek insan, yüz ve nesne kutularını (bounding box) çıkarır.
-5. **Görsel Takip Servisi (`TrackingService`):** Tespit edilen nesnelerin merkez koordinatlarını (centroid) hesaplar; robotun kafasının pan/tilt motorlarıyla hedefi takip etmesi için hata farklarını (delta) üretir.
-6. **HTTP API Sunucusu (`api/router.py`):** Gateway ve diğer istemciler için `/camera/frame`, `/camera/status`, `/camera/healthz` endpointlerini sunar.
+1. **Donanım Sahipliği ve Kilitleme (`CameraDeviceManager`):** `attach_capture()` ile gerçek yakalama hattı yaşam döngüsüne bağlanır, referans sayımı ve birleşik `RLock` altında mod geçişlerini yönetir.
+2. **Süreçler Arası Kilit Mekanizması (`DeviceLock`):** Aynı kamera donanımına birden fazla tüketici çakışmasını önler.
+3. **Kare Yakalama Döngüsü (`CameraCapture` + `FramePublisher`):** `Picamera2` doğrudan, sistem `picamera2` köprü alt süreci (`stderr` drain thread + EOF/üst-boyut doğrulamalı) ve OpenCV V4L2 akışlarını yürütür. `FramePublisher.set_raw_frame()` ve `threading.Condition` abone bildirimi sayesinde HTTP/VLM tüketicisi yokken boşuna JPEG sıkıştırması yapılmaz.
+4. **On-Sensor AI Hızlandırması (`Imx500Runner`):** Raspberry Pi AI Camera (Sony IMX500) NPU çıktılarını kilit korumalı sayaç ve boyut-kontrollü tensör açımıyla `OnSensorEventBus`'a yayınlar; `enabled=False` iken tamamen atıl kalır.
+5. **Görsel Takip Servisi (`DetectionTracker`):** IoU tabanlı takip ve kilit korumalı hedef seçimi (`largest`/`center`/`confidence`) sunar.
+6. **HTTP API ve Lifespan (`api/router.py` & `xCameraService.py`):** `/camera/video`, `/camera/snap`, `/camera/status`, `/camera/healthz`, `/camera/start|stop`, `/camera/onsensor/latest` ve `/camera/tracking/*` uçlarını sunar; FastAPI `lifespan` kapanışında runner ve capture temiz biçimde durdurulur.
 
 ---
 
@@ -110,25 +110,28 @@ sequenceDiagram
 - `close_camera() -> None`
   - Donanım kaynaklarını serbest bırakır ve kilit dosyasını temizler.
 
-### 3.2 `CaptureWorker` (`modules/camera/services/capture.py`)
-- `start() -> None`: Arka plan yakalama iş parçacığını (`daemon=True`) başlatır.
-- `stop() -> None`: Yakalama döngüsünü güvenle sonlandırır.
-- `get_latest_frame(as_jpeg: bool = True) -> bytes | np.ndarray | None`
-  - **Parametreler:** `as_jpeg=True` ise sıkıştırılmış JPEG bayt dizisi, `False` ise ham NumPy BGR matrisi döner.
-  - **Dönüş:** En güncel kare baytları veya matrisi.
+### 3.2 `CameraCapture` & `FramePublisher` (`modules/camera/services/capture.py`)
+- `start() -> bool`: `backend` (`picamera2` / `opencv`) ve geciktirilmiş `find_system_picam_python()` seçimiyle yakalamayı başlatır; köprü modunda `stderr` okuma thread'i açar.
+- `stop() -> None`: Kilit korumalı şekilde yakalama thread'ini, alt süreci ve bekliyor olan MJPEG abonelerini uyandırıp durdurur.
+- `FramePublisher`:
+  - `set_raw_frame(raw_frame, quality)` / `set_jpeg(jpeg_bytes)`: Tembel JPEG önbelleği ve `Condition` bildirimi (`has_frame` her iki durumu yansıtır).
+  - `subscriber_session()` / `acquire_subscriber()` / `release_subscriber()`: Etkin HTTP/VLM abone sayacı.
+  - `get_jpeg() -> Optional[bytes]`: Yalnız talep edildiğinde JPEG encode edip kare önbelleğine alır.
 
-### 3.3 `IMX500Runner` (`modules/camera/services/imx500_runner.py`)
-- `is_available() -> bool`: Sistemde Sony IMX500 AI kameranın takılı olup olmadığını kontrol eder.
-- `get_detections() -> List[Dict[str, Any]]`: Sensör üzerinde çalışan NPU'dan nesne etiketlerini (`label`), güven skorunu (`score`) ve sınır kutularını (`box: [x, y, w, h]`) döner.
+### 3.3 `Imx500Runner` (`modules/camera/services/imx500_runner.py`)
+- `prepare()` / `start()` / `stop()`: Yaşam döngüsü (yalnız `enabled=True` iken hazırlanır).
+- `tracks()` / `target()` / `select_target()`: `DetectionTracker` kilidi altında anlık hedef/iz listesi.
 
 ### 3.4 REST API Endpointleri (`modules/camera/api/router.py`)
 
 | Metot | Yol | Açıklama | Yanıt / Model |
 |:---|:---|:---|:---|
-| **`GET`** | `/camera/healthz` | Donanım ve servis sağlık kontrolü. | `{"ok": bool, "device_open": bool}` |
-| **`GET`** | `/camera/frame` | Son yakalanan tekil JPEG görüntüsü. | `image/jpeg` binary akışı |
-| **`GET`** | `/camera/status` | Aktif çözünürlük, gerçek FPS ve backend bilgisi. | `{"backend": str, "fps": float, "resolution": [w, h]}` |
-| **`GET`** | `/camera/imx500/status`| IMX500 AI sensörünün çalışma durumu ve NPU yükü. | `{"available": bool, "npu_active": bool}` |
+| **`GET`** | `/camera/healthz` | Donanım ve servis sağlık kontrolü. | `{"ok": bool, "enabled": bool, "capture": ..., "imx500": ...}` |
+| **`GET`** | `/camera/snap` | Son yakalanan tekil JPEG görüntüsü. | `image/jpeg` (veya `503`) |
+| **`GET`** | `/camera/video` | MJPEG video akışı (`Condition` tabanlı yeni kare beklemesi). | `multipart/x-mixed-replace` |
+| **`GET`** | `/camera/status` | Aktif backend, çözünürlük, abone sayısı, IMX500/onsensor durumu. | JSON status özeti |
+| **`GET`** | `/camera/onsensor/latest` | Son on-sensor NPU tespit paketi. | JSON snapshot |
+| **`POST`** | `/camera/start`, `/camera/stop` | Kilitli yakalama başlat/durdur. | JSON kontrol durumu |
 
 ---
 

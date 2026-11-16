@@ -6,6 +6,7 @@ servo position commands.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from modules.common.http_client import get_http_client
@@ -16,29 +17,31 @@ logger = logging.getLogger("expression.adapter.head")
 
 class HeadAdapter:
     """Adapter for head/servo control (Arduino serial via gateway)."""
-    
+
     def __init__(self, gateway_url: str = "http://127.0.0.1:8080", timeout: float = 1.0):
         self._gateway = gateway_url.rstrip("/")
         self._client = get_http_client(self._gateway, timeout)
-    
+
     async def move_head(self, pan: int, tilt: int) -> bool:
-        """Move head to pan/tilt angles (0-180, 90=center)."""
+        """Move head to pan/tilt angles concurrently (pan 30-150, tilt 60-120, 90=center)."""
         try:
-            # Clamp to safe ranges
             pan = max(30, min(150, int(pan)))
             tilt = max(60, min(120, int(tilt)))
-            
-            resp = await self._client.post(
-                "/arduino/request",
-                json=build_set_servo_cmd(SERVO_INDEX_PAN, pan),
+
+            resp_pan, resp_tilt = await asyncio.gather(
+                self._client.post(
+                    "/arduino/request",
+                    json=build_set_servo_cmd(SERVO_INDEX_PAN, pan),
+                ),
+                self._client.post(
+                    "/arduino/request",
+                    json=build_set_servo_cmd(SERVO_INDEX_TILT, tilt),
+                ),
             )
-            if getattr(resp, "status_code", 0) != 200:
-                return False
-            resp2 = await self._client.post(
-                "/arduino/request",
-                json=build_set_servo_cmd(SERVO_INDEX_TILT, tilt),
+            return (
+                getattr(resp_pan, "status_code", 0) == 200
+                and getattr(resp_tilt, "status_code", 0) == 200
             )
-            return getattr(resp2, "status_code", 0) == 200
         except Exception as e:
             logger.debug("Head move failed: %s", e)
             return False

@@ -91,10 +91,13 @@ class ClientSpeechMixin:
         if not job_id:
             return resp
 
-        poll_s = float(self.speech_stream_cfg.get("stream_poll_interval_s", 0.12))
-        max_wait = float(self.speech_stream_cfg.get("stream_max_wait_s", 90.0))
+        poll_s = max(0.02, float(self.speech_stream_cfg.get("stream_poll_interval_s", 0.12)))
+        max_wait = max(poll_s, min(300.0, float(self.speech_stream_cfg.get("stream_max_wait_s", 90.0))))
+        max_polls = max(1, int(max_wait / poll_s) + 2)
         deadline = time.time() + max_wait
-        while time.time() < deadline:
+        polls = 0
+        while time.time() < deadline and polls < max_polls:
+            polls += 1
             status = self._get("speak", f"/jobs/{job_id}", timeout_s=2.0)
             if not isinstance(status, dict):
                 time.sleep(poll_s)

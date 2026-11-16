@@ -1,23 +1,47 @@
 import json
 import logging
 import time
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 try:
     import ollama
 except ImportError:
     ollama = None
 
+from modules.common.ollama_url import default_ollama_base_url, normalize_ollama_url
+
 logger = logging.getLogger("autonomy.planner")
+
+
+def resolve_planner_llm_settings(config: Dict[str, Any]) -> Tuple[str, str, bool]:
+    """Resolve (model, normalized_ollama_host, enabled) from root or nested autonomy config."""
+    cfg = config if isinstance(config, dict) else {}
+    llm_cfg = cfg.get("llm", {}) if isinstance(cfg.get("llm"), dict) else {}
+    agent_cfg = cfg.get("agent", {}) if isinstance(cfg.get("agent"), dict) else {}
+    model = str(llm_cfg.get("model") or cfg.get("planner_model") or "llama3.2")
+    raw_url = agent_cfg.get("ollama_base_url") or llm_cfg.get("ollama_base_url") or default_ollama_base_url()
+    ollama_host = normalize_ollama_url(raw_url)
+    enabled = bool(cfg.get("llm_planning_enabled", True))
+    return model, ollama_host, enabled
+
+
+def format_needs_summary(needs_snapshot: Dict[str, Any]) -> str:
+    """Format companion needs scores consistently for BehaviorPlanner and ReflectionPlanner."""
+    scores = needs_snapshot.get("scores", {}) if isinstance(needs_snapshot, dict) else {}
+    dom = (needs_snapshot or {}).get("dominant_need", "balance") if isinstance(needs_snapshot, dict) else "balance"
+    return (
+        f"Robot Current Emotions (0-100):\n"
+        f"- Boredom: {float(scores.get('boredom', 0) or 0):.0f}\n"
+        f"- Curiosity: {float(scores.get('curiosity', 0) or 0):.0f}\n"
+        f"- Social Need: {float(scores.get('social', 0) or 0):.0f}\n"
+        f"- Energy: {float(scores.get('energy', 0) or 0):.0f}\n\n"
+        f"Dominant Emotion: {dom}"
+    )
+
 
 class BehaviorPlanner:
     def __init__(self, config: dict):
         self.config = config
-        # Use the primary LLM model from config if possible, fallback to llama3.2
-        llm_cfg = config.get("llm", {})
-        agent_cfg = config.get("agent", {})
-        self.model = llm_cfg.get("model") or config.get("planner_model") or "llama3.2"
-        self.ollama_host = agent_cfg.get("ollama_base_url", "http:")
-        self.enabled = config.get("llm_planning_enabled", True)
+        self.model, self.ollama_host, self.enabled = resolve_planner_llm_settings(config)
         self.goal_queue: List[Dict[str, Any]] = []
         self._last_plan_time = 0.0
         self.cooldown_s = 30.0 # Don't plan too often if queue is empty
@@ -42,35 +66,34 @@ class BehaviorPlanner:
             "Stage 2: Select 2-3 tool calls to execute your plan and fulfill your dominant emotion."
         )
         
-        scores = needs_snapshot.get('scores', {})
-        dom = needs_snapshot.get('dominant_need', 'balance')
-        
         reflections_text = ""
         if recent_reflections:
-            reflections_text = "Recent memory reflections of past actions:\n"
+            lines = []
+            for ref in recent_reflections[-3:]:
+                summary = ref.get("summary") if isinstance(ref, dict) else str(ref)
+                if summary:
+                    lines.append(f"- {summary}")
+            if lines:
+                reflections_text = "Recent memory reflections of past actions:\n" + "\n".join(lines) + "\n"
         social_text = f"Social / Person Context: {social_context}\n" if social_context else ""
         
         rag_text = ""
-        if self.rag:
+        if self.rag and hasattr(self.rag, "recent"):
             try:
-                items = self.rag.recent_observations(limit=5)
+                recent_res = self.rag.recent(limit=5)
+                items = recent_res.get("items", []) if isinstance(recent_res, dict) else []
                 if items:
                     rag_text = "Spatial & Object RAG Memory:\n"
                     for item in items:
-                        lbl = item.get("label") or item.get("id") or "object"
-                        desc = item.get("description") or item.get("kind") or ""
+                        lbl = item.get("name") or item.get("label") or item.get("id") or "object"
+                        desc = item.get("summary") or item.get("description") or item.get("kind") or ""
                         rag_text += f"- {lbl}: {desc}\n"
                     rag_text += "\n"
             except Exception:
                 pass
         
         user_prompt = (
-            f"Robot Current Emotions (0-100):\n"
-            f"- Boredom: {scores.get('boredom', 0):.0f}\n"
-            f"- Curiosity: {scores.get('curiosity', 0):.0f}\n"
-            f"- Social Need: {scores.get('social', 0):.0f}\n"
-            f"- Energy: {scores.get('energy', 0):.0f}\n\n"
-            f"Dominant Emotion: {dom}\n"
+            f"{format_needs_summary(needs_snapshot)}\n"
             f"Camera Vision Context: {vision_context}\n"
             f"{social_text}"
             f"{rag_text}"

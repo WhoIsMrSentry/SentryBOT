@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
+import threading
 from typing import Dict, Optional, Tuple
 
 from .clients import LLMClientProtocol
@@ -44,6 +45,7 @@ class OllamaTranslator:
             model=str(cfg.get("model", "")).strip() or None,
             cache_size=max(0, int(cfg.get("cache_size", 128))),
         )
+        self._lock = threading.Lock()
         self._cache: "OrderedDict[Tuple[str, str, str], str]" = OrderedDict()
         self._detect_cache: "OrderedDict[str, str]" = OrderedDict()
 
@@ -59,34 +61,38 @@ class OllamaTranslator:
     def _cache_get(self, key: Tuple[str, str, str]) -> Optional[str]:
         if not self.cfg.cache_size:
             return None
-        value = self._cache.get(key)
-        if value is not None:
-            self._cache.move_to_end(key)
-        return value
+        with self._lock:
+            value = self._cache.get(key)
+            if value is not None:
+                self._cache.move_to_end(key)
+            return value
 
     def _cache_put(self, key: Tuple[str, str, str], value: str) -> None:
         if not self.cfg.cache_size:
             return
-        self._cache[key] = value
-        self._cache.move_to_end(key)
-        while len(self._cache) > self.cfg.cache_size:
-            self._cache.popitem(last=False)
+        with self._lock:
+            self._cache[key] = value
+            self._cache.move_to_end(key)
+            while len(self._cache) > self.cfg.cache_size:
+                self._cache.popitem(last=False)
 
     def _detect_cache_get(self, text: str) -> Optional[str]:
         if not self.cfg.cache_size:
             return None
-        value = self._detect_cache.get(text)
-        if value is not None:
-            self._detect_cache.move_to_end(text)
-        return value
+        with self._lock:
+            value = self._detect_cache.get(text)
+            if value is not None:
+                self._detect_cache.move_to_end(text)
+            return value
 
     def _detect_cache_put(self, text: str, lang: str) -> None:
         if not self.cfg.cache_size:
             return
-        self._detect_cache[text] = lang
-        self._detect_cache.move_to_end(text)
-        while len(self._detect_cache) > self.cfg.cache_size:
-            self._detect_cache.popitem(last=False)
+        with self._lock:
+            self._detect_cache[text] = lang
+            self._detect_cache.move_to_end(text)
+            while len(self._detect_cache) > self.cfg.cache_size:
+                self._detect_cache.popitem(last=False)
 
     def detect_language(self, text: str) -> str:
         value = str(text or "").strip()
@@ -139,8 +145,8 @@ class OllamaTranslator:
             {
                 "role": "user",
                 "content": (
-                    f"Translate from {src} to {tgt}.\\n"
-                    "If text is already in target language, return it unchanged.\\n"
+                    f"Translate from {src} to {tgt}.\n"
+                    "If text is already in target language, return it unchanged.\n"
                     f"Text: {value}"
                 ),
             },
@@ -158,7 +164,7 @@ class OllamaTranslator:
             self._cache_put(key, translated)
             return translated
         except Exception as exc:
-            from modules.system_control.config_center.log_redact import redact_secrets
+            from modules.common.config_loader import redact_secrets
 
             logger.warning(
                 "Translation failed (%s->%s), using original text: %s",

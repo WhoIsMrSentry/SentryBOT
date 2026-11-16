@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import time
 import logging
+import time
 from typing import Any, Dict, Optional
 
 try:
@@ -9,25 +9,32 @@ try:
 except Exception:  # pragma: no cover
     requests = None  # type: ignore
 
+from modules.common.color_utils import normalize_color as _normalize_color
 
 logger = logging.getLogger("interactions.neopixel_client")
 
 NEOPIXEL_SAFE_DEGRADED_CLIENT_CONTRACT = True
 NOOP_NEOPIXEL_CLIENT_ROLE = "safe_degraded_output_adapter"
 
-from modules.common.color_utils import normalize_color as _normalize_color
-
 
 class NeoHttpClient:
-    def __init__(self, base_url: str) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        idle_base: Optional[tuple[str, Any]] = ("BREATHE", "#30E3CA"),
+        timeout_s: float = 1.5,
+    ) -> None:
         self.base = base_url.rstrip("/")
+        self._idle_base = idle_base
+        self._timeout_s = float(timeout_s)
 
     def _post(self, path: str, json: Optional[Dict[str, Any]] = None, params: Optional[Dict[str, Any]] = None) -> None:
         if requests is None:
             logger.warning("neopixel http client disabled: requests not available")
             return
         try:
-            resp = requests.post(self.base + path, json=json, params=params, timeout=1.5)
+            resp = requests.post(self.base + path, json=json, params=params, timeout=self._timeout_s)
             if resp.status_code >= 400:
                 logger.warning("neopixel request failed: %s %s -> %s", "POST", self.base + path, resp.status_code)
         except Exception as exc:
@@ -52,18 +59,21 @@ class NeoHttpClient:
         if rgb is not None:
             payload["r"], payload["g"], payload["b"] = rgb
         if emotions:
-            payload["emotions"] = emotions
+            payload["emotions"] = list(emotions)
         if iterations is not None:
             payload["iterations"] = iterations
         self._post("/animate", json=payload)
 
     # Friendly helpers
-    def set_base(self, name: str, color: Optional[str | tuple[int, int, int]] = None, speed: Optional[str] = None) -> None:
+    def set_base(
+        self,
+        name: str,
+        color: Optional[str | tuple[int, int, int]] = None,
+        speed: Optional[str] = None,
+        emotions: Optional[list[str]] = None,
+    ) -> None:
         rgb = _normalize_color(color)
-        if rgb is not None:
-            self.animate(name, color=rgb)
-        else:
-            self.animate(name)
+        self.animate(name, emotions=emotions, color=rgb)
 
     def play_effect(
         self,
@@ -71,9 +81,13 @@ class NeoHttpClient:
         duration_ms: int = 800,
         color: Optional[str | tuple[int, int, int]] = None,
         emotions: Optional[list[str]] = None,
+        restore_idle: bool = True,
     ) -> None:
-        self.set_base(name, color=color)
+        self.animate(name, emotions=emotions, color=color)
         time.sleep(max(0.0, duration_ms / 1000.0))
+        if restore_idle and self._idle_base is not None:
+            idle_name, idle_color = self._idle_base
+            self.set_base(idle_name, color=idle_color)
 
     def companion_mode(self, mode: str, eye_color: Any = None) -> None:
         payload: Dict[str, Any] = {"mode": str(mode)}
@@ -105,7 +119,12 @@ class NoOpNeoClient:
     ) -> None:  # pragma: no cover
         pass
 
-    def set_base(self, name: str, color: Optional[str | tuple[int, int, int]] = None, speed: Optional[str] = None) -> None:  # pragma: no cover
+    def set_base(
+        self,
+        name: str,
+        color: Optional[str | tuple[int, int, int]] = None,
+        speed: Optional[str] = None,
+    ) -> None:  # pragma: no cover
         pass
 
     def play_effect(

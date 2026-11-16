@@ -109,11 +109,21 @@ curl -X GET http://127.0.0.1:8080/agent/status
 
 ## 🧪 Testleri Çalıştırma
 
-Tri-layer router, LAYA motoru, güvenlik süzgeci ve anlamsal bellek testlerini koşturmak için:
+Tri-layer router, System-1 LRU önbellek, ToolRegistry/MCP bağdaştırıcı, hakem zinciri ve anlamsal bellek testlerini koşturmak için:
 
 ```bash
 pytest tests/modules/agent_core -v
 ```
+
+### İterasyon 17 Güncellemeleri (Özet)
+- `_run_turn_core()` ile `step()`/`step_event()` birleştirildi; temiz `user`/`assistant` `chat_history` ve FastAPI `lifespan` (`agent.stop()`) eklendi.
+- `System1CascadeEngine` sınırlı LRU niyet + duygu ön-önbelleği (`cache_stats()`) ve `/agent/healthz` içinde `system1` + `arbiters` + `tool_metrics` sağlandı.
+- `ToolRegistry` içine `remember_fact`, argüman şema/tip süzgeci, per-tool `metrics()` ve bağlı dış MCP araçları için dinamik `mcp__<server>__<tool>` bağdaştırıcısı eklendi.
+
+### İterasyon 18 Güncellemeleri (Bilişsel Runtime)
+- `GoalStore` (`RLock` + `backend="sqlite"` kalıcılığı + `status_summary()`), `DecisionTraceStore` (`Lock` + dönen `JSONL` günlük) ve `GoalFormationService` kilitlendi.
+- `AgentRuntime._handle_failure()` gerçek `ContextualReplanner` + `PlanPolicyGate` (`recovery_helpers.py`) bağlandı; `CompanionExecutionLoop` başarısız retry/switch dönüşleri düzeltildi.
+- `RuntimeBudgetUsage` duraklatılan `WAITING` hedeflerde uyku süresini tüketmeyecek şekilde `active_elapsed_s` izler; `GET /agent/goals/status` tanı ucu eklendi.
 
 ---
 

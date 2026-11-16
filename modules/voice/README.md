@@ -35,9 +35,12 @@ modules/voice/
 ├── speak/                       # TTS (Konuşma Sentezi) Servisi (Port: 8083)
 │   ├── xSpeakService.py         # Piper ONNX TTS, Split-Lock, Düşünce Filtreleme
 │   └── api/router.py            # /speak/say, /speak/say_stream, /speak/stop
-├── speech/                      # STT (Konuşma Tanıma & DoA) Servisi (Port: 8084)
-│   ├── xSpeechService.py        # Vosk/Whisper STT, GCC-PHAT Yön Tayini, Pan-Tilt
+├── speech/                      # STT (Konuşma Tanıma & DoA) Servisi (Port: 8082/8084)
+│   ├── xSpeechService.py        # Google STT / Çoklu Dil, GCC-PHAT Yön Tayini, Pan-Tilt
 │   └── api/router.py            # /speech/start, /speech/stop, /speech/direction
+├── speaker_id/                  # Konuşmacı Kimliği & Çoklu Modalite Füzyon Servisi
+│   ├── xSpeakerIdService.py     # Native 16 kHz FFT Voiceprint, EMA+SNR Adaptasyonu
+│   └── api/router.py            # /speaker_id/enroll, /speaker_id/identify, /speaker_id/signal
 └── wakeword/                    # WakeWord (Uyanma Kelimesi) Servisi (Port: 8085)
     ├── xWakewordService.py      # openWakeWord ONNX "hey sentry" Algılama
     └── api/router.py            # /wakeword/start, /wakeword/stop, /wakeword/status

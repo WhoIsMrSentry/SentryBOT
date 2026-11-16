@@ -20,16 +20,17 @@ flowchart TD
     end
     
     %% Motor Seçimi
-    subgraph Engine Selection [TTS Motoru Seçimi]
+    subgraph Engine Selection [TTS Motoru Secimi]
         direction TB
-        CHK_ENGINE -- Default / pyttsx3 --> ENGINE_PYTTS(pyttsx3)
-        CHK_ENGINE -- Piper --> ENGINE_PIPER(Piper / Offline Türkçe)
-        CHK_ENGINE -- Diğer (espeak, vb.) --> ENGINE_DEF(Fallback Engine)
+        CHK_ENGINE -- Piper / Yerel --> ENGINE_PIPER(Piper ONNX / PersistentPiperModel)
+        CHK_ENGINE -- Remote / XTTS HTTP --> ENGINE_REMOTE(RemoteTTSHttpBackend / XTTSHttpBackend)
+        CHK_ENGINE -- Dummy (test) --> ENGINE_DUMMY(DummyBackend - SENTRYBOT_ALLOW_TEST_TTS=1)
     end
     
-    ENGINE_PYTTS --> APPLY_TONE
+    ENGINE_REMOTE -- Hata (iptal değilse) --> ENGINE_PIPER
     ENGINE_PIPER --> APPLY_TONE
-    ENGINE_DEF --> APPLY_TONE
+    ENGINE_REMOTE --> APPLY_TONE
+    ENGINE_DUMMY --> APPLY_TONE
     
     %% Duygusal Tonlama ve Sentezleme
     subgraph Tone Application [Duygu / Ton Ayarlama]
@@ -41,7 +42,7 @@ flowchart TD
         CHK_TONE -- angry --> SET_A[Hız: +%10, Ses: MAX] --> SYNTHESIZE
         CHK_TONE -- neutral / Yok --> SET_N[Normal Hız ve Ses] --> SYNTHESIZE
         
-        SYNTHESIZE(TTS Sentezleme ve <br> ALSA / aplay ile Oynatma)
+        SYNTHESIZE(TTS Sentezi -> LRU PCM Önbelleği ve <br> AudioPlayer ile Oynatma + Asenkron @gateway/expression)
     end
     
     SYNTHESIZE --> DONE([ok: true])
@@ -53,22 +54,24 @@ flowchart TD
 erDiagram
     AutonomyBrain ||--o{ SpeakService : generates_speech
     VisionBridge ||--o{ SpeakService : pushes_alerts
+    SpeakService ||--o{ SpeechPriorityQueue : serializes_streams
 
     SpeakService {
         string default_engine
-        float base_rate
-        string voice_id
+        int rate
+        string language
+        int pcm_cache_max_entries
     }
 ```
 
-## ⚙️ Detaylı Karar Mantığı (if/else)
+## ⚙️ Detaylı Karar Mantığı
 
-1. **Metin Temizliği (Regex)**
-   - Autonomy'den gelen LLM cümlesi yanlışlıkla markdown yıldızları (`*hızla kafa sallar*`), etiketler (`<speak>`) barındırıyorsa, okumadan önce Regex ile bunları temizler (`re.sub` mantığı). Aksi takdirde TTS motoru harf harf "yıldız gülücük yıldız" şeklinde okur.
-2. **Tone (Duygu) Ayarlamaları**
-   - Autonomy Brain, robotun hissettiği duyguya (joy, sadness) göre `tone` parametresini doldurur.
-   - **`if`** `tone == 'sad'`: Hoparlörün okuma hızı (rate) düşürülür, ses (volume) azaltılır, böylece mutsuz bir tını oluşur.
-   - **`if`** `tone == 'happy'`: Cümle ritmik ve daha hızlı, sesi daha gür çıkar.
-3. **Motor Seçimi (`pyttsx3` vs `piper`)**
-   - **`if`** `engine == 'piper'`: RPi üzerinde yüksek kaliteli yerel insan sesi sentezleyen piper binary'sini (`subprocess` ile) çalıştırıp `aplay` (ALSA ses sistemi) portuna pipe eder.
-   - **`else`**: Basit ama uyumlu olan standart `pyttsx3` nesnesi (runAndWait) çağrılır.
+1. **Metin Temizliği & Çevrimdışı Dil Algılama (`lang_detect.py`)**
+   - Autonomy'den gelen LLM cümlesi markdown, kod bloğu veya iç düşünce etiketleri (`<think>`, `reasoning:` vb.) barındırıyorsa okunmadan önce temizlenir.
+   - `resolve_speak_language()` ağ sondası olmadan (`1.1.1.1:53` yok) metin dilini algılar; sayı/noktalama gibi belirsiz metinlerde `explicit` oturum dilini korur.
+2. **Öncelikli Akış Kuyruğu & Kesintisiz Barge-In (`SpeechPriorityQueue` & `AudioPlayer`)**
+   - `/speak/say_stream` cümleleri tek işçili sıralı `SpeechPriorityQueue` üzerinden oynatılır; yüksek öncelikli akış geldiğinde aktif konuşma anında kesilir.
+   - `AudioPlayer.stop_playback()` kilitsizdir (`_play_lock` beklemeden `_play_stop.set()` ve `sd.stop()` çağırır); `stop()` ve `stop_speaking()` sentezi iptal edip `speak.finished` bildirimini asenkron yayımlar.
+3. **Motor Seçimi & LRU PCM Önbelleği (`TextToSpeech`)**
+   - Kısa ve sık kullanılan ifadeler (`<= 80` karakter, en fazla `24` kayıt) LRU `_pcm_cache` içinden tekrar sentezlemeden döndürülür.
+   - Uzak (`remote`/`xtts`) hata verirse önbellekli yerel `PiperBackend`'e düşer; ancak kullanıcı barge-in (`synthesis_cancelled`) nedeniyle iptal edildiyse fallback tetiklenmez.

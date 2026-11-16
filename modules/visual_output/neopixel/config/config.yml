@@ -14,6 +14,8 @@ hardware:
   speed_khz: 800
   ws2812_spi_khz: 2400
   order: "GRB"
+  max_brightness: 0.7
+  max_current_ma: 900
 
 companion:
   enabled: true

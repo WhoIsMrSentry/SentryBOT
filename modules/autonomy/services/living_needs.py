@@ -4,6 +4,9 @@ import time
 from typing import Any, Dict, Optional
 
 
+from .needs_engine import _clamp, normalize_unit_score  # noqa: F401
+
+
 def _as_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -129,6 +132,9 @@ class LivingNeedsEngine:
             "hazards_count": int(hazards_count),
             "sound_recent": bool(sound_recent),
             "speech_busy": bool(speech_busy),
+            "scale": "0..1_hazard_as_safety",
+            "risk": scores["safety"],
+            "safety_level": round(max(0.0, 1.0 - scores["safety"]), 3),
             "scores": scores,
             "dominant_need": dominant,
             "recommended_goal": recommended,

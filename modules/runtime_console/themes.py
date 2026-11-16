@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Dict, List
-from textual.theme import Theme
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List
 
-# SentryBOT Built-in Themes (Including Posting, Crimson, Cyberpunk, Nord, Dracula, etc.)
-THEMES: Dict[str, Theme] = {
-    "sentry-crimson": Theme(
+if TYPE_CHECKING:
+    from textual.theme import Theme
+
+# Pure-data theme specifications (avoids importing textual at module import time)
+_THEME_SPECS: Dict[str, Dict[str, Any]] = {
+    "sentry-crimson": dict(
         name="sentry-crimson",
         primary="#FA1E4E",
         secondary="#88001b",
@@ -27,7 +30,7 @@ THEMES: Dict[str, Theme] = {
             "hero-bg": "#18070e",
         },
     ),
-    "posting": Theme(
+    "posting": dict(
         name="posting",
         primary="#458588",
         secondary="#b16286",
@@ -48,7 +51,7 @@ THEMES: Dict[str, Theme] = {
             "hero-bg": "#282828",
         },
     ),
-    "nord": Theme(
+    "nord": dict(
         name="nord",
         primary="#88c0d0",
         secondary="#81a1c1",
@@ -69,7 +72,7 @@ THEMES: Dict[str, Theme] = {
             "hero-bg": "#2e3440",
         },
     ),
-    "monokai": Theme(
+    "monokai": dict(
         name="monokai",
         primary="#a6e22e",
         secondary="#f92672",
@@ -90,7 +93,7 @@ THEMES: Dict[str, Theme] = {
             "hero-bg": "#272822",
         },
     ),
-    "dracula": Theme(
+    "dracula": dict(
         name="dracula",
         primary="#bd93f9",
         secondary="#ff79c6",
@@ -111,7 +114,7 @@ THEMES: Dict[str, Theme] = {
             "hero-bg": "#282a36",
         },
     ),
-    "tokyo-night": Theme(
+    "tokyo-night": dict(
         name="tokyo-night",
         primary="#7aa2f7",
         secondary="#bb9af7",
@@ -132,7 +135,7 @@ THEMES: Dict[str, Theme] = {
             "hero-bg": "#1a1b26",
         },
     ),
-    "cyberpunk": Theme(
+    "cyberpunk": dict(
         name="cyberpunk",
         primary="#ffe600",
         secondary="#ff003c",
@@ -153,7 +156,7 @@ THEMES: Dict[str, Theme] = {
             "hero-bg": "#0e131d",
         },
     ),
-    "catppuccin": Theme(
+    "catppuccin": dict(
         name="catppuccin",
         primary="#89b4fa",
         secondary="#f5c2e7",
@@ -174,7 +177,7 @@ THEMES: Dict[str, Theme] = {
             "hero-bg": "#1e1e2e",
         },
     ),
-    "matrix": Theme(
+    "matrix": dict(
         name="matrix",
         primary="#00ff66",
         secondary="#008f39",
@@ -195,7 +198,7 @@ THEMES: Dict[str, Theme] = {
             "hero-bg": "#061208",
         },
     ),
-    "solarized-dark": Theme(
+    "solarized-dark": dict(
         name="solarized-dark",
         primary="#268bd2",
         secondary="#2aa198",
@@ -218,33 +221,71 @@ THEMES: Dict[str, Theme] = {
     ),
 }
 
+
+class _LazyThemeMapping(Mapping[str, "Theme"]):
+    """Mapping proxy that constructs textual Theme objects lazily on access."""
+
+    def __init__(self, specs: Dict[str, Dict[str, Any]]) -> None:
+        self._specs = specs
+        self._cache: Dict[str, "Theme"] = {}
+
+    def _build(self, name: str) -> "Theme":
+        if name not in self._cache:
+            from textual.theme import Theme
+
+            self._cache[name] = Theme(**self._specs[name])
+        return self._cache[name]
+
+    def __getitem__(self, name: str) -> "Theme":
+        return self._build(name)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._specs)
+
+    def __len__(self) -> int:
+        return len(self._specs)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._specs
+
+
+THEMES: Mapping[str, "Theme"] = _LazyThemeMapping(_THEME_SPECS)
+
 DEFAULT_THEME_NAME = "sentry-crimson"
-CONFIG_PATH = Path("config/tui_theme.txt")
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+CONFIG_PATH = _REPO_ROOT / "config" / "tui_theme.txt"
 
 
-def get_saved_theme_name() -> str:
+def get_saved_theme_name(config_path: Path | None = None) -> str:
+    target = config_path or CONFIG_PATH
     try:
-        if CONFIG_PATH.exists():
-            name = CONFIG_PATH.read_text(encoding="utf-8").strip()
-            if name in THEMES:
+        if target.exists():
+            name = target.read_text(encoding="utf-8").strip()
+            if name in _THEME_SPECS:
                 return name
     except Exception:
         pass
     return DEFAULT_THEME_NAME
 
 
-def save_theme_name(name: str) -> None:
-    if name in THEMES:
+def save_theme_name(name: str, config_path: Path | None = None) -> None:
+    if name in _THEME_SPECS:
+        target = config_path or CONFIG_PATH
         try:
-            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            CONFIG_PATH.write_text(name, encoding="utf-8")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(name, encoding="utf-8")
         except Exception:
             pass
 
 
 def get_theme_names() -> List[str]:
-    return list(THEMES.keys())
+    return list(_THEME_SPECS.keys())
 
 
-def get_theme(name: str) -> Theme:
-    return THEMES.get(name, THEMES[DEFAULT_THEME_NAME])
+def get_theme_spec(name: str) -> Dict[str, Any]:
+    return dict(_THEME_SPECS.get(name, _THEME_SPECS[DEFAULT_THEME_NAME]))
+
+
+def get_theme(name: str) -> "Theme":
+    resolved = name if name in _THEME_SPECS else DEFAULT_THEME_NAME
+    return THEMES[resolved]

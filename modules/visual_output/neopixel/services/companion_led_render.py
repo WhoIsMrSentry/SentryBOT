@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 import math
 import time
-from typing import Any, Dict, List, Mapping
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
 
-from .companion_led_helpers import Color, _StickSegment, _parse_hex_color
+from .companion_led_helpers import Color, _StickSegment, _parse_hex_color, _safe_float
 
 logger = logging.getLogger("neopixel.companion_render")
 
@@ -37,10 +37,12 @@ class CompanionLedRenderMixin:
     _wake_spin_position: int
     _wake_spin_wait_ms: float
     _wake_spin_frame_tick: int
+    _wake_chase_pos: int
+    _last_rendered_frame: Optional[Dict[int, Color]]
 
-    @staticmethod
-    def _bounded(value: Any, default: float) -> float:
-        raise NotImplementedError
+    if TYPE_CHECKING:
+        @staticmethod
+        def _bounded(value: Any, default: float) -> float: ...
 
     def _companion_indices(self) -> range:
         end = self._jewel_start + self._jewel_count
@@ -48,7 +50,16 @@ class CompanionLedRenderMixin:
             end = max(end, stick.start + stick.count)
         return range(self._jewel_start, min(end, self._driver.num_leds))
 
+    def _commit_frame(self, pixels: Dict[int, Color]) -> None:
+        if getattr(self, "_last_rendered_frame", None) == pixels:
+            return
+        for idx, color in pixels.items():
+            self._driver.set(idx, *color)
+        self._driver.show()
+        self._last_rendered_frame = dict(pixels)
+
     def _clear_companion_range(self) -> None:
+        self._last_rendered_frame = None
         for i in self._companion_indices():
             self._driver.set(i, 0, 0, 0)
         self._driver.show()
@@ -72,6 +83,7 @@ class CompanionLedRenderMixin:
             tc = self._thinking_color
             eye = self._eye_color
 
+        pixels: Dict[int, Color] = {}
         ring_indices = [i for i in range(self._jewel_count) if i != self._center_rel]
         for rel in range(self._jewel_count):
             idx = self._jewel_start + rel
@@ -79,29 +91,22 @@ class CompanionLedRenderMixin:
                 continue
             if rel == self._center_rel:
                 pulse = 0.5 + 0.5 * math.sin(self._eye_phase * 2 * math.pi)
-                self._driver.set(
-                    idx,
-                    int(eye[0] * pulse),
-                    int(eye[1] * pulse),
-                    int(eye[2] * pulse),
-                )
+                pixels[idx] = (int(eye[0] * pulse), int(eye[1] * pulse), int(eye[2] * pulse))
                 continue
             ring_pos = ring_indices.index(rel) if rel in ring_indices else 0
-            on = (ring_pos + phase) % 2 == 0
-            if on:
-                self._driver.set(idx, *tc)
+            if (ring_pos + phase) % 2 == 0:
+                pixels[idx] = tc
             else:
-                self._driver.set(idx, int(tc[0] * 0.08), int(tc[1] * 0.08), int(tc[2] * 0.12))
+                pixels[idx] = (int(tc[0] * 0.08), int(tc[1] * 0.08), int(tc[2] * 0.12))
 
-        self._clear_sticks()
         for stick in self._sticks:
             for i in range(stick.count):
                 idx = stick.start + i
                 if idx >= self._driver.num_leds:
                     break
                 fade = 0.12 + 0.08 * math.sin((self._eye_phase + i * 0.2) * math.pi)
-                self._driver.set(idx, int(tc[0] * fade), int(tc[1] * fade), int(tc[2] * fade))
-        self._driver.show()
+                pixels[idx] = (int(tc[0] * fade), int(tc[1] * fade), int(tc[2] * fade))
+        self._commit_frame(pixels)
 
     def _render_eye_frame(self) -> None:
         with self._lock:
@@ -109,17 +114,17 @@ class CompanionLedRenderMixin:
 
         self._eye_phase += self._tick_ms / max(200.0, self._eye_breathe_ms)
         pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(self._eye_phase * 2 * math.pi))
-
         opp = (255 - eye[0], 255 - eye[1], 255 - eye[2])
+        pixels: Dict[int, Color] = {}
 
         for rel in range(self._jewel_count):
             idx = self._jewel_start + rel
             if idx >= self._driver.num_leds:
                 break
             if rel == self._center_rel:
-                self._driver.set(idx, int(opp[0] * pulse), int(opp[1] * pulse), int(opp[2] * pulse))
+                pixels[idx] = (int(opp[0] * pulse), int(opp[1] * pulse), int(opp[2] * pulse))
             else:
-                self._driver.set(idx, int(eye[0] * 0.15), int(eye[1] * 0.15), int(eye[2] * 0.15))
+                pixels[idx] = (int(eye[0] * 0.15), int(eye[1] * 0.15), int(eye[2] * 0.15))
 
         eyebrow_pulse = 0.2 + 0.5 * (0.5 + 0.5 * math.cos(self._eye_phase * math.pi))
         for stick in self._sticks:
@@ -129,9 +134,38 @@ class CompanionLedRenderMixin:
                     break
                 arch_factor = math.sin((i / max(1, stick.count - 1)) * math.pi)
                 intensity = eyebrow_pulse * (0.4 + 0.6 * arch_factor)
-                self._driver.set(idx, int(eye[0] * intensity), int(eye[1] * intensity), int(eye[2] * intensity))
+                pixels[idx] = (int(eye[0] * intensity), int(eye[1] * intensity), int(eye[2] * intensity))
 
-        self._driver.show()
+        self._commit_frame(pixels)
+
+    def _render_listen_frame(self) -> None:
+        """Distinct active listening visualization (pulsing aqua ring + brow wave)."""
+        with self._lock:
+            eye = self._eye_color
+
+        self._eye_phase += (self._tick_ms * 1.6) / max(200.0, self._eye_breathe_ms)
+        ring_pulse = 0.35 + 0.65 * (0.5 + 0.5 * math.sin(self._eye_phase * 2.0 * math.pi))
+        pixels: Dict[int, Color] = {}
+        for rel in range(self._jewel_count):
+            idx = self._jewel_start + rel
+            if idx >= self._driver.num_leds:
+                break
+            if rel == self._center_rel:
+                pixels[idx] = eye
+            else:
+                pixels[idx] = (
+                    int(eye[0] * ring_pulse * 0.6),
+                    int(eye[1] * ring_pulse * 0.6),
+                    int(eye[2] * ring_pulse * 0.8),
+                )
+        for stick in self._sticks:
+            for i in range(stick.count):
+                idx = stick.start + i
+                if idx >= self._driver.num_leds:
+                    break
+                ripple = 0.35 + 0.55 * (0.5 + 0.5 * math.sin((self._eye_phase * 2.0 + i * 0.35) * math.pi))
+                pixels[idx] = (int(eye[0] * ripple), int(eye[1] * ripple), int(eye[2] * ripple))
+        self._commit_frame(pixels)
 
     def _render_face_frame(self) -> None:
         now = time.monotonic()
@@ -141,20 +175,29 @@ class CompanionLedRenderMixin:
             if expired:
                 self._face_frame = {}
                 self._mode = "eye"
+                self._last_rendered_frame = None
         if not frame or expired:
             self._render_eye_frame()
             return
         eye = frame.get("eye", {})
-        eye_color = _parse_hex_color(eye.get("color"), self._eye_color)
-        eye_brightness = self._bounded(eye.get("brightness", 0.75), 0.75)
-        pulse_hz = max(0.0, float(eye.get("pulse_hz", 0.0) or 0.0))
+        raw_eye_col = eye.get("color")
+        eye_color = (
+            raw_eye_col
+            if isinstance(raw_eye_col, tuple)
+            else _parse_hex_color(raw_eye_col, self._eye_color)
+        )
+        eye_brightness = _safe_float(eye.get("brightness", 0.75), 0.75, minimum=0.0, maximum=1.0)
+        pulse_hz = _safe_float(eye.get("pulse_hz", 0.0), 0.0, minimum=0.0, maximum=20.0)
         pulse = 1.0 if pulse_hz <= 0.0 else 0.70 + 0.30 * (0.5 + 0.5 * math.sin(now * pulse_hz * 2.0 * math.pi))
+        animation = str(frame.get("animation") or "").strip().upper()
+        pixels: Dict[int, Color] = {}
         for rel in range(self._jewel_count):
             idx = self._jewel_start + rel
             if idx >= self._driver.num_leds:
                 break
             level = eye_brightness * pulse
-            self._driver.set(idx, int(eye_color[0] * level), int(eye_color[1] * level), int(eye_color[2] * level))
+            pixels[idx] = (int(eye_color[0] * level), int(eye_color[1] * level), int(eye_color[2] * level))
+
         brows = frame.get("brows", {})
         for stick in self._sticks:
             spec = brows.get(stick.name, {}) if isinstance(brows, Mapping) else {}
@@ -162,11 +205,24 @@ class CompanionLedRenderMixin:
             profile = self._face_profiles.get(pose, self._face_profiles.get("neutral", {}))
             if not isinstance(profile, Mapping):
                 profile = {}
-            color = _parse_hex_color(spec.get("color"), eye_color)
-            intensity = self._bounded(spec.get("intensity", profile.get("intensity", 0.65)), 0.65)
-            slope = float(profile.get("slope", 0.0) or 0.0)
-            arch = self._bounded(profile.get("arch", 0.0), 0.0)
-            phase = self._bounded(spec.get("phase", profile.get("phase", 0.0)), 0.0)
+            raw_brow_col = spec.get("color")
+            color = (
+                raw_brow_col
+                if isinstance(raw_brow_col, tuple)
+                else _parse_hex_color(raw_brow_col, eye_color)
+            )
+            intensity = _safe_float(
+                spec.get("intensity", profile.get("intensity", 0.65)), 0.65, minimum=0.0, maximum=1.0
+            )
+            slope = _safe_float(profile.get("slope", 0.0), 0.0, minimum=-2.0, maximum=2.0)
+            arch = _safe_float(profile.get("arch", 0.0), 0.0, minimum=0.0, maximum=1.0)
+            phase = _safe_float(spec.get("phase", profile.get("phase", 0.0)), 0.0, minimum=0.0, maximum=1.0)
+            # Only animate brows dynamically when eye pulses or a wave/dynamic semantic animation is selected
+            wave_mod = (
+                (0.82 + 0.18 * math.sin((now + phase) * 2.0 * math.pi))
+                if (pulse_hz > 0.0 or animation in {"WAVE", "PULSE", "BREATHE", "SNOW", "STACK"})
+                else 1.0
+            )
             for physical_rel in range(stick.count):
                 idx = stick.start + physical_rel
                 if idx >= self._driver.num_leds:
@@ -174,10 +230,9 @@ class CompanionLedRenderMixin:
                 logical_rel = (stick.count - 1 - physical_rel) if stick.reverse else physical_rel
                 progress = logical_rel / max(1, stick.count - 1)
                 arch_factor = 1.0 - arch + arch * math.sin(progress * math.pi)
-                level = self._bounded(intensity + slope * (progress - 0.5), intensity) * arch_factor
-                level *= 0.82 + 0.18 * math.sin((now + phase) * 2.0 * math.pi)
-                self._driver.set(idx, int(color[0] * level), int(color[1] * level), int(color[2] * level))
-        self._driver.show()
+                level = self._bounded(intensity + slope * (progress - 0.5), intensity) * arch_factor * wave_mod
+                pixels[idx] = (int(color[0] * level), int(color[1] * level), int(color[2] * level))
+        self._commit_frame(pixels)
 
     def _render_wake_spin_frame(self) -> bool:
         with self._lock:
@@ -188,9 +243,15 @@ class CompanionLedRenderMixin:
 
         if (time.monotonic() - started) >= duration_s:
             self._clear_sticks()
+            self._driver.show()
             return True
 
-        self._clear_sticks()
+        pixels: Dict[int, Color] = {}
+        for stick in self._sticks:
+            for i in range(stick.count):
+                idx = stick.start + i
+                if idx < self._driver.num_leds:
+                    pixels[idx] = self._stick_off
         r, g, b = color
         n = self._jewel_count
         steps_per_advance = max(1, int(self._wake_spin_wait_ms / max(1.0, self._tick_ms)))
@@ -208,23 +269,41 @@ class CompanionLedRenderMixin:
                 continue
             sin_val = math.sin((rel + position) * 1.0) * 127 + 128
             ratio = sin_val / 255.0
-            self._driver.set(idx, int(r * ratio), int(g * ratio), int(b * ratio))
-        self._driver.show()
+            pixels[idx] = (int(r * ratio), int(g * ratio), int(b * ratio))
+        self._commit_frame(pixels)
         return False
 
     def _render_wake_chase_frame(self) -> None:
+        """Render an animated rotating chase around the jewel ring with bright center focus."""
         with self._lock:
             eye = self._eye_color
+            ring_rels = [r for r in range(self._jewel_count) if r != self._center_rel]
+            pos = self._wake_chase_pos
+            if ring_rels:
+                self._wake_chase_pos = (self._wake_chase_pos + 1) % len(ring_rels)
 
-        self._clear_sticks()
-        self._eye_phase += self._tick_ms / max(200.0, self._eye_breathe_ms)
-        pulse = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(self._eye_phase * 2 * math.pi))
+        pixels: Dict[int, Color] = {}
+        for stick in self._sticks:
+            for i in range(stick.count):
+                idx = stick.start + i
+                if idx < self._driver.num_leds:
+                    pixels[idx] = self._stick_off
+
         center_idx = self._jewel_start + self._center_rel
         if center_idx < self._driver.num_leds:
-            self._driver.set(center_idx, int(eye[0] * pulse), int(eye[1] * pulse), int(eye[2] * pulse))
-        for rel in range(1, self._jewel_count):
-            idx = self._jewel_start + rel
-            if idx < self._driver.num_leds:
-                dim = tuple(int(c * 0.2) for c in eye)
-                self._driver.set(idx, *dim)
-        self._driver.show()
+            pixels[center_idx] = eye
+
+        if ring_rels:
+            head_rel = ring_rels[pos % len(ring_rels)]
+            tail_rel = ring_rels[(pos - 1) % len(ring_rels)]
+            for rel in ring_rels:
+                idx = self._jewel_start + rel
+                if idx >= self._driver.num_leds:
+                    continue
+                if rel == head_rel:
+                    pixels[idx] = eye
+                elif rel == tail_rel:
+                    pixels[idx] = (int(eye[0] * 0.45), int(eye[1] * 0.45), int(eye[2] * 0.45))
+                else:
+                    pixels[idx] = (int(eye[0] * 0.12), int(eye[1] * 0.12), int(eye[2] * 0.12))
+        self._commit_frame(pixels)

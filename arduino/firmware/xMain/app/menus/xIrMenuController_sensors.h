@@ -2,7 +2,7 @@
 #ifndef SENTRY_APP_IR_MENU_CONTROLLER_SENSORS_H
 #define SENTRY_APP_IR_MENU_CONTROLLER_SENSORS_H
 
-#if IR_ENABLED
+#if VIRTUAL_MENU_ENABLED
 
 #include "../xIrMenuController.h"
 
@@ -27,18 +27,15 @@ void IrMenuController::refreshLive(Robot &robot){
       int frac = (int)((g_ultraCm - whole) * 10);
       snprintf_P(l3, sizeof(l3), PSTR(" DIST: %d.%d cm     "), whole, abs(frac));
         
-      // Modern progress bar
+      // Fixed-buffer progress bar (avoids heap allocation)
       int dots = (int)constrain(g_ultraCm / 5.0f, 0, 16);
-      String bar = " [";
-      for (int i=0; i<dots && i<16; i++) bar += "=";
-      for (int i=dots; i<16; i++) bar += " ";
-      bar += "]";
-      strncpy(l4, bar.c_str(), sizeof(l4));
-      l4[sizeof(l4)-1] = '\0';
-      g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+      l4[0] = ' '; l4[1] = '[';
+      for (int i=0; i<16; i++) l4[2 + i] = (i < dots) ? '=' : ' ';
+      l4[18] = ']'; l4[19] = '\0';
+      lcdHubShow4(l1, l2, l3, l4);
     }
 #else
-    lcdPrint("ULTRA", "DISABLED");
+    lcdPrint(F("ULTRA"), F("DISABLED"));
 #endif
     return;
   }
@@ -52,12 +49,13 @@ void IrMenuController::refreshLive(Robot &robot){
       snprintf_P(l3, sizeof(l3), PSTR("  STATUS: IDLE      "));
       snprintf_P(l4, sizeof(l4), PSTR("  WAITING FOR TAG   "));
     } else {
-      String tail = g_lastRfid;
-      if (tail.length() > 16) tail = tail.substring(tail.length() - 16);
+      const char *uidPtr = g_lastRfid.c_str();
+      size_t ulen = g_lastRfid.length();
+      if (ulen > 16) uidPtr += (ulen - 16);
       snprintf_P(l3, sizeof(l3), PSTR("  LAST ID:          "));
-      snprintf_P(l4, sizeof(l4), PSTR("  %-16s  "), tail.c_str());
+      snprintf_P(l4, sizeof(l4), PSTR("  %-16s  "), uidPtr);
     }
-    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+    lcdHubShow4(l1, l2, l3, l4);
 #else
     lcdPrint((const __FlashStringHelper*)F("RFID"), (const __FlashStringHelper*)F("DISABLED"));
 #endif
@@ -70,9 +68,6 @@ void IrMenuController::refreshLive(Robot &robot){
     float r = robot.imu.getRoll();
 
     if (LCD_ROWS >= 4){
-      // Plain ASCII so the page renders regardless of CGRAM state, and we use
-      // signed clamps so very large IMU values cannot overflow the row width
-      // (which previously truncated mid-row and gave the panel nothing to show).
       int pi  = (int)constrain(p, -999.0f, 999.0f);
       int ri  = (int)constrain(r, -999.0f, 999.0f);
       int ax  = (int)constrain(robot.imu.getAccX(), -9999.0f, 9999.0f);
@@ -85,7 +80,7 @@ void IrMenuController::refreshLive(Robot &robot){
       snprintf_P(l2, sizeof(l2), PSTR(" PITCH:%-4d ROLL:%-3d"), pi, ri);
       snprintf_P(l3, sizeof(l3), PSTR(" AX:%-4d AY:%-4d    "), ax, ay);
       snprintf_P(l4, sizeof(l4), PSTR(" AZ:%-4d  TEMP:%-3dC "), az, tc);
-      g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+      lcdHubShow4(l1, l2, l3, l4);
     } else {
       if (_imuSub == 0){
         String line;
@@ -126,21 +121,28 @@ void IrMenuController::refreshLive(Robot &robot){
     int s = upS % 60;
     snprintf_P(l1, sizeof(l1), PSTR("\x04 %s UP %02d:%02d:%02d"), (robot.getMode()==MODE_HEAD_TRACK)?"S":"K", h, m, s);
     
-    // Line 2: Connectivity with link icon (Shortened labels to fit 20 chars)
-    snprintf_P(l2, sizeof(l2), PSTR("\x03 S:%s R:%s RF:%s"), robot.servos.driverOk()?"OK":"NO", "NA", g_lastRfid.length()?"OK":"NO");
+    // Line 2: Connectivity with link icon
+#if RFID_ENABLED
+    const char *rfOk = g_lastRfid.length() ? "OK" : "NO";
+#else
+    const char *rfOk = "OFF";
+#endif
+    snprintf_P(l2, sizeof(l2), PSTR("\x03 S:%s E:%s RF:%s"), robot.servos.driverOk()?"OK":"NO", robot.isEstopped()?"1":"0", rfOk);
     
-    // Line 3: IMU and Drive with temp icon (multi-purpose)
+    // Line 3: IMU and Drive with temp icon
     snprintf_P(l3, sizeof(l3), PSTR("\x01 IMU:%s DRV:%d"), robot.imu.isReady()?"OK":"NO", (int)robot.getDriveCmd());
     
-    // Line 4: Ultra and Misc with battery icon (simulated for now)
+    // Line 4: Ultra
 #if ULTRA_ENABLED
-    String ul = isnan(g_ultraCm) ? "NA" : String((int)g_ultraCm);
-    snprintf_P(l4, sizeof(l4), PSTR("\x02 ULTRA:%scm BTN:OK"), ul.c_str());
+    char ulBuf[8];
+    if (isnan(g_ultraCm)) strcpy_P(ulBuf, PSTR("NA"));
+    else itoa((int)g_ultraCm, ulBuf, 10);
+    snprintf_P(l4, sizeof(l4), PSTR("\x02 ULTRA:%scm BTN:OK"), ulBuf);
 #else
     snprintf_P(l4, sizeof(l4), PSTR("\x02 ULTRA:OFF BTN:OK"));
 #endif
 
-    g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+    lcdHubShow4(l1, l2, l3, l4);
     return;
   }
   
@@ -155,6 +157,6 @@ void IrMenuController::refreshLive(Robot &robot){
   }
 }
 
-#endif // IR_ENABLED
+#endif // VIRTUAL_MENU_ENABLED
 
 #endif // SENTRY_APP_IR_MENU_CONTROLLER_SENSORS_H

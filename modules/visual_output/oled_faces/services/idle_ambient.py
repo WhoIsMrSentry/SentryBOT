@@ -42,7 +42,7 @@ class IdleAmbientPlayer:
     def maybe_action(self, *, blocked: bool) -> Optional[OledAction]:
         if not self.enabled or blocked:
             return None
-        now = time.time()
+        now = time.monotonic()
         if now < self._hold_until:
             return None
         if now < self._next_at:

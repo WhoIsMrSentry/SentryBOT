@@ -60,9 +60,11 @@ class SceneMixin:
         interval_ms = max(0, int(step.get("interval_ms", 80)))
         force = bool(step.get("force", False))
         for idx in range(count):
+            if getattr(self, "running", True) is False:
+                return
             self.client.set_interaction_effect(name=name, duration_ms=duration_ms, force=force)
             if idx < count - 1 and interval_ms > 0:
-                time.sleep(interval_ms / 1000.0)
+                time.sleep(min(1.0, interval_ms / 1000.0))
 
     def _scene_base(self, step, context):
         name = str(step.get("name", "BREATHE"))
@@ -128,8 +130,8 @@ class SceneMixin:
 
     def _scene_sleep(self, step, context):
         ms = int(step.get("duration_ms", 0))
-        if ms > 0:
-            time.sleep(ms / 1000.0)
+        if ms > 0 and getattr(self, "running", True) is not False:
+            time.sleep(min(3.0, ms / 1000.0))
 
     _SCENE_HANDLERS = {
         "event": "_scene_event",

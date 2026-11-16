@@ -4,19 +4,19 @@ SentryBOT'un periyodik görev yöneticisidir. HTTP ping, konuşma, diagnostics, 
 
 ## Sorumluluklar
 
-- Runtime'da job ekleme/güncelleme/silme (CRUD API)
-- Periyodik HTTP istekleri (keep-alive, poll)
-- Yerleşik job türleri: `speak`, `interaction_event`, `diagnostics`, `state_set`, `notify`, `http`
-- Son çalıştırma sonuçlarını saklama (memory + opsiyonel persistence)
+- Runtime'da doğrulanmış iş ekleme/güncelleme/silme (CRUD API + Pydantic `SchedulerJobPayload`)
+- Paylaşımlı `httpx.AsyncClient` üzerinden periyodik veya günlük `"HH:MM"` (`modules.common.time_utils.parse_hhmm`) iş tetikleme
+- `modules.common.job_types` (`JobContext` + `JobRegistry`) aracılığıyla yerleşik iş türleri: `speak`, `interaction_event`, `diagnostics`, `state_set`, `notify` (`/notify/telegram`|`/notify/discord`), `http`
+- İş sonuçları belleği (`remove_job` sonrası temizlenir) ve dinamik işler için atomik JSON kalıcılığı (`persistence_path`)
 
-## Mimari (Güncel: 2026-08-20)
+## Mimari
 
-- Giriş noktası: `xSchedulerService.py`
-- **Motor**: `services/runner.py` → `Scheduler` class
+- Giriş noktası: `xSchedulerService.py` (`services` + `persistence_path` desteği)
+- **Motor**: `services/runner.py` → `Scheduler` (`add_or_update_job`, `remove_job`, `_seconds_until_next_hhmm`)
 - **Router**: `api/router.py`
-- **Config**: `config_loader.py`
+- **Config**: `config_loader.py` → `modules.common.config_loader.load_module_config` + `apply_bind_host(..., "SCHEDULER_HOST")`
 
-Gateway `_mount_scheduler` ile mount edilir; `include.scheduler=true` gerekir. Autostart açıksa startup'ta `Scheduler.start()` çağrılır.
+Gateway `_mount_scheduler` ile mount edilir; `include.scheduler=true` gerekir. Autostart açıksa startup'ta `Scheduler.start()`, kapanışta `Scheduler.stop()` (client `aclose()` dahil) çağrılır.
 
 ## Job Türleri
 
@@ -24,10 +24,10 @@ Gateway `_mount_scheduler` ile mount edilir; `include.scheduler=true` gerekir. A
 |------|----------|--------------|
 | `http` | `url` veya gateway `path` üzerinden HTTP isteği | `method`, `path`, `url`, `body`, `headers` |
 | `speak` | `POST /speak/say` | `text`, `engine`, `tone` |
-| `interaction_event` | `POST /expression/interactions/event` | `type`, `data` |
+| `interaction_event` | `POST /interactions/event` | `type`, `data` |
 | `diagnostics` | `POST /diagnostics/run` | - |
-| `state_set` | `POST /state/set` | `key`, `value` |
-| `notify` | `POST /notify/test` | - |
+| `state_set` | `POST /state/set` (`set_value`) | `key`, `value` |
+| `notify` | `POST /notify/telegram` / `/notify/discord` | `text`, `channel` |
 
 ## API (Gateway altında `/scheduler/*`)
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, TYPE_CHECKING
 
+from ..utils import decay_salience
+
 if TYPE_CHECKING:
     from ..db import SocialDB
 
@@ -65,7 +67,6 @@ class MomentsRepo:
     def decay(self, person_id: str, half_life_s: float = 216000.0) -> int:
         """Apply exponential decay and drop low-score rows. Returns deleted count."""
         now = time.time()
-        decay_per_sec = 0.5 / max(1.0, float(half_life_s))
         with self.db.transaction() as conn:
             rows = conn.execute(
                 "SELECT id, score, updated_at FROM moments WHERE person_id = ?",
@@ -74,8 +75,7 @@ class MomentsRepo:
             deleted = 0
             for r in rows:
                 dt = max(0.0, now - float(r["updated_at"] or now))
-                score = float(r["score"] or 0.0) - dt * decay_per_sec
-                score = max(0.0, min(1.0, score))
+                score = decay_salience(float(r["score"] or 0.0), dt, half_life_s)
                 if score < 0.08:
                     conn.execute("DELETE FROM moments WHERE id = ?", (int(r["id"]),))
                     deleted += 1

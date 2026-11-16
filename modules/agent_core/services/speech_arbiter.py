@@ -76,6 +76,7 @@ class SpeechArbiter:
         self._processing = threading.Event()
         self._stop_event = threading.Event()
         self._interrupt_flag = threading.Event()
+        self._interrupt_seq: int = 0
         self._worker: Optional[threading.Thread] = None
         self._current_item: Optional[SpeechItem] = None
         self._tts_state_callback: Optional[Callable[[bool], Any]] = None
@@ -108,15 +109,18 @@ class SpeechArbiter:
 
     def interrupt_all(self) -> int:
         self._interrupt_flag.set()
-        cleared = self.clear_queue()
+        with self._lock:
+            self._interrupt_seq += 1
+            cleared = len(self._queue)
+            self._queue.clear()
+            self._current_item = None
         if self._stop_playback_fn:
             try:
                 self._stop_playback_fn()
             except Exception:
                 logger.debug("stop playback failed", exc_info=True)
         self._set_tts_active(False)
-        with self._lock:
-            self._current_item = None
+        self._interrupt_flag.clear()
         return cleared
 
     def enqueue(
@@ -292,18 +296,22 @@ class SpeechArbiter:
             self._processing.wait(timeout=0.5)
             self._processing.clear()
             while not self._stop_event.is_set():
-                item = self._pop_next()
+                item, pop_seq = self._pop_next_with_seq()
                 if item is None:
                     break
-                self._dispatch(item)
+                self._dispatch(item, pop_seq=pop_seq)
 
     def _pop_next(self) -> Optional[SpeechItem]:
+        item, _ = self._pop_next_with_seq()
+        return item
+
+    def _pop_next_with_seq(self) -> tuple[Optional[SpeechItem], int]:
         with self._lock:
             self._queue = [item for item in self._queue if not item.expired]
             if not self._queue:
-                return None
+                return None, self._interrupt_seq
             self._queue.sort(key=lambda item: (-item.priority, item.created_at))
-            return self._queue.pop(0)
+            return self._queue.pop(0), self._interrupt_seq
 
     def _set_tts_active(self, active: bool) -> None:
         if active:
@@ -316,11 +324,13 @@ class SpeechArbiter:
             except Exception:
                 logger.debug("tts state callback failed", exc_info=True)
 
-    def _dispatch(self, item: SpeechItem) -> None:
+    def _dispatch(self, item: SpeechItem, pop_seq: Optional[int] = None) -> None:
         if item.expired or not self._speak_fn:
             return
         if self._interrupt_flag.is_set():
             self._interrupt_flag.clear()
+            return
+        if pop_seq is not None and pop_seq != self._interrupt_seq:
             return
 
         key = item.text[:80].lower()
@@ -333,7 +343,6 @@ class SpeechArbiter:
         self._set_tts_active(True)
         try:
             logger.info("SpeechArbiter dispatching speech: '%s' (lang=%s)", item.text, item.language or "auto")
-            print(f"\n🗣️ [SentryBOT Speak]: {item.text}\n", flush=True)
             kwargs: Dict[str, Any] = {"text": item.text}
             if item.tone:
                 kwargs["tone"] = item.tone

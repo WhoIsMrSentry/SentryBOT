@@ -33,15 +33,16 @@ Durumlara ve olaylara göre ifade kararı üreten hafif kural motorudur. LED/OLE
 Gateway altında `/interactions/*` olarak yayınlanır.
 
 - `GET /interactions/state`
+- `GET /interactions/rules/trace` (etkin kurallar, cooldown, aktif lease, sessiz saat ve config uyarıları)
 - `POST /interactions/event`
 - `POST /interactions/effect`
 - `POST /interactions/base`
 
-`/interactions/effect` çağrısı ayrıca `color`, `r/g/b`, `force` ve `emotions` alanlarını destekler.
+`/interactions/effect` çağrısı Pydantic şeması ile doğrulanır ve ayrıca `color`, `r/g/b`, `force` ve `emotions` alanlarını destekler; arbiter veya sessiz saat reddettiğinde `{"ok": false, "reason": ...}` döner. `/interactions/base` companion, sessiz saat ve arbiter izinlerini denetler.
 
 ## Konfigürasyon
 
-Varsayılanlar `config_loader.py` içinde tanımlıdır ve modül-içi `config/config.yml` ile birleştirilir.
+Varsayılanlar `config_loader.py` içinde tanımlıdır ve modül-içi `modules/expression/interactions/config/config.yml` ile birleştirilir. Başlangıçta bilinmeyen kural/koşul anahtarları `validate_rules_config()` ile doğrulanıp uyarılır.
 
 - `adapter.http_base_url`
 - `hardware.num_leds`, `hardware.segments`

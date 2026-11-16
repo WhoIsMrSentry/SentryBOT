@@ -97,12 +97,24 @@ def get_venv_python(venv_path: Path) -> str:
         return str(venv_path / "bin" / "python")
 
 
-def install_requirements(files: Iterable[Path], dry_run: bool = False, pip_args: str | None = None,
-                        fail_fast: bool = False, use_venv: bool = False, venv_path: Path | None = None) -> List[Tuple[Path, int]]:
+def install_requirements(
+    files: Iterable[Path],
+    dry_run: bool = False,
+    pip_args: str | None = None,
+    fail_fast: bool = False,
+    use_venv: bool = False,
+    venv_path: Path | None = None,
+    repo_root: Path | None = None,
+) -> List[Tuple[Path, int]]:
+    root = (repo_root or Path(__file__).resolve().parent.parent).resolve()
     results: List[Tuple[Path, int]] = []
 
-    if use_venv and venv_path:
-        python_exe = get_venv_python(venv_path)
+    resolved_venv: Path | None = None
+    if venv_path is not None:
+        resolved_venv = venv_path if venv_path.is_absolute() else (root / venv_path)
+
+    if use_venv and resolved_venv is not None:
+        python_exe = get_venv_python(resolved_venv)
         if not Path(python_exe).exists():
             print(f"HATA: Virtual environment Python bulunamadı: {python_exe}")
             return [(f, 1) for f in files]
@@ -118,11 +130,11 @@ def install_requirements(files: Iterable[Path], dry_run: bool = False, pip_args:
     extra = shlex.split(pip_args) if pip_args else []
 
     def _run_pip(cmd: List[str]) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(cmd, capture_output=True, text=True, cwd=str(Path.cwd()))
+        return subprocess.run(cmd, capture_output=True, text=True, cwd=str(root))
 
     for f in files:
-        lab = label_for(f, Path.cwd())
-        venv_info = f" (venv: {venv_path.name})" if use_venv and venv_path else ""
+        lab = label_for(f, root)
+        venv_info = f" (venv: {resolved_venv.name})" if use_venv and resolved_venv else ""
         print(f"\n=== {lab} gereklilikleri kuruluyor ({f}){venv_info} ===")
 
         if dry_run:
@@ -148,27 +160,48 @@ def install_requirements(files: Iterable[Path], dry_run: bool = False, pip_args:
     return results
 
 
-def parse_args() -> argparse.Namespace:
+def filter_requirements_for_profile(files: Iterable[Path], profile: str, repo_root: Path) -> List[Path]:
+    """Select requirements files appropriate for target profile (all | pi | pc | ci)."""
+    prof = (profile or "all").strip().lower()
+    items = list(files)
+    if prof == "all":
+        return items
+    excluded_labels = {
+        "pi": {"remote_tts_server", "remote_multimodal_server"},
+        "ci": {"remote_tts_server", "remote_multimodal_server"},
+        "pc": set(),
+    }.get(prof, set())
+    return [p for p in items if label_for(p, repo_root) not in excluded_labels]
+
+
+def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Tüm requirements.txt dosyalarını bulup kurar.")
+    ap.add_argument(
+        "--profile",
+        choices=["all", "pi", "pc", "ci"],
+        default="all",
+        help="Hedef ortam profili (pi, pc, ci veya tümü).",
+    )
     ap.add_argument("--only", nargs="*", default=None, help="Sadece belirtilen modülleri kur.")
     ap.add_argument("--skip", nargs="*", default=None, help="Belirtilen modülleri atla.")
     ap.add_argument("--dry-run", action="store_true", help="Yükleme komutlarını sadece yazdır.")
     ap.add_argument("--pip-args", default=None, help="pip için ekstra argümanlar.")
     ap.add_argument("--fail-fast", action="store_true", help="İlk hata sonrası dur.")
     ap.add_argument("--use-venv", action="store_true", help="Virtual environment kullan.")
-    ap.add_argument("--venv-path", default="scripts/venv", help="Virtual environment yolu.")
+    ap.add_argument("--venv-path", default=".venv", help="Virtual environment yolu (depo köküne göre veya mutlak).")
     ap.add_argument("--break-system-packages", action="store_true", help="Sistem paketlerini kırmaya zorla.")
-    return ap.parse_args()
+    return ap.parse_args(argv)
 
 
-def main() -> int:
-    args = parse_args()
+def main(argv: List[str] | None = None) -> int:
+    args = parse_args(argv)
     repo_root = Path(__file__).resolve().parent.parent
-    print(f"Geçerli dizin: {repo_root}")
+    print(f"Geçerli dizin: {repo_root} | Profil: {args.profile}")
 
     venv_path = None
     if args.use_venv:
-        venv_path = repo_root / args.venv_path
+        raw_venv = Path(args.venv_path)
+        venv_path = raw_venv if raw_venv.is_absolute() else (repo_root / raw_venv)
         if not setup_venv(venv_path):
             return 1
 
@@ -176,6 +209,8 @@ def main() -> int:
     if not all_reqs:
         print("requirements.txt bulunamadı.")
         return 0
+
+    profile_reqs = filter_requirements_for_profile(all_reqs, args.profile, repo_root)
 
     def _keep(p: Path) -> bool:
         lab = label_for(p, repo_root)
@@ -185,7 +220,7 @@ def main() -> int:
             return not (lab in args.skip or p.name in args.skip)
         return True
 
-    selected = [p for p in all_reqs if _keep(p)]
+    selected = [p for p in profile_reqs if _keep(p)]
 
     print("Bulunan requirements dosyaları:")
     for p in selected:
@@ -201,7 +236,8 @@ def main() -> int:
         pip_args=pip_args,
         fail_fast=args.fail_fast,
         use_venv=args.use_venv,
-        venv_path=venv_path
+        venv_path=venv_path,
+        repo_root=repo_root,
     )
 
     failed = [str(p) for p, code in results if code != 0]

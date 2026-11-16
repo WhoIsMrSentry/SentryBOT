@@ -102,7 +102,7 @@ class PersonIdentityManager:
             except Exception:
                 social_db = None
         self._social_db = social_db
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._records: Dict[str, PersonMemoryRecord] = {}
         self._name_index: Dict[str, str] = {}  # name.lower() -> person_id
         self._load()
@@ -130,7 +130,7 @@ class PersonIdentityManager:
                     if len(rec.face_descriptors) > 50:
                         rec.face_descriptors = rec.face_descriptors[-50:]
                 self._auto_upgrade_level(rec)
-                self._save_unlocked()
+                self._save_unlocked(record=rec)
                 return rec
 
             # New person
@@ -146,7 +146,7 @@ class PersonIdentityManager:
             self._records[rec.person_id] = rec
             if name_key != "unknown":
                 self._name_index[name_key] = rec.person_id
-            self._save_unlocked()
+            self._save_unlocked(record=rec)
             return rec
 
     def remember_person(
@@ -175,25 +175,59 @@ class PersonIdentityManager:
                 rec.owner_priority = True
                 rec.relationship = "owner"
 
-            self._save_unlocked()
+            self._save_unlocked(record=rec)
             return rec
+
+    def _update_relationship_unlocked(
+        self, person_id: str, relationship: str = "", recognition_level: int = -1
+    ) -> Optional[PersonMemoryRecord]:
+        rec = self._records.get(person_id)
+        if not rec:
+            return None
+        if relationship and relationship in RELATIONSHIP_TYPES:
+            rec.relationship = relationship
+        if recognition_level >= 0:
+            rec.recognition_level = max(0, min(5, recognition_level))
+        if rec.recognition_level >= 5:
+            rec.owner_priority = True
+            rec.relationship = "owner"
+        self._save_unlocked(record=rec)
+        return rec
 
     def update_relationship(
         self, person_id: str, relationship: str = "", recognition_level: int = -1,
     ) -> Optional[PersonMemoryRecord]:
         with self._lock:
-            rec = self._records.get(person_id)
-            if not rec:
+            return self._update_relationship_unlocked(
+                person_id, relationship=relationship, recognition_level=recognition_level
+            )
+
+    def update_relationship_by_name_or_id(
+        self,
+        *,
+        person_id: str = "",
+        name: str = "",
+        relationship: str = "",
+        recognition_level: int = -1,
+    ) -> Optional[PersonMemoryRecord]:
+        """Thread-safe lookup & update by person_id or name (preferred public API)."""
+        with self._lock:
+            target_pid = str(person_id or "").strip()
+            if not target_pid and name:
+                name_key = str(name).strip().lower()
+                target_pid = self._name_index.get(name_key, "")
+                if not target_pid:
+                    for pid, rec in self._records.items():
+                        if rec.name.lower() == name_key:
+                            target_pid = pid
+                            break
+            if not target_pid:
                 return None
-            if relationship and relationship in RELATIONSHIP_TYPES:
-                rec.relationship = relationship
-            if recognition_level >= 0:
-                rec.recognition_level = max(0, min(5, recognition_level))
-            if rec.recognition_level >= 5:
-                rec.owner_priority = True
-                rec.relationship = "owner"
-            self._save_unlocked()
-            return rec
+            return self._update_relationship_unlocked(
+                target_pid,
+                relationship=relationship,
+                recognition_level=recognition_level,
+            )
 
     def append_conversation_note(self, person_id: str, text: str) -> bool:
         with self._lock:
@@ -322,10 +356,11 @@ class PersonIdentityManager:
         except Exception as exc:
             logger.warning("Failed to load person identity store: %s", exc)
 
-    def _save_unlocked(self) -> None:
+    def _save_unlocked(self, record: Optional[PersonMemoryRecord] = None) -> None:
         if self._social_db is not None:
+            targets = [record] if record is not None else list(self._records.values())
             try:
-                for rec in self._records.values():
+                for rec in targets:
                     extra = dict(rec.extra or {})
                     extra.setdefault("appearance_notes", list(rec.appearance_notes))
                     extra.setdefault("voice_notes", list(rec.voice_notes))
@@ -346,10 +381,15 @@ class PersonIdentityManager:
             return
 
         try:
-            os.makedirs(os.path.dirname(self._store_path), exist_ok=True)
+            parent = os.path.dirname(self._store_path) or "."
+            os.makedirs(parent, exist_ok=True)
             data = {pid: r.to_dict() for pid, r in self._records.items()}
-            with open(self._store_path, "w", encoding="utf-8") as f:
+            tmp_path = f"{self._store_path}.tmp.{os.getpid()}"
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self._store_path)
         except Exception as exc:
             logger.warning("Failed to save person identity store: %s", exc)
 

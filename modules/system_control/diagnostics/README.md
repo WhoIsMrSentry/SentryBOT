@@ -4,24 +4,24 @@ SentryBOT modüllerinin toplu sağlık kontrolünü yapan teşhis servisidir. Bo
 
 ## Sorumluluklar
 
-- Yapılandırılmış modüllere HTTP health/status ping
-- Latency uyarıları (varsayılan >600ms)
-- Opsiyonel self-heal (başarısız modüle POST)
-- Opsiyonel notifier entegrasyonu (Telegram alert)
-- Son rapor cache'i
+- Yapılandırılmış modüllere paralel asenkron HTTP health/status ping (`run_http_checks_async` / senkron `run_http_checks`)
+- Yerel sistem sağlığı kontrolleri (`run_local_system_checks`: `check_disk_space`, `check_memory`, `read_hardware_pressure`)
+- Latency uyarıları, kilit korumalı (`_HEAL_STATE_LOCK`) self-heal ve `hard_heal_cooldown_s` baskılama (timeout/exception dahil)
+- Loglanan notifier entegrasyonu (`/notify/telegram`)
+- Thread-safe son rapor cache'i (`report_lock`)
 
-## Mimari (Güncel: 2026-08-20)
+## Mimari
 
 - Giriş noktası: `xDiagnosticsService.py`
-- **Motor**: `services/selftest.py` → `run_http_checks()`
-- **Router**: `api/router.py`
-- **Config**: `config_loader.py`
+- **Motor**: `services/selftest.py` → `run_http_checks()`, `run_http_checks_async()`, `run_local_system_checks()`
+- **Router**: `api/router.py` (`resolve_gateway_base_url` ile hedef URL)
+- **Config**: `config_loader.py` → `modules.common.config_loader.load_module_config` + `apply_bind_host(..., "DIAGNOSTICS_HOST")`
 
 Gateway `_IMPORT_MODULES` ile `include.diagnostics=true` olduğunda mount edilir (`bootstrap_ops.py`). `platform/scheduler` job kind `diagnostics` bu servisi periyodik tetikleyebilir.
 
 ## Varsayılan Kontroller
 
-`camera`, `arduino`, `neopixel`, `speech`, `speak`, `wakeword` — config yoksa bunlar kullanılır.
+`camera`, `arduino`, `neopixel`, `speech`, `speak`, `wakeword`, `oled_faces`, `agent_core` (`/agent/healthz`), `autonomy` (`/autonomy/state`) — `system_checks.enabled` açıkken ek olarak `system` (`disk`, `memory`, `pressure`) rapora eklenir.
 
 `speech/status` ve `speak/status` için yanıt gövdesi de doğrulanır (`model_ready`, `ready`).
 

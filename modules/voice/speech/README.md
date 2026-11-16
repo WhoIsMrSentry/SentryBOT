@@ -11,20 +11,21 @@ SentryBOT'un konuşma giriş modülüdür. Mikrofon akışını alır, SpeechRec
 - Pan takibi: **HeadControlArbiter** (priority lease), fallback Arduino servo komutu
 - STT olaylarını `autonomy`, `expression/interactions`, `visual_output/oled_faces` tarafına iletme
 
-## Mimari (Güncel: 2026-08-20)
+## Mimari (Güncel: 2026-11-16)
 
-- Giriş noktası: `xSpeechService.py` → `SpeechService`
-- **Router**: `api/router.py`
-- **Ses Yakalama**: `services/audio_capture.py` → `AudioCapture`, `CaptureConfig`, `FramePublisher`
-- **Tanıma**: 
-  - `services/recognizer.py` → `SpeechRecognizer` (SpeechRecognition)
-  - `services/stt_language.py` → `STTLanguageResolver` (TR/EN auto-detect, Piper voice lock)
+- Giriş noktası: `xSpeechService.py` → `SpeechService` (`attach_speak_service()`, tek STT çözümleme, `stop_event` + thread `join`)
+- **Router**: `api/router.py` (zaten tanınmış utterance için ikinci Google STT çağrısını önler)
+- **Ses Yakalama**: **ORTAK** - `modules/voice/audio_router.py` (`AudioCapture` PyAudio/ALSA/sounddevice) + `services/audio_capture.py` (geriye dönük uyumluluk sarmalayıcısı)
+- **Tanıma & Sıra Takibi**: 
+  - `services/recognizer.py` → `Recognizer` (`channels=1` mono giriş + `DynamicTurnTakingEngine` entegrasyonu)
+  - `services/turn_taking.py` → `DynamicTurnTakingEngine` (ses enerjisi/düşüş duyarlı konuşma sonu kestirimi)
+  - `services/stt_language.py` → `resolve_stt_text_and_language` (`(text, lang)` tuple uyumlu + tek marjin karşılaştırması)
   - `services/online_stt.py` → Google Speech Recognition multi-language
 - **Yön ve Takip**: 
-  - `services/direction.py` → `DoAEstimator` (GCC-PHAT, stereo frame processing)
-  - `services/pan_tilt.py` → `PanTiltTracker` (head arbiter entegrasyonu)
-- **Ses Ön İşleme**: `services/audio_filters.py` (downmix/gain PCM filtreleri)
-- **Ses Kaynağı Takibi**: `services/sound_tracking.py` → `SpeechSoundTrackingMixin`
+  - `services/direction.py` → `DirectionEstimator` (GCC-PHAT, stereo frame processing)
+  - `services/pan_tilt.py` → `PanTiltController` (`stop()` thread `join`)
+- **Ses Ön İşleme**: `services/audio_filters.py` (RMS/VU, downmix, gain ve `SoftwareEchoGate` `direction.enabled=false` iken de her zaman çalışır)
+- **Ses Kaynağı Takibi**: `services/sound_tracking.py` → `SpeechSoundTrackingMixin` (paylaşımlı `requests.Session` + `min_delta_deg` filtresi)
 
 ## Bağımlılıklar (Güncel Modül Yolları)
 

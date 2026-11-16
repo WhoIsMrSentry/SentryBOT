@@ -3,10 +3,13 @@ from __future__ import annotations
 import argparse
 import copy
 import logging
+import threading
 from threading import Event, Lock
 import time
 from typing import Any, Callable, Optional
 from fastapi import FastAPI
+
+from modules.common.bind_host import apply_bind_host
 
 from modules.voice.speech.config_loader import load_config, load_audio_router_config
 from modules.voice.speech.services.recognizer import Recognizer, RecognitionResult
@@ -68,8 +71,9 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self._audio_router = get_audio_router(audio_router_cfg)
         self._audio_router.start()
         
-        rec_cfg = self.cfg.get("recognition", {}) or {}
-        self.recognizer = Recognizer(rec_cfg)
+        rec_cfg = dict(self.cfg.get("recognition", {}) or {})
+        rec_cfg["channels"] = 1  # _direction_wrapper outputs mono PCM
+        self.recognizer = Recognizer(rec_cfg, on_turn_cue=self._on_turn_cue)
         self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
         self._default_language = str(rec_cfg.get("default_language") or self.source_language or "tr")
         self._auto_language = bool(rec_cfg.get("auto_language", True))
@@ -142,6 +146,28 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                 return False
             return True
 
+    def _on_turn_cue(self, cue_info: dict[str, Any]) -> None:
+        logger.debug("Turn-taking cue emitted: %s", cue_info)
+        if cue_info.get("suggested_cue") == "head_tilt_listening" and self._head_arbiter is not None:
+            if hasattr(self._head_arbiter, "move"):
+                try:
+                    self._head_arbiter.move(
+                        pan=90.0,
+                        tilt=94.0,
+                        source="speech_turn_cue",
+                        priority=35,
+                    )
+                except Exception:
+                    pass
+
+    def attach_speak_service(self, speak_service: Any) -> bool:
+        """Automatically bridge SpeakService playback state to SoftwareEchoGate."""
+        register = getattr(speak_service, "register_playback_listener", None)
+        if not callable(register):
+            return False
+        register(lambda active, rms=1200.0: self.set_tts_playback_state(active, estimated_rms=rms))
+        return True
+
     def stt_status(self) -> dict:
         primary = self.recognizer.status() if self.recognizer is not None else {"ok": False, "error": "recognizer missing"}
         languages: dict[str, dict] = {}
@@ -160,13 +186,14 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                 continue
             cfg = copy.deepcopy(rec_cfg)
             cfg["language"] = lang
+            cfg["channels"] = 1
             cfg.pop("model_path", None)
             try:
                 languages[key] = Recognizer(cfg).status()
             except Exception as exc:
                 languages[key] = {"ok": False, "language": key, "error": str(exc)}
-        ready_languages = [primary_lang] if primary.get("ok") else []
-        missing_languages = [] if primary.get("ok") else [primary_lang]
+        ready_languages = [k for k, st in languages.items() if st.get("ok")]
+        missing_languages = [k for k, st in languages.items() if not st.get("ok")]
         available = bool(primary.get("ok"))
         return {
             "available": available,
@@ -178,7 +205,7 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
             "auto_language": bool(self._auto_language),
             "auto_switch_model": bool(self._auto_switch_model),
             "primary": primary,
-            "languages": {primary_lang: primary},
+            "languages": languages,
             "ready_languages": ready_languages,
             "missing_languages": missing_languages,
             "reason": "ready" if available else (primary.get("error") or "speech_recognition backend unavailable"),
@@ -208,20 +235,24 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                     stt_status.get("reason"),
                 )
                 return
-            
+
             capture = self._audio_router.get_capture()
             if capture is None:
                 raise RuntimeError("audio router capture not running")
-            self._stream_iter = iter(capture.stream())
+            self._stream_iter = iter(capture.stream(stop_event=self._stop_event))
 
             for result in self.recognizer.run(self._direction_wrapper(self._stream_iter)):
+                if self._stop_event.is_set():
+                    break
                 if self.is_stt_suppressed():
+                    self.clear_utterance_buffer()
                     continue
                 if result and result.text:
                     self.last_result = {
                         "text": result.text,
                         "final": result.is_final,
                         "confidence": result.confidence,
+                        "language": result.language,
                         "ts": time.time(),
                     }
                 cb = None
@@ -229,18 +260,42 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                     cb = self._on_result_cb or self._default_result_cb
                 if cb:
                     cb(result)
+                else:
+                    self.clear_utterance_buffer()
                 if self._stop_event.is_set():
                     break
         except Exception as exc:
             logger.warning("speech degraded: recognizer stopped (%s)", exc)
         finally:
+            it = self._stream_iter
+            self._stream_iter = None
+            if hasattr(it, "close"):
+                try:
+                    it.close()  # type: ignore[misc]
+                except Exception:
+                    pass
             with self._listen_lock:
                 self._listening = False
 
-    def finalize_stt(self, text: str) -> tuple[str, str]:
+    def finalize_stt(
+        self,
+        text: str,
+        language: Optional[str] = None,
+        already_transcribed: bool = False,
+    ) -> tuple[str, str]:
         pcm = bytes(self._utterance_pcm)
         self.clear_utterance_buffer()
         self.last_voice_speaker = compute_voice_speaker_hint(pcm)
+
+        cleaned = str(text or "").strip()
+        if already_transcribed and cleaned:
+            resolved_lang = (
+                str(language or "").split("-", 1)[0].strip().lower()
+                or self.source_language
+                or self._default_language
+            )
+            self.source_language = resolved_lang
+            return cleaned, resolved_lang
 
         if len(pcm) >= 1600:
             try:
@@ -263,11 +318,9 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
             except Exception as exc:
                 logger.debug("Online Google STT transcription error: %s", exc)
 
-        return str(text or "").strip(), self.source_language or self._default_language
+        return cleaned, self.source_language or self._default_language
 
     def start_background(self, on_result: Optional[Callable[[RecognitionResult], None]] = None) -> None:
-        import threading
-
         if on_result is not None:
             with self._result_lock:
                 self._on_result_cb = on_result
@@ -277,16 +330,25 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         with self._listen_lock:
             if self._listening and self._thread is not None and self._thread.is_alive():
                 return
-        t = threading.Thread(target=self.start, kwargs={"on_result": on_result or self._default_result_cb}, daemon=True)
-        with self._listen_lock:
+            t = threading.Thread(target=self.start, kwargs={"on_result": on_result or self._default_result_cb}, daemon=True)
             self._thread = t
         t.start()
 
     def stop(self) -> None:
         self._stop_event.set()
-        self._stream_iter = None
         with self._listen_lock:
+            it = self._stream_iter
+            self._stream_iter = None
             self._listening = False
+            thr = self._thread
+            self._thread = None
+        if hasattr(it, "close"):
+            try:
+                it.close()  # type: ignore[misc]
+            except Exception:
+                pass
+        if thr is not None and thr is not threading.current_thread() and thr.is_alive():
+            thr.join(timeout=1.5)
 
     def listen_once(self, timeout_sec: float = 5.0) -> Optional[RecognitionResult]:
         res: Optional[RecognitionResult] = None
@@ -328,8 +390,8 @@ def main():
 
     if args.api:
         import uvicorn  # type: ignore
-        cfg = load_config(args.config)
-        host = str(cfg.get("server", {}).get("host", "0.0.0.0"))
+        cfg = apply_bind_host(load_config(args.config), "SPEECH_HOST")
+        host = str(cfg.get("server", {}).get("host", "127.0.0.1"))
         port = int(cfg.get("server", {}).get("port", 8082))
         uvicorn.run(create_app(args.config), host=host, port=port, log_config=None)
         return

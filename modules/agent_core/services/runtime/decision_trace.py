@@ -1,8 +1,11 @@
-"""Safe, machine-readable decision traces (no chain-of-thought)."""
+"""Safe, machine-readable decision traces with lock protection and rotating JSONL export."""
 
 from __future__ import annotations
 
 from collections import deque
+import json
+from pathlib import Path
+import threading
 from typing import Any, Deque, Dict, List, Optional
 
 from .schemas import DecisionTrace
@@ -27,15 +30,65 @@ _SENSITIVE_META_KEYS = frozenset(
 
 
 class DecisionTraceStore:
-    """Ring buffer of concise decision summaries for debugging and APIs."""
+    """Thread-safe ring buffer of concise decision summaries with optional rotating JSONL log."""
 
-    def __init__(self, maxlen: int = 64) -> None:
+    def __init__(
+        self,
+        maxlen: int = 64,
+        *,
+        log_path: Optional[str | Path] = None,
+        max_bytes: int = 262_144,
+        backup_count: int = 2,
+    ) -> None:
         n = max(1, int(maxlen))
+        self._lock = threading.Lock()
         self._traces: Deque[DecisionTrace] = deque(maxlen=n)
         self.maxlen = n
+        self._log_path: Optional[Path] = Path(str(log_path).strip()) if str(log_path or "").strip() else None
+        self._max_bytes = max(1024, int(max_bytes))
+        self._backup_count = max(0, int(backup_count))
+
+    def _rotate_if_needed(self) -> None:
+        if self._log_path is None or not self._log_path.exists():
+            return
+        try:
+            if self._log_path.stat().st_size < self._max_bytes:
+                return
+        except OSError:
+            return
+        if self._backup_count <= 0:
+            try:
+                self._log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+        for idx in range(self._backup_count, 0, -1):
+            src = self._log_path if idx == 1 else self._log_path.with_name(f"{self._log_path.name}.{idx - 1}")
+            dst = self._log_path.with_name(f"{self._log_path.name}.{idx}")
+            if src.exists():
+                try:
+                    if dst.exists():
+                        dst.unlink()
+                    src.replace(dst)
+                except OSError:
+                    pass
+
+    def _write_jsonl(self, trace: DecisionTrace) -> None:
+        if self._log_path is None:
+            return
+        try:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._rotate_if_needed()
+            line = json.dumps(to_public_trace(trace), ensure_ascii=False, default=str)
+            with open(self._log_path, "a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+        except Exception:
+            pass
 
     def add(self, trace: DecisionTrace) -> DecisionTrace:
-        self._traces.append(trace)
+        with self._lock:
+            self._traces.append(trace)
+            self._write_jsonl(trace)
         return trace
 
     def record(
@@ -65,8 +118,18 @@ class DecisionTraceStore:
         return self.add(trace)
 
     def recent(self, limit: int = 20) -> List[Dict]:
-        items = list(self._traces)[-max(1, int(limit)) :]
+        with self._lock:
+            items = list(self._traces)[-max(1, int(limit)) :]
         return [t.to_dict() for t in items]
+
+    def latest_replan(self) -> Optional[Dict[str, Any]]:
+        """Return the most recent replan trace DTO without mutating buffer state."""
+        with self._lock:
+            snapshot = list(self._traces)
+        for trace in reversed(snapshot):
+            if trace.decision in {"contextual_replan", "replan"} or trace.next_action == "replan":
+                return to_public_trace(trace)
+        return None
 
     def query(
         self,
@@ -75,7 +138,8 @@ class DecisionTraceStore:
         goal_id: Optional[str] = None,
         since: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
-        items = list(self._traces)
+        with self._lock:
+            items = list(self._traces)
         if goal_id:
             gid = str(goal_id)
             items = [t for t in items if t.goal_id == gid]
@@ -90,13 +154,14 @@ class DecisionTraceStore:
         return [to_public_trace(t) for t in items]
 
     def clear(self) -> None:
-        self._traces.clear()
+        with self._lock:
+            self._traces.clear()
 
     def __len__(self) -> int:
-        return len(self._traces)
+        with self._lock:
+            return len(self._traces)
 
     def __bool__(self) -> bool:
-        # Empty stores are still valid injected dependencies.
         return True
 
 
@@ -156,3 +221,6 @@ def _truncate(text: str, limit: int = 240) -> str:
     if len(value) <= limit:
         return value
     return value[: limit - 3] + "..."
+
+
+__all__ = ["DecisionTraceStore", "to_public_trace"]

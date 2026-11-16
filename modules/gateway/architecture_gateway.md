@@ -18,11 +18,13 @@ Modülün temel sorumlulukları şunlardır:
    - Merkezi `config/agent.yaml` dosyasındaki bayraklara (`include.camera`, `include.ollama`, `include.voice`, `include.arduino` vb.) göre ilgili servisleri dinamik olarak başlatır ve ana FastAPI uygulamasına alt yönlendirici (`sub-router`) olarak bağlar.
 2. **Kendi Kendine Çağrı (Self-URL Loop) Koruması (`url.py`):**
    - Gateway üzerinden LLM veya harici bir servise giden isteklerin yanlış yapılandırma nedeniyle tekrar Gateway'e yönlendirilmesini (`localhost:8080 -> localhost:8080`) engeller. Döngüsel kilitlenmeleri (deadlock) proaktif olarak engeller.
-3. **Geriye Dönük Uyumluluk ve Olay Yönlendirme (`agent_api_compat.py`):**
-   - Eski sistem çağrılarını (`/speak/say`, `/speech/start`, `/actions/execute`, `/events`) arka planda doğru servislere şeffaf biçimde yönlendirir (Shim layer).
+3. **Geriye Dönük Uyumluluk ve Asenkron Araç Köprüsü (`agent_api_compat.py`):**
+   - `modules.common.http_client.get_http_client` kullanarak bloklamasız asenkron Ollama tool çağrısı yapar; gerçek `agent_core` yönlendirmelerinden sonra yalnız eksik uyumluluk uçlarını (`/agent/turn`, `/agent/chat`, `/agent/events`, `/api/agent/*`) kaydeder.
 4. **Agent Core Entegrasyonu (`agent_core_binding.py`):**
-   - Robotun bilişsel beyni olan `AgentOrchestrator` nesnesini Gateway yaşam döngüsüne (lifespan) bağlar; `/agent/*` ve `/chat` uç noktalarını sunar.
-5. **Birleşik / Dağıtık Çalışma Desteği:**
+   - `from_config` veya `inspect.signature` eşleşmesiyle `AgentOrchestrator` örneğini Gateway yaşam döngüsüne bağlar.
+5. **Bellek-İçi Sağlık ve Başlangıç Manifestosu (`/healthz`, `/health`, `/readyz`):**
+   - Kendi sürecine senkron loopback HTTP atmadan `started` servislerinden doğrudan sağlık toplar; `bootstrap()` modül başına süreleri (`duration_ms`) ölçüp `_boot_manifest` üzerinden `/readyz` ucunda yayınlar (`200` hazır / `503` hazır değil).
+6. **Birleşik / Dağıtık Çalışma Desteği:**
    - İster tüm alt sistemler Gateway içerisinde tek bir monolitik süreç olarak çalışsın, ister alt sistemler bağımsız portlarda mikroservis olarak koşsun; Gateway her iki senaryoyu da şeffafça yönetir.
 
 ---
@@ -139,6 +141,8 @@ def create_app(config_path: Optional[str] = None) -> FastAPI:
   - `modules.ai_provider.api.router` $\rightarrow$ `/ollama` (Sağlayıcı ister yerel Ollama, ister Google AI Studio olsun prefix standart `/ollama` kalır).
   - `modules.vlm_bridge.api.router` $\rightarrow$ `/vlm`
   - `modules.cognitive_memory.api.router` $\rightarrow$ `/memory`
+  - `modules.mcp_client.api.router` $\rightarrow$ `/mcp_client` (kapanışta `_cleanup_hooks` ile `svc.stop()` garantili)
+  - `modules.mcp_server.api.router` $\rightarrow$ `/mcp` (`/mcp/healthz`, `/mcp/status`, `/mcp/tools`, `/mcp/resources`)
 
 #### `agent_core_binding.py`
 - `bind_agent_core(app: FastAPI, cfg: dict)`:
@@ -169,8 +173,9 @@ Gateway, tüm sistemin ana giriş kapısı olduğu için aşağıdaki birleşik 
 
 | Kök Önek | Modül | Açıklama |
 |---|---|---|
-| `/healthz` | Gateway | Merkezi sistem sağlık durumu ve aktif modül listesi |
-| `/status` | Gateway | Sistem metrikleri, CPU/RAM ve çalışma zamanı |
+| `/healthz` | Gateway | Merkezi sistem sağlık durumu ve bellek-içi modül özeti |
+| `/readyz` | Gateway | Başlatma hazırlık kapısı, `boot_manifest` ve modül süreleri |
+| `/status` | Gateway | Yapılandırılan ve başlatılan modül listesi |
 | `/chat` | AgentCore | Kullanıcı ile tek/çok turlu konuşma ve eylem yürütme |
 | `/agent/*` | AgentCore | Bilişsel durum, FSM, hedef ilerleme ve manuel adımlama |
 | `/arduino/*` | ArduinoSerial | Servo açıları, adım motorları, telemetri, buzzer |

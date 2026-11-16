@@ -5,9 +5,35 @@
 
 set -euo pipefail
 
-INSECURE="${1:-}"
-SKIP_SYSTEM="${2:-}"
-SKIP_MODELS="${3:-}"
+INSECURE=""
+SKIP_SYSTEM=""
+SKIP_MODELS=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --insecure)
+            INSECURE="--insecure"
+            shift
+            ;;
+        --skip-system)
+            SKIP_SYSTEM="--skip-system"
+            shift
+            ;;
+        --skip-models)
+            SKIP_MODELS="--skip-models"
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: bash scripts/install_all.sh [--insecure] [--skip-system] [--skip-models]"
+            exit 0
+            ;;
+        *)
+            echo "ERROR: Unknown option '$1'" >&2
+            echo "Usage: bash scripts/install_all.sh [--insecure] [--skip-system] [--skip-models]" >&2
+            exit 2
+            ;;
+    esac
+done
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
@@ -29,10 +55,10 @@ install_system_packages() {
         return
     fi
 
-    echo "[1/6] Installing system packages (apt)..."
+    echo "[1/5] Installing system packages (apt)..."
     sudo apt-get update -y
 
-    # Core build tools & Python
+    # Core build tools & Python (Bookworm / Pi OS compatible)
     sudo apt-get install -y \
         python3 python3-pip camera-devices \
         python3-venv python3-dev \
@@ -42,9 +68,8 @@ install_system_packages() {
         libavcodec-dev libavformat-dev libswscale-dev \
         libv4l-dev libxvidcore-dev libx264-dev \
         libgtk-3-dev libcanberra-gtk3-module \
-        libatlas-base-dev gfortran \
+        gfortran \
         libhdf5-dev libhdf5-serial-dev \
-        libqtgui4 libqtwebkit4 libqt4-test \
         python3-pyqt5 \
         v4l-utils \
         i2c-tools \
@@ -71,7 +96,7 @@ install_system_packages() {
 # 2. PYTHON VENV & PIP DEPENDENCIES
 # -------------------------------------------------------------------
 setup_venv_and_pip() {
-    echo "[2/6] Setting up Python venv & pip deps..."
+    echo "[2/5] Setting up Python venv & pip deps..."
 
     # Create venv if not exists
     if [[ ! -d ".venv" ]]; then
@@ -92,13 +117,21 @@ setup_venv_and_pip() {
         fi
     done
 
-    # Core ML / Vision deps
+    # PyTorch CPU wheels use dedicated index URL without affecting PyPI packages
+    pip install --no-cache-dir \
+        --index-url https://download.pytorch.org/whl/cpu \
+        torch==2.4.0 \
+        torchvision==0.19.0
+
+    # Core ML / Vision / TUI deps
     pip install --no-cache-dir \
         numpy==1.26.4 \
         opencv-python-headless==4.10.0.84 \
         Pillow==10.4.0 \
         pyyaml==6.0.1 \
         requests==2.32.3 \
+        httpx \
+        textual \
         fastapi==0.112.0 \
         uvicorn[standard]==0.30.5 \
         pydantic==2.8.2 \
@@ -106,8 +139,6 @@ setup_venv_and_pip() {
         ollama==0.4.2 \
         onnxruntime==1.19.2 \
         onnx==1.16.1 \
-        torch==2.4.0 --index-url https://download.pytorch.org/whl/cpu \
-        torchvision==0.19.0 --index-url https://download.pytorch.org/whl/cpu \
         ultralytics==8.2.100 \
         supervision==0.21.0 \
         filterpy==1.4.5 \
@@ -155,7 +186,7 @@ setup_venv_and_pip() {
 }
 
 # -------------------------------------------------------------------
-# 4. PIPER TTS MODELS
+# 3. PIPER TTS MODELS
 # -------------------------------------------------------------------
 install_piper_models() {
     if [[ "$SKIP_MODELS" == "--skip-models" ]]; then
@@ -163,7 +194,7 @@ install_piper_models() {
         return
     fi
 
-    echo "[4/6] Installing Piper TTS models..."
+    echo "[3/5] Installing Piper TTS models..."
 
     source .venv/bin/activate
     python scripts/setup/install_piper_models.py --turkish ${INSECURE:+"--insecure"}
@@ -173,15 +204,15 @@ install_piper_models() {
 }
 
 # -------------------------------------------------------------------
-# 5. CAMERA / IMX500 FIRMWARE
+# 4. CAMERA / IMX500 FIRMWARE
 # -------------------------------------------------------------------
 install_camera_firmware() {
-    echo "[5/6] Setting up Camera / IMX500..."
+    echo "[4/5] Setting up Camera / IMX500..."
 
     # Check if IMX500 firmware exists
     if [[ ! -f /usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk ]]; then
         echo "IMX500 firmware not found, attempting to install..."
-        sudo apt-get install -y imx500-firmware 2>/dev/null || {
+        sudo apt-get install -y imx500-firmware 2>/dev/null || (
             echo "Could not install via apt, downloading manually..."
             sudo mkdir -p /usr/share/imx500-models
             cd /tmp
@@ -193,13 +224,13 @@ install_camera_firmware() {
             else
                 echo "⚠ Could not download IMX500 firmware"
             fi
-        }
+        )
     else
         echo "✓ IMX500 firmware already present"
     fi
 
-    # Test picamera2
-    source .venv/bin/activate
+    # Test picamera2 (PWD remains REPO_ROOT)
+    source "$REPO_ROOT/.venv/bin/activate"
     python -c "import picamera2; print('✓ picamera2 OK')" 2>/dev/null || {
         echo "Installing picamera2..."
         pip install picamera2==0.3.24
@@ -209,10 +240,10 @@ install_camera_firmware() {
 }
 
 # -------------------------------------------------------------------
-# 6. AUDIO / PERMISSIONS / FINISH
+# 5. AUDIO / PERMISSIONS / FINISH
 # -------------------------------------------------------------------
 setup_audio_permissions() {
-    echo "[6/6] Configuring audio & permissions..."
+    echo "[5/5] Configuring audio & permissions..."
 
     # Add user to audio/gpio/video groups
     sudo usermod -a -G audio,gpio,video,i2c,spi $(whoami) 2>/dev/null || true

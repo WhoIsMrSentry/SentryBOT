@@ -50,9 +50,16 @@ from .contract_validators import (  # noqa: F401
     _validate_temp_read,
     _VALIDATORS,
     validate_arduino_payload,
-    validate_set_servo_cmd,
     validate_liveliness_cmd,
 )
+
+
+def build_ack_cmd(ack_seq: int, ok: bool = True) -> Dict[str, Any]:
+    return {"ok": bool(ok), "ack_seq": int(ack_seq)}
+
+
+def build_telemetry_start_cmd(interval_ms: int) -> Dict[str, Any]:
+    return {"cmd": "telemetry_start", "interval_ms": int(interval_ms)}
 
 
 def build_set_servo_cmd(index: int, deg: float) -> Dict[str, Any]:
@@ -118,7 +125,11 @@ def build_pid_status_cmd(id_: int) -> Dict[str, Any]:
     return {"cmd": "pid_status", "id": int(id_)}
 
 
-def build_tune_cmd(pid: Optional[Dict[str, Any]] = None, skate: Optional[Dict[str, Any]] = None, servo_speed: Optional[Any] = None) -> Dict[str, Any]:
+def build_tune_cmd(
+    pid: Optional[Dict[str, Any]] = None,
+    skate: Optional[Dict[str, Any]] = None,
+    servo_speed: Optional[Any] = None,
+) -> Dict[str, Any]:
     payload: Dict[str, Any] = {"cmd": "tune"}
     if pid is not None:
         payload["pid"] = pid
@@ -216,7 +227,12 @@ def build_sound_play_cmd(name: str, out: Optional[str] = None) -> Dict[str, Any]
     return payload
 
 
-def build_lcd_cmd(id_: Optional[int] = None, msg: Optional[str] = None, top: Optional[str] = None, bottom: Optional[str] = None) -> Dict[str, Any]:
+def build_lcd_cmd(
+    id_: Optional[int] = None,
+    msg: Optional[str] = None,
+    top: Optional[str] = None,
+    bottom: Optional[str] = None,
+) -> Dict[str, Any]:
     payload: Dict[str, Any] = {"cmd": "lcd"}
     if id_ is not None:
         payload["id"] = int(id_)

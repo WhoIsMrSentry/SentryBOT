@@ -43,7 +43,7 @@ class ChatEpisodesRepo:
 
     def recent_for_person(self, person_id: str, limit: int = 16) -> List[Dict[str, Any]]:
         rows = self.db.fetchall(
-            "SELECT * FROM chat_episodes WHERE person_id = ? ORDER BY ts DESC LIMIT ?",
+            "SELECT * FROM chat_episodes WHERE person_id = ? ORDER BY ts DESC, id DESC LIMIT ?",
             (str(person_id), max(1, int(limit))),
         )
         items = [{k: r[k] for k in r.keys()} for r in rows]
@@ -55,7 +55,7 @@ class ChatEpisodesRepo:
             """
             SELECT text FROM chat_episodes
             WHERE person_id = ? AND lower(role) = 'user'
-            ORDER BY ts DESC LIMIT 1
+            ORDER BY ts DESC, id DESC LIMIT 1
             """,
             (str(person_id),),
         )
@@ -70,7 +70,7 @@ class ChatEpisodesRepo:
                   AND id NOT IN (
                     SELECT id FROM chat_episodes
                     WHERE person_id = ?
-                    ORDER BY ts DESC LIMIT ?
+                    ORDER BY ts DESC, id DESC LIMIT ?
                   )
                 """,
                 (str(person_id), str(person_id), max(1, int(keep_last))),

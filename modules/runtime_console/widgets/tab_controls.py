@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, Optional
+
 import httpx
 import yaml
 from textual import work
@@ -13,6 +15,9 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, Label, RichLog
 
 from ..services.async_gateway_probe import resolve_base_url
+
+if TYPE_CHECKING:
+    from ..services.async_gateway_probe import AsyncGatewayProbe
 
 
 def _get_remote_ollama_url(root: Path) -> str:
@@ -34,15 +39,52 @@ def _get_remote_ollama_url(root: Path) -> str:
 class TabControls(Widget):
     """Interactive Mission Controls, Diagnostics & Teleoperation for Real SentryBOT Hardware and AI."""
 
-    def __init__(self, root: Path, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        root: Path,
+        gateway_probe: Optional["AsyncGatewayProbe"] = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self.root = root
-        self.gateway_url = resolve_base_url()
+        self.gateway_probe = gateway_probe
+        self.gateway_url = gateway_probe.base_url if gateway_probe is not None else resolve_base_url()
         self.ollama_url = _get_remote_ollama_url(root)
         self.current_pan: float = 90.0
         self.current_tilt: float = 90.0
         self.current_ear_l: float = 90.0
         self.current_ear_r: float = 90.0
+        self._client: Optional[httpx.AsyncClient] = None
+
+    def _get_http_client(self) -> httpx.AsyncClient:
+        """Share AsyncGatewayProbe's AsyncClient when available, else reuse local fallback."""
+        if self.gateway_probe is not None:
+            return self.gateway_probe.get_client()
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=2.5)
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close local fallback HTTP client if one was created (never closes shared probe client)."""
+        if self._client is not None and not self._client.is_closed:
+            try:
+                await self._client.aclose()
+            except Exception:
+                pass
+            self._client = None
+
+    def _write_log(self, message: str) -> None:
+        """Must run only on the main Textual event loop thread."""
+        try:
+            self.query_one("#controls_rich_log", RichLog).write(message)
+        except Exception:
+            pass
+
+    def _log_from_worker(self, message: str) -> None:
+        try:
+            self.app.call_from_thread(self._write_log, message)
+        except Exception:
+            self._write_log(message)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="controls_container"):
@@ -211,233 +253,245 @@ class TabControls(Widget):
         log.write(f"\n[bold cyan]👤 OPERATOR[/bold cyan] > {text}")
         self.run_custom_prompt_worker(text)
 
-    @work(thread=True)
-    def run_servo_jog_worker(self, index: int, deg: float, label: str) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, f"🎮 [TELEOP JOG] {label}")
+    @work
+    async def run_servo_jog_worker(self, index: int, deg: float, label: str) -> None:
+        self._write_log(f"🎮 [TELEOP JOG] {label}")
         try:
             from modules.arduino_serial.contract import build_set_servo_cmd
-            payload = build_set_servo_cmd(index, deg)
-            r = httpx.post(f"{self.gateway_url}/arduino/request", json=payload, timeout=1.5)
-            self.app.call_from_thread(log.write, f"• Servo command ACK: HTTP {r.status_code}")
-        except Exception as e:
-            self.app.call_from_thread(log.write, f"• Teleop servo error: {e}")
 
-    @work(thread=True)
-    def run_stepper_jog_worker(self, steps: int) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, f"🎮 [TELEOP DRIVE] Steppers {steps:+d} steps")
+            payload = build_set_servo_cmd(index, deg)
+            r = await self._get_http_client().post(f"{self.gateway_url}/arduino/request", json=payload, timeout=1.5)
+            self._write_log(f"• Servo command ACK: HTTP {r.status_code}")
+        except Exception as e:
+            self._write_log(f"• Teleop servo error: {e}")
+
+    @work
+    async def run_stepper_jog_worker(self, steps: int) -> None:
+        self._write_log(f"🎮 [TELEOP DRIVE] Steppers {steps:+d} steps")
         try:
             from modules.arduino_serial.contract import build_stepper_cmd
-            payload = build_stepper_cmd(0, "jog", steps)
-            r = httpx.post(f"{self.gateway_url}/arduino/request", json=payload, timeout=1.5)
-            self.app.call_from_thread(log.write, f"• Stepper command ACK: HTTP {r.status_code}")
+
+            payload = build_stepper_cmd(0, "pos", steps)
+            r = await self._get_http_client().post(f"{self.gateway_url}/arduino/request", json=payload, timeout=1.5)
+            self._write_log(f"• Stepper command ACK: HTTP {r.status_code}")
         except Exception as e:
-            self.app.call_from_thread(log.write, f"• Teleop stepper error: {e}")
+            self._write_log(f"• Teleop stepper error: {e}")
 
     @work(thread=True)
     def run_preflight_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, "--> Starting SentryBOT Preflight Validation Check...")
+        self._log_from_worker("--> Starting SentryBOT Preflight Validation Check...")
         try:
             cmd = [sys.executable, "-m", "pytest", "tests/modules/runtime_console/test_smoke.py", "-q"]
             res = subprocess.run(cmd, cwd=self.root, capture_output=True, text=True, timeout=15)
-            self.app.call_from_thread(log.write, res.stdout or res.stderr or "Preflight finished.")
+            self._log_from_worker(res.stdout or res.stderr or "Preflight finished.")
             if res.returncode == 0:
-                self.app.call_from_thread(log.write, "✔ Preflight check PASSED (Core, Gateway & Renderer operational)")
+                self._log_from_worker("✔ Preflight check PASSED (Core, Gateway & Renderer operational)")
             else:
-                self.app.call_from_thread(log.write, "✖ Preflight check encountered issues.")
+                self._log_from_worker("✖ Preflight check encountered issues.")
         except Exception as e:
-            self.app.call_from_thread(log.write, f"Preflight error: {e}")
+            self._log_from_worker(f"Preflight error: {e}")
 
     @work(thread=True)
     def run_smoke_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, "--> Executing full module smoke test suite...")
+        self._log_from_worker("--> Executing full module smoke test suite...")
         try:
             cmd = [sys.executable, "-m", "pytest", "tests/modules/runtime_console/", "-q"]
             res = subprocess.run(cmd, cwd=self.root, capture_output=True, text=True, timeout=30)
-            self.app.call_from_thread(log.write, res.stdout or res.stderr or "Smoke tests finished.")
-            self.app.call_from_thread(log.write, "✔ Smoke test suite complete.")
+            self._log_from_worker(res.stdout or res.stderr or "Smoke tests finished.")
+            self._log_from_worker("✔ Smoke test suite complete.")
         except Exception as e:
-            self.app.call_from_thread(log.write, f"Smoke test error: {e}")
+            self._log_from_worker(f"Smoke test error: {e}")
 
-    @work(thread=True)
-    def run_camera_test_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, f"--> Probing Camera status via Gateway: {self.gateway_url}/camera/status...")
+    @work
+    async def run_camera_test_worker(self) -> None:
+        self._write_log(f"--> Probing Camera status via Gateway: {self.gateway_url}/camera/status...")
         try:
-            r = httpx.get(f"{self.gateway_url}/camera/status", timeout=2.0)
+            r = await self._get_http_client().get(f"{self.gateway_url}/camera/status", timeout=2.0)
             if r.status_code == 200:
                 data = r.json()
                 cap = data.get("capture", {})
                 imx = data.get("imx500", {})
-                self.app.call_from_thread(log.write, f"✔ Camera ONLINE: Running={cap.get('running')}, Frame={cap.get('has_frame')}, IMX500={imx.get('running')}")
+                self._write_log(
+                    f"✔ Camera ONLINE: Running={cap.get('running')}, Frame={cap.get('has_frame')}, IMX500={imx.get('running')}"
+                )
                 return
         except Exception as exc:
-            self.app.call_from_thread(log.write, f"• Gateway camera probe skipped ({exc}); checking local sensor...")
+            self._write_log(f"• Gateway camera probe skipped ({exc}); checking local sensor...")
 
-        try:
-            import cv2
-            cap = cv2.VideoCapture(0)
-            if cap.isOpened():
-                ret, frame = cap.read()
-                cap.release()
-                if ret and frame is not None:
-                    h, w, c = frame.shape
-                    self.app.call_from_thread(log.write, f"✔ Direct OpenCV capture OK: Frame {w}x{h} (channels: {c})")
-                else:
-                    self.app.call_from_thread(log.write, "⚠ Camera opened but no frame captured (simulator/quiet mode).")
-            else:
-                self.app.call_from_thread(log.write, "⚠ Camera hardware 0 not currently accessible.")
-        except Exception as e:
-            self.app.call_from_thread(log.write, f"Camera test info: {e}")
+        def _probe_local_cam() -> str:
+            try:
+                import cv2
 
-    @work(thread=True)
-    def run_ping_bridge_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, f"--> Sending live contract command to Arduino/ESP bridge via {self.gateway_url}/arduino/request...")
+                cap = cv2.VideoCapture(0)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    cap.release()
+                    if ret and frame is not None:
+                        h, w, c = frame.shape
+                        return f"✔ Direct OpenCV capture OK: Frame {w}x{h} (channels: {c})"
+                    return "⚠ Camera opened but no frame captured (simulator/quiet mode)."
+                return "⚠ Camera hardware 0 not currently accessible."
+            except Exception as e:
+                return f"Camera test info: {e}"
+
+        self._write_log(await asyncio.to_thread(_probe_local_cam))
+
+    @work
+    async def run_ping_bridge_worker(self) -> None:
+        self._write_log(
+            f"--> Sending live contract command to Arduino/ESP bridge via {self.gateway_url}/arduino/request..."
+        )
+        client = self._get_http_client()
         try:
             from modules.arduino_serial.contract import build_simple_cmd
-            r = httpx.post(f"{self.gateway_url}/arduino/request", json=build_simple_cmd("get_state"), timeout=2.0)
+
+            r = await client.post(f"{self.gateway_url}/arduino/request", json=build_simple_cmd("get_state"), timeout=2.0)
             if r.status_code == 200:
-                self.app.call_from_thread(log.write, f"✔ Live Bridge Response (HTTP 200): {r.json()}")
+                self._write_log(f"✔ Live Bridge Response (HTTP 200): {r.json()}")
             else:
-                self.app.call_from_thread(log.write, f"• Gateway returned HTTP {r.status_code} for arduino/request. Querying /state/get...")
-                r_state = httpx.get(f"{self.gateway_url}/state/get", timeout=2.0)
+                self._write_log(
+                    f"• Gateway returned HTTP {r.status_code} for arduino/request. Querying /state/get..."
+                )
+                r_state = await client.get(f"{self.gateway_url}/state/get", timeout=2.0)
                 if r_state.status_code == 200:
-                    self.app.call_from_thread(log.write, f"✔ Current Robot State: {r_state.json()}")
+                    self._write_log(f"✔ Current Robot State: {r_state.json()}")
                 else:
-                    self.app.call_from_thread(log.write, "⚠ Serial bridge currently standby or not responding.")
+                    self._write_log("⚠ Serial bridge currently standby or not responding.")
         except Exception as exc:
-            self.app.call_from_thread(log.write, f"⚠ Serial bridge unreachable ({exc}). Verify gateway on {self.gateway_url}.")
+            self._write_log(f"⚠ Serial bridge unreachable ({exc}). Verify gateway on {self.gateway_url}.")
 
-    @work(thread=True)
-    def run_tts_test_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
+    @work
+    async def run_tts_test_worker(self) -> None:
         test_text = "SentryBOT sistemleri devrede ve göreve hazırdır."
-        self.app.call_from_thread(log.write, f"--> Dispatching Piper TTS synthesis via {self.gateway_url}/speak/say: '{test_text}'...")
+        self._write_log(f"--> Dispatching Piper TTS synthesis via {self.gateway_url}/speak/say: '{test_text}'...")
         try:
-            r = httpx.post(f"{self.gateway_url}/speak/say", json={"text": test_text}, timeout=3.0)
+            r = await self._get_http_client().post(
+                f"{self.gateway_url}/speak/say", json={"text": test_text}, timeout=3.0
+            )
             if r.status_code == 200:
-                self.app.call_from_thread(log.write, f"✔ TTS synthesized successfully: {r.json()}")
+                self._write_log(f"✔ TTS synthesized successfully: {r.json()}")
             else:
-                self.app.call_from_thread(log.write, f"• Speak endpoint responded HTTP {r.status_code}: {r.text[:100]}")
+                self._write_log(f"• Speak endpoint responded HTTP {r.status_code}: {r.text[:100]}")
         except Exception as exc:
-            self.app.call_from_thread(log.write, f"⚠ TTS test skipped ({exc}). Gateway may be starting.")
+            self._write_log(f"⚠ TTS test skipped ({exc}). Gateway may be starting.")
 
-    @work(thread=True)
-    def run_llm_test_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, f"--> Probing Remote Ollama LLM Bridge: {self.ollama_url}/api/tags...")
+    @work
+    async def run_llm_test_worker(self) -> None:
+        self._write_log(f"--> Probing Remote Ollama LLM Bridge: {self.ollama_url}/api/tags...")
+        client = self._get_http_client()
         try:
-            r = httpx.get(f"{self.ollama_url}/api/tags", timeout=2.5)
+            r = await client.get(f"{self.ollama_url}/api/tags", timeout=2.5)
             if r.status_code == 200:
                 models = [m.get("name") for m in r.json().get("models", [])]
-                self.app.call_from_thread(log.write, f"✔ Remote Ollama ONLINE ({self.ollama_url}). Available Models: {models}")
+                self._write_log(f"✔ Remote Ollama ONLINE ({self.ollama_url}). Available Models: {models}")
                 return
-            else:
-                self.app.call_from_thread(log.write, f"• Remote Ollama HTTP {r.status_code}")
+            self._write_log(f"• Remote Ollama HTTP {r.status_code}")
         except Exception:
-            self.app.call_from_thread(log.write, f"• Remote host ({self.ollama_url}) not reachable. Trying loopback 127.0.0.1:11434...")
+            self._write_log(f"• Remote host ({self.ollama_url}) not reachable. Trying loopback 127.0.0.1:11434...")
 
         try:
-            r2 = httpx.get("http://127.0.0.1:11434/api/tags", timeout=1.5)
+            r2 = await client.get("http://127.0.0.1:11434/api/tags", timeout=1.5)
             if r2.status_code == 200:
                 models = [m.get("name") for m in r2.json().get("models", [])]
-                self.app.call_from_thread(log.write, f"✔ Local Ollama ONLINE (127.0.0.1:11434). Models: {models}")
+                self._write_log(f"✔ Local Ollama ONLINE (127.0.0.1:11434). Models: {models}")
             else:
-                self.app.call_from_thread(log.write, "⚠ Ollama server offline on both remote bridge and loopback.")
+                self._write_log("⚠ Ollama server offline on both remote bridge and loopback.")
         except Exception:
-            self.app.call_from_thread(log.write, f"⚠ Remote Ollama at {self.ollama_url} currently unreachable. Rule-based companion autonomy active.")
+            self._write_log(
+                f"⚠ Remote Ollama at {self.ollama_url} currently unreachable. Rule-based companion autonomy active."
+            )
 
     @work(thread=True)
     def run_mem_check_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, "--> Inspecting SocialDB SQLite memory & repositories...")
+        self._log_from_worker("--> Inspecting SocialDB SQLite memory & repositories...")
         db_path = self.root / "data" / "social.sqlite3"
         if db_path.exists():
             size_kb = db_path.stat().st_size / 1024
             try:
                 import sqlite3
-                conn = sqlite3.connect(str(db_path))
+
+                conn = sqlite3.connect(str(db_path), timeout=2.0)
                 tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
                 conn.close()
-                self.app.call_from_thread(log.write, f"✔ SocialDB found ({size_kb:.1f} KB). Tables: {', '.join(tables)}")
+                self._log_from_worker(f"✔ SocialDB found ({size_kb:.1f} KB). Tables: {', '.join(tables)}")
             except Exception:
-                self.app.call_from_thread(log.write, f"✔ SocialDB database found ({size_kb:.1f} KB).")
+                self._log_from_worker(f"✔ SocialDB database found ({size_kb:.1f} KB).")
         else:
-            self.app.call_from_thread(log.write, "• SocialDB database will be created at data/social.sqlite3 on first person interaction.")
+            self._log_from_worker("• SocialDB database will be created at data/social.sqlite3 on first person interaction.")
 
-    @work(thread=True)
-    def run_neopixel_test_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, f"--> Sending live NeoPixel animation request to {self.gateway_url}/neopixel/animate...")
+    @work
+    async def run_neopixel_test_worker(self) -> None:
+        self._write_log(f"--> Sending live NeoPixel animation request to {self.gateway_url}/neopixel/animate...")
+        client = self._get_http_client()
         try:
             payload = {"name": "EMOTIONAL_PULSE", "color": "#FA1E4E", "iterations": 2}
-            r = httpx.post(f"{self.gateway_url}/neopixel/animate", json=payload, timeout=2.0)
+            r = await client.post(f"{self.gateway_url}/neopixel/animate", json=payload, timeout=2.0)
             if r.status_code == 200:
-                self.app.call_from_thread(log.write, f"✔ NeoPixel animation dispatched: {r.json()}")
+                self._write_log(f"✔ NeoPixel animation dispatched: {r.json()}")
                 return
         except Exception:
             pass
 
         try:
-            # Fallback to expression endpoint
             payload_exp = {"emotion": "curious", "intensity": 1.0, "modalities": ["leds"]}
-            r_exp = httpx.post(f"{self.gateway_url}/expression/express", json=payload_exp, timeout=2.0)
+            r_exp = await client.post(f"{self.gateway_url}/expression/express", json=payload_exp, timeout=2.0)
             if r_exp.status_code == 200:
-                self.app.call_from_thread(log.write, "✔ Expression LED animation triggered successfully.")
+                self._write_log("✔ Expression LED animation triggered successfully.")
             else:
-                self.app.call_from_thread(log.write, f"• Expression endpoint HTTP {r_exp.status_code}")
+                self._write_log(f"• Expression endpoint HTTP {r_exp.status_code}")
         except Exception as exc:
-            self.app.call_from_thread(log.write, f"⚠ NeoPixel dispatch skipped ({exc}). Gateway may be in quiet mode.")
+            self._write_log(f"⚠ NeoPixel dispatch skipped ({exc}). Gateway may be in quiet mode.")
 
     @work(thread=True)
     def run_rotate_logs_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, "--> Rotating & archiving runtime log files...")
+        self._log_from_worker("--> Rotating & archiving runtime log files...")
         try:
             from modules.runtime_console.logwrapper.services.run_rotator import rotate_run_logs
-            rotate_run_logs(self.root / "logs")
-            self.app.call_from_thread(log.write, "✔ Log rotation complete. Historical logs archived under logs/runs/.")
-        except Exception as e:
-            self.app.call_from_thread(log.write, f"Log rotation error: {e}")
 
-    @work(thread=True)
-    def run_estop_worker(self) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
-        self.app.call_from_thread(log.write, "[EMERGENCY STOP TRIGGERED] Sending zero-velocity halt frame to motors...")
+            rotate_run_logs(self.root / "logs")
+            self._log_from_worker("✔ Log rotation complete. Historical logs archived under logs/runs/.")
+        except Exception as e:
+            self._log_from_worker(f"Log rotation error: {e}")
+
+    @work
+    async def run_estop_worker(self) -> None:
+        self._write_log("[EMERGENCY STOP TRIGGERED] Sending zero-velocity halt frame to motors...")
+        client = self._get_http_client()
         try:
             from modules.arduino_serial.contract import build_simple_cmd
-            r1 = httpx.post(f"{self.gateway_url}/arduino/request", json=build_simple_cmd("estop"), timeout=1.5)
-            self.app.call_from_thread(log.write, f"• Arduino hardware estop: HTTP {r1.status_code}")
+
+            r1 = await client.post(
+                f"{self.gateway_url}/arduino/request", json=build_simple_cmd("estop"), timeout=1.5
+            )
+            self._write_log(f"• Arduino hardware estop: HTTP {r1.status_code}")
         except Exception as e:
-            self.app.call_from_thread(log.write, f"• Arduino estop network error: {e}")
+            self._write_log(f"• Arduino estop network error: {e}")
 
         try:
-            r2 = httpx.post(f"{self.gateway_url}/state/set", json={"operational": "estop"}, timeout=1.5)
-            self.app.call_from_thread(log.write, f"• State manager operational lock: HTTP {r2.status_code}")
-        except Exception:
-            pass
-        self.app.call_from_thread(log.write, "[EMERGENCY STOP] All motor channels locked to neutral. Safety interlock engaged.")
+            r2 = await client.post(
+                f"{self.gateway_url}/state/set/operational", json={"value": "estop"}, timeout=1.5
+            )
+            self._write_log(f"• State manager operational lock: HTTP {r2.status_code}")
+        except Exception as e:
+            self._write_log(f"• State manager operational lock error: {e}")
+        self._write_log("[EMERGENCY STOP] All motor channels locked to neutral. Safety interlock engaged.")
 
-    @work(thread=True)
-    def run_custom_prompt_worker(self, text: str) -> None:
-        log = self.query_one("#controls_rich_log", RichLog)
+    @work
+    async def run_custom_prompt_worker(self, text: str) -> None:
+        client = self._get_http_client()
 
         def _log_bot_reply(raw_reply: str) -> None:
             if "<think>" in raw_reply and "</think>" in raw_reply:
                 parts = raw_reply.split("</think>")
                 think_txt = parts[0].replace("<think>", "").strip()
                 ans_txt = parts[1].strip()
-                self.app.call_from_thread(log.write, f"⚡ [THINKING PROCESS]\n{think_txt}")
-                self.app.call_from_thread(log.write, f"🤖 [SENTRYBOT AGENT] > {ans_txt}")
+                self._write_log(f"⚡ [THINKING PROCESS]\n{think_txt}")
+                self._write_log(f"🤖 [SENTRYBOT AGENT] > {ans_txt}")
             else:
-                self.app.call_from_thread(log.write, f"🤖 [SENTRYBOT AGENT] > {raw_reply}")
+                self._write_log(f"🤖 [SENTRYBOT AGENT] > {raw_reply}")
 
         try:
-            r = httpx.post(f"{self.gateway_url}/agent/step", json={"query": text}, timeout=10.0)
+            r = await client.post(f"{self.gateway_url}/agent/step", json={"query": text}, timeout=10.0)
             if r.status_code == 200:
                 data = r.json()
                 reply = data.get("text") or data.get("response") or str(data)
@@ -447,13 +501,12 @@ class TabControls(Widget):
             pass
 
         try:
-            # Fallback to agent/chat compatibility endpoint
-            r_chat = httpx.post(f"{self.gateway_url}/agent/chat", json={"prompt": text}, timeout=10.0)
+            r_chat = await client.post(f"{self.gateway_url}/chat", params={"query": text}, timeout=10.0)
             if r_chat.status_code == 200:
                 data = r_chat.json()
-                reply = data.get("response") or str(data)
+                reply = data.get("text") or data.get("response") or str(data)
                 _log_bot_reply(str(reply))
             else:
-                self.app.call_from_thread(log.write, f"• Gateway agent HTTP {r_chat.status_code}: {r_chat.text[:120]}")
+                self._write_log(f"• Gateway chat HTTP {r_chat.status_code}: {r_chat.text[:120]}")
         except Exception as exc:
-            self.app.call_from_thread(log.write, f"⚠ Agent communication error: {exc}")
+            self._write_log(f"⚠ Agent communication error: {exc}")

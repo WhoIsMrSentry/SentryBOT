@@ -36,17 +36,26 @@ modules/autonomy/
 ├── api/                             # FastAPI Yönlendiricileri (/autonomy/*)
 ├── tools/                           # Otonomi Eylem Araçları
 └── services/                        # Temel Yaşam ve Karar Motorları
-    ├── living_needs.py              # Homeostatik İhtiyaçlar Modeli (Energy, Social, Curiosity)
-    ├── needs_engine.py              # İhtiyaç Bozunumu ve Dengeleme Döngüsü
-    ├── mood.py                      # 2D Değerlik-Uyarılma (Valence-Arousal) Duygu Motoru
-    ├── companion_goal_selector.py   # Proaktif Otonom Hedef Seçici
+    ├── brain.py                     # AutonomyBrain Ana Orkestrasyon & Durum Snapshot'ı
+    ├── brain_init.py                # Bileşen & Executor Başlatma
+    ├── brain_parts/                 # Capability, EmotionSync, Decision, Perception, Vision, Vocal, Scenes
+    ├── storage_utils.py             # Repo-kökü yol çözümleme & kilitli atomik JSON yazımı
+    ├── living_needs.py              # Homeostatik İhtiyaçlar Modeli (0..1; unified risk/safety_level)
+    ├── needs_engine.py              # CompanionNeedsEngine (0..100; unified risk/safety_level & normalizasyon)
+    ├── mood.py                      # MoodManager (thread-safe duygu/ihtiyaç eksenleri & risk/safety özeti)
+    ├── companion_goal_selector.py   # Proaktif Otonom Hedef Seçici & Politika Zinciri
     ├── companion_auto_execute_gate.py # Güvenli Otomatik Yürütme Kapısı
+    ├── behavior_composer.py         # Çok Modlu Davranış Bestecisi (ServiceClient kontrat uyumlu)
+    ├── behavior_shadow_learner.py   # Deterministik Makro Klonlama (SHA-256)
+    ├── spinal_cord_reflex.py        # Donanım & Laya Acil Refleks Motoru
+    ├── safe_navigation.py           # Güvenli Dinlenme Konumu Hafızası
+    ├── owner_person_learning.py     # Sahip/Kişi Öğrenme & RFID Yetki
     ├── companion_lines.py           # Kendiliğinden Spontane Konuşma İfadeleri
     ├── companion_rituals.py         # Günlük Selamlama ve Uyku Ritüelleri
     ├── system1_reflex.py            # Sub-50ms Hızlı Engel ve Tehlike Refleksi
-    ├── topomap_motion_executor.py   # Topolojik Graf Navigasyonu
+    ├── topomap_motion_executor.py   # Topolojik Graf Navigasyonu ('pos' adım kontratı)
     ├── saliency_map.py              # Görsel Dikkat ve Odak Sıralayıcısı
-    └── scene_register.py            # Çevresel Nesne Konum Hafızası
+    └── scene_register.py            # Çevresel Nesne & Kişi Konum Hafızası
 ```
 
 ---
@@ -64,17 +73,16 @@ modules/autonomy/
 
 ### 1. İhtiyaç Motoru ve Durum Sorgulama
 ```python
-from modules.autonomy.services.living_needs import LivingNeedsState
-from modules.autonomy.services.needs_engine import NeedsEngine
+from modules.autonomy.services.living_needs import LivingNeedsEngine
+from modules.autonomy.services.needs_engine import CompanionNeedsEngine
 
-engine = NeedsEngine()
-state = engine.get_state()
+companion_engine = CompanionNeedsEngine()
+snap = companion_engine.tick(mood_state={"energy": 85, "curiosity": 70, "fear": 0})
+print("Risk:", snap["risk"], "Safety level:", snap["safety_level"])
 
-print("Sosyal İhtiyaç Seviyesi:", state.social)
-print("Merak Seviyesi:", state.curiosity)
-
-# Sahibini gördüğünde sosyal ihtiyacı tatmin et
-engine.satisfy_need("social", 0.4)
+living_engine = LivingNeedsEngine()
+living_snap = living_engine.tick(state={"battery_pct": 90.0})
+print("Living risk:", living_snap["risk"], "Scores:", living_snap["scores"])
 ```
 
 ### 2. Otonom Hedef Belirleme
@@ -82,24 +90,24 @@ engine.satisfy_need("social", 0.4)
 from modules.autonomy.services.companion_goal_selector import CompanionGoalSelector
 
 selector = CompanionGoalSelector()
-goal = selector.select_next_goal()
-
-if goal:
-    print(f"Yeni Otonom Hedef: {goal.name} (Öncelik: {goal.priority})")
+plan = selector.select(snap, owner_present=True)
+print(f"Hedef: {plan['recommended_goal']} (Davranış: {plan['behavior']})")
 ```
 
 ---
 
 ## 🌐 HTTP REST API Örnekleri (cURL)
 
-### 1. Otonomi Durumunu ve Aktif Hedefi Alma
+### 1. Otonomi Durumunu ve Telemetriyi Alma
 ```bash
-curl -X GET http://127.0.0.1:8080/autonomy/status
+curl -X GET http://127.0.0.1:8080/autonomy/state
 ```
 
-### 2. Canlı İhtiyaç Seviyelerini Sorgulama
+### 2. İhtiyaç ve Ruh Hali Seviyelerini Sorgulama
 ```bash
 curl -X GET http://127.0.0.1:8080/autonomy/needs
+curl -X GET http://127.0.0.1:8080/autonomy/mood
+curl -X GET http://127.0.0.1:8080/autonomy/living-needs
 ```
 
 ### 3. Otonom Döngüyü Duraklatma / Başlatma

@@ -2,7 +2,7 @@
 #ifndef SENTRY_APP_IR_MENU_CONTROLLER_SERVO_H
 #define SENTRY_APP_IR_MENU_CONTROLLER_SERVO_H
 
-#if IR_ENABLED
+#if VIRTUAL_MENU_ENABLED
 
 #include "../xIrMenuController.h"
 
@@ -20,7 +20,7 @@ void IrMenuController::showServoPrompt(){
   extern Robot robot;
   snprintf_P(l3, sizeof(l3), PSTR(" S1:%3d   S2:%3d "), (int)robot.servos.get(0), (int)robot.servos.get(1));
   snprintf_P(l4, sizeof(l4), PSTR(" S3:%3d   S4:%3d "), (int)robot.servos.get(2), (int)robot.servos.get(3));
-  g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
+  lcdHubShow4(l1, l2, l3, l4);
 }
 
 void IrMenuController::showServoToken(){
@@ -36,13 +36,7 @@ void IrMenuController::showServoToken(){
   extern Robot robot;
   snprintf_P(l3, sizeof(l3), PSTR(" S1:%3d   S2:%3d "), (int)robot.servos.get(0), (int)robot.servos.get(1));
   snprintf_P(l4, sizeof(l4), PSTR(" S3:%3d   S4:%3d "), (int)robot.servos.get(2), (int)robot.servos.get(3));
-  g_lcdStatus.show4To(LCD_TGT_1, l1, l2, l3, l4, true);
-}
-
-void IrMenuController::startToken(){
-  _capture = true;
-  _token = "";
-  _lastDigitMs = 0;
+  lcdHubShow4(l1, l2, l3, l4);
 }
 
 void IrMenuController::cancelToken(){
@@ -59,6 +53,6 @@ void IrMenuController::commitTokenIfAny(Robot &robot){
   _lastDigitMs = 0;
 }
 
-#endif // IR_ENABLED
+#endif // VIRTUAL_MENU_ENABLED
 
 #endif // SENTRY_APP_IR_MENU_CONTROLLER_SERVO_H

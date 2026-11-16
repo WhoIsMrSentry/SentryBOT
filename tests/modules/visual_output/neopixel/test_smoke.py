@@ -8,16 +8,20 @@ from modules.visual_output.neopixel.emotions.loader import EmotionStore
 
 
 def test_basic_effects_smoke():
-    cfg = NeoDriverConfig(num_leds=5)
+    cfg = NeoDriverConfig(num_leds=5, backend="sim")
     r = NeoRunner(cfg)
-    r.clear()
-    r.fill(10, 20, 30)
-    r.theater_chase(cycles=1, wait=0)
-    # emotions
-    store = EmotionStore()
-    col = store.random_color("joy")
-    assert isinstance(col, tuple) and len(col) == 3
-    r.emote_sequence(["joy", "fear"], duration=0)
+    try:
+        r.clear()
+        r.fill(10, 20, 30)
+        r.theater_chase(cycles=1, wait=0)
+        r._wait_for_animations()
+        # emotions
+        store = EmotionStore()
+        col = store.random_color("joy")
+        assert isinstance(col, tuple) and len(col) == 3
+        r.emote_sequence(["joy", "fear"], duration=0)
+    finally:
+        r.stop()
 
 
 def test_emotion_palette_alias_resolution():
@@ -83,3 +87,4 @@ def test_preset_segment_effects_do_not_cancel_each_other():
     assert runner.apply_preset("dual") is True
     assert [call[0] for call in calls] == ["PULSE", "COMET"]
     assert all(call[1]["coalesce"] is False for call in calls)
+    runner.stop()

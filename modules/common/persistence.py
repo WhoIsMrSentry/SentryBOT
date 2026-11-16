@@ -205,11 +205,10 @@ class SQLiteBackend(PersistenceBackend[T]):
             if pattern == "*":
                 rows = self._conn.execute("SELECT key FROM kv_store ORDER BY key").fetchall()
             else:
-                # Simple pattern matching (SQLite GLOB)
-                sql_pattern = pattern.replace("*", "%").replace("?", "_")
+                # SQLite GLOB natively uses '*' and '?' wildcards.
                 rows = self._conn.execute(
-                    "SELECT key FROM kv_store WHERE key GLOB ? ORDER BY key", 
-                    (sql_pattern,)
+                    "SELECT key FROM kv_store WHERE key GLOB ? ORDER BY key",
+                    (pattern,),
                 ).fetchall()
             return [row["key"] for row in rows]
     
@@ -242,51 +241,56 @@ class JSONBackend(PersistenceBackend[T]):
         self._load()
     
     def _load(self) -> None:
-        path = Path(self.config.path)
-        if path.exists():
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    raw = json.load(f)
-                    if isinstance(raw, dict):
-                        self._data = {k: self._deserializer(v) for k, v in raw.items()}
-            except Exception as e:
-                logger.warning("Failed to load JSON persistence: %s", e)
-                self._data = {}
-    
+        with self._lock:
+            path = Path(self.config.path)
+            if path.exists():
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        raw = json.load(f)
+                        if isinstance(raw, dict):
+                            self._data = {k: self._deserializer(v) for k, v in raw.items()}
+                except Exception as e:
+                    logger.warning("Failed to load JSON persistence: %s", e)
+                    self._data = {}
+
     def _save(self) -> None:
-        if not self._dirty:
-            return
-        path = Path(self.config.path)
-        if self.config.create_dirs:
-            path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Atomic write: write to temp file then rename
-        temp_path = path.with_suffix(".tmp")
-        try:
-            raw = {k: self._serializer(v) for k, v in self._data.items()}
-            with open(temp_path, "w", encoding="utf-8") as f:
-                json.dump(raw, f, indent=self.config.indent, ensure_ascii=False)
-            temp_path.replace(path)
-            self._dirty = False
-        except Exception as e:
-            logger.error("Failed to save JSON persistence: %s", e)
-            if temp_path.exists():
-                temp_path.unlink(missing_ok=True)
-    
+        with self._lock:
+            if not self._dirty:
+                return
+            path = Path(self.config.path)
+            if self.config.create_dirs:
+                path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Atomic write: thread-unique temp file then replace
+            temp_path = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+            try:
+                raw = {k: self._serializer(v) for k, v in self._data.items()}
+                with open(temp_path, "w", encoding="utf-8") as f:
+                    json.dump(raw, f, indent=self.config.indent, ensure_ascii=False)
+                temp_path.replace(path)
+                self._dirty = False
+            except Exception as e:
+                logger.error("Failed to save JSON persistence: %s", e)
+                if temp_path.exists():
+                    temp_path.unlink(missing_ok=True)
+
     def _schedule_save(self) -> None:
-        if self._save_timer:
-            self._save_timer.cancel()
-        self._save_timer = threading.Timer(self.config.save_interval_s, self._save)
-        self._save_timer.daemon = True
-        self._save_timer.start()
-    
+        with self._lock:
+            if self._save_timer:
+                self._save_timer.cancel()
+            self._save_timer = threading.Timer(self.config.save_interval_s, self._save)
+            self._save_timer.daemon = True
+            self._save_timer.start()
+
     def connect(self) -> None:
         pass  # Already loaded in __init__
-    
+
     def disconnect(self) -> None:
-        if self._save_timer:
-            self._save_timer.cancel()
-        self._save()
+        with self._lock:
+            if self._save_timer:
+                self._save_timer.cancel()
+                self._save_timer = None
+            self._save()
     
     def close(self) -> None:
         self.disconnect()

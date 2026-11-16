@@ -94,8 +94,6 @@ class VocalMixin(VocalProsodyMixin):
             message, emotion = blocked_response
             self._speak_with_mood(message, emotion=emotion, language=lang)
             return True
-        if self._handle_owner_commands(text, speaker):
-            return True
         if self._features_locked_for_request(text):
             return True
         if self._handle_follow_commands(text, speaker, lang):
@@ -130,6 +128,7 @@ class VocalMixin(VocalProsodyMixin):
                     )
                 )
             enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
+            t0 = time.monotonic()
             agent_result = self.agent.step(
                 enriched_text,
                 language=lang,
@@ -137,25 +136,33 @@ class VocalMixin(VocalProsodyMixin):
                 native_tools=True,
                 trace_id=request_id,
             )
-            if agent_result and agent_result.get("text"):
+            elapsed_ms = round((time.monotonic() - t0) * 1000.0, 2)
+            if isinstance(getattr(self, "state", None), dict):
+                self.state["agent_last_latency_ms"] = elapsed_ms
+            if isinstance(agent_result, dict) and (
+                agent_result.get("text")
+                or agent_result.get("speech_handled")
+                or agent_result.get("actions")
+            ):
                 if not self._is_active_request(request_id):
                     return True
-                reply_text = agent_result["text"]
-                final_lang = lang
-                if detect_text_language:
-                    final_lang = detect_text_language(reply_text, default=lang)
-                logger.info("🤖 SentryBOT Reply [%s]: %s", final_lang, reply_text)
-                print(f"\n========================================\n🤖 [SentryBOT ({final_lang})]:\n{reply_text}\n========================================\n", flush=True)
-                self.memory.add_event(f"Agent replied: {reply_text}")
-                self._remember_person_chat(speaker, reply_text, role="assistant")
-                if not agent_result.get("speech_handled"):
-                    tone = self._tone_profile(self.state.get("last_emotion") or self.mood.get_dominant_emotion())
-                    self.agent.speech_arbiter.enqueue_final(
-                        reply_text,
-                        language=final_lang,
-                        tone=tone,
-                        trace_id=request_id,
-                    )
+                reply_text = str(agent_result.get("text") or "").strip()
+                if reply_text:
+                    final_lang = lang
+                    if detect_text_language:
+                        final_lang = detect_text_language(reply_text, default=lang)
+                    logger.info("🤖 SentryBOT Reply [%s]: %s", final_lang, reply_text)
+                    print(f"\n========================================\n🤖 [SentryBOT ({final_lang})]:\n{reply_text}\n========================================\n", flush=True)
+                    self.memory.add_event(f"Agent replied: {reply_text}")
+                    self._remember_person_chat(speaker, reply_text, role="assistant")
+                    if not agent_result.get("speech_handled"):
+                        tone = self._tone_profile(self.state.get("last_emotion") or self.mood.get_dominant_emotion())
+                        self.agent.speech_arbiter.enqueue_final(
+                            reply_text,
+                            language=final_lang,
+                            tone=tone,
+                            trace_id=request_id,
+                        )
                 return True
         except Exception as exc:
             logger.warning("Agent Core step failed, falling back to direct LLM: %s", exc)

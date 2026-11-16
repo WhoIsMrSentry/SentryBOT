@@ -145,27 +145,31 @@ class StdioMcpConnection:
         return self.server_info
 
     def stop(self) -> None:
-        proc = self.proc
         with self._state_lock:
+            proc = self.proc
+            self.proc = None
             self.alive = False
+            reader = self._reader
+            self._reader = None
         self._fail_all_pending("connection_closed")
-        if proc is None:
-            return
-        for stream in (proc.stdin, proc.stdout, proc.stderr):
+        if proc is not None:
+            for stream in (proc.stdin, proc.stdout, proc.stderr):
+                try:
+                    if stream is not None:
+                        stream.close()
+                except Exception:
+                    pass
             try:
-                if stream is not None:
-                    stream.close()
+                if proc.poll() is None:
+                    proc.terminate()
+                    proc.wait(timeout=2.0)
             except Exception:
-                pass
-        try:
-            proc.terminate()
-            proc.wait(timeout=2.0)
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-        self.proc = None
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        if reader is not None and reader is not threading.current_thread() and reader.is_alive():
+            reader.join(timeout=0.5)
         self.server_info = {}
         self.tools_cache = []
 
@@ -184,17 +188,28 @@ class StdioMcpConnection:
         try:
             self._send(msg)
             if not pending.event.wait(timeout if timeout is not None else self.request_timeout_s):
-                raise RequestTimeout(f"timeout:{self.name}:{method}")
+                self.last_error = f"timeout:{self.name}:{method}"
+                raise RequestTimeout(self.last_error)
+        except RequestTimeout:
+            with self._state_lock:
+                self._pending.pop(rid, None)
+            self.stop()
+            raise
         except Exception:
             with self._state_lock:
                 self._pending.pop(rid, None)
-            self.alive = False
+            with self._state_lock:
+                self.alive = False
             raise
         with self._state_lock:
             self._pending.pop(rid, None)
         if pending.error is not None:
             err = pending.error
-            raise RemoteError(int(err.get("code", -32603)), str(err.get("message", "remote_error")))
+            code = int(err.get("code", -32603))
+            message = str(err.get("message", "remote_error"))
+            if code == -32000 and message in ("eof", "connection_closed"):
+                raise TransportError(f"{message}:{self.name}")
+            raise RemoteError(code, message)
         return pending.result
 
     def notify(self, method: str, params: Optional[Dict[str, Any]] = None) -> None:
@@ -242,24 +257,32 @@ class StdioMcpConnection:
                 proc.stdin.flush()
             except Exception as exc:
                 self.alive = False
+                self.last_error = f"write_failed:{exc}"
                 raise TransportError(f"write_failed:{self.name}:{exc}") from exc
 
     def _reader_loop(self) -> None:
         proc = self.proc
         if proc is None or proc.stdout is None:
             return
-        for line in proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except Exception:
-                logger.debug("%s: bad json line", self.name)
-                continue
-            if not isinstance(msg, dict):
-                continue
-            self._route(msg)
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    msg = json.loads(line)
+                except Exception:
+                    logger.debug("%s: bad json line", self.name)
+                    continue
+                if not isinstance(msg, dict):
+                    continue
+                self._route(msg)
+        except (ValueError, OSError):
+            pass
+        finally:
+            with self._state_lock:
+                self.alive = False
+            self._fail_all_pending("eof")
 
     def _route(self, msg: Dict[str, Any]) -> None:
         msg_id = msg.get("id")
@@ -295,5 +318,5 @@ class StdioMcpConnection:
         try:
             for line in proc.stderr:
                 logger.debug("%s stderr: %s", self.name, line.strip()[:300])
-        except Exception:
+        except (ValueError, OSError):
             pass

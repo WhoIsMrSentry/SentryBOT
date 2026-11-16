@@ -1,6 +1,6 @@
 # NeoPixel Modülü Mimarisi
 
-NeoPixel modülü (`modules/neopixel`), robotun göz veya gövde ışıklarını (WS2812/SK6812 LED şeritleri) kontrol eder. 20'den fazla yerleşik animasyon barındırır ve duygu durumlarına (joy, fear, neutral vb.) göre 23 farklı YAML paletinden renk eşleştirmesi yapar.
+NeoPixel modülü (`modules/visual_output/neopixel`), robotun göz (`jewel`) veya kaş (`stick_left`/`stick_right`, ortak alias `stick`) WS2812/SK6812 LED şeritlerini kontrol eder. 20'den fazla yerleşik animasyon barındırır, `NeoDriver` üzerinden `ws2812_spi_khz`, `max_brightness` ve `max_current_ma` güç sınırlarını uygular ve `get_shared_store()` bellek önbelleği ile duygu paletlerinden renk eşleştirmesi yapar.
 
 ## 🏗️ İş Akışı ve Karar Mekanizmaları (Flowchart)
 

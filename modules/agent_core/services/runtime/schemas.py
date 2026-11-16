@@ -309,18 +309,47 @@ class RuntimeBudgetUsage:
     retries: int = 0
     replans: int = 0
     started_at: float = field(default_factory=time.time)
+    active_elapsed_s: float = 0.0
+    paused: bool = False
+    _segment_started_at: Optional[float] = field(default=None, repr=False, compare=False)
 
-    def exceeded(self, budget: Budget) -> Optional[str]:
-        if self.iterations >= budget.max_iterations:
+    def begin_active(self, now: Optional[float] = None) -> None:
+        ts = float(now if now is not None else time.time())
+        self.paused = False
+        if self._segment_started_at is None:
+            self._segment_started_at = ts
+
+    def pause_active(self, now: Optional[float] = None) -> None:
+        ts = float(now if now is not None else time.time())
+        if self._segment_started_at is not None:
+            self.active_elapsed_s += max(0.0, ts - float(self._segment_started_at))
+            self._segment_started_at = None
+        self.paused = True
+
+    def elapsed_active(self, now: Optional[float] = None) -> float:
+        ts = float(now if now is not None else time.time())
+        if self._segment_started_at is not None:
+            return float(self.active_elapsed_s) + max(0.0, ts - float(self._segment_started_at))
+        if self.paused or self.active_elapsed_s > 0.0:
+            return float(self.active_elapsed_s)
+        return max(0.0, ts - float(self.started_at))
+
+    def can_retry(self, budget: Budget) -> bool:
+        return self.retries < max(0, int(budget.max_retries))
+
+    def can_replan(self, budget: Budget) -> bool:
+        return self.replans < max(0, int(budget.max_replans))
+
+    def exceeded(self, budget: Budget, *, now: Optional[float] = None) -> Optional[str]:
+        if self.iterations >= int(budget.max_iterations):
             return "max_iterations"
-        if self.tool_calls >= budget.max_tool_calls:
+        if self.tool_calls >= int(budget.max_tool_calls):
             return "max_tool_calls"
-        if self.retries > budget.max_retries:
+        if self.retries > max(0, int(budget.max_retries)):
             return "max_retries"
-        if self.replans > budget.max_replans:
+        if self.replans > max(0, int(budget.max_replans)):
             return "max_replans"
-        elapsed = time.time() - self.started_at
-        if elapsed >= budget.max_execution_time_s:
+        if self.elapsed_active(now=now) >= float(budget.max_execution_time_s):
             return "max_execution_time"
         return None
 
@@ -331,19 +360,22 @@ class RuntimeBudgetUsage:
             "retries": self.retries,
             "replans": self.replans,
             "started_at": self.started_at,
+            "active_elapsed_s": round(float(self.elapsed_active()), 6),
+            "paused": bool(self.paused),
         }
 
     @classmethod
     def from_dict(cls, raw: Optional[Dict[str, Any]]) -> "RuntimeBudgetUsage":
         data = raw if isinstance(raw, dict) else {}
-        usage = cls(
+        return cls(
             iterations=int(data.get("iterations") or 0),
             tool_calls=int(data.get("tool_calls") or 0),
             retries=int(data.get("retries") or 0),
             replans=int(data.get("replans") or 0),
             started_at=float(data.get("started_at") or time.time()),
+            active_elapsed_s=float(data.get("active_elapsed_s") or 0.0),
+            paused=bool(data.get("paused", False)),
         )
-        return usage
 
 
 @dataclass

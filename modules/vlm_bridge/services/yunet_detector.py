@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -56,35 +57,38 @@ class YuNetDetector:
         self.score_threshold = float(score_threshold)
         self.nms_threshold = float(nms_threshold)
         self.top_k = int(top_k)
+        self._lock = threading.RLock()
         self._detector: Any = None
         self._current_size: Tuple[int, int] = (0, 0)
         self._init_detector()
 
     def _init_detector(self) -> None:
-        if cv2 is None or not hasattr(cv2, "FaceDetectorYN"):
-            logger.info("cv2.FaceDetectorYN is not supported in this OpenCV build")
-            return
-        if not self.model_path or not os.path.isfile(self.model_path):
-            logger.info("YuNet model file not found (%s)", self.model_path)
-            return
-        try:
-            self._detector = cv2.FaceDetectorYN.create(
-                self.model_path,
-                "",
-                (320, 320),
-                score_threshold=self.score_threshold,
-                nms_threshold=self.nms_threshold,
-                top_k=self.top_k,
-            )
-            self._current_size = (320, 320)
-            logger.info("YuNet face detector initialized from %s", self.model_path)
-        except Exception as exc:
-            logger.warning("Failed to create cv2.FaceDetectorYN: %s", exc)
-            self._detector = None
+        with self._lock:
+            if cv2 is None or not hasattr(cv2, "FaceDetectorYN"):
+                logger.info("cv2.FaceDetectorYN is not supported in this OpenCV build")
+                return
+            if not self.model_path or not os.path.isfile(self.model_path):
+                logger.info("YuNet model file not found (%s)", self.model_path)
+                return
+            try:
+                self._detector = cv2.FaceDetectorYN.create(
+                    self.model_path,
+                    "",
+                    (320, 320),
+                    score_threshold=self.score_threshold,
+                    nms_threshold=self.nms_threshold,
+                    top_k=self.top_k,
+                )
+                self._current_size = (320, 320)
+                logger.info("YuNet face detector initialized from %s", self.model_path)
+            except Exception as exc:
+                logger.warning("Failed to create cv2.FaceDetectorYN: %s", exc)
+                self._detector = None
 
     @property
     def is_available(self) -> bool:
-        return self._detector is not None
+        with self._lock:
+            return self._detector is not None
 
     def detect(
         self,
@@ -101,23 +105,26 @@ class YuNetDetector:
                 "raw_face": np.ndarray,      # 15-float row for SFace
             }
         """
-        if not self.is_available or image is None or not hasattr(image, "shape"):
+        if image is None or not hasattr(image, "shape"):
             return []
         h, w = image.shape[:2]
         if h <= 0 or w <= 0:
             return []
 
-        try:
-            if (w, h) != self._current_size:
-                self._detector.setInputSize((w, h))
-                self._current_size = (w, h)
-            if score_threshold is not None and score_threshold != self.score_threshold:
-                self._detector.setScoreThreshold(float(score_threshold))
+        with self._lock:
+            if self._detector is None:
+                return []
+            try:
+                if (w, h) != self._current_size:
+                    self._detector.setInputSize((w, h))
+                    self._current_size = (w, h)
+                if score_threshold is not None and score_threshold != self.score_threshold:
+                    self._detector.setScoreThreshold(float(score_threshold))
 
-            retval, faces = self._detector.detect(image)
-        except Exception as exc:
-            logger.debug("YuNet detect call failed: %s", exc)
-            return []
+                retval, faces = self._detector.detect(image)
+            except Exception as exc:
+                logger.debug("YuNet detect call failed: %s", exc)
+                return []
 
         if not retval or faces is None or len(faces) == 0:
             return []
@@ -158,62 +165,70 @@ class SFaceRecognizer:
 
     def __init__(self, model_path: Optional[str] = None) -> None:
         self.model_path = model_path or _find_model_file(_SFACE_MODEL_NAME)
+        self._lock = threading.RLock()
         self._recognizer: Any = None
         self._init_recognizer()
 
     def _init_recognizer(self) -> None:
-        if cv2 is None or not hasattr(cv2, "FaceRecognizerSF"):
-            logger.info("cv2.FaceRecognizerSF is not supported in this OpenCV build")
-            return
-        if not self.model_path or not os.path.isfile(self.model_path):
-            logger.info("SFace model file not found (%s)", self.model_path)
-            return
-        try:
-            self._recognizer = cv2.FaceRecognizerSF.create(self.model_path, "")
-            logger.info("SFace face recognizer initialized from %s", self.model_path)
-        except Exception as exc:
-            logger.warning("Failed to create cv2.FaceRecognizerSF: %s", exc)
-            self._recognizer = None
+        with self._lock:
+            if cv2 is None or not hasattr(cv2, "FaceRecognizerSF"):
+                logger.info("cv2.FaceRecognizerSF is not supported in this OpenCV build")
+                return
+            if not self.model_path or not os.path.isfile(self.model_path):
+                logger.info("SFace model file not found (%s)", self.model_path)
+                return
+            try:
+                self._recognizer = cv2.FaceRecognizerSF.create(self.model_path, "")
+                logger.info("SFace face recognizer initialized from %s", self.model_path)
+            except Exception as exc:
+                logger.warning("Failed to create cv2.FaceRecognizerSF: %s", exc)
+                self._recognizer = None
 
     @property
     def is_available(self) -> bool:
-        return self._recognizer is not None
+        with self._lock:
+            return self._recognizer is not None
 
     def extract_feature(self, image: np.ndarray, raw_face: np.ndarray) -> Optional[np.ndarray]:
         """Align crop and extract 128-dimensional dense feature vector."""
-        if not self.is_available or image is None or raw_face is None:
+        if image is None or raw_face is None:
             return None
-        try:
-            aligned = self._recognizer.alignCrop(image, raw_face)
-            feat = self._recognizer.feature(aligned)
-            if feat is not None and hasattr(feat, "shape") and feat.size == 128:
-                vec = feat.flatten().astype(np.float32)
-                norm = np.linalg.norm(vec)
-                return vec / norm if norm > 0 else vec
-            return None
-        except Exception as exc:
-            logger.debug("SFace feature extraction failed: %s", exc)
-            return None
+        with self._lock:
+            if self._recognizer is None:
+                return None
+            try:
+                aligned = self._recognizer.alignCrop(image, raw_face)
+                feat = self._recognizer.feature(aligned)
+                if feat is not None and hasattr(feat, "shape") and feat.size == 128:
+                    vec = feat.flatten().astype(np.float32)
+                    norm = np.linalg.norm(vec)
+                    return vec / norm if norm > 0 else vec
+                return None
+            except Exception as exc:
+                logger.debug("SFace feature extraction failed: %s", exc)
+                return None
 
     def match(self, feature1: np.ndarray, feature2: np.ndarray) -> float:
         """Compute cosine similarity score between two 128D feature vectors."""
         if feature1 is None or feature2 is None:
             return -1.0
-        try:
-            f1 = np.asarray(feature1, dtype=np.float32).reshape(1, -1)
-            f2 = np.asarray(feature2, dtype=np.float32).reshape(1, -1)
-            if self._recognizer is not None:
-                score = self._recognizer.match(f1, f2, cv2.FaceRecognizerSF_FR_COSINE)
-                return float(score)
-            n1 = np.linalg.norm(f1)
-            n2 = np.linalg.norm(f2)
-            if n1 <= 0 or n2 <= 0:
+        with self._lock:
+            try:
+                f1 = np.asarray(feature1, dtype=np.float32).reshape(1, -1)
+                f2 = np.asarray(feature2, dtype=np.float32).reshape(1, -1)
+                if self._recognizer is not None:
+                    score = self._recognizer.match(f1, f2, cv2.FaceRecognizerSF_FR_COSINE)
+                    return float(score)
+                n1 = np.linalg.norm(f1)
+                n2 = np.linalg.norm(f2)
+                if n1 <= 0 or n2 <= 0:
+                    return -1.0
+                return float(np.dot(f1, f2.T)[0, 0] / (n1 * n2))
+            except Exception:
                 return -1.0
-            return float(np.dot(f1, f2.T)[0, 0] / (n1 * n2))
-        except Exception:
-            return -1.0
 
 
+_SINGLETON_LOCK = threading.Lock()
 _DETECTOR_SINGLETON: Optional[YuNetDetector] = None
 _RECOGNIZER_SINGLETON: Optional[SFaceRecognizer] = None
 
@@ -221,14 +236,18 @@ _RECOGNIZER_SINGLETON: Optional[SFaceRecognizer] = None
 def get_yunet_detector() -> YuNetDetector:
     global _DETECTOR_SINGLETON
     if _DETECTOR_SINGLETON is None:
-        _DETECTOR_SINGLETON = YuNetDetector()
+        with _SINGLETON_LOCK:
+            if _DETECTOR_SINGLETON is None:
+                _DETECTOR_SINGLETON = YuNetDetector()
     return _DETECTOR_SINGLETON
 
 
 def get_sface_recognizer() -> SFaceRecognizer:
     global _RECOGNIZER_SINGLETON
     if _RECOGNIZER_SINGLETON is None:
-        _RECOGNIZER_SINGLETON = SFaceRecognizer()
+        with _SINGLETON_LOCK:
+            if _RECOGNIZER_SINGLETON is None:
+                _RECOGNIZER_SINGLETON = SFaceRecognizer()
     return _RECOGNIZER_SINGLETON
 
 

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
+import threading
 import time
 from typing import Any, Dict, List, Optional
 from urllib.error import HTTPError, URLError
@@ -12,7 +14,8 @@ class ExpressionOutputBridge:
     def __init__(self, engine: Any, cfg: Optional[Dict[str, Any]] = None) -> None:
         self.engine = engine
         base = getattr(engine, "cfg", {}) if engine is not None else {}
-        configured = base.get("output_bridge", {}) if isinstance(base, dict) and isinstance(base.get("output_bridge"), dict) else {}
+        ob_raw = base.get("output_bridge", {}) if isinstance(base, dict) else {}
+        configured = ob_raw if isinstance(ob_raw, dict) else {}
         self.cfg = dict(configured)
         if isinstance(cfg, dict):
             self.cfg.update(cfg)
@@ -28,14 +31,42 @@ class ExpressionOutputBridge:
         self.endpoints.update({str(k): str(v) for k, v in custom.items()})
         self._last_apply: Dict[str, Any] = {"ok": True, "applied": False, "reason": "never_applied"}
         self._last_target_sig = ""
+        self._lock = threading.Lock()
+        self._send_executor: Optional[ThreadPoolExecutor] = None
+        self._bg_executor: Optional[ThreadPoolExecutor] = None
+
+    def _get_send_executor(self) -> ThreadPoolExecutor:
+        with self._lock:
+            if self._send_executor is None:
+                self._send_executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ExprBridgeSend")
+            return self._send_executor
+
+    def _get_bg_executor(self) -> ThreadPoolExecutor:
+        with self._lock:
+            if self._bg_executor is None:
+                self._bg_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ExprBridgeBg")
+            return self._bg_executor
+
+    def close(self) -> None:
+        with self._lock:
+            send_ex, self._send_executor = self._send_executor, None
+            bg_ex, self._bg_executor = self._bg_executor, None
+        for ex in (bg_ex, send_ex):
+            if ex is not None:
+                try:
+                    ex.shutdown(wait=False, cancel_futures=True)
+                except Exception:
+                    pass
 
     def status(self) -> Dict[str, Any]:
+        with self._lock:
+            last_apply = dict(self._last_apply)
         return {
             "ok": True,
             "enabled": self.enabled,
             "gateway_url": self.gateway_url,
             "endpoints": dict(self.endpoints),
-            "last_apply": dict(self._last_apply),
+            "last_apply": last_apply,
         }
 
     def plan(self) -> Dict[str, Any]:
@@ -50,16 +81,26 @@ class ExpressionOutputBridge:
             return self._remember(False, "bridge_disabled", [])
         plan = self.plan()
         sig = json.dumps(plan.get("targets") or {}, sort_keys=True, default=str)
-        if sig == self._last_target_sig:
-            return self._remember(True, "unchanged", [])
-        self._last_target_sig = sig
-        results: List[Dict[str, Any]] = []
-        for action in plan["actions"]:
-            results.append(self._send(action))
+        with self._lock:
+            if sig == self._last_target_sig:
+                return self._remember(True, "unchanged", [])
+        executor = self._get_send_executor()
+        results = list(executor.map(self._send, plan["actions"]))
         ok = bool(results) and all(bool(result.get("ok")) for result in results)
+        if ok:
+            with self._lock:
+                self._last_target_sig = sig
         result = self._remember(ok, "applied" if ok else "output_failed", results)
         result["plan"] = plan
         return result
+
+    def apply_async(self) -> None:
+        if not self.enabled:
+            return
+        try:
+            self._get_bg_executor().submit(self.apply)
+        except Exception:
+            pass
 
     def _actions(self, targets: Dict[str, Any], state: Dict[str, Any]) -> List[Dict[str, Any]]:
         led = targets.get("led") if isinstance(targets.get("led"), dict) else {}
@@ -92,7 +133,7 @@ class ExpressionOutputBridge:
     @staticmethod
     def _led_mode(value: Any) -> str:
         mode = str(value or "eye").strip().lower()
-        if mode in {"off", "listen", "thinking", "eye", "wake_spin", "wake_chase"}:
+        if mode in {"off", "listen", "thinking", "eye", "breathe", "wake_spin", "wake_chase"}:
             return mode
         return "eye"
 
@@ -112,7 +153,12 @@ class ExpressionOutputBridge:
             with urlopen(request, timeout=self.timeout_s) as response:
                 body = response.read().decode("utf-8", errors="replace")
                 parsed = json.loads(body) if body else {}
-                return {"ok": 200 <= int(response.status) < 300, "component": action["component"], "status": int(response.status), "response": parsed}
+                return {
+                    "ok": 200 <= int(response.status) < 300,
+                    "component": action["component"],
+                    "status": int(response.status),
+                    "response": parsed,
+                }
         except HTTPError as exc:
             return {"ok": False, "component": action["component"], "status": int(exc.code), "error": str(exc)}
         except (URLError, OSError) as exc:

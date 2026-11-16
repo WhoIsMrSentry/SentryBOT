@@ -16,16 +16,21 @@ import re
 from collections import Counter
 from typing import Dict, List, Sequence, Tuple
 
-_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
-_TR_DEVOICE = str.maketrans({"ğ": "k", "d": "t", "b": "p", "c": "ç"})
+try:
+    from modules.cognitive_memory.services.text_utils import _TOKEN_RE, _TR_DEVOICE, _tokens
+except Exception:
+    _TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+    _TR_DEVOICE = str.maketrans({"ğ": "k", "d": "t", "b": "p", "c": "ç"})
+
+    def _tokens(text: str) -> List[str]:
+        return [t.lower() for t in _TOKEN_RE.findall(str(text or "")) if len(t) > 1]
 
 
 def _turkish_stem_tokens(word: str) -> List[str]:
     """Emit root-prefix tokens so Turkish inflected words match without a heavy stemmer."""
     extra: List[str] = []
     if len(word) >= 5:
-        p4 = word[:4]
-        extra.append(f"#{p4}")
+        extra.append(f"#{word[:4]}")
     if len(word) >= 6:
         p5 = word[:5]
         # Normalize Turkish consonant softening at stem boundary (e.g. gözlük/gözlüğ, kitap/kitab)
@@ -35,7 +40,7 @@ def _turkish_stem_tokens(word: str) -> List[str]:
 
 
 def tokenize(text: str) -> List[str]:
-    words = [t for t in _TOKEN_RE.findall(str(text).lower()) if len(t) > 1]
+    words = _tokens(text)
     tokens = list(words)
     for w in words:
         tokens.extend(_turkish_stem_tokens(w))

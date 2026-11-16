@@ -36,8 +36,14 @@ def arm_state() -> tuple[bool, bool]:
 def has_robot_safe_manual_profile() -> bool:
     p = ROOT / "config" / "robot_execution_profiles.json"
     data = read_json(p, {})
-    text = json.dumps(data).lower() if data else ""
-    return "robot_safe_manual" in text or p.exists()
+    if not isinstance(data, dict) or not data:
+        return False
+    profiles = data.get("profiles")
+    if isinstance(profiles, dict) and any(
+        isinstance(v, dict) and v for v in profiles.values()
+    ):
+        return True
+    return "robot_safe_manual" in json.dumps(data).lower()
 
 
 def print_rows(rows: list[tuple[str, str, str]], title: str | None = None) -> int:

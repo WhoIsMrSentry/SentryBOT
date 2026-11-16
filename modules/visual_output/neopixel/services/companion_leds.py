@@ -14,6 +14,7 @@ from .companion_led_helpers import (
     Color,
     _StickSegment,
     _parse_hex_color,
+    _safe_float,
     _lerp_color,  # noqa: F401
     _interpolate_gradient,  # noqa: F401
 )
@@ -73,7 +74,18 @@ class CompanionLedController(CompanionLedRenderMixin):
         self._eye_color = _parse_hex_color(colors.get("eye_default", "#30E3CA"), (48, 227, 202))
         face_cfg = self._cfg.get("face", {}) if isinstance(self._cfg.get("face"), dict) else {}
         self._face_default_duration_ms = max(100, int(face_cfg.get("default_duration_ms", 1400)))
-        self._face_profiles = face_cfg.get("pose_profiles", {}) if isinstance(face_cfg.get("pose_profiles"), dict) else {}
+        raw_profiles = face_cfg.get("pose_profiles", {})
+        self._face_profiles: Dict[str, Dict[str, float]] = {}
+        if isinstance(raw_profiles, dict):
+            for p_name, p_spec in raw_profiles.items():
+                if not isinstance(p_spec, Mapping):
+                    continue
+                self._face_profiles[str(p_name).strip().lower()] = {
+                    "intensity": _safe_float(p_spec.get("intensity", 0.65), 0.65, minimum=0.0, maximum=1.0),
+                    "slope": _safe_float(p_spec.get("slope", 0.0), 0.0, minimum=-2.0, maximum=2.0),
+                    "arch": _safe_float(p_spec.get("arch", 0.0), 0.0, minimum=0.0, maximum=1.0),
+                    "phase": _safe_float(p_spec.get("phase", 0.0), 0.0, minimum=0.0, maximum=1.0),
+                }
         self._semantic_catalog = face_cfg.get("semantics", {}) if isinstance(face_cfg.get("semantics"), dict) else {}
         self._face_frame: Dict[str, Any] = {}
         self._face_frame_expires_at = 0.0
@@ -89,11 +101,11 @@ class CompanionLedController(CompanionLedRenderMixin):
         wake_spin = self._cfg.get("wake_spin", {}) if isinstance(self._cfg.get("wake_spin"), dict) else {}
         self._wake_spin_duration_ms = float(wake_spin.get("duration_ms", 1200))
         self._wake_spin_wait_ms = float(wake_spin.get("wait_ms", 45))
-        self._wake_spin_loops = int(wake_spin.get("loops", 2))
         self._wake_spin_next_mode = str(wake_spin.get("next_mode", "eye")).strip().lower()
 
         self._lock = threading.Lock()
         self._stop = threading.Event()
+        self._wakeup = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._mode = "off"
         self._think_phase = 0
@@ -102,7 +114,10 @@ class CompanionLedController(CompanionLedRenderMixin):
         self._wake_spin_started = 0.0
         self._wake_spin_position = 0
         self._wake_spin_frame_tick = 0
+        self._wake_chase_pos = 0
         self._pending_mode = ""
+        self._last_rendered_frame: Optional[Dict[int, Color]] = None
+        self._active_semantic_animation: str = ""
 
     @property
     def mode(self) -> str:
@@ -119,19 +134,18 @@ class CompanionLedController(CompanionLedRenderMixin):
             return {
                 "mode": self._mode,
                 "pending_mode": self._pending_mode,
+                "active_semantic_animation": self._active_semantic_animation,
                 "renderer_alive": bool(self._thread and self._thread.is_alive()),
             }
 
     def set_eye_color(self, color: Color) -> None:
         with self._lock:
             self._eye_color = color
+            self._last_rendered_frame = None
 
     @staticmethod
     def _bounded(value: Any, default: float) -> float:
-        try:
-            return min(1.0, max(0.0, float(value)))
-        except (TypeError, ValueError):
-            return default
+        return _safe_float(value, default, minimum=0.0, maximum=1.0)
 
     def semantic_catalog(self) -> Dict[str, Any]:
         return {name: dict(value) for name, value in self._semantic_catalog.items() if isinstance(value, Mapping)}
@@ -145,6 +159,7 @@ class CompanionLedController(CompanionLedRenderMixin):
         frame: Dict[str, Any] = dict(raw_frame) if isinstance(raw_frame, Mapping) else {}
         frame["semantic"] = str(semantic)
         frame["revision"] = str(revision or "")
+        frame["animation"] = str(entry.get("animation") or "")
         configured_duration = entry.get("duration_ms")
         active_duration = duration_ms if duration_ms is not None else configured_duration
         return self.apply_face_frame(frame, duration_ms=active_duration)
@@ -155,6 +170,8 @@ class CompanionLedController(CompanionLedRenderMixin):
             return False
         with self._lock:
             self._face_frame = self._normalize_face_frame(frame)
+            self._active_semantic_animation = str(self._face_frame.get("animation") or "")
+            self._last_rendered_frame = None
             requested_ms = duration_ms if duration_ms is not None else frame.get("duration_ms")
             try:
                 active_ms = max(100, int(requested_ms)) if requested_ms is not None else self._face_default_duration_ms
@@ -186,10 +203,11 @@ class CompanionLedController(CompanionLedRenderMixin):
         return {
             "semantic": str(frame.get("semantic") or "ambient_idle"),
             "revision": str(frame.get("revision") or ""),
+            "animation": str(frame.get("animation") or ""),
             "eye": {
                 "color": eye_color,
                 "brightness": self._bounded(eye_raw.get("brightness", 0.75), 0.75),
-                "pulse_hz": max(0.0, float(eye_raw.get("pulse_hz", 0.0) or 0.0)),
+                "pulse_hz": _safe_float(eye_raw.get("pulse_hz", 0.0), 0.0, minimum=0.0, maximum=20.0),
             },
             "brows": brows,
         }
@@ -201,33 +219,48 @@ class CompanionLedController(CompanionLedRenderMixin):
         if mode not in self.VALID_MODES:
             logger.warning("unknown companion mode ignored: %s", mode)
             return False
+        was_off = False
         with self._lock:
             if mode == self._mode and mode != "wake_spin":
                 return True
             if self._mode == "wake_spin" and mode not in {"off", "wake_spin"}:
                 self._pending_mode = mode
                 return True
+            was_off = self._mode in {"", "off"}
             self._mode = mode
             self._think_phase = 0
             self._think_last_advance = 0.0
             self._eye_phase = 0.0
             self._wake_spin_position = 0
             self._wake_spin_frame_tick = 0
+            self._wake_chase_pos = 0
+            self._last_rendered_frame = None
             if mode == "wake_spin":
                 self._wake_spin_started = time.monotonic()
                 self._pending_mode = ""
             if mode == "off":
                 self._pending_mode = ""
+                self._active_semantic_animation = ""
         if mode == "off":
             with self._frame_lock:
                 self._clear_companion_range()
+            self._wakeup.set()
         else:
+            if was_off:
+                with self._frame_lock:
+                    self._clear_companion_range()
+            self._wakeup.set()
             self._ensure_thread()
         return True
 
     def stop(self) -> None:
         self.set_mode("off")
         self._stop.set()
+        self._wakeup.set()
+        thread = self._thread
+        if thread and thread.is_alive():
+            thread.join(timeout=1.5)
+        self._thread = None
 
     def _ensure_thread_unlocked(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -246,11 +279,14 @@ class CompanionLedController(CompanionLedRenderMixin):
             with self._lock:
                 mode = self._mode
             if mode == "off":
-                self._stop.wait(interval)
+                self._wakeup.wait(timeout=1.0)
+                self._wakeup.clear()
                 continue
             try:
                 with self._frame_lock:
-                    if mode in {"listen", "eye"}:
+                    if mode == "listen":
+                        self._render_listen_frame()
+                    elif mode == "eye":
                         self._render_eye_frame()
                     elif mode == "thinking":
                         self._render_thinking_frame()

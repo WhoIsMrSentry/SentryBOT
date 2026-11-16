@@ -115,6 +115,9 @@ def run_tui(
         root=root,
         run_robot=run_robot,
         profile=profile,
+        colors=colors,
+        ascii_mode=ascii_mode,
+        no_alt=no_alt,
     )
 
 
@@ -146,9 +149,15 @@ def main(argv: list[str] | None = None) -> int:
 
     profile = "pc-test" if args.profile == "pc" else args.profile
     should_run_robot = bool(args.run) and not bool(args.no_run)
+    colors = not bool(args.no_color)
+    ascii_mode = bool(args.ascii) and not bool(args.unicode)
+    no_alt = bool(args.no_alt) and not bool(args.alt)
     return run_tui(
         root=root,
         run_robot=should_run_robot,
+        colors=colors,
+        ascii_mode=ascii_mode,
+        no_alt=no_alt,
         profile=profile,
     )
 

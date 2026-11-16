@@ -1,19 +1,25 @@
 from __future__ import annotations
+
 import logging
 import os
-
-from fastapi import APIRouter
+import threading
 from typing import Dict
 
-from ..services.clients import create_llm_client
-from ..services.chat import OllamaChatService
-from ..services.translator import OllamaTranslator
+from fastapi import APIRouter
 
-from modules.ai_provider.api._helpers import load_persona_text, should_use_persona_model as _should_use_persona_model
-from modules.ai_provider.api.health import get_health_router
+from modules.ai_provider.api._helpers import (
+    DEFAULT_PERSONA_DIR,
+    load_persona_text,
+    should_use_persona_model as _should_use_persona_model,
+)
 from modules.ai_provider.api.chat_routes import get_chat_router
-from modules.ai_provider.api.persona_routes import get_persona_router
+from modules.ai_provider.api.health import get_health_router
 from modules.ai_provider.api.models_routes import get_models_router
+from modules.ai_provider.api.persona_routes import get_persona_router
+
+from ..services.chat import OllamaChatService
+from ..services.clients import create_llm_client
+from ..services.translator import OllamaTranslator
 
 logger = logging.getLogger("ollama.api")
 
@@ -27,14 +33,16 @@ def get_router(cfg: dict) -> APIRouter:
     provider_name = "ollama"
     try:
         client, provider_name = create_llm_client(cfg)
+        if getattr(client, "DISABLED", False):
+            raise RuntimeError(f"Provider '{provider_name}' is disabled; local Ollama routing is required")
     except Exception as exc:
         if llm_provider_requested in {"google", "google_ai_studio", "gemini"}:
             logger.error(
-                "Google AI Studio init failed — set config/agent.yaml google_ai_studio.api_key "
-                "or export GOOGLE_API_KEY (profile must not use empty api_key). Error: %s",
+                "Google AI Studio provider unavailable (%s); falling back to local Ollama.",
                 exc,
             )
-        logger.warning("LLM provider init failed, fallback to ollama: %s", exc)
+        else:
+            logger.warning("LLM provider init failed, fallback to ollama: %s", exc)
         fallback_cfg = {"llm": {"provider": "ollama"}, "ollama": cfg.get("ollama", {}) or {}}
         client, provider_name = create_llm_client(fallback_cfg)
 
@@ -58,7 +66,7 @@ def get_router(cfg: dict) -> APIRouter:
     )
 
     _persona_cache: Dict[str, str] = {}
-    base_persona_dir = str(cfg.get("persona", {}).get("dir", "modules/ai_provider/config/personalities"))
+    base_persona_dir = str(cfg.get("persona", {}).get("dir", DEFAULT_PERSONA_DIR))
     if os.path.exists(base_persona_dir):
         for name in os.listdir(base_persona_dir):
             pdir = os.path.join(base_persona_dir, name)
@@ -73,6 +81,8 @@ def get_router(cfg: dict) -> APIRouter:
                     pass
 
     runtime = {
+        "_lock": threading.RLock(),
+        "client": client,
         "model": model,
         "active_persona": active_persona,
         "persona_text": persona_text,
@@ -82,14 +92,31 @@ def get_router(cfg: dict) -> APIRouter:
 
     r = APIRouter(prefix="/ollama", tags=["ollama"])
 
-    r.include_router(get_health_router(cfg, provider_name, model))
-    r.include_router(get_chat_router(
-        chat, translator, model, provider_name, active_persona,
-        action_endpoint, action_timeout, default_apply,
-    ))
-    r.include_router(get_persona_router(
-        cfg, client, provider_name, single_model_mode, use_persona_models, ollama_num_predict, runtime,
-    ))
+    r.include_router(get_health_router(cfg, provider_name, model, runtime=runtime))
+    r.include_router(
+        get_chat_router(
+            chat,
+            translator,
+            model,
+            provider_name,
+            active_persona,
+            action_endpoint,
+            action_timeout,
+            default_apply,
+            runtime=runtime,
+        )
+    )
+    r.include_router(
+        get_persona_router(
+            cfg,
+            client,
+            provider_name,
+            single_model_mode,
+            use_persona_models,
+            ollama_num_predict,
+            runtime,
+        )
+    )
     r.include_router(get_models_router(client, provider_name, model, cfg, runtime))
 
     return r

@@ -25,14 +25,12 @@ flowchart TD
         TRIG_PUB_SUB -- Hayır --> RET_OK_U
     end
     
-    %% Veri Okuma (GET)
-    subgraph Read Flow [Durum Okuma İşlemi GET]
+    %% Veri Okuma & SSE Akışı
+    subgraph Read Flow [Durum Okuma & Akış GET]
         direction TB
-        REQ_READ([GET /get/emotions <br> veya /state]) --> PARSE_QRY(Query Parametresi Al <br> Varsa Sadece Onu Ver)
-        
-        PARSE_QRY --> GET_LOCK[Kilit Al] --> CLONE_DAT[Kopya Oluştur <br> copy.deepcopy] --> UNLOCK[Kilidi Bırak]
-        
-        UNLOCK --> RET_JSON([Seçili State JSON'ı Dön])
+        REQ_READ(["GET /state/get (?key=) veya /state/stream"]) --> PARSE_QRY("Query Parametresi Kontrolü")
+        PARSE_QRY --> GET_LOCK["Kilit Al (_lock)"] --> CLONE_DAT["Seçili Key veya Kopya Al"] --> UNLOCK["Kilidi Bırak"]
+        UNLOCK --> RET_JSON(["JSON veya SSE Stream (snapshot + state)"])
     end
 ```
 

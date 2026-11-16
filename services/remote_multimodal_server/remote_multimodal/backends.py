@@ -9,14 +9,30 @@ logger = logging.getLogger("remote_multimodal.backends")
 
 
 class Backends:
-    def __init__(self, cfg: RuntimeConfig) -> None:
+    def __init__(self, cfg: RuntimeConfig, *, lazy: bool = False) -> None:
+        self._cfg = cfg
+        self._loaded = False
+        self._init_lock = __import__("threading").Lock()
         self.yolo: Optional[Any] = None
         self.face_recognition: Optional[Any] = None
         self.deepface: Optional[Any] = None
         self.caption_pipe: Optional[Any] = None
         self.ocr: Optional[Any] = None
         self.ocr_backend_name: str = ""
-        self._init(cfg)
+        if not lazy:
+            self.ensure_loaded()
+
+    @property
+    def is_loaded(self) -> bool:
+        return self._loaded
+
+    def ensure_loaded(self) -> None:
+        if self._loaded:
+            return
+        with self._init_lock:
+            if not self._loaded:
+                self._init(self._cfg)
+                self._loaded = True
 
     def _init(self, cfg: RuntimeConfig) -> None:
         if cfg.detector_backend in {"auto", "yolo"}:

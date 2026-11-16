@@ -3,8 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import logging
 import threading
-import time
-from typing import Any, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 try:
     import requests  # type: ignore
@@ -21,43 +20,88 @@ class EngineGuardsMixin:
     quiet_hours_cfg: Dict[str, Any]
     monitor_cfg: Dict[str, Any]
     _expression_arbiter: Any
-    _lock: Any
+    _lock: threading.RLock
+    _restore_timer_lock: threading.Lock
+    _release_timer: Optional[threading.Timer]
     _lights_claim_generation: int
     _last_arduino_check: float
     _last_net_burst: float
+    _arduino_fail_logged: bool
 
-    def set_state(self, **kwargs: Any) -> None:
-        raise NotImplementedError
+    if TYPE_CHECKING:
+        def set_state(self, **kwargs: Any) -> None: ...
 
-    def _claim_lights_for_event(self, event_name: Any, *, force: bool = False) -> bool:
+    def _claim_lights_for_event(
+        self,
+        event_name: Any,
+        *,
+        force: bool = False,
+        ttl_ms: Optional[int] = None,
+    ) -> bool:
         if self._expression_arbiter is None:
             return True
+        semantic = str(event_name or "").strip()
+        ttl_s = max(0.05, float(ttl_ms) / 1000.0) if ttl_ms and ttl_ms > 0 else None
         try:
-            ok = bool(self._expression_arbiter.claim_lights("interactions", force=force))
+            try:
+                ok = bool(
+                    self._expression_arbiter.claim_lights(
+                        "interactions",
+                        force=force,
+                        ttl_s=ttl_s,
+                        semantic=semantic,
+                    )
+                )
+            except TypeError:
+                ok = bool(self._expression_arbiter.claim_lights("interactions", force=force))
             if ok:
                 with self._lock:
                     self._lights_claim_generation += 1
             return ok
-        except Exception:
-            return True
+        except Exception as exc:
+            logger.warning("expression arbiter claim_lights failed (fail-closed) for '%s': %s", semantic, exc)
+            return False
+
+    def _cancel_release_timer(self) -> None:
+        with self._restore_timer_lock:
+            timer = getattr(self, "_release_timer", None)
+            if timer is not None:
+                try:
+                    timer.cancel()
+                except Exception:
+                    pass
+                self._release_timer = None
+
+    def _release_lights_now(self) -> None:
+        if self._expression_arbiter is None:
+            return
+        try:
+            self._expression_arbiter.release("interactions")
+        except Exception as exc:
+            logger.debug("expression arbiter release failed: %s", exc)
 
     def _schedule_lights_release(self, duration_ms: int) -> None:
         if self._expression_arbiter is None:
+            return
+        self._cancel_release_timer()
+        if duration_ms <= 0:
+            self._release_lights_now()
             return
         with self._lock:
             generation = self._lights_claim_generation
 
         def _release() -> None:
-            time.sleep(max(0.0, duration_ms / 1000.0))
             with self._lock:
                 if generation != self._lights_claim_generation:
                     return
-            try:
-                self._expression_arbiter.release("interactions")
-            except Exception:
-                pass
+            self._release_lights_now()
 
-        threading.Thread(target=_release, name="InteractionsLightsRelease", daemon=True).start()
+        timer = threading.Timer(max(0.0, float(duration_ms) / 1000.0), _release)
+        timer.name = "InteractionsLightsRelease"
+        timer.daemon = True
+        with self._restore_timer_lock:
+            self._release_timer = timer
+        timer.start()
 
     def _effect_allowed(self, event_name: Any) -> bool:
         if not bool(self.quiet_hours_cfg.get("enabled", False)):
@@ -92,7 +136,7 @@ class EngineGuardsMixin:
             return start_min <= now < end_min
         return now >= start_min or now < end_min
 
-    def _detect_net_burst(self, now: float, metrics) -> bool:
+    def _detect_net_burst(self, now: float, metrics: Any) -> bool:
         try:
             thr = self.cfg.get("thresholds", {}).get("net", {})
             burst_mbps = float(thr.get("burst_mbps", 20))
@@ -104,6 +148,21 @@ class EngineGuardsMixin:
         except Exception:
             return False
 
+    @staticmethod
+    def _resolve_monitor_url(raw_url: str) -> str:
+        url = str(raw_url or "").strip()
+        if not url:
+            return ""
+        if url.startswith("@gateway"):
+            try:
+                from modules.gateway.url import resolve_config_url, resolve_gateway_base_url
+
+                return resolve_config_url(url, resolve_gateway_base_url())
+            except Exception as exc:
+                logger.warning("Failed to resolve gateway URL '%s': %s", url, exc)
+                return ""
+        return url
+
     def _update_arduino_state(self, now: float) -> None:
         if requests is None:
             return
@@ -114,11 +173,12 @@ class EngineGuardsMixin:
         if now - self._last_arduino_check < interval:
             return
         self._last_arduino_check = now
-        url = str(cfg.get("url"))
+        url = self._resolve_monitor_url(str(cfg.get("url") or ""))
         if not url:
             return
         timeout = float(cfg.get("timeout_s", 0.5))
         ok = False
+        err_msg = ""
         try:
             resp = requests.get(url, timeout=timeout)
             if resp.status_code == 200:
@@ -127,6 +187,21 @@ class EngineGuardsMixin:
                 except Exception:
                     data = {}
                 ok = bool(data.get("ok", True))
-        except Exception:
+                if not ok:
+                    err_msg = str(data.get("error") or "status ok=False")
+            else:
+                err_msg = f"HTTP {resp.status_code}"
+        except Exception as exc:
             ok = False
+            err_msg = str(exc)
+        if not ok:
+            if not getattr(self, "_arduino_fail_logged", False):
+                logger.warning("Arduino health probe failed (%s): %s", url, err_msg)
+                self._arduino_fail_logged = True
+            else:
+                logger.debug("Arduino health probe failed (%s): %s", url, err_msg)
+        else:
+            if getattr(self, "_arduino_fail_logged", False):
+                logger.info("Arduino health probe recovered (%s)", url)
+                self._arduino_fail_logged = False
         self.set_state(arduino_connected=ok)

@@ -3,6 +3,8 @@ from pathlib import Path
 from fastapi import APIRouter, Response
 from fastapi.responses import HTMLResponse, FileResponse
 
+from modules.system_control.config_center.api._helpers import is_within_repo
+
 
 def get_views_router(static_dir: Path) -> APIRouter:
     r = APIRouter(tags=["config_center-ui"])
@@ -17,9 +19,7 @@ def get_views_router(static_dir: Path) -> APIRouter:
     @r.get("/static/{file_path:path}")
     def serve_static(file_path: str):
         target = (static_dir / file_path).resolve()
-        try:
-            target.relative_to(static_dir.resolve())
-        except Exception:
+        if not is_within_repo(target, static_dir):
             return Response(status_code=403, content="invalid path")
         if not target.exists() or not target.is_file():
             return Response(status_code=404)

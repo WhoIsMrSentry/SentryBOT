@@ -25,15 +25,16 @@ class OledAdapter:
         duration_s: float = 3.0,
         loop: bool = False,
     ) -> bool:
-        """Play an OLED face animation.
-
-        The oled_faces router exposes POST /manual {mode, name}
-        (mode="animation") - there is no /animate endpoint.
-        """
+        """Play an OLED face animation via POST /oled_faces/manual."""
         try:
             resp = await self._client.post(
                 "/oled_faces/manual",
-                json={"mode": "animation", "name": name},
+                json={
+                    "mode": "animation",
+                    "name": name,
+                    "duration_s": float(duration_s),
+                    "loop": bool(loop),
+                },
             )
             return resp.status_code == 200
         except Exception as e:

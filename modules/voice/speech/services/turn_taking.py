@@ -41,6 +41,7 @@ class DynamicTurnTakingEngine:
         self._turn_start_ts = 0.0
         self._last_speech_ts = 0.0
         self._cue_emitted = False
+        self._peak_speech_rms = 0.0
 
     def start_listening(self, current_time_s: Optional[float] = None) -> None:
         now = float(current_time_s if current_time_s is not None else time.time())
@@ -48,15 +49,23 @@ class DynamicTurnTakingEngine:
         self._turn_start_ts = now
         self._last_speech_ts = 0.0
         self._cue_emitted = False
+        self._peak_speech_rms = 0.0
 
-    def process_vad_frame(self, is_speech: bool, current_time_s: Optional[float] = None) -> Dict[str, Any]:
+    def process_vad_frame(
+        self,
+        is_speech: bool,
+        current_time_s: Optional[float] = None,
+        energy_rms: Optional[float] = None,
+    ) -> Dict[str, Any]:
         now = float(current_time_s if current_time_s is not None else time.time())
-        
+
         # 1. Konuşma başladı
         if is_speech:
             if self._last_speech_ts == 0.0:
                 self._turn_start_ts = now
             self._last_speech_ts = now
+            if energy_rms is not None:
+                self._peak_speech_rms = max(self._peak_speech_rms, float(energy_rms))
             self.state = TurnState.USER_SPEAKING
             return {"state": self.state.value, "turn_completed": False, "suggested_cue": None}
 
@@ -70,9 +79,16 @@ class DynamicTurnTakingEngine:
         # 3. Konuşuldu ve şu an sessizlik var
         silence_duration = now - self._last_speech_ts
         speech_duration = self._last_speech_ts - self._turn_start_ts
+        effective_eot = self.end_of_turn_silence_s
+        if (
+            energy_rms is not None
+            and self._peak_speech_rms > 0.0
+            and float(energy_rms) <= self._peak_speech_rms * 0.25
+        ):
+            effective_eot = max(0.35, self.end_of_turn_silence_s * 0.75)
 
         # Kullanıcı yeterli süre konuştu ve ardından doğal konuşma sonu sessizliği oluştu
-        if speech_duration >= self.min_speech_duration_s and silence_duration >= self.end_of_turn_silence_s:
+        if speech_duration >= self.min_speech_duration_s and silence_duration >= effective_eot:
             self.state = TurnState.USER_DONE
             return {"state": self.state.value, "turn_completed": True, "suggested_cue": None}
 

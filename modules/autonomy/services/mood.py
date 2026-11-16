@@ -120,6 +120,17 @@ class MoodManager:
                 "rest": round(float(self.state.get("rest", 0)), 1),
             }
 
+    def get_risk_and_safety(self) -> dict[str, float]:
+        """Return canonical 0..1 risk (high=danger) and safety_level (high=safe) derived from fear."""
+        with self._lock:
+            fear = max(0.0, min(100.0, float(self.state.get("fear", 0.0) or 0.0)))
+        risk = round(fear / 100.0, 3)
+        return {
+            "risk": risk,
+            "safety_level": round(max(0.0, 1.0 - risk), 3),
+            "fear": round(fear, 1),
+        }
+
     def modify(self, mood, delta):
         with self._lock:
             if mood in self.state:

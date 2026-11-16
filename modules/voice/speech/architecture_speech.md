@@ -7,38 +7,27 @@ Speech modülü (`modules/voice/speech`), mikrofon verisini alarak konuşma tan�
 ```mermaid
 flowchart TD
     %% Ana Giriş
-    START([Mikrofon Dinleme Döngüsü]) --> CAPTURE_AUDIO[Ses Akışını Yakala]
+    START([Mikrofon Dinleme Döngüsü]) --> CAPTURE_AUDIO["modules.voice.audio_router<br>(Kilit-Dışı Worker Akışı)"]
     
-    %% Ses Yönü Bulma
-    subgraph Direction_Calculation [Ses Yönü Tahmini]
+    %% Ön İşleme ve Ses Yönü
+    subgraph Conditioning [Ön İşleme, Echo Gate & Opsiyonel DoA]
         direction TB
-        CAPTURE_AUDIO --> CHK_DIR_SUPPORT{"Cihaz Çok Kanallı mı? <br> (Örn: ReSpeaker)"}
-        CHK_DIR_SUPPORT -- Evet --> CALC_DOA(DOA - Direction of Arrival <br> Hesapla)
-        CHK_DIR_SUPPORT -- Hayır --> SKIP_DIR[Varsayılan 0° / İleri]
-        
-        CALC_DOA --> SET_DIR_VAR[Global Ses Yönü Değişkenini<br>Güncelle]
-        SKIP_DIR --> SET_DIR_VAR
+        CAPTURE_AUDIO --> PRE["RMS/VU + Downmix + Gain +<br>SoftwareEchoGate (Speak Bağlı)"]
+        PRE --> CHK_DIR_SUPPORT{"direction.enabled?"}
+        CHK_DIR_SUPPORT -- Evet --> CALC_DOA["DOA - GCC-PHAT -> PanTiltController"]
+        CHK_DIR_SUPPORT -- Hayır --> SKIP_DIR["DoA Atlanır (Ön İşleme Devam Eder)"]
     end
     
     %% Konuşma Tanıma
-    subgraph Speech_Recognition [Konuşma Tanıma ASR]
+    subgraph Speech_Recognition [Tek Geçişli Mono ASR & Turn-Taking]
         direction TB
-        SET_DIR_VAR --> VAD_CHK{"Ses Var mı? <br> Voice Activity Detection"}
-        
-        VAD_CHK -- Hayır --> SESSİZLIK((Bekle)) --> CAPTURE_AUDIO
-        VAD_CHK -- Evet --> SEND_ASR[Ses Verisini <br> Recognizer Motoruna İlet]
-        
-        SEND_ASR --> RECOGNIZER_ENGINE(SpeechRecognition / Google STT)
-        
-        RECOGNIZER_ENGINE --> PARSE_RES{"Motor Sonuç <br> Döndürdü mü?"}
-        PARSE_RES -- Hayır / Gürültü --> SESSİZLIK
-        PARSE_RES -- Evet --> EXTRACT_TEXT[Tanınan Metni Al]
-        
-        EXTRACT_TEXT --> SET_LAST_SPEECH(last_speech_text <br>değişkenini güncelle)
+        CALC_DOA --> TT["DynamicTurnTakingEngine<br>(channels=1 Mono + Enerji Düşüşü)"]
+        SKIP_DIR --> TT
+        TT -- "on_turn_cue" --> CUE_HEAD["Kafa İpucu / Hesitation Cue"]
+        TT -- "turn_completed" --> SEND_ASR["Recognizer.recognize_pcm() (Tek Google STT)"]
+        SEND_ASR --> FIN["finalize_stt(already_transcribed=True)<br>+ SpeakerId İpucu"]
+        FIN --> AUTONOMY["/autonomy/speech & OLED Altyazı"]
     end
-    
-    SET_LAST_SPEECH --> AUTONOMY_PULL[Autonomy Modülü<br>Tarafından Poll Edilmeyi Bekle]
-    AUTONOMY_PULL --> SESSİZLIK
 ```
 
 ## 🔄 İlişkisel Etkileşimler (Veri Akışı)

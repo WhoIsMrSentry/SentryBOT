@@ -26,7 +26,7 @@ _IMPORT_MODULES: list[tuple[str, str]] = [
 
 def _include_social_db(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.cognitive_memory.config_loader import load_config as load_social_cfg  # type: ignore
-    from modules.cognitive_memory.db import SocialDB, set_default  # type: ignore
+    from modules.cognitive_memory.db import SocialDB, reset_default, set_default  # type: ignore
 
     scfg = _merge_with_agent_section(load_social_cfg(None), "social_db")
     db = SocialDB(
@@ -38,6 +38,9 @@ def _include_social_db(app: FastAPI, started: Dict[str, object]) -> None:
     )
     set_default(db)
     started["social_db"] = db
+    hooks = started.setdefault("_cleanup_hooks", [])
+    if isinstance(hooks, list):
+        hooks.append(reset_default)
     logger.info("module social_db mounted (path=%s)", db.path)
 
 
@@ -47,7 +50,7 @@ def _include_logs(app: FastAPI, started: Dict[str, object]) -> None:
     logs_router = get_logs_router()
     if logs_router is not None:
         app.include_router(logs_router)
-        started["logs"] = True
+        started["logs"] = {"kind": "router", "mounted": True, "ok": True}
         logger.info("module logs mounted")
 
 
@@ -59,13 +62,20 @@ def _include_notifier(app: FastAPI, started: Dict[str, object]) -> None:
     ncfg = _merge_with_agent_section(load_not_cfg(None), "notifier")
     bot = build_telegram_bot(ncfg)
     app.include_router(get_notifier_router(ncfg, bot))
-    polling_enabled = ncfg.get("telegram", {}).get("polling", {}).get("enabled", False)
-    started["notifier"] = True
-    if bot and polling_enabled:
-        # Single ownership (R48): gateway lifespan starts/stops the bot;
-        # no duplicate add_event_handler registration here.
+    polling_enabled = bool(ncfg.get("telegram", {}).get("polling", {}).get("enabled", False))
+    started["notifier"] = {
+        "kind": "service",
+        "mounted": True,
+        "polling_enabled": polling_enabled,
+        "has_bot": bot is not None,
+        "ok": True,
+    }
+    if bot is not None:
+        # Single ownership: gateway lifespan starts polling (if enabled) and
+        # always closes TelegramBot + senders cleanly on shutdown.
         started["notifier_bot"] = bot
-        started["notifier_polling_enabled"] = True
+    started["notifier_polling_enabled"] = polling_enabled
+    if bot and polling_enabled:
         logger.info("module notifier mounted (polling owned by gateway lifespan)")
     else:
         logger.info("module notifier mounted")
@@ -75,7 +85,7 @@ def _include_runtime_console(app: FastAPI, started: Dict[str, object]) -> None:
     from modules.runtime_console.api.router import router as console_router  # type: ignore
 
     app.include_router(console_router)
-    started["runtime_console"] = True
+    started["runtime_console"] = {"kind": "router", "mounted": True, "ok": True}
     logger.info("module runtime_console mounted")
 
 

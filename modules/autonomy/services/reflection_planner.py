@@ -6,16 +6,14 @@ try:
 except ImportError:
     ollama = None
 
+from .behavior_planner import format_needs_summary, resolve_planner_llm_settings
+
 logger = logging.getLogger("autonomy.reflection")
 
 class ReflectionPlanner:
     def __init__(self, config: dict):
         self.config = config
-        llm_cfg = config.get("llm", {})
-        agent_cfg = config.get("agent", {})
-        self.model = llm_cfg.get("model") or config.get("planner_model") or "llama3.2"
-        self.ollama_host = agent_cfg.get("ollama_base_url", "http:")
-        self.enabled = config.get("llm_planning_enabled", True)
+        self.model, self.ollama_host, self.enabled = resolve_planner_llm_settings(config)
         
     def reflect(self, plan: Dict[str, Any], execution_result: Dict[str, Any], needs_snapshot: Dict[str, Any], vision_context: str) -> Optional[Dict[str, Any]]:
         if not self.enabled or ollama is None:
@@ -35,17 +33,10 @@ class ReflectionPlanner:
         )
         
         # Prepare context
-        scores = needs_snapshot.get('scores', {})
-        dom = needs_snapshot.get('dominant_need', 'balance')
         actions = plan.get('actions', [])
         
         user_prompt = (
-            f"Robot Current Emotions (0-100):\n"
-            f"- Boredom: {scores.get('boredom', 0):.0f}\n"
-            f"- Curiosity: {scores.get('curiosity', 0):.0f}\n"
-            f"- Social Need: {scores.get('social', 0):.0f}\n"
-            f"- Energy: {scores.get('energy', 0):.0f}\n\n"
-            f"Dominant Emotion: {dom}\n"
+            f"{format_needs_summary(needs_snapshot)}\n"
             f"Camera Vision Context: {vision_context}\n\n"
             f"Action Attempted: {json.dumps(actions)}\n"
             f"Action Execution Result: {json.dumps(execution_result.get('reason', 'unknown'))}\n\n"

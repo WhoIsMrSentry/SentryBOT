@@ -21,17 +21,14 @@ Notes for maintainers
 
 Where to find related code
 --------------------------
-- Pi/runner implementation: `modules/neopixel/services/runner.py`
-- Driver/low-level mapping: `modules/neopixel/services/driver.py`
-- Interactions rules: `modules/interactions/config/config.yml`
+- Pi/runner implementation: `modules/visual_output/neopixel/services/runner.py`
+- Driver/low-level mapping: `modules/visual_output/neopixel/services/driver.py`
+- Interactions rules: `modules/expression/interactions/config/config.yml`
 - Autonomy scenes that call animations: `modules/autonomy/config/config.yml`
 
 Example serial commands
 -----------------------
 - `SET 3 255 0 0` — set LED index 3 to red.
 - `ANIMATE COMET 0,255,255 0,0,0 2` — run `COMET` with cyan as color1 for 2 repeats.
-
-Request from you
-----------------
-If you'd like, I can add segment parsing (`SEG=jewel`) to `neo.ino` and provide matching examples how to call it from `NeoRunner`/robot.
+- `ANIMATE PULSE #FF0088 SEG=jewel` — run `PULSE` on jewel segment only.
 

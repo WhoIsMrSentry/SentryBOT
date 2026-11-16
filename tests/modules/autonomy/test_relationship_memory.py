@@ -35,7 +35,8 @@ def test_recall_candidates_include_moments(tmp_path):
     assert candidates
 
 
-def test_json_fallback_extracts_preferences(tmp_path):
+def test_json_fallback_extracts_preferences(tmp_path, monkeypatch):
+    monkeypatch.setattr("modules.cognitive_memory.get_default", lambda: None)
     path = tmp_path / "rel.json"
     rm = RelationshipMemory(enabled=True, path=str(path), social_db=None)
     rm.add_chat("Ali", "user", "seviyorum muzik")

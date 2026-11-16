@@ -5,14 +5,19 @@
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_Sensor.h>
 #include "xConfig.h"
+#include "xProtocol.h"
 
 class Imu {
 public:
   bool begin(uint8_t addr = IMU_I2C_ADDR) {
     // Try primary address first; if module's AD0 is tied high it may be at 0x69.
     if (!mpu.begin(addr)) {
+      Protocol::pollWireTimeout();
       uint8_t alt = (addr == 0x68) ? 0x69 : 0x68;
-      if (!mpu.begin(alt)) return false;
+      if (!mpu.begin(alt)) {
+        Protocol::pollWireTimeout();
+        return false;
+      }
     }
     mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
     mpu.setGyroRange(MPU6050_RANGE_250_DEG);
@@ -23,7 +28,13 @@ public:
 
   void read() {
     if (!ready) return;
-    sensors_event_t a, g, temp; mpu.getEvent(&a, &g, &temp);
+    sensors_event_t a, g, temp;
+    bool ok = mpu.getEvent(&a, &g, &temp);
+    Protocol::pollWireTimeout();
+    if (!ok) {
+      Protocol::recordI2cError();
+      return;
+    }
 
     accX = a.acceleration.x;
     accY = a.acceleration.y;

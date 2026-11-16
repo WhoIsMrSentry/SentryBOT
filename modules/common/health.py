@@ -56,7 +56,12 @@ class HealthResponse:
     uptime_seconds: Optional[float] = None
     checks: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
-    
+
+    @property
+    def ok(self) -> bool:
+        """Whether this health response indicates a healthy state."""
+        return self.status == HealthStatus.HEALTHY.value
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -107,7 +112,7 @@ class HealthChecker:
     
     def add_simple_check(self, name: str, check_fn: Callable[[], bool]) -> "HealthChecker":
         """Add a simple boolean check."""
-        def wrapper():
+        def wrapper() -> Dict[str, Any]:
             try:
                 result = check_fn()
                 return {"status": "healthy" if result else "unhealthy"}
@@ -120,7 +125,7 @@ class HealthChecker:
                           healthy_threshold_ms: float = 100,
                           degraded_threshold_ms: float = 500) -> "HealthChecker":
         """Add a latency-based check."""
-        def wrapper():
+        def wrapper() -> Dict[str, Any]:
             try:
                 start = time.perf_counter()
                 check_fn()
@@ -147,36 +152,38 @@ class HealthChecker:
     def run(self) -> Dict[str, Any]:
         """Run all checks and return aggregated response."""
         overall_status = "healthy"
-        
+        results: Dict[str, Dict[str, Any]] = {}
+
         for name, check_fn in self._checks.items():
             try:
                 result = check_fn()
                 if isinstance(result, dict):
-                    check_result = result
+                    check_result = dict(result)
                 else:
                     check_result = {"status": "healthy" if result else "unhealthy"}
-                
-                if check_result.get("status") == "unhealthy":
+
+                status_val = check_result.get("status", "unhealthy")
+                if status_val == "unhealthy":
                     overall_status = "unhealthy"
-                elif check_result.get("status") == "degraded" and overall_status == "healthy":
+                elif status_val == "degraded" and overall_status == "healthy":
                     overall_status = "degraded"
-                
+
                 check_result["name"] = name
-                self._checks[name] = check_result
-            
+                results[name] = check_result
+
             except Exception as e:
                 overall_status = "unhealthy"
-                check_result = {
+                results[name] = {
                     "name": name,
                     "status": "unhealthy",
                     "message": str(e),
                 }
-        
+
         return {
             "status": overall_status,
-            "timestamp": datetime.utcnow().isoformat() + "Z",
-            "version": "1.0.0",
-            "checks": {k: v for k, v in self._checks.items() if isinstance(v, dict)},
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "version": self.version,
+            "checks": results,
             "metadata": {
                 "service": self.service_name,
             },
@@ -205,7 +212,7 @@ def create_health_response(
     """Create a standard health response dict."""
     return {
         "status": status,
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": version,
         "uptime_seconds": uptime,
         "checks": checks or {},
@@ -282,16 +289,6 @@ def check_latency(
 
 
 # Standard check functions
-def check_database(db, query: str = "SELECT 1") -> Dict[str, Any]:
-    """Standard database health check."""
-    return check_latency(lambda: db.execute(query), "database")
-
-
-def check_redis(redis_client) -> Dict[str, Any]:
-    """Standard Redis health check."""
-    return check_latency(lambda: redis_client.ping(), "redis")
-
-
 def check_http_endpoint(url: str, timeout: float = 5.0, expected_status: int = 200) -> Dict[str, Any]:
     """Check an HTTP endpoint."""
     import requests
@@ -327,7 +324,7 @@ def check_disk_space(path: str = "/", min_free_gb: float = 1.0) -> Dict[str, Any
 
 def check_memory(min_free_mb: float = 100.0) -> Dict[str, Any]:
     """Check available memory."""
-    import psutil
+    import psutil  # type: ignore[import-not-found]
     try:
         mem = psutil.virtual_memory()
         free_mb = mem.available / (1024**2)
@@ -341,7 +338,7 @@ def check_memory(min_free_mb: float = 100.0) -> Dict[str, Any]:
 
 def check_cpu(threshold_percent: float = 90.0) -> Dict[str, Any]:
     """Check CPU usage."""
-    import psutil
+    import psutil  # type: ignore[import-not-found]
     try:
         percent = psutil.cpu_percent(interval=0.1)
         if percent < threshold_percent:
@@ -359,8 +356,6 @@ __all__ = [
     "HealthChecker",
     "create_health_response",
     "health_check_decorator",
-    "check_database",
-    "check_redis",
     "check_http_endpoint",
     "check_disk_space",
     "check_memory",

@@ -10,6 +10,17 @@ from .pcm import PCM
 from .tts_piper_model import _wav_bytes_to_pcm
 
 logger = logging.getLogger("speak.tts_remote_backends")
+_HTTP_SESSION: Any = None
+
+
+def _http_post(req_mod: Any, url: str, **kwargs: Any):
+    global _HTTP_SESSION
+    post_fn = getattr(req_mod, "post", None)
+    if req_mod is requests and getattr(post_fn, "__module__", "") == "requests.api":
+        if _HTTP_SESSION is None:
+            _HTTP_SESSION = requests.Session()
+        return _HTTP_SESSION.post(url, **kwargs)
+    return req_mod.post(url, **kwargs)
 
 
 class TTSBackend:
@@ -47,7 +58,7 @@ class XTTSHttpBackend(TTSBackend):
         req = getattr(tts_mod, "requests", requests)
         wav_converter = getattr(tts_mod, "_wav_bytes_to_pcm", _wav_bytes_to_pcm)
         self._raise_if_cancelled(tts_mod)
-        response = req.post(self.endpoint, json=payload, timeout=self.timeout)
+        response = _http_post(req, self.endpoint, json=payload, timeout=self.timeout)
         response.raise_for_status()
         self._raise_if_cancelled(tts_mod)
         return wav_converter(response.content)
@@ -97,7 +108,7 @@ class RemoteTTSHttpBackend(TTSBackend):
         req = getattr(tts_mod, "requests", requests)
         wav_converter = getattr(tts_mod, "_wav_bytes_to_pcm", _wav_bytes_to_pcm)
         XTTSHttpBackend._raise_if_cancelled(tts_mod)
-        response = req.post(self.endpoint, json=payload, headers=headers, timeout=self.timeout)
+        response = _http_post(req, self.endpoint, json=payload, headers=headers, timeout=self.timeout)
         response.raise_for_status()
         XTTSHttpBackend._raise_if_cancelled(tts_mod)
         content_type = str(response.headers.get("content-type", "")).lower()

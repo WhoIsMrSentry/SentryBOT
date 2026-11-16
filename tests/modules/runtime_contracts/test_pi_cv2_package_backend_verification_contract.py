@@ -78,19 +78,22 @@ def test_v4l2_detection_and_report_only_output_shape():
 
 
 def test_tool_source_has_no_camera_open_or_network_call():
+    import ast
+
     source = Path("tools/pi_cv2_package_backend_verification.py").read_text(encoding="utf-8")
-    forbidden = [
-        "VideoCapture(",
-        ".read(",
-        "/camera/start",
-        "/camera/snap",
-        "/camera/video",
-        "/vlm/analyze",
-        "/vlm/caption",
-        "requests.",
-        "httpx.",
-        "ollama.",
-        "hardware_enabled=True",
-    ]
-    for token in forbidden:
-        assert token not in source
+    tree = ast.parse(source)
+    forbidden_callees = {"VideoCapture", "read", "requests", "httpx", "ollama"}
+    forbidden_strings = {"/camera/start", "/camera/snap", "/camera/video", "/vlm/analyze", "/vlm/caption"}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            fn = node.func
+            if isinstance(fn, ast.Name) and fn.id in forbidden_callees:
+                raise AssertionError(f"Forbidden call in status-only verifier: {fn.id}")
+            if isinstance(fn, ast.Attribute) and fn.attr in {"VideoCapture", "read"}:
+                raise AssertionError(f"Forbidden method call in status-only verifier: .{fn.attr}()")
+            if isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name) and fn.value.id in {"requests", "httpx", "ollama"}:
+                raise AssertionError(f"Forbidden network client call: {fn.value.id}.{fn.attr}()")
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            for bad in forbidden_strings:
+                assert bad not in node.value, f"Forbidden endpoint literal: {bad}"

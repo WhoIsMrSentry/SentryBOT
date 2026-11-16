@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..utils import resolve_repo_path
 
 KIND_ALIASES: Dict[str, str] = {
     "person": "people",
@@ -82,12 +84,7 @@ def _slug(text: str) -> str:
 
 
 class WorldMemory:
-    """Small semantic world-memory store for companion behavior.
-
-    This is intentionally local and deterministic. It is not vector/RAG yet. The
-    goal is to establish a stable schema that later vision, audio, dialog and RAG
-    layers can write into while reporting local persistence status explicitly.
-    """
+    """Thread-safe semantic world-memory facade with expiry pruning and optional RAG/SocialDB backing."""
 
     DEFAULTS: Dict[str, Any] = {
         "enabled": True,
@@ -96,30 +93,66 @@ class WorldMemory:
         "decay_half_life_s": 86400.0,
         "persistence_enabled": True,
         "storage_path": ".sentrybot_state/world_memory.json",
+        "save_interval_s": 0.0,
     }
 
     def __init__(self, cfg: Optional[Dict[str, Any]] = None) -> None:
         raw = cfg if isinstance(cfg, dict) else {}
         self.cfg: Dict[str, Any] = dict(self.DEFAULTS)
         self.cfg.update(raw)
+        self._lock = threading.RLock()
         self._store: Dict[str, Dict[str, Dict[str, Any]]] = {kind: {} for kind in SCHEMA}
         self._history: List[Dict[str, Any]] = []
         self._last_persist_error = ""
         self._loaded_from_disk = False
+        self._dirty = False
+        self._last_save_ts = 0.0
         self._rag: Any = raw.get("rag_backing")
+        self._social_db: Any = raw.get("social_db")
         self._load()
 
     def set_rag_backing(self, rag: Any) -> None:
-        """Attach an optional WorldMemoryRAG instance for dual-write synchronization."""
-        self._rag = rag
+        """Attach an optional shared WorldMemoryRAG instance for dual-write synchronization."""
+        with self._lock:
+            self._rag = rag
 
-    def _sync_to_rag(self, item: Dict[str, Any], *, source: str = "api") -> None:
+    def _is_expired(self, item: Dict[str, Any], now: float) -> bool:
+        exp = _as_float(item.get("expiry"), 0.0)
+        return exp > 0.0 and now >= exp
+
+    def _purge_expired_unlocked(self, now: float) -> int:
+        removed = 0
+        for bucket in self._store.values():
+            expired_keys = [k for k, v in bucket.items() if self._is_expired(v, now)]
+            for k in expired_keys:
+                bucket.pop(k, None)
+                removed += 1
+        if removed:
+            self._dirty = True
+        return removed
+
+    def _retire_superseded_unlocked(self, supersedes: str) -> None:
+        target = _clean_text(supersedes)
+        if not target:
+            return
+        if ":" in target:
+            kind_raw, key_raw = target.split(":", 1)
+            bucket = self._store.get(_normalize_kind(kind_raw), {})
+            if key_raw in bucket:
+                bucket.pop(key_raw, None)
+                return
+        for bucket in self._store.values():
+            to_del = [k for k, v in bucket.items() if v.get("id") == target]
+            for k in to_del:
+                bucket.pop(k, None)
+
+    def _sync_to_backing(self, item: Dict[str, Any], *, source: str = "api") -> None:
         rag = self._rag
         if rag is None and bool(self.cfg.get("sync_to_rag", False)):
             try:
-                from .world_memory_rag import WorldMemoryRAG
+                from .world_memory_rag import get_default as _get_rag_default
 
-                rag = WorldMemoryRAG()
+                rag = _get_rag_default()
                 self._rag = rag
             except Exception:
                 rag = None
@@ -133,10 +166,29 @@ class WorldMemory:
                         "summary": item.get("summary"),
                         "confidence": item.get("confidence"),
                         "salience": item.get("salience"),
+                        "expiry": item.get("expiry"),
+                        "supersedes": item.get("supersedes"),
                         "tags": item.get("tags", []),
                         "details": item.get("properties", {}),
                     },
                     source=source,
+                )
+            except Exception:
+                pass
+        sdb = self._social_db
+        if sdb is not None and hasattr(sdb, "world_memory"):
+            try:
+                sdb.world_memory.upsert(
+                    memory_id=str(item.get("id") or ""),
+                    kind=str(item.get("kind") or "observations"),
+                    name=str(item.get("name") or ""),
+                    summary=str(item.get("summary") or ""),
+                    details=dict(item.get("properties") or {}),
+                    source=source,
+                    confidence=float(item.get("confidence", 0.5)),
+                    salience=float(item.get("salience", 0.5)),
+                    tags=list(item.get("tags") or []),
+                    expiry=float(item.get("expiry", 0.0)),
                 )
             except Exception:
                 pass
@@ -149,23 +201,26 @@ class WorldMemory:
             "schema": SCHEMA,
             "fields": [
                 "id", "kind", "name", "summary", "properties", "source",
-                "confidence", "salience", "count", "first_seen_ts", "last_seen_ts", "tags",
+                "confidence", "salience", "count", "first_seen_ts", "last_seen_ts", "expiry", "supersedes", "tags",
             ],
             "persistence": self._persistence_status(),
         }
 
-    def status(self, *, limit: Optional[int] = None) -> Dict[str, Any]:
-        counts = {kind: len(bucket) for kind, bucket in self._store.items()}
-        recent_limit = _as_int(limit, _as_int(self.cfg.get("recent_limit"), 20))
-        return {
-            "ok": True,
-            "enabled": bool(self.cfg.get("enabled", True)),
-            "total": sum(counts.values()),
-            "counts": counts,
-            "kinds": list(SCHEMA.keys()),
-            "recent": self.recent(limit=recent_limit).get("items", []),
-            "persistence": self._persistence_status(),
-        }
+    def status(self, *, limit: Optional[int] = None, now: Optional[float] = None) -> Dict[str, Any]:
+        ts_now = float(now if now is not None else time.time())
+        with self._lock:
+            self._purge_expired_unlocked(ts_now)
+            counts = {kind: len(bucket) for kind, bucket in self._store.items()}
+            recent_limit = _as_int(limit, _as_int(self.cfg.get("recent_limit"), 20))
+            return {
+                "ok": True,
+                "enabled": bool(self.cfg.get("enabled", True)),
+                "total": sum(counts.values()),
+                "counts": counts,
+                "kinds": list(SCHEMA.keys()),
+                "recent": self.recent(limit=recent_limit, now=ts_now).get("items", []),
+                "persistence": self._persistence_status(),
+            }
 
     def observe(self, payload: Optional[Dict[str, Any]], *, source: str = "api", now: Optional[float] = None) -> Dict[str, Any]:
         if not bool(self.cfg.get("enabled", True)):
@@ -194,100 +249,125 @@ class WorldMemory:
             tags = [_clean_text(tags_raw).lower()]
         else:
             tags = []
-        key = self._key_for(kind, name, summary, src)
-        bucket = self._store.setdefault(kind, {})
-        created = key not in bucket
-        if created:
-            item = {
-                "id": f"{kind}:{key}",
+
+        with self._lock:
+            self._purge_expired_unlocked(ts)
+            if supersedes:
+                self._retire_superseded_unlocked(supersedes)
+            key = self._key_for(kind, name, summary, src)
+            bucket = self._store.setdefault(kind, {})
+            created = key not in bucket
+            if created:
+                item = {
+                    "id": f"{kind}:{key}",
+                    "kind": kind,
+                    "name": name,
+                    "summary": summary,
+                    "properties": properties,
+                    "source": src,
+                    "confidence": round(confidence, 3),
+                    "salience": round(salience, 3),
+                    "count": 1,
+                    "first_seen_ts": ts,
+                    "last_seen_ts": ts,
+                    "observed_at": observed_at,
+                    "expiry": expiry,
+                    "supersedes": supersedes,
+                    "tags": sorted(set(tags)),
+                }
+            else:
+                item = dict(bucket[key])
+                merged_props = dict(_as_dict(item.get("properties")))
+                merged_props.update(properties)
+                item["properties"] = merged_props
+                item["summary"] = summary or item.get("summary", "")
+                item["confidence"] = round(max(_as_float(item.get("confidence"), 0.0), confidence), 3)
+                item["salience"] = round(max(_as_float(item.get("salience"), 0.0), salience), 3)
+                item["count"] = _as_int(item.get("count"), 1) + 1
+                item["last_seen_ts"] = ts
+                item["observed_at"] = observed_at
+                item["expiry"] = expiry
+                if supersedes:
+                    item["supersedes"] = supersedes
+                item["tags"] = sorted(set(list(item.get("tags") or []) + tags))
+            bucket[key] = item
+            self._trim_kind(kind)
+            history_item = {
+                "timestamp": ts,
+                "id": item.get("id"),
                 "kind": kind,
                 "name": name,
-                "summary": summary,
-                "properties": properties,
                 "source": src,
-                "confidence": round(confidence, 3),
-                "salience": round(salience, 3),
-                "count": 1,
-                "first_seen_ts": ts,
-                "last_seen_ts": ts,
-                "observed_at": observed_at,
-                "expiry": expiry,
-                "supersedes": supersedes,
-                "tags": sorted(set(tags)),
+                "created": created,
+                "summary": summary,
             }
-        else:
-            item = dict(bucket[key])
-            merged_props = dict(_as_dict(item.get("properties")))
-            merged_props.update(properties)
-            item["properties"] = merged_props
-            item["summary"] = summary or item.get("summary", "")
-            item["confidence"] = round(max(_as_float(item.get("confidence"), 0.0), confidence), 3)
-            item["salience"] = round(max(_as_float(item.get("salience"), 0.0), salience), 3)
-            item["count"] = _as_int(item.get("count"), 1) + 1
-            item["last_seen_ts"] = ts
-            item["observed_at"] = observed_at
-            item["expiry"] = expiry
-            if supersedes:
-                item["supersedes"] = supersedes
-            item["tags"] = sorted(set(list(item.get("tags") or []) + tags))
-        bucket[key] = item
-        self._trim_kind(kind)
-        history_item = {
-            "timestamp": ts,
-            "id": item.get("id"),
-            "kind": kind,
-            "name": name,
-            "source": src,
-            "created": created,
-            "summary": summary,
-        }
-        self._history.append(history_item)
-        self._history = self._history[-100:]
-        self._save()
-        self._sync_to_rag(item, source=src)
-        return {"ok": True, "available": True, "created": created, "item": dict(item), "timestamp": ts}
+            self._history.append(history_item)
+            self._history = self._history[-100:]
+            self._dirty = True
+            self._maybe_save_unlocked()
+            item_copy = dict(item)
+        self._sync_to_backing(item_copy, source=src)
+        return {"ok": True, "available": True, "created": created, "item": item_copy, "timestamp": ts}
 
-    def recent(self, *, kind: Optional[str] = None, limit: int = 10) -> Dict[str, Any]:
+    def recent(self, *, kind: Optional[str] = None, limit: int = 10, now: Optional[float] = None) -> Dict[str, Any]:
         limit = max(1, min(100, _as_int(limit, 10)))
+        ts_now = float(now if now is not None else time.time())
         kinds = [_normalize_kind(kind)] if kind else list(SCHEMA.keys())
-        items: List[Dict[str, Any]] = []
-        for k in kinds:
-            bucket = self._store.get(k, {})
-            items.extend(dict(x) for x in bucket.values())
+        with self._lock:
+            self._purge_expired_unlocked(ts_now)
+            items: List[Dict[str, Any]] = []
+            for k in kinds:
+                bucket = self._store.get(k, {})
+                for x in bucket.values():
+                    if not self._is_expired(x, ts_now):
+                        items.append(dict(x))
         items.sort(key=lambda x: _as_float(x.get("last_seen_ts"), 0.0), reverse=True)
         return {"ok": True, "kind": _normalize_kind(kind) if kind else "all", "limit": limit, "items": items[:limit], "count": len(items[:limit])}
 
-    def get(self, item_id: str) -> Dict[str, Any]:
+    def get(self, item_id: str, *, now: Optional[float] = None) -> Dict[str, Any]:
         item_id = _clean_text(item_id)
-        if ":" in item_id:
-            kind, key = item_id.split(":", 1)
-            kind = _normalize_kind(kind)
-            item = self._store.get(kind, {}).get(key)
-            if item:
-                return {"ok": True, "available": True, "item": dict(item)}
-        for bucket in self._store.values():
-            for item in bucket.values():
-                if item.get("id") == item_id:
+        ts_now = float(now if now is not None else time.time())
+        with self._lock:
+            self._purge_expired_unlocked(ts_now)
+            if ":" in item_id:
+                kind, key = item_id.split(":", 1)
+                kind = _normalize_kind(kind)
+                item = self._store.get(kind, {}).get(key)
+                if item and not self._is_expired(item, ts_now):
                     return {"ok": True, "available": True, "item": dict(item)}
+            for bucket in self._store.values():
+                for item in bucket.values():
+                    if item.get("id") == item_id and not self._is_expired(item, ts_now):
+                        return {"ok": True, "available": True, "item": dict(item)}
         return {"ok": True, "available": False, "reason": "not_found", "id": item_id}
 
     def clear(self, *, kind: Optional[str] = None) -> Dict[str, Any]:
-        if kind:
-            normalized = _normalize_kind(kind)
-            removed = len(self._store.get(normalized, {}))
-            self._store[normalized] = {}
-            self._history.append({"timestamp": time.time(), "kind": normalized, "event": "clear", "removed": removed})
+        with self._lock:
+            if kind:
+                normalized = _normalize_kind(kind)
+                removed = len(self._store.get(normalized, {}))
+                self._store[normalized] = {}
+                self._history.append({"timestamp": time.time(), "kind": normalized, "event": "clear", "removed": removed})
+                self._dirty = True
+                self._save()
+                return {"ok": True, "kind": normalized, "removed": removed}
+            removed = sum(len(bucket) for bucket in self._store.values())
+            self._store = {k: {} for k in SCHEMA}
+            self._history.append({"timestamp": time.time(), "kind": "all", "event": "clear", "removed": removed})
+            self._dirty = True
             self._save()
-            return {"ok": True, "kind": normalized, "removed": removed}
-        removed = sum(len(bucket) for bucket in self._store.values())
-        self._store = {k: {} for k in SCHEMA}
-        self._history.append({"timestamp": time.time(), "kind": "all", "event": "clear", "removed": removed})
-        self._save()
-        return {"ok": True, "kind": "all", "removed": removed}
+            return {"ok": True, "kind": "all", "removed": removed}
 
     def history(self, *, limit: int = 20) -> Dict[str, Any]:
         limit = max(1, min(100, _as_int(limit, 20)))
-        return {"ok": True, "items": list(self._history[-limit:]), "count": min(limit, len(self._history))}
+        with self._lock:
+            return {"ok": True, "items": list(self._history[-limit:]), "count": min(limit, len(self._history))}
+
+    def flush(self) -> None:
+        """Persist pending dirty changes to disk immediately."""
+        with self._lock:
+            if self._dirty:
+                self._save()
 
     def _key_for(self, kind: str, name: str, summary: str, source: str) -> str:
         if kind in {"events"}:
@@ -307,7 +387,7 @@ class WorldMemory:
 
     def _storage_file(self) -> Path:
         raw = _clean_text(self.cfg.get("storage_path"), ".sentrybot_state/world_memory.json")
-        return Path(raw).expanduser()
+        return resolve_repo_path(raw)
 
     def _persistence_enabled(self) -> bool:
         return bool(self.cfg.get("persistence_enabled", True))
@@ -343,8 +423,16 @@ class WorldMemory:
                 self._history = [dict(x) for x in raw_history[-100:] if isinstance(x, dict)]
             self._loaded_from_disk = True
             self._last_persist_error = ""
+            self._purge_expired_unlocked(time.time())
         except Exception as exc:
             self._last_persist_error = str(exc)
+
+    def _maybe_save_unlocked(self) -> None:
+        if not self._persistence_enabled() or not self._dirty:
+            return
+        interval = max(0.0, _as_float(self.cfg.get("save_interval_s"), 0.0))
+        if interval <= 0.0 or (time.monotonic() - self._last_save_ts) >= interval:
+            self._save()
 
     def _save(self) -> None:
         if not self._persistence_enabled():
@@ -361,6 +449,8 @@ class WorldMemory:
             tmp = path.with_suffix(path.suffix + ".tmp")
             tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
             tmp.replace(path)
+            self._dirty = False
+            self._last_save_ts = time.monotonic()
             self._last_persist_error = ""
         except Exception as exc:
             self._last_persist_error = str(exc)

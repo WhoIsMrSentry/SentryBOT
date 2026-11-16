@@ -6,12 +6,12 @@ if/elif chains in CommandRouter with extensible registry pattern.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import threading
 from abc import ABC, abstractmethod
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 logger = logging.getLogger("common.command_registry")
 
@@ -119,320 +119,214 @@ class HelpCommandHandler:
         return CommandResult(text="Yardım bulunamadı")
 
 
-class StatusCommandHandler:
-    name = "status"
-    description = "Sistem modül sağlık kontrolü"
-    usage = "/status"
-    
+class _GatewayHTTPCommandHandler:
+    """Shared HTTP client lifecycle helper for built-in gateway commands."""
+
     def __init__(self, base_url: str = "http://127.0.0.1:8080", timeout: float = 4.0):
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
-    
-    async def execute(self, context: CommandContext) -> Optional[CommandResult]:
+
+    @asynccontextmanager
+    async def _client_session(self, context: CommandContext) -> AsyncIterator[Any]:
         import httpx
+
         client = context.services.get("_http_client")
-        if not client:
-            client = httpx.AsyncClient(timeout=self._timeout)
-            close_client = True
-        else:
-            close_client = False
-        
+        if client is not None:
+            yield client
+            return
+        async with httpx.AsyncClient(timeout=self._timeout) as temp_client:
+            yield temp_client
+
+
+class _HeadTrackCommandHandler(_GatewayHTTPCommandHandler):
+    """Shared pan/tilt POST helper for head control commands."""
+
+    async def _post_track(self, context: CommandContext, pan: float, tilt: float, label: str) -> CommandResult:
         try:
-            url = f"{self._base_url}/health"
-            resp = await client.get(url, timeout=self._timeout)
-            if resp.status_code != 200:
-                return CommandResult(text=f"Status error: {resp.status_code}")
-            
-            data = resp.json()
-            mods = data if isinstance(data, dict) else {}
-            summary = []
-            for name, info in mods.items():
-                if name == "ok":
-                    continue
-                ok = info.get("ok", False) if isinstance(info, dict) else False
-                summary.append(f"{name}:{'ok' if ok else 'fail'}")
-            
-            status = "ok" if mods.get("ok", False) else "fail"
-            return CommandResult(text=f"Durum {status} " + ", ".join(summary))
+            async with self._client_session(context) as client:
+                url = f"{self._base_url}/vlm/track"
+                params = {"head_pan": pan, "head_tilt": tilt}
+                resp = await client.post(url, params=params, timeout=self._timeout)
+                ok = resp.status_code == 200
+                return CommandResult(text=f"{label} ok" if ok else f"{label} başarısız")
+        except Exception as exc:
+            return CommandResult(text=f"{label} hata: {exc}")
+
+
+class StatusCommandHandler(_GatewayHTTPCommandHandler):
+    name = "status"
+    description = "Sistem modül sağlık kontrolü"
+    usage = "/status"
+
+    async def execute(self, context: CommandContext) -> Optional[CommandResult]:
+        try:
+            async with self._client_session(context) as client:
+                url = f"{self._base_url}/health"
+                resp = await client.get(url, timeout=self._timeout)
+                if resp.status_code != 200:
+                    return CommandResult(text=f"Status error: {resp.status_code}")
+
+                data = resp.json()
+                mods = data if isinstance(data, dict) else {}
+                summary = []
+                for name, info in mods.items():
+                    if name == "ok":
+                        continue
+                    ok = info.get("ok", False) if isinstance(info, dict) else False
+                    summary.append(f"{name}:{'ok' if ok else 'fail'}")
+
+                status = "ok" if mods.get("ok", False) else "fail"
+                return CommandResult(text=f"Durum {status} " + ", ".join(summary))
         except Exception as exc:
             return CommandResult(text=f"Status hata: {exc}")
-        finally:
-            if close_client:
-                await client.aclose()
 
 
-class SnapCommandHandler:
+class SnapCommandHandler(_GatewayHTTPCommandHandler):
     name = "snap"
     aliases = ["snapshot"]
     description = "Kamera fotoğrafı gönder"
     usage = "/snap"
-    
-    def __init__(self, base_url: str = "http://127.0.0.1:8080", timeout: float = 4.0):
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-    
+
     async def execute(self, context: CommandContext) -> Optional[CommandResult]:
-        import httpx
-        client = context.services.get("_http_client")
-        if not client:
-            client = httpx.AsyncClient(timeout=self._timeout)
-            close_client = True
-        else:
-            close_client = False
-        
         try:
-            url = f"{self._base_url}/camera/snap"
-            resp = await client.get(url, timeout=self._timeout)
-            if resp.status_code != 200:
-                return CommandResult(text=f"Snapshot hata: {resp.status_code}")
-            return CommandResult(photo=resp.content, photo_caption="📸 Snapshot")
+            async with self._client_session(context) as client:
+                url = f"{self._base_url}/camera/snap"
+                resp = await client.get(url, timeout=self._timeout)
+                if resp.status_code != 200:
+                    return CommandResult(text=f"Snapshot hata: {resp.status_code}")
+                return CommandResult(photo=resp.content, photo_caption="📸 Snapshot")
         except Exception as exc:
             return CommandResult(text=f"Snapshot hata: {exc}")
-        finally:
-            if close_client:
-                await client.aclose()
 
 
-class PanTiltCommandHandler:
+class PanTiltCommandHandler(_HeadTrackCommandHandler):
     name = "pt"
     aliases = ["track"]
     description = "Kafa pan/tilt hareket ettir"
     usage = "/pt <pan> <tilt>"
-    
-    def __init__(self, base_url: str = "http://127.0.0.1:8080", timeout: float = 4.0):
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-    
+
     async def execute(self, context: CommandContext) -> Optional[CommandResult]:
         args = context.args
         if len(args) < 2:
             return CommandResult(text="Kullanım: /pt <pan> <tilt> (derece)")
-        
+
         try:
             pan = float(args[0])
             tilt = float(args[1])
         except (ValueError, IndexError):
             return CommandResult(text="Kullanım: /pt <pan> <tilt>")
-        
-        import httpx
-        client = context.services.get("_http_client")
-        if not client:
-            client = httpx.AsyncClient(timeout=self._timeout)
-            close_client = True
-        else:
-            close_client = False
-        
-        try:
-            url = f"{self._base_url}/vlm/track"
-            params = {"head_pan": pan, "head_tilt": tilt}
-            resp = await client.post(url, params=params, timeout=self._timeout)
-            ok = resp.status_code == 200
-            if close_client:
-                await client.aclose()
-            return CommandResult(text="Pan/tilt ok" if ok else "Pan/tilt başarısız")
-        except Exception as exc:
-            if close_client:
-                await client.aclose()
-            return CommandResult(text=f"Pan/tilt hata: {exc}")
+
+        return await self._post_track(context, pan, tilt, "Pan/tilt")
 
 
-class PanCommandHandler:
+class PanCommandHandler(_HeadTrackCommandHandler):
     name = "pan"
     description = "Sadece pan (yaw) ayarla"
     usage = "/pan <derece>"
-    
-    def __init__(self, base_url: str = "http://127.0.0.1:8080", timeout: float = 4.0):
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-    
+
     async def execute(self, context: CommandContext) -> Optional[CommandResult]:
         args = context.args
         if not args:
             return CommandResult(text="Kullanım: /pan <derece>")
-        
+
         try:
             pan = float(args[0])
         except ValueError:
             return CommandResult(text="Kullanım: /pan <derece>")
-        
-        import httpx
-        client = context.services.get("_http_client")
-        if not client:
-            client = httpx.AsyncClient(timeout=self._timeout)
-            close_client = True
-        else:
-            close_client = False
-        
-        try:
-            url = f"{self._base_url}/vlm/track"
-            params = {"head_pan": pan, "head_tilt": 0.0}
-            resp = await client.post(url, params=params, timeout=self._timeout)
-            ok = resp.status_code == 200
-            if close_client:
-                await client.aclose()
-            return CommandResult(text="Pan ok" if ok else "Pan başarısız")
-        except Exception as exc:
-            if close_client:
-                await client.aclose()
-            return CommandResult(text=f"Pan hata: {exc}")
+
+        return await self._post_track(context, pan, 0.0, "Pan")
 
 
-class TiltCommandHandler:
+class TiltCommandHandler(_HeadTrackCommandHandler):
     name = "tilt"
     description = "Sadece tilt (pitch) ayarla"
     usage = "/tilt <derece>"
-    
-    def __init__(self, base_url: str = "http://127.0.0.1:8080", timeout: float = 4.0):
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-    
+
     async def execute(self, context: CommandContext) -> Optional[CommandResult]:
         args = context.args
         if not args:
             return CommandResult(text="Kullanım: /tilt <derece>")
-        
+
         try:
             tilt = float(args[0])
         except ValueError:
             return CommandResult(text="Kullanım: /tilt <derece>")
-        
-        import httpx
-        client = context.services.get("_http_client")
-        if not client:
-            client = httpx.AsyncClient(timeout=self._timeout)
-            close_client = True
-        else:
-            close_client = False
-        
-        try:
-            url = f"{self._base_url}/vlm/track"
-            params = {"head_pan": 0.0, "head_tilt": tilt}
-            resp = await client.post(url, params=params, timeout=self._timeout)
-            ok = resp.status_code == 200
-            if close_client:
-                await client.aclose()
-            return CommandResult(text="Tilt ok" if ok else "Tilt başarısız")
-        except Exception as exc:
-            if close_client:
-                await client.aclose()
-            return CommandResult(text=f"Tilt hata: {exc}")
+
+        return await self._post_track(context, 0.0, tilt, "Tilt")
 
 
-class NeoFillCommandHandler:
+class NeoFillCommandHandler(_GatewayHTTPCommandHandler):
     name = "neofill"
     aliases = ["fill"]
     description = "Tüm LED'leri tek renkle doldur"
     usage = "/neofill <r> <g> <b>"
-    
-    def __init__(self, base_url: str = "http://127.0.0.1:8080", timeout: float = 4.0):
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-    
+
     async def execute(self, context: CommandContext) -> Optional[CommandResult]:
         args = context.args
         if len(args) < 3:
             return CommandResult(text="Kullanım: /neofill <r> <g> <b>")
-        
+
         try:
             r, g, b = [int(x) for x in args[:3]]
         except ValueError:
             return CommandResult(text="Kullanım: /neofill <r> <g> <b>")
-        
-        import httpx
-        client = context.services.get("_http_client")
-        if not client:
-            client = httpx.AsyncClient(timeout=self._timeout)
-            close_client = True
-        else:
-            close_client = False
-        
+
         try:
-            url = f"{self._base_url}/neopixel/fill"
-            params = {"r_": r, "g": g, "b": b}
-            resp = await client.post(url, params=params, timeout=self._timeout)
-            ok = resp.status_code == 200
-            if close_client:
-                await client.aclose()
-            return CommandResult(text="NeoPixel set" if ok else "NeoPixel hata")
+            async with self._client_session(context) as client:
+                url = f"{self._base_url}/neopixel/fill"
+                params = {"r_": r, "g": g, "b": b}
+                resp = await client.post(url, params=params, timeout=self._timeout)
+                ok = resp.status_code == 200
+                return CommandResult(text="NeoPixel set" if ok else "NeoPixel hata")
         except Exception as exc:
-            if close_client:
-                await client.aclose()
             return CommandResult(text=f"NeoPixel hata: {exc}")
 
 
-class NeoClearCommandHandler:
+class NeoClearCommandHandler(_GatewayHTTPCommandHandler):
     name = "neoclear"
     aliases = ["clear"]
     description = "LED'leri temizle (kapat)"
     usage = "/neoclear"
-    
-    def __init__(self, base_url: str = "http://127.0.0.1:8080", timeout: float = 4.0):
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-    
+
     async def execute(self, context: CommandContext) -> Optional[CommandResult]:
-        import httpx
-        client = context.services.get("_http_client")
-        if not client:
-            client = httpx.AsyncClient(timeout=self._timeout)
-            close_client = True
-        else:
-            close_client = False
-        
         try:
-            url = f"{self._base_url}/neopixel/clear"
-            resp = await client.post(url, timeout=self._timeout)
-            ok = resp.status_code == 200
-            if close_client:
-                await client.aclose()
-            return CommandResult(text="NeoPixel cleared" if ok else "NeoPixel clear hata")
+            async with self._client_session(context) as client:
+                url = f"{self._base_url}/neopixel/clear"
+                resp = await client.post(url, timeout=self._timeout)
+                ok = resp.status_code == 200
+                return CommandResult(text="NeoPixel cleared" if ok else "NeoPixel clear hata")
         except Exception as exc:
-            if close_client:
-                await client.aclose()
             return CommandResult(text=f"NeoPixel clear hata: {exc}")
 
 
-class SayCommandHandler:
+class SayCommandHandler(_GatewayHTTPCommandHandler):
     name = "say"
     aliases = ["tts"]
     description = "Metni seslendir (TTS)"
     usage = "/say <metin>"
-    
+
     def __init__(self, base_url: str = "http://127.0.0.1:8080", timeout: float = 15.0):
-        self._base_url = base_url.rstrip("/")
-        self._timeout = timeout
-    
+        super().__init__(base_url=base_url, timeout=timeout)
+
     async def execute(self, context: CommandContext) -> Optional[CommandResult]:
         text = " ".join(context.args).strip()
         if not text:
             return CommandResult(text="Kullanım: /say <metin>")
-        
-        import httpx
-        client = context.services.get("_http_client")
-        if not client:
-            client = httpx.AsyncClient(timeout=self._timeout)
-            close_client = True
-        else:
-            close_client = False
-        
+
         try:
-            url = f"{self._base_url}/speak/say"
-            resp = await client.post(url, json={"text": text}, timeout=self._timeout)
-            if resp.status_code != 200:
-                return CommandResult(text=f"TTS http {resp.status_code}")
-            
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None
-            if isinstance(data, dict) and data.get("ok"):
-                return CommandResult(text="TTS oynatılıyor")
-            err = data.get("error") if isinstance(data, dict) else data
-            return CommandResult(text=f"TTS hata: {err}")
+            async with self._client_session(context) as client:
+                url = f"{self._base_url}/speak/say"
+                resp = await client.post(url, json={"text": text}, timeout=self._timeout)
+                if resp.status_code != 200:
+                    return CommandResult(text=f"TTS http {resp.status_code}")
+
+                data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else None
+                if isinstance(data, dict) and data.get("ok"):
+                    return CommandResult(text="TTS oynatılıyor")
+                err = data.get("error") if isinstance(data, dict) else data
+                return CommandResult(text=f"TTS hata: {err}")
         except Exception as exc:
-            if close_client:
-                await client.aclose()
             return CommandResult(text=f"TTS istek hatası: {exc!r}")
-        finally:
-            if close_client:
-                await client.aclose()
 
 
 
@@ -449,7 +343,7 @@ class CommandRegistry:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._services: Dict[str, Any] = {}
-        self._http_client = None
+        self._http_client: Optional[Any] = None
         
         # Register built-in handlers
         self._register_builtins()
@@ -540,7 +434,7 @@ class CommandRegistry:
         parts = text.strip().split()
         if not parts:
             return None
-        cmd = parts[0].lower()
+        cmd = parts[0].lstrip("/").lower()
         args = parts[1:]
         
         handler = self._handlers.get(cmd)
@@ -553,12 +447,17 @@ class CommandRegistry:
             return f"Hata: {error}\nKullanım: {handler.usage}"
         
         try:
+            services = dict(self._services)
+            services.setdefault("_command_registry", self)
+            if self._http_client is not None:
+                services.setdefault("_http_client", self._http_client)
             context = CommandContext(
                 args=args,
                 raw_text=text,
                 user_id=user_id,
+                username=username or None,
                 chat_id=chat_id,
-                services=self._services.copy(),
+                services=services,
             )
             
             result = await handler.execute(context)
@@ -576,11 +475,10 @@ class CommandRegistry:
 
 # Global registry instance
 _global_command_registry: Optional[CommandRegistry] = None
-_registry_lock = asyncio.Lock()
 _registry_sync_lock = threading.RLock()
 
 
-def get_command_registry(base_url: str = "http://127.0.0.1:8080", 
+def get_command_registry(base_url: str = "http://127.0.0.1:8080",
                          timeout: float = 4.0) -> CommandRegistry:
     global _global_command_registry
     if _global_command_registry is None:
@@ -590,13 +488,9 @@ def get_command_registry(base_url: str = "http://127.0.0.1:8080",
     return _global_command_registry
 
 
-async def get_command_registry_async(base_url: str = "http://127.0.0.1:8080", 
+async def get_command_registry_async(base_url: str = "http://127.0.0.1:8080",
                                       timeout: float = 4.0) -> CommandRegistry:
-    global _global_command_registry
-    async with _registry_sync_lock:
-        if _global_command_registry is None:
-            _global_command_registry = CommandRegistry(base_url, timeout)
-    return _global_command_registry
+    return get_command_registry(base_url, timeout)
 
 
 def register_command(handler: Any) -> None:

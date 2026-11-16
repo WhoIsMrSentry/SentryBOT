@@ -6,6 +6,7 @@ import os
 import warnings
 from typing import Any, Dict, Optional
 
+from ..config_loader import DEFAULT_HIDDEN_PATHS
 from .config_loader import load_config
 from .services.handlers import InMemoryLogHandler, build_formatter
 
@@ -156,11 +157,38 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
             "backupCount": backups,
             "encoding": "utf-8",
         }
-        root_handlers.extend(["warnings_file", "errors_file", "tui_file"])
+        root_handlers.extend(["warnings_file", "errors_file"])
 
     # Formatters
     json_format = bool(cfg.get("json_format", False))
     formatter = build_formatter(json_format)
+
+    # Logger definitions: only bind tui_file when separate_files is enabled, and
+    # keep propagate=False so runtime_console logs are never double-written.
+    loggers_cfg: Dict[str, Any] = {
+        "uvicorn.access": {
+            "level": "WARNING",
+            "handlers": list(root_handlers),
+            "propagate": False,
+        },
+        "uvicorn.error": {
+            "level": "INFO",
+            "handlers": list(root_handlers),
+            "propagate": False,
+        },
+    }
+    if "tui_file" in handlers:
+        loggers_cfg["runtime_console"] = {
+            "level": "DEBUG",
+            "handlers": ["tui_file"],
+            "propagate": False,
+        }
+    else:
+        loggers_cfg["runtime_console"] = {
+            "level": "DEBUG",
+            "handlers": [],
+            "propagate": True,
+        }
 
     # dictConfig yapılandırması
     logging.config.dictConfig(
@@ -180,19 +208,7 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
                 }
                 for name, opts in handlers.items()
             },
-            "loggers": {
-                "runtime_console": {"level": "DEBUG", "handlers": ["tui_file"], "propagate": True},
-                "uvicorn.access": {
-                    "level": "WARNING",
-                    "handlers": root_handlers,
-                    "propagate": False,
-                },
-                "uvicorn.error": {
-                    "level": "INFO",
-                    "handlers": root_handlers,
-                    "propagate": False,
-                },
-            },
+            "loggers": loggers_cfg,
             "root": {
                 "level": "DEBUG",
                 "handlers": root_handlers,
@@ -256,22 +272,7 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
             logging.getLogger(name).setLevel(level)
 
     # Apply endpoint filtering to noisy console logs only. File logging keeps full detail.
-    suppressed = list((cfg.get("console") or {}).get("hidden_paths") or [])
-    if not suppressed:
-        suppressed = [
-            "/camera/healthz",
-            "/vlm/context/latest",
-            "/vlm/results/latest",
-            "/telemetry/metrics",
-            "/speech/direction",
-            "/speech/last",
-            "/arduino/healthz",
-            "/state/set/emotions",
-            "/interactions/event",
-            "/interactions/effect",
-            "/neopixel/animate",
-            "/oled_faces/manual",
-        ]
+    suppressed = list((cfg.get("console") or {}).get("hidden_paths") or DEFAULT_HIDDEN_PATHS)
     ef = EndpointFilter(suppressed)
 
     logging.getLogger("uvicorn.access").addFilter(ef)

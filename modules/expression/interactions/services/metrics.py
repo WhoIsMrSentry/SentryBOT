@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from collections import deque
+from dataclasses import dataclass
+import math
 import os
 import time
-from dataclasses import dataclass
 from typing import Optional
 
 try:
     import psutil  # type: ignore
 except Exception:  # pragma: no cover
     psutil = None  # type: ignore
+
+_PREFERRED_TEMP_SENSORS = ("cpu_thermal", "coretemp", "k10temp", "acpitz", "soc_thermal")
 
 
 @dataclass
@@ -19,52 +23,86 @@ class SysMetrics:
     arduino_connected: Optional[bool] = None
 
 
+def _extract_sensor_temp(entry: object) -> Optional[float]:
+    val = getattr(entry, "current", None)
+    if val is None:
+        val = getattr(entry, "temp", None)
+    if val is None:
+        return None
+    f = float(val)
+    return f if math.isfinite(f) else None
+
+
 class MetricsCollector:
     def __init__(self, window_s: int = 60) -> None:
-        self.window_s = window_s
-        self._last_net = None
-        self._last_time = None
+        self.window_s = max(1, int(window_s))
+        self._last_net: Optional[int] = None
+        self._last_time: Optional[float] = None
+        self._load_samples: deque[tuple[float, float]] = deque()
+
+    def _window_cpu_load(self, instant_load: Optional[float]) -> Optional[float]:
+        now = time.monotonic()
+        cutoff = now - float(self.window_s)
+        while self._load_samples and self._load_samples[0][0] < cutoff:
+            self._load_samples.popleft()
+        if instant_load is not None and math.isfinite(instant_load):
+            clamped = max(0.0, min(1.0, float(instant_load)))
+            self._load_samples.append((now, clamped))
+        if not self._load_samples:
+            return None
+        return sum(val for _, val in self._load_samples) / float(len(self._load_samples))
 
     def sample(self) -> SysMetrics:
         m = SysMetrics()
+        instant_load: Optional[float] = None
         snap = self._hardware_snapshot()
         if snap is not None:
             m.cpu_temp = snap.get("cpu_temp_c")
             load = snap.get("cpu_load_1m")
             if load is not None:
                 nproc = float(os.cpu_count() or 1)
-                m.cpu_load = min(1.0, float(load) / nproc)
+                instant_load = min(1.0, max(0.0, float(load) / nproc))
         if m.cpu_temp is None:
             m.cpu_temp = self._read_cpu_temp()
-        if m.cpu_load is None:
-            m.cpu_load = self._read_cpu_load()
+        if instant_load is None:
+            instant_load = self._read_cpu_load()
+        m.cpu_load = self._window_cpu_load(instant_load)
         m.net_mbps = self._read_net_speed_mbps()
         return m
 
     @staticmethod
     def _hardware_snapshot() -> Optional[dict]:
+        snap: dict = {}
         try:
-            load = float(os.getloadavg()[0])
-        except Exception:
-            return None
-        return {"cpu_load_1m": load}
-
-    def _read_cpu_temp(self) -> Optional[float]:
-        if psutil is None:
-            return None
-        try:
-            temps = psutil.sensors_temperatures()
-            if not temps:
-                return None
-            # pick first available
-            for _, arr in temps.items():
-                if arr:
-                    return float(getattr(arr[0], "current", None) or getattr(arr[0], "temp", None))
+            snap["cpu_load_1m"] = float(os.getloadavg()[0])
         except Exception:
             pass
+        temp = MetricsCollector._read_cpu_temp()
+        if temp is not None:
+            snap["cpu_temp_c"] = temp
+        return snap or None
+
+    @staticmethod
+    def _read_cpu_temp() -> Optional[float]:
+        if psutil is not None and hasattr(psutil, "sensors_temperatures"):
+            try:
+                temps = psutil.sensors_temperatures() or {}
+                for key in _PREFERRED_TEMP_SENSORS:
+                    arr = temps.get(key)
+                    if arr:
+                        val = _extract_sensor_temp(arr[0])
+                        if val is not None:
+                            return val
+                for _, arr in temps.items():
+                    if arr:
+                        val = _extract_sensor_temp(arr[0])
+                        if val is not None:
+                            return val
+            except Exception:
+                pass
         # Fallback for Linux thermal zone
         try:
-            with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+            with open("/sys/class/thermal/thermal_zone0/temp", "r", encoding="utf-8") as f:
                 val = f.read().strip()
                 return float(val) / 1000.0
         except Exception:
@@ -82,7 +120,7 @@ class MetricsCollector:
         if psutil is None:
             return None
         try:
-            now = time.time()
+            now = time.monotonic()
             counters = psutil.net_io_counters()
             if counters is None:
                 return None

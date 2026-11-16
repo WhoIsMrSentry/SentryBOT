@@ -2,17 +2,33 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 from dataclasses import dataclass
 from datetime import datetime, time
-from typing import Iterable, Optional
+import logging
+from typing import Any, Iterable, Mapping, Optional
 
 import httpx
 
-from .command_router import CommandRouter, CommandResult
+from modules.common.config_loader import redact_secrets
+from modules.common.time_utils import is_time_in_window, parse_hhmm
 
+from .command_router import CommandResult, CommandRouter
 
 logger = logging.getLogger("notifier.telegram")
+
+
+def _to_hhmm(value: time | tuple[int, int]) -> tuple[int, int]:
+    if isinstance(value, tuple):
+        return (int(value[0]), int(value[1]))
+    return (value.hour, value.minute)
+
+
+def _parse_hhmm_or_default(value: Any, fallback: tuple[int, int]) -> time:
+    parsed = parse_hhmm(value)
+    if parsed is None:
+        logger.warning("invalid quiet_hours time %r; falling back to %02d:%02d", value, fallback[0], fallback[1])
+        return time(fallback[0], fallback[1])
+    return time(parsed[0], parsed[1])
 
 
 @dataclass
@@ -21,19 +37,24 @@ class QuietHours:
     start: time
     end: time
 
+    @classmethod
+    def from_config(cls, quiet_cfg: Mapping[str, Any] | None) -> QuietHours:
+        cfg = quiet_cfg or {}
+        return cls(
+            enabled=bool(cfg.get("enabled", False)),
+            start=_parse_hhmm_or_default(cfg.get("start", "23:00"), (23, 0)),
+            end=_parse_hhmm_or_default(cfg.get("end", "08:00"), (8, 0)),
+        )
+
     def is_quiet_now(self, now: Optional[datetime] = None) -> bool:
         if not self.enabled:
             return False
-        current = (now or datetime.now()).time()
-        # Quiet hours may wrap past midnight (e.g., 23:00-08:00)
-        if self.start <= self.end:
-            return self.start <= current < self.end
-        return current >= self.start or current < self.end
-
-
-def _parse_time(value: str) -> time:
-    hour, minute = value.split(":", maxsplit=1)
-    return time(int(hour), int(minute))
+        current = now or datetime.now()
+        return is_time_in_window(
+            (current.hour, current.minute),
+            _to_hhmm(self.start),
+            _to_hhmm(self.end),
+        )
 
 
 class TelegramBot:
@@ -43,6 +64,7 @@ class TelegramBot:
         default_chat_id: str,
         *,
         allowed_user_ids: Iterable[int] | None = None,
+        allow_public: bool = False,
         poll_interval: float = 2.5,
         quiet_hours: QuietHours | None = None,
         command_router: CommandRouter | None = None,
@@ -50,6 +72,7 @@ class TelegramBot:
         self._bot_token = bot_token.strip('"').strip("'")
         self._default_chat_id = default_chat_id
         self._allowed_user_ids = set(allowed_user_ids or [])
+        self._allow_public = bool(allow_public)
         self._poll_interval = poll_interval
         self._quiet_hours = quiet_hours or QuietHours(False, time(0, 0), time(0, 0))
         self._commands = command_router
@@ -58,10 +81,26 @@ class TelegramBot:
         self._task: asyncio.Task | None = None
         self._client: httpx.AsyncClient | None = None
 
+    def _is_authorized(self, user_id: int) -> bool:
+        if self._allowed_user_ids:
+            return user_id in self._allowed_user_ids
+        return self._allow_public
+
+    def _ensure_client(self) -> httpx.AsyncClient:
+        if not self._client:
+            self._client = httpx.AsyncClient()
+        return self._client
+
+    def _safe_error(self, exc: Exception) -> str:
+        raw = str(exc)
+        if self._bot_token:
+            raw = raw.replace(self._bot_token, "***")
+        return redact_secrets(raw)
+
     async def start(self) -> None:
         if self._task:
             return
-        self._client = httpx.AsyncClient()
+        self._ensure_client()
         self._task = asyncio.create_task(self._poll_loop())
         logger.info("telegram polling started")
 
@@ -77,37 +116,43 @@ class TelegramBot:
         logger.info("telegram polling stopped")
 
     async def send(self, text: str, *, chat_id: str | None = None) -> bool:
-        if not self._client:
-            self._client = httpx.AsyncClient()
         target_chat = chat_id or self._default_chat_id
-        if not target_chat:
+        if not self._bot_token or not target_chat:
             return False
+        client = self._ensure_client()
         url = f"https://api.telegram.org/bot{self._bot_token}/sendMessage"
         try:
-            res = await self._client.post(
+            res = await client.post(
                 url,
                 json={"chat_id": target_chat, "text": text},
                 timeout=10.0,
             )
-            return res.status_code == 200
-        except Exception:
+            if res.status_code != 200:
+                logger.warning("telegram sendMessage status=%s chat=%s", res.status_code, target_chat)
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("telegram sendMessage failed: %s", self._safe_error(exc))
             return False
 
     async def send_photo(self, photo: bytes, *, chat_id: str | None = None, caption: str | None = None) -> bool:
-        if not self._client:
-            self._client = httpx.AsyncClient()
         target_chat = chat_id or self._default_chat_id
-        if not target_chat:
+        if not self._bot_token or not target_chat or not photo:
             return False
+        client = self._ensure_client()
         url = f"https://api.telegram.org/bot{self._bot_token}/sendPhoto"
         try:
             files = {"photo": ("snap.jpg", photo, "image/jpeg")}
             data = {"chat_id": target_chat}
             if caption:
                 data["caption"] = caption
-            res = await self._client.post(url, data=data, files=files, timeout=20.0)
-            return res.status_code == 200
-        except Exception:
+            res = await client.post(url, data=data, files=files, timeout=20.0)
+            if res.status_code != 200:
+                logger.warning("telegram sendPhoto status=%s chat=%s", res.status_code, target_chat)
+                return False
+            return True
+        except Exception as exc:
+            logger.warning("telegram sendPhoto failed: %s", self._safe_error(exc))
             return False
 
     async def _poll_loop(self) -> None:
@@ -135,29 +180,29 @@ class TelegramBot:
                 break
             except Exception:
                 logger.exception("poll loop error")
-                # Cooldown on any error to avoid busy looping
                 await asyncio.sleep(self._poll_interval)
 
     async def _handle_update(self, update: dict) -> None:
         message = update.get("message") or update.get("edited_message")
         if not message:
             return
-        user_id = int(message.get("from", {}).get("id", 0))
+        try:
+            user_id = int(message.get("from", {}).get("id", 0))
+        except (TypeError, ValueError):
+            user_id = 0
         chat_id = str(message.get("chat", {}).get("id", ""))
         text = str(message.get("text", ""))
 
-        if self._allowed_user_ids and user_id not in self._allowed_user_ids:
-            logger.info("skip unauthorized user %s", user_id)
+        if not self._is_authorized(user_id):
+            logger.warning("skip unauthorized user %s", user_id)
             return
 
         if self._quiet_hours.is_quiet_now():
-            await self.send("Quiet hours are active.", chat_id=chat_id)
-            logger.info("quiet hours active; informed chat %s", chat_id)
+            logger.info("quiet hours active; ignoring update from chat %s", chat_id)
             return
 
         lower = text.lower().strip()
 
-        # Core bot commands
         if lower.startswith("/start"):
             await self.send("SentryBOT notifier aktif.", chat_id=chat_id)
             logger.info("/start handled for chat %s", chat_id)
@@ -167,21 +212,30 @@ class TelegramBot:
             logger.info("/ping handled for chat %s", chat_id)
             return
 
-        # Extended commands routed to services
         if self._commands:
-            result = await self._commands.handle(self._client, text)
+            result = await self._commands.handle(
+                self._ensure_client(),
+                text,
+                user_id=user_id,
+                chat_id=chat_id,
+            )
             if isinstance(result, CommandResult):
-                sent = False
                 if result.photo:
-                    sent = await self.send_photo(result.photo, chat_id=chat_id, caption=result.text or None)
-                elif result.text:
-                    sent = await self.send(result.text, chat_id=chat_id)
-                if sent:
+                    await self.send_photo(
+                        result.photo,
+                        chat_id=chat_id,
+                        caption=result.photo_caption or result.text or None,
+                    )
+                    logger.info("photo command handled via router for chat %s", chat_id)
+                    return
+                if result.text:
+                    await self.send(result.text, chat_id=chat_id)
                     logger.info("command handled via router for chat %s", chat_id)
                     return
 
         if lower.startswith("/help"):
-            await self.send("Komutlar: /ping, /help", chat_id=chat_id)
+            help_text = self._commands.get_help_text() if self._commands else "Komutlar: /ping, /help"
+            await self.send(help_text, chat_id=chat_id)
             logger.info("/help handled for chat %s", chat_id)
             return
 
@@ -191,19 +245,20 @@ class TelegramBot:
 
 def build_telegram_bot(cfg: dict) -> TelegramBot | None:
     telegram_cfg = cfg.get("telegram", {})
-    token = telegram_cfg.get("bot_token", "")
-    chat_id = telegram_cfg.get("chat_id", "")
+    token = str(telegram_cfg.get("bot_token", "") or "")
+    chat_id = str(telegram_cfg.get("chat_id", "") or "")
     if not token:
         return None
 
-    quiet_cfg = cfg.get("quiet_hours", {})
-    quiet = QuietHours(
-        bool(quiet_cfg.get("enabled", False)),
-        _parse_time(quiet_cfg.get("start", "23:00")),
-        _parse_time(quiet_cfg.get("end", "08:00")),
-    )
+    quiet = QuietHours.from_config(cfg.get("quiet_hours", {}))
     poll_cfg = telegram_cfg.get("polling", {})
-    allowed = telegram_cfg.get("allowed_user_ids") or []
+    raw_allowed = telegram_cfg.get("allowed_user_ids") or []
+    allowed_ids: list[int] = []
+    for item in raw_allowed:
+        try:
+            allowed_ids.append(int(item))
+        except (TypeError, ValueError):
+            logger.warning("ignoring non-integer allowed_user_id: %r", item)
 
     gw_cfg = cfg.get("gateway", {})
     router = CommandRouter(
@@ -214,7 +269,8 @@ def build_telegram_bot(cfg: dict) -> TelegramBot | None:
     return TelegramBot(
         token,
         chat_id,
-        allowed_user_ids=[int(u) for u in allowed],
+        allowed_user_ids=allowed_ids,
+        allow_public=bool(telegram_cfg.get("allow_public", False)),
         poll_interval=float(poll_cfg.get("interval_sec", 2.5)),
         quiet_hours=quiet,
         command_router=router,

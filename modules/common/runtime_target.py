@@ -65,13 +65,66 @@ def assert_raspberry_pi(allow_pc_fallback: bool | None = None) -> RuntimeTarget:
     return target
 
 
+def _read_cpu_temp_c(thermal_path: Path = Path("/sys/class/thermal/thermal_zone0/temp")) -> float | None:
+    try:
+        raw = thermal_path.read_text(encoding="utf-8", errors="ignore").strip()
+        if not raw:
+            return None
+        val = float(raw)
+        return round(val / 1000.0 if val > 200.0 else val, 1)
+    except (OSError, ValueError):
+        return None
+
+
+def _read_mem_available_mb(meminfo_path: Path = Path("/proc/meminfo")) -> float | None:
+    try:
+        for line in meminfo_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if line.startswith("MemAvailable:"):
+                kb = float(line.split()[1])
+                return round(kb / 1024.0, 1)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def read_hardware_pressure(
+    *,
+    thermal_path: Path = Path("/sys/class/thermal/thermal_zone0/temp"),
+    meminfo_path: Path = Path("/proc/meminfo"),
+    warn_temp_c: float = 72.0,
+    critical_temp_c: float = 80.0,
+    min_free_mem_mb: float = 512.0,
+) -> Dict[str, Any]:
+    """Return lightweight RPi5 thermal/memory pressure hints without subprocess overhead."""
+    temp_c = _read_cpu_temp_c(thermal_path)
+    mem_mb = _read_mem_available_mb(meminfo_path)
+    pressure = "normal"
+    if (temp_c is not None and temp_c >= critical_temp_c) or (mem_mb is not None and mem_mb < min_free_mem_mb / 2):
+        pressure = "critical"
+    elif (temp_c is not None and temp_c >= warn_temp_c) or (mem_mb is not None and mem_mb < min_free_mem_mb):
+        pressure = "warm"
+    return {
+        "cpu_temp_c": temp_c,
+        "mem_available_mb": mem_mb,
+        "pressure_level": pressure,
+        "eco_recommended": pressure != "normal",
+    }
+
+
 def status() -> Dict[str, Any]:
     target = detect_runtime_target()
     return {
         "ok": target.is_raspberry_pi,
         "target": "raspberry_pi_5" if target.is_raspberry_pi else "unsupported",
+        "pressure": read_hardware_pressure(),
         **target.to_dict(),
     }
 
 
-__all__ = ["RuntimeTarget", "detect_runtime_target", "assert_raspberry_pi", "status"]
+__all__ = [
+    "RuntimeTarget",
+    "detect_runtime_target",
+    "assert_raspberry_pi",
+    "read_hardware_pressure",
+    "status",
+]

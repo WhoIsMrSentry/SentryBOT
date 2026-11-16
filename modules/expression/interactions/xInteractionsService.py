@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 try:
@@ -15,8 +17,17 @@ except Exception:  # pragma: no cover
 def create_app(config_path: str | None = None) -> FastAPI:
     cfg = load_config(config_path)
     engine = InteractionEngine(cfg)
-    engine.start()
-    app = FastAPI()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        engine.start()
+        try:
+            yield
+        finally:
+            engine.stop()
+
+    app = FastAPI(lifespan=lifespan)
+    app.state.engine = engine
     app.include_router(get_router(engine))
     return app
 

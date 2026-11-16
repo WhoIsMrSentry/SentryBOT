@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from ..utils import decay_salience
 
 logger = logging.getLogger("cognitive_memory.relationship_storage")
 
@@ -34,11 +38,19 @@ class RelationshipStorageMixin:
     def _persist(self) -> None:
         if self.path is None:
             return
+        lock = getattr(self, "_lock", None) or threading.RLock()
+        tmp = self.path.with_name(f"{self.path.name}.tmp.{os.getpid()}")
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps(self._people, ensure_ascii=True, indent=2), encoding="utf-8")
+            with lock:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                tmp.write_text(json.dumps(self._people, ensure_ascii=True, indent=2), encoding="utf-8")
+                os.replace(tmp, self.path)
         except Exception:
-            pass
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except Exception:
+                pass
 
     def _get_learner(self):
         if self._learner is not None:
@@ -159,15 +171,13 @@ class RelationshipStorageMixin:
             return
         now = time.time()
         half_life_s = 2.5 * 24 * 3600.0
-        decay_per_sec = 0.5 / half_life_s
         kept = []
         for m in moments:
             if not isinstance(m, dict):
                 continue
             updated = float(m.get("updated_at", now) or now)
             dt = max(0.0, now - updated)
-            score = float(m.get("score", 0.0)) - (dt * decay_per_sec)
-            score = max(0.0, min(1.0, score))
+            score = decay_salience(float(m.get("score", 0.0)), dt, half_life_s)
             if score < 0.08:
                 continue
             m["score"] = score

@@ -4,7 +4,7 @@ OLED_FACE_MAPPER_ROLE = "face_state_event_alias_mapper"
 
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 try:
     from modules.common.emotion_vocab import get_vocab as _get_emotion_vocab
@@ -28,7 +28,6 @@ class FaceMapper:
 
         self.state_map = dict(cfg.get("state_map", {}))
         self.event_map = dict(cfg.get("event_map", {}))
-        self.arduino_event_map = dict(cfg.get("arduino_event_map", {}))
         self.fallback_unknown = resolve_mood(str(cfg.get("fallback_unknown", "neutral")))
         self.idle_bitmap = resolve_mood(str(cfg.get("idle_bitmap", "neutral")))
 
@@ -80,10 +79,3 @@ class FaceMapper:
         if isinstance(mapped, dict):
             return OledAction(mode=str(mapped.get("mode", "bitmap")), name=str(mapped.get("name", self.fallback_unknown)))
         return OledAction(mode="bitmap", name=self.fallback_unknown)
-
-    def from_arduino_event(self, event_type: str) -> Optional[OledAction]:
-        key = str(event_type or "").strip().lower()
-        mapped = self.arduino_event_map.get(key)
-        if isinstance(mapped, dict):
-            return OledAction(mode=str(mapped.get("mode", "bitmap")), name=str(mapped.get("name", self.fallback_unknown)))
-        return None

@@ -8,7 +8,7 @@ import threading
 import time
 from typing import Any, Mapping
 
-from .config_loader import load_config
+from .config_loader import DEFAULT_HIDDEN_PATHS, load_config
 from .event_bus import RuntimeEvent, publish_event
 from .panels import render_startup_panel, render_summary_panel, render_warning_panel
 from .renderer import ConsoleRenderer
@@ -72,7 +72,7 @@ _INFO_KEEP_SUBSTRINGS = (
 
 
 def should_hide_background_message(message: str, hidden_paths: list[str] | tuple[str, ...] | None = None) -> bool:
-    paths = hidden_paths or load_config().get("hidden_paths", [])
+    paths = hidden_paths or load_config().get("hidden_paths") or DEFAULT_HIDDEN_PATHS
     return any(path and path in message for path in paths)
 
 
@@ -164,6 +164,7 @@ class RuntimeConsoleLogHandler(logging.Handler):
         self.aggregate = bool(self.cfg.get("aggregate_repeated_messages", True))
         self.summary_interval_s = max(8.0, float(self.cfg.get("repeat_summary_interval_s", 30)))
         self.duplicate_window_s = max(20.0, float(self.cfg.get("duplicate_window_s", 90)))
+        self._max_seen_entries = max(128, int(self.cfg.get("max_seen_entries", 512)))
         self._hidden_count = 0
         self._duplicate_count = 0
         self._last_summary = time.monotonic()
@@ -172,29 +173,39 @@ class RuntimeConsoleLogHandler(logging.Handler):
         if _startup_panel_enabled():
             self._write(render_startup_panel(self.renderer, mode=self.mode))
 
+    def _prune_seen_unlocked(self, now: float) -> None:
+        expired = [k for k, ts in self._seen.items() if (now - ts) >= self.duplicate_window_s]
+        for k in expired:
+            self._seen.pop(k, None)
+        while len(self._seen) > self._max_seen_entries:
+            oldest_key = min(self._seen, key=self._seen.__getitem__)
+            self._seen.pop(oldest_key, None)
+
     def emit(self, record: logging.LogRecord) -> None:
         try:
             message = record.getMessage()
             level = record.levelname.upper()
 
-            if not self.show_background and should_hide_background_message(message, self.hidden_paths):
-                self._hidden_count += 1
-                self._maybe_emit_summary()
-                return
+            with self._lock:
+                if not self.show_background and should_hide_background_message(message, self.hidden_paths):
+                    self._hidden_count += 1
+                    self._maybe_emit_summary()
+                    return
 
-            if level == "INFO" and _is_info_noise(message):
-                self._hidden_count += 1
-                self._maybe_emit_summary()
-                return
+                if level == "INFO" and _is_info_noise(message):
+                    self._hidden_count += 1
+                    self._maybe_emit_summary()
+                    return
 
-            key = (level, record.name, _normalize_message(message))
-            now = time.monotonic()
-            previous = self._seen.get(key)
-            self._seen[key] = now
-            if previous is not None and (now - previous) < self.duplicate_window_s:
-                self._duplicate_count += 1
-                self._maybe_emit_summary()
-                return
+                key = (level, record.name, _normalize_message(message))
+                now = time.monotonic()
+                self._prune_seen_unlocked(now)
+                previous = self._seen.get(key)
+                self._seen[key] = now
+                if previous is not None and (now - previous) < self.duplicate_window_s:
+                    self._duplicate_count += 1
+                    self._maybe_emit_summary()
+                    return
 
             channel = classify_record(record, self.cfg)
             event = publish_event(
@@ -223,14 +234,15 @@ class RuntimeConsoleLogHandler(logging.Handler):
     def _maybe_emit_summary(self) -> None:
         if not self.aggregate:
             return
-        now = time.monotonic()
-        if now - self._last_summary < self.summary_interval_s:
-            return
-        hidden = self._hidden_count
-        duplicates = self._duplicate_count
-        self._hidden_count = 0
-        self._duplicate_count = 0
-        self._last_summary = now
+        with self._lock:
+            now = time.monotonic()
+            if now - self._last_summary < self.summary_interval_s:
+                return
+            hidden = self._hidden_count
+            duplicates = self._duplicate_count
+            self._hidden_count = 0
+            self._duplicate_count = 0
+            self._last_summary = now
         parts = []
         if hidden:
             parts.append(f"{hidden} startup/background messages hidden")

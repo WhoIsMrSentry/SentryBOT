@@ -14,14 +14,16 @@ PC-side inference server for SentryBOT, structured similarly to `remote_tts_serv
 
 ## Features
 
-- Face/person detection
-- Optional face identity (`face_recognition`)
+- Lazy backend startup via FastAPI `lifespan` (`app.py` / `run_app()`) so importing `app` does not block on heavy GPU model loading
+- Thread-safe concurrent inference throttling (`MM_MAX_CONCURRENT_INFERENCES`) and payload size protection (`MM_MAX_IMAGE_B64_BYTES` -> HTTP `413`, bad base64 -> HTTP `400`)
+- Face/person detection (`RLock`-guarded DB reads and atomic `.tmp` + `replace` persistence)
+- Optional face identity (`face_recognition`) & IMX500 `onsensor_hints` crop identity/emotion enrichment
 - Optional age/emotion estimation (`deepface`)
 - Object detection (`ultralytics` YOLO if installed, OpenCV fallback otherwise)
-- Hybrid vision reasoning: OpenCV/YOLO + Qwen VLM (Ollama)
-- Motion score + scene change score
-- Hazard hints from object labels
-- Optional advanced caption backend (`transformers`)
+- Hybrid vision reasoning: OpenCV/YOLO + Qwen VLM (Ollama, zero re-encode `image_b64` pass-through + dict/string hazard parsing)
+- Motion score + scene change score (`_caption()` gated to semantic mode only)
+- Optional OCR (`PaddleOCR` / `EasyOCR` / `Tesseract`) with `languages` forwarding
+- `/healthz` reporting GPU VRAM (`torch.cuda.mem_get_info`), loaded `backends` status, and cached Qwen `/api/tags` availability (`15s` TTL)
 
 ## Run
 
@@ -34,18 +36,22 @@ Default: `http://0.0.0.0:8091`
 
 ## Endpoints
 
-- `GET /healthz`
-- `POST /vision/analyze` (legacy compatible)
-- `POST /vision/analyze/cheap` (objects/people/faces/hazards; never wakes Qwen)
+- `GET /healthz` (`vram`, `backends`, `qwen` cached reachability, active config)
+- `POST /vision/analyze` (legacy compatible, `X-Auth-Token` via `hmac.compare_digest`)
+- `POST /vision/analyze/cheap` (objects/people/faces/hazards; never wakes Qwen or heavy caption)
 - `POST /vision/analyze/semantic` (explicit semantic VLM budget; may wake Qwen)
-- `POST /vision/register_face`
-- `POST /vision/ocr` (remote OCR backend)
+- `POST /vision/register_face` (locked atomic DB persistence)
+- `POST /vision/ocr` (remote OCR backend with `languages` parameter)
 
 ## Environment Variables
 
-- `MM_HOST` (default `0.0.0.0`)
+Note: Explicitly exported environment variables override `MM_RUNTIME_PROFILE` defaults.
+
+- `MM_HOST` (default `127.0.0.1`)
 - `MM_PORT` (default `8091`)
-- `MM_AUTH_TOKEN` (default `changeme`)
+- `MM_AUTH_TOKEN` (default empty / falls back to `SENTRYBOT_VLM_AUTH_TOKEN`)
+- `MM_MAX_IMAGE_B64_BYTES` (default `12582912`, 12 MiB payload limit)
+- `MM_MAX_CONCURRENT_INFERENCES` (default `2`)
 - `MM_YOLO_MODEL` (default `yolov8n.pt`)
 - `MM_FACE_DB` (default `known_faces.json`)
 - `MM_DETECTOR_BACKEND` (`auto|yolo|opencv`, default `auto`)

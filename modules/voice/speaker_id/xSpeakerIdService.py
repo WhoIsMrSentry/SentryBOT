@@ -23,13 +23,22 @@ class SpeakerIdService:
     def __init__(self, config_path: str | None = None) -> None:
         self.cfg = load_config(config_path)
         self.enabled = bool(self.cfg.get("enabled", True))
+        self.sample_rate = max(8000, int(self.cfg.get("sample_rate", 16000)))
         self.threshold = self.cfg.get("threshold") or {}
         self.sim_min = float(self.threshold.get("similarity", 0.75))
         self.margin_min = float(self.threshold.get("margin", 0.05))
-        self.enroll_min = int(self.cfg.get("enroll_min_frames", 30))   # voiced windows needed
+        self.enroll_min = max(3, int(self.cfg.get("enroll_min_frames", 30)))
+        self.identify_min = max(3, int(self.cfg.get("identify_min_frames", 3)))
+        ema_cfg = self.cfg.get("ema_update", {}) if isinstance(self.cfg.get("ema_update"), dict) else {}
+        self.ema_enabled = bool(ema_cfg.get("enabled", True))
+        self.ema_alpha = float(ema_cfg.get("alpha", 0.08))
+        self.ema_min_similarity = float(ema_cfg.get("min_similarity", max(self.sim_min + 0.06, 0.84)))
+        self.ema_min_margin = float(ema_cfg.get("min_margin", max(self.margin_min, 0.08)))
+        self.ema_min_snr_db = float(ema_cfg.get("min_snr_db", 12.0))
         self.embedder = VoiceprintEmbedder(
             bands=int(self.cfg.get("bands", 20)),
             min_energy_rms=float(self.cfg.get("min_energy_rms", 0.004)),
+            sample_rate=self.sample_rate,
         )
         self.store = VoiceprintStore(
             str(self.cfg.get("store_path", "data/speaker_id.json")),
@@ -41,16 +50,16 @@ class SpeakerIdService:
     def enroll_speaker(self, name: str, speaker_pcm: Any, samplerate: int, replace: bool = False) -> Dict[str, Any]:
         if not self.enabled:
             raise SpeakerIdError("speaker_id disabled")
-        vec = self.embedder.embed(speaker_pcm, samplerate)
+        vec = self.embedder.embed(speaker_pcm, samplerate, min_frames=self.enroll_min)
         if vec is None:
-            raise SpeakerIdError("clip has too little speech to enroll")
+            raise SpeakerIdError(f"clip has too little speech to enroll (need >= {self.enroll_min} voiced frames)")
         result = self.store.upsert(name, vec, replace=bool(replace))
         return {"ok": True, "name": name, "samples": result.get("samples", 1), "backend": "voiceprint_mvp"}
 
     def identify(self, speaker_pcm: Any, samplerate: int) -> Dict[str, Any]:
         if not self.enabled:
             raise SpeakerIdError("speaker_id disabled")
-        vec = self.embedder.embed(speaker_pcm, samplerate)
+        vec = self.embedder.embed(speaker_pcm, samplerate, min_frames=self.identify_min)
         if vec is None:
             return {"ok": True, "known": False, "reason": "too_little_speech", "samplerate": samplerate}
         profiles = self.store.all()
@@ -74,6 +83,15 @@ class SpeakerIdService:
                 "similarity": round(best_sim, 4), "margin": round(margin, 4),
                 "backend": "voiceprint_mvp",
             }
+        ema_updated = False
+        snr_db = self.embedder.estimate_snr_db(speaker_pcm, samplerate)
+        if (
+            self.ema_enabled
+            and best_sim >= self.ema_min_similarity
+            and margin >= self.ema_min_margin
+            and snr_db >= self.ema_min_snr_db
+        ):
+            ema_updated = self.store.update_ema(best_name, vec, alpha=self.ema_alpha)
         try:
             self.identity_resolver.observe_voice(best_name, float(best_sim))
         except Exception:
@@ -81,6 +99,7 @@ class SpeakerIdService:
         return {
             "ok": True, "known": True, "name": best_name,
             "similarity": round(best_sim, 4), "margin": round(margin, 4),
+            "snr_db": snr_db, "ema_updated": ema_updated,
             "backend": "voiceprint_mvp",
         }
 

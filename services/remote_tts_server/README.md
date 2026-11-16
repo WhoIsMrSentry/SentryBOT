@@ -25,17 +25,17 @@ Not: Host `0.0.0.0` gibi herkese açık bir adrese bağlanacaksa `SENTRYBOT_TTS_
 
 ## Endpoint'ler
 
-- `GET /healthz` - katalog/binary/bootstrap durumu
-- `POST /tts/synthesize` - sentez (body: `{text, engine: "piper"|"xtts", language, ...}`; yanıt WAV veya `response_format: json_base64`)
-- `GET /tts/voices/piper` - yüklü Piper sesleri
-- `GET /tts/voices/xtts` - XTTS speaker kaynakları
-- `POST /tts/voices/xtts/upload` - `.wav` speaker yükleme
-- `POST /tts/refresh` - ses kataloğunu yeniden tara
-- `POST /bootstrap/run` - bootstrap'ı elle çalıştır (`force` parametreli)
-- `GET /ollama/tags` - Ollama model listesi proxy'si
+- `GET /healthz` - katalog/binary/bootstrap ve `WavLRUCache` durumu
+- `POST /tts/synthesize` - sentez (body: `{text, engine: "piper"|"xtts", language, stream?: bool, ...}`; yanıt `audio/wav`, chunked `StreamingResponse` veya `response_format: json_base64`; `X-Cache: hit|miss` başlığı)
+- `GET /tts/voices/piper` - yüklü Piper sesleri (auth korumalı)
+- `GET /tts/voices/xtts` - XTTS speaker kaynakları (auth korumalı)
+- `POST /tts/voices/xtts/upload` - `.wav` speaker yükleme (güvenli ASCII dosya adı/path-traversal doğrulaması, boyut sınırı `HTTP 413` ve atomik `.tmp` yazım)
+- `POST /tts/refresh` - ses kataloğunu yeniden tara (auth korumalı)
+- `POST /bootstrap/run` - bootstrap'ı elle çalıştır (`force` parametreli; açılışta arka plan thread'inde bloklamadan çalışır)
+- `GET /ollama/tags` - Ollama model listesi proxy'si (auth korumalı, paylaşımlı `requests.Session`)
 - `GET /` - web arayüzü (`/styles.css`, `/script.js`)
 
-Kimlik doğrulama: `X-Auth-Token` header veya `Authorization: Bearer <token>`.
+Kimlik doğrulama: `X-Auth-Token` header veya `Authorization: Bearer <token>` (`hmac.compare_digest` ile sabit-zamanlı doğrulama).
 
 ## Ortam Değişkenleri
 
@@ -44,9 +44,14 @@ Kimlik doğrulama: `X-Auth-Token` header veya `Authorization: Bearer <token>`.
 - `SENTRYBOT_TTS_AUTH_TOKEN` - public bind için zorunlu
 - `SENTRYBOT_TTS_ROOT`, `SENTRYBOT_PIPER_ROOT`, `SENTRYBOT_XTTS_ROOT` - runtime dizinleri
 - `SENTRYBOT_PIPER_BIN` (varsayılan `piper`), `SENTRYBOT_XTTS_BIN` (varsayılan `tts`)
+- `SENTRYBOT_TTS_MAX_UPLOAD_MB` (varsayılan `25`) - `/tts/voices/xtts/upload` boyut limiti
+- `SENTRYBOT_TTS_SUBPROCESS_TIMEOUT` (varsayılan `60.0`) - Piper/XTTS alt süreç zaman aşımı (`HTTP 504`)
+- `SENTRYBOT_TTS_CACHE_SIZE` (varsayılan `32`, `0` kapatır) - `WavLRUCache` kapasitesi
 - `SENTRYBOT_BOOTSTRAP_ON_START|FORCE|INSTALL_PIPER|INSTALL_XTTS|DOWNLOAD_PIPER_MODELS`
 - `SENTRYBOT_PIPER_MODELS_SOURCE_URL`, `SENTRYBOT_BOOTSTRAP_TIMEOUT`
-- `SENTRYBOT_OLLAMA_TAGS_ENDPOINT` (veya `SENTRYBOT_OLLAMA_BASE_URL` / `OLLAMA_BASE_URL`), `SENTRYBOT_OLLAMA_TIMEOUT`
+- `SENTRYBOT_OLLAMA_TAGS_ENDPOINT` (`Dockerfile` varsayılanı: `http://host.docker.internal:11434/api/tags`; veya `SENTRYBOT_OLLAMA_BASE_URL` / `OLLAMA_BASE_URL`), `SENTRYBOT_OLLAMA_TIMEOUT`
+
+Not: In-process `piper.voice.PiperVoice` veya `TTS.api.TTS` Python paketleri kuruluysa modeller bellek içi önbellekte tutulur; `xtts.extra_args` yalnızca güvenli bayrak beyaz listesiyle (`_ALLOWED_XTTS_FLAGS`) kabul edilir.
 
 ## Robot Tarafı Entegrasyonu
 

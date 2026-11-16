@@ -3,7 +3,7 @@ import os
 from copy import deepcopy
 from typing import Any, Dict
 from modules.common.config_loader import load_agent_config, require_dict_section
-from modules.voice.audio_router import AudioConfig, AudioRouterConfig
+from modules.voice.audio_router import load_audio_router_config
 
 
 def load_config(override_path: str | os.PathLike | None = None) -> Dict[str, Any]:
@@ -23,21 +23,4 @@ def load_config(override_path: str | os.PathLike | None = None) -> Dict[str, Any
     return deepcopy(section)
 
 
-def load_audio_router_config() -> AudioRouterConfig:
-    """Load audio_router configuration from agent.yaml."""
-    root_cfg = load_agent_config()
-    audio_router_cfg = root_cfg.get("audio_router")
-    if isinstance(audio_router_cfg, dict):
-        capture_cfg = audio_router_cfg.get("capture", {})
-        return AudioRouterConfig(
-            capture=AudioConfig(
-                device=capture_cfg.get("device", "default"),
-                sample_rate=capture_cfg.get("sample_rate", 16000),
-                channels=capture_cfg.get("channels", 2),
-                frame_size=capture_cfg.get("frame_size", 1024),
-                format=capture_cfg.get("format", "int16"),
-                vad_enabled=capture_cfg.get("vad_enabled", True),
-                vad_threshold=capture_cfg.get("vad_threshold", 0.01),
-            )
-        )
-    return AudioRouterConfig()
+__all__ = ["load_config", "load_audio_router_config"]

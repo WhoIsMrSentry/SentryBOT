@@ -2,30 +2,34 @@
 #define SENTRY_APP_LCD_HUB_H
 
 #include <Arduino.h>
-#include "../xConfig.h"
-
-#if LCD_ENABLED
 #include <Wire.h>
-#include "../xPeripherals.h"
+#include "../xConfig.h"
+#include "../xProtocol.h"
 
 // Shared LCD hub routing constants.
 static constexpr uint8_t LCD_TGT_1 = 0x01;
 
+// Shared I2C presence probe (available even when LCD_ENABLED == 0 for boot diagnostics)
+static inline bool i2cDevicePresent(uint8_t addr){
+  Wire.beginTransmission(addr);
+  uint8_t st = Wire.endTransmission();
+  Protocol::pollWireTimeout();
+  return (st == 0);
+}
+
+#if LCD_ENABLED
+#include "../xPeripherals.h"
+
 // Globals owned by xMain.ino
 extern LcdDisplay g_lcd1;
 extern bool g_lcd1Ok;
-
-static inline bool i2cDevicePresent(uint8_t addr){
-  Wire.beginTransmission(addr);
-  return (Wire.endTransmission() == 0);
-}
 
 static inline void bootInfo(const char *name, bool ok){
   SERIAL_IO.print(F("{\"info\":\"boot_check\",\"name\":\""));
   SERIAL_IO.print(name);
   SERIAL_IO.print(F("\",\"ok\":"));
   SERIAL_IO.print(ok ? F("true") : F("false"));
-  SERIAL_IO.println(F("}"));
+  SERIAL_IO.println('}');
 }
 
 static inline uint8_t lcdHubAvailableMask(){
@@ -68,25 +72,6 @@ static inline void lcdHubPrintDefault(const String &top, const String &bottom){
   lcdHubPrint(LCD_TGT_1, top, bottom);
 }
 
-static inline void lcdHubHeader(const String &title, uint8_t iconIdx = 255){
-  String line = "";
-  if (iconIdx != 255){
-    // This is tricky because String doesn't support raw bytes easily in all versions, 
-    // but we can use g_lcd1.writeRaw indirectly.
-    // For simplicity, we'll just handle it in the print call if we had a better abstraction, 
-    // but here we'll just use a special prefix.
-    line = "[#] "; // Placeholder for icon
-  }
-  line += title;
-  while (line.length() < 20) line += " ";
-  g_lcd1.printLine(line); // Assuming we update printLine or use printLines
-}
-
-static inline void lcdHubDrawFrame(){
-  // On 20x4, we can draw a simple border or separator
-  // We'll use this in specific screens.
-}
-
 static inline void bootUiStep(const String &top, const String &bottom, unsigned long ms){
   if (!BOOT_UI_ENABLED) return;
   if (!lcdHubAny()) return;
@@ -107,43 +92,13 @@ static inline void bootUiStep(const String &top, const String &bottom, unsigned 
 
   unsigned long t0 = millis();
   while (millis() - t0 < ms){
-    if (SERIAL_IO.available()){ SERIAL_IO.read(); break; }
+    // Do not read or consume SERIAL_IO bytes during boot splash so NDJSON framing stays intact.
     delay(5);
   }
 }
 
 static inline void bootUiStep(const __FlashStringHelper* top, const __FlashStringHelper* bottom, unsigned long ms){
   bootUiStep(String(top), String(bottom), ms);
-}
-
-static inline int parseJsonIntAfter(const String &line, const char *key, int defaultVal, bool *found=nullptr){
-  int p = line.indexOf(key);
-  if (p < 0){ if (found) *found = false; return defaultVal; }
-  if (found) *found = true;
-  p += (int)strlen(key);
-  while (p < (int)line.length() && (line[p] == ' ')) p++;
-  bool neg = false;
-  if (p < (int)line.length() && line[p] == '-') { neg = true; p++; }
-  long v = 0;
-  bool any = false;
-  while (p < (int)line.length()){
-    char c = line[p];
-    if (c < '0' || c > '9') break;
-    any = true;
-    v = (v * 10) + (c - '0');
-    p++;
-  }
-  if (!any) return defaultVal;
-  return neg ? (int)(-v) : (int)v;
-}
-
-static inline String parseJsonStringAfter(const String &line, const char *key){
-  int p = line.indexOf(key);
-  if (p < 0) return "";
-  p += (int)strlen(key);
-  int e = line.indexOf('"', p);
-  if (e <= p) return "";
-  return line.substring(p, e);
 }
 
 static inline uint8_t lcdTargetMaskFromLine(const String &line){
@@ -241,6 +196,9 @@ private:
 
 extern LcdStatus g_lcdStatus;
 
+#else
+static inline bool lcdHubAny(){ return false; }
+static inline uint8_t lcdTargetMaskFromLine(const String &){ return LCD_TGT_1; }
 #endif // LCD_ENABLED
 
 #endif // SENTRY_APP_LCD_HUB_H

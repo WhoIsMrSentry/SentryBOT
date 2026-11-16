@@ -10,11 +10,13 @@ Mimari detaylar, sınıf yapıları ve veri akış diyagramları için:
 
 ## 🚀 Temel Özellikler
 
-1. **Konfigürasyon Yükleyici (`config_loader`):** `agent.yaml` ve modül konfigürasyonlarını hiyerarşik olarak birleştirir ve önbelleğe alır.
-2. **Model Politikası (`model_policy`):** Yerel (Ollama / `qwen3.5:9b`) ve bulut (Google AI Studio / `gemini-2.5-flash`) profillerini dinamik ve güvenli yönetir.
-3. **Ollama URL Koruyucusu (`ollama_url`):** Döngüsel Gateway yönlendirmelerini engeller, bozuk adresleri otomatik düzeltir.
-4. **Olay Dağıtıcı (`event_bus`):** Modüller arası tamponlu (bounded ring buffer) pub/sub mesajlaşma sağlar.
-5. **Güvenli HTTP İstemcisi (`http_client`):** Zaman aşımı korumalı, circuit-breaker destekli mikroservis istemcisi.
+1. **Konfigürasyon Yükleyici (`config_loader`):** `agent.yaml`, runtime profilleri ve modül konfigürasyonlarını birleştirir (`load_agent_config`, `load_ai_provider_config`); `ai_provider` / `ollama_service` bölümlerini ve `llm.single_model_mode` / `llm.required_model` ayarlarını destekler.
+2. **Model Politikası (`model_policy`):** Yerel Ollama (`qwen3.5:9b`) ve esnek tek-model/çoklu-model modlarını thread-safe (`threading.Lock`) yönetir; Ollama URL temizliğini `ollama_url` modülüne devreder.
+3. **Ollama URL Koruyucusu (`ollama_url`):** `DEFAULT_LOCAL_OLLAMA_URL` / `DEFAULT_REMOTE_OLLAMA_URL` sabitleriyle döngüsel Gateway yönlendirmelerini engeller, bozuk adresleri normalize eder.
+4. **Güvenli HTTP İstemcisi (`http_client`):** `AsyncHTTPClient` / `SyncHTTPClient`, per-segment gateway circuit-breaker izolasyonu, monotonic zamanlama ve 4xx koruma desteği sağlar.
+5. **Log Sağlayıcı ve Telemetri (`logger`, `runtime_target`):** `register_log_provider(...)` ile UI bağımlılığını ayırır; `read_hardware_pressure()` ile subprocess açmadan CPU sıcaklığı ve RAM baskısını raporlar.
+6. **Görüş & Varlık Doğrulama (`vision_availability`, `model_asset_truth`):** Paylaşımlı `requests.Session` + `1.0s` TTL önbellekleme (`clear_vision_cache`) ve `config/model_assets.json` ile senkronize varlık kontrolü sunar.
+7. **Servis, Kalıcılık, İş & Komut Kayıt Defterleri (`service_base`, `persistence`, `job_types`, `command_registry`, `router_factory`, `health`):** Ortak yaşam döngüsü, SQLite `GLOB` / atomik JSON kalıcılığı, oturum/kayıt yardımcıları, FastAPI router fabrikası ve kayan pencere rate limiter içerir.
 
 ---
 

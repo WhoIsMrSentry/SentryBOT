@@ -19,8 +19,8 @@ digraph common_module {
             color = "#0284c7";
             fontcolor = "#7dd3fc";
 
-            cfg_loader [label="config_loader\n- load_agent_config()\n- deep_merge()\n- resolve_agent_cfg_path()", fillcolor="#1e3a5f", fontcolor="#f8fafc", color="#38bdf8"];
-            model_policy [label="model_policy\n- ModelPolicy (Singleton)\n- get_provider_config()\n- set_required_model()", fillcolor="#1e3a5f", fontcolor="#f8fafc", color="#38bdf8"];
+            cfg_loader [label="config_loader\n- load_agent_config()\n- load_ai_provider_config()\n- deep_merge()", fillcolor="#1e3a5f", fontcolor="#f8fafc", color="#38bdf8"];
+            model_policy [label="model_policy\n- ModelPolicy (Thread-safe)\n- get_provider_config()\n- set_strict_single_model()", fillcolor="#1e3a5f", fontcolor="#f8fafc", color="#38bdf8"];
             ollama_url [label="ollama_url\n- normalize_ollama_url()\n- is_bad_ollama_url()\n- default_ollama_base_url()", fillcolor="#1e3a5f", fontcolor="#f8fafc", color="#38bdf8"];
         }
 
@@ -30,9 +30,9 @@ digraph common_module {
             color = "#0d9488";
             fontcolor = "#5eead4";
 
-            event_bus [label="event_bus\n- EventBus (Thread-safe pub/sub)\n- publish_event()\n- subscribe(channel)\n- iter(limit)", fillcolor="#134e4a", fontcolor="#f8fafc", color="#2dd4bf"];
-            http_client [label="http_client\n- SafeHttpClient\n- Circuit Breaker\n- Retry & Timeout Pools", fillcolor="#134e4a", fontcolor="#f8fafc", color="#2dd4bf"];
-            router_factory [label="router_factory\n- create_service_router()\n- CORS, Healthz, Metrics\n- Error Formatter", fillcolor="#134e4a", fontcolor="#f8fafc", color="#2dd4bf"];
+            event_bus [label="robot_event_bus\n- RobotEventBus\n- Event publishing\n- Subscribe channels", fillcolor="#134e4a", fontcolor="#f8fafc", color="#2dd4bf"];
+            http_client [label="http_client\n- AsyncHTTPClient / SyncHTTPClient\n- Segment Circuit Breaker\n- RetryPolicy", fillcolor="#134e4a", fontcolor="#f8fafc", color="#2dd4bf"];
+            router_factory [label="router_factory\n- RouterFactory / create_router()\n- RateLimitMiddleware (429)\n- Healthz & CRUD Builders", fillcolor="#134e4a", fontcolor="#f8fafc", color="#2dd4bf"];
         }
 
         subgraph cluster_lifecycle_state {
@@ -41,9 +41,9 @@ digraph common_module {
             color = "#d97706";
             fontcolor = "#fcd34d";
 
-            service_base [label="service_base\n- BaseService (Lifecycle)\n- start() / stop()\n- health()", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
-            persistence [label="persistence\n- StatePersistence\n- SQLite/JSON Adapters\n- Atomic File Writes", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
-            health_check [label="health\n- SubsystemHealthCheck\n- Liveness & Readiness", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            service_base [label="service_base\n- ServiceBase / AsyncServiceBase\n- BackgroundTaskMixin\n- start() / stop()", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            persistence [label="persistence\n- SQLiteBackend (GLOB)\n- JSONBackend (Atomic)\n- MemoryBackend", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
+            health_check [label="health\n- HealthChecker.run()\n- HealthResponse (.ok)\n- System Probe Helpers", fillcolor="#78350f", fontcolor="#f8fafc", color="#f59e0b"];
         }
 
         subgraph cluster_domain_helpers {
@@ -54,7 +54,7 @@ digraph common_module {
 
             emotion_vocab [label="emotion_vocab\n- Affective Vocabulary Map\n- Joy, Sorrow, Anger, Fear...", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
             latency_trace [label="latency_trace\n- Pipeline Latency Profiler\n- TTFT & Actuation Ticks", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
-            target_runtime [label="runtime_target\n- Pi 5 vs Dev Environment\n- Hardware Capabilities", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
+            target_runtime [label="runtime_target\n- detect_runtime_target()\n- read_hardware_pressure()\n- status()", fillcolor="#4c1d95", fontcolor="#f8fafc", color="#a78bfa"];
         }
     }
 

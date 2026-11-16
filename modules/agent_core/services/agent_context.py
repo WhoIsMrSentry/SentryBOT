@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from modules.common.ollama_url import normalize_ollama_url
-
-
-
+from contextlib import nullcontext
 import logging
+import threading
 from typing import Any, Dict, List, Optional
+
+from modules.common.ollama_url import normalize_ollama_url
 
 from .action_arbiter import ActionArbiter
 from .agent_handlers import register_default_action_handlers
@@ -32,9 +32,34 @@ except ImportError:
     ollama = None
 
 try:
-    from modules.ai_provider.services.clients import create_llm_client
+    from modules.ai_provider.services.clients import _INFERENCE_SCHEDULER, create_llm_client
 except Exception:
     create_llm_client = None
+    _INFERENCE_SCHEDULER = None
+
+
+class _PriorityOllamaAdapter:
+    """Wrap stock ollama.Client with PriorityInferenceLock while filtering ``priority``."""
+
+    supports_priority = True
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    def chat(self, *, priority: int = 0, **kwargs: Any) -> Any:
+        guard = (
+            _INFERENCE_SCHEDULER.acquire(priority=int(priority))
+            if _INFERENCE_SCHEDULER is not None
+            else nullcontext()
+        )
+        with guard:
+            return self._inner.chat(**kwargs)
+
+    def list(self) -> Any:
+        return self._inner.list()
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._inner, item)
 
 
 class AgentContextMixin(AgentMemorySyncMixin):
@@ -141,11 +166,13 @@ class AgentContextMixin(AgentMemorySyncMixin):
         if ollama:
             try:
                 self.ollama_base_url = normalize_ollama_url(getattr(self, "ollama_base_url", None))
-                self.ollama_client = ollama.Client(host=self.ollama_base_url, timeout=self.request_timeout)
+                raw_client = ollama.Client(host=self.ollama_base_url, timeout=self.request_timeout)
+                self.ollama_client = _PriorityOllamaAdapter(raw_client)
             except Exception as exc:
                 logger.warning("Ollama client init failed for host %s: %s", self.ollama_base_url, exc)
                 try:
-                    self.ollama_client = ollama.Client(host=self.ollama_base_url)
+                    raw_client = ollama.Client(host=self.ollama_base_url)
+                    self.ollama_client = _PriorityOllamaAdapter(raw_client)
                 except Exception:
                     self.ollama_client = None
         if self.llm_provider != "ollama" and create_llm_client:
@@ -188,18 +215,35 @@ class AgentContextMixin(AgentMemorySyncMixin):
             expression_arbiter=self.expression_arbiter, tool_execution_arbiter=self.tool_execution_arbiter,
         )
         self.tool_registry = ToolRegistry(
-            client=self.autonomy_client, memory=self.memory, slam=self.slam,
-            world_state=self.world_state, safety_filter=self.safety_filter,
-            tool_execution_arbiter=self.tool_execution_arbiter, vision_arbiter=self.vision_arbiter,
+            client=self.autonomy_client,
+            memory=self.memory,
+            slam=self.slam,
+            world_state=self.world_state,
+            safety_filter=self.safety_filter,
+            tool_execution_arbiter=self.tool_execution_arbiter,
+            vision_arbiter=self.vision_arbiter,
             vlm_ask_timeout_s=float((config.get("tool_execution", {}) or {}).get("timeout_s", 22.0)),
             gateway_base_url=self._gateway_base_url,
+            action_arbiter=self.action_arbiter,
+            expression_arbiter=self.expression_arbiter,
+            mcp_client=getattr(self, "mcp_client", None),
         )
         runtime_cfg = config.get("agent_runtime", {}) if isinstance(config.get("agent_runtime"), dict) else {}
-        from .runtime import CapabilityIndex, DecisionTraceStore, FailureClassifier, ProgressTracker, RecoveryManager
+        from .runtime import CapabilityIndex, DecisionTraceStore, FailureClassifier, GoalStore, ProgressTracker, RecoveryManager
         from .runtime.native_tool_recovery import NativeToolRecovery
 
         self.decision_traces = DecisionTraceStore(
-            maxlen=int(runtime_cfg.get("decision_trace_maxlen", 64))
+            maxlen=int(runtime_cfg.get("decision_trace_maxlen", 64)),
+            log_path=runtime_cfg.get("decision_trace_log_path") or None,
+            max_bytes=int(runtime_cfg.get("decision_trace_log_max_bytes", 262144)),
+            backup_count=int(runtime_cfg.get("decision_trace_log_backups", 2)),
+        )
+        gp_cfg = runtime_cfg.get("goal_persistence") if isinstance(runtime_cfg.get("goal_persistence"), dict) else {}
+        self.goal_store = GoalStore(
+            enabled=bool(gp_cfg.get("enabled", True)),
+            backend=str(gp_cfg.get("backend", "memory")),
+            ttl_s=float(gp_cfg.get("ttl_s", 600.0)),
+            db_path=gp_cfg.get("db_path") or None,
         )
         self.capability_index = CapabilityIndex.from_robot_registry()
         self.failure_classifier = FailureClassifier()
@@ -265,6 +309,7 @@ class AgentContextMixin(AgentMemorySyncMixin):
     def _init_chat_history(self, agent_cfg: Dict[str, Any]) -> None:
         self.chat_history = []
         self.max_history = agent_cfg.get("max_history", 10)
+        self._history_lock = threading.RLock()
 
     def _init_tri_layer(self, config: Dict[str, Any], agent_cfg: Dict[str, Any]) -> None:
         tri_cfg = config.get("tri_layer", {}) if isinstance(config.get("tri_layer", {}), dict) else {}
@@ -305,7 +350,7 @@ class AgentContextMixin(AgentMemorySyncMixin):
             )
         )
         self.persona_num_predict = self._safe_int(persona_cfg.get("num_predict", 160), fallback=160, minimum=10)
-        self.persona_stream_enabled = bool(persona_cfg.get("stream_enabled", False))
+        self.persona_stream_enabled = bool(persona_cfg.get("stream_enabled", persona_cfg.get("stream", False)))
         self.chat_num_predict = self._safe_int(agent_cfg.get("chat_num_predict", 120), fallback=120, minimum=10)
 
     def _vision_input_available(self) -> bool:
@@ -355,7 +400,8 @@ class AgentContextMixin(AgentMemorySyncMixin):
         if rag_note:
             base_system = f"{base_system}\n\n{rag_note}"
         messages = [{"role": "system", "content": base_system}]
-        messages.extend(self.chat_history)
+        get_snap = getattr(self, "_get_history_snapshot", None)
+        messages.extend(get_snap() if callable(get_snap) else list(self.chat_history))
         messages.append({"role": "user", "content": user_prompt})
         return messages
 
@@ -417,9 +463,17 @@ class AgentContextMixin(AgentMemorySyncMixin):
             pass
         return None
 
-    def _check_provider_availability(self) -> None:
+    def _check_provider_availability(self) -> Optional[Dict[str, Any]]:
         if self.llm_provider != "ollama" and self.provider_client is None:
-            raise RuntimeError(f"Provider {self.llm_provider} is not available")
+            return {
+                "ok": False,
+                "error": "provider_unavailable",
+                "text": f"Provider {self.llm_provider} is not available",
+                "thoughts": f"Provider {self.llm_provider} is not available.",
+                "actions": [],
+                "plan": [],
+            }
+        return None
 
     def create_agent_runtime(self, **budget_overrides: Any):
         """Build a typed AgentRuntime bound to this orchestrator's ToolRegistry.

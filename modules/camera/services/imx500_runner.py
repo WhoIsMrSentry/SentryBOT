@@ -70,82 +70,92 @@ class Imx500Runner:
 
     @property
     def running(self) -> bool:
-        return bool(self._running)
+        with self._lock:
+            return bool(self._running)
 
     @property
     def camera_num(self) -> int:
-        if self._device is None:
-            return 0
-        return int(getattr(self._device, "camera_num", 0))
+        with self._lock:
+            if self._device is None:
+                return 0
+            return int(getattr(self._device, "camera_num", 0))
 
     @property
     def inference_rate(self) -> Optional[int]:
         if self.cfg.inference_rate is not None:
             return int(self.cfg.inference_rate)
-        value = getattr(self._intrinsics, "inference_rate", None)
+        with self._lock:
+            value = getattr(self._intrinsics, "inference_rate", None)
         return int(value) if value is not None else None
 
     def prepare(self) -> bool:
-        if not self.available:
-            return False
-        if self._device is not None:
+        with self._lock:
+            if not self.available:
+                return False
+            if self._device is not None:
+                return True
+            if IMX500 is None:
+                return False
+            self._device = IMX500(self.cfg.model_path)
+            self._intrinsics = getattr(self._device, "network_intrinsics", None)
+            if self._intrinsics is None and NetworkIntrinsics is not None:
+                self._intrinsics = NetworkIntrinsics()
+                self._intrinsics.task = "object detection"
+            if self._intrinsics is not None:
+                if str(getattr(self._intrinsics, "task", "object detection")) != "object detection":
+                    raise RuntimeError("IMX500 model is not an object detection model")
+                labels = self._load_labels()
+                if labels:
+                    self._intrinsics.labels = labels
+                if self.cfg.inference_rate is not None:
+                    self._intrinsics.inference_rate = int(self.cfg.inference_rate)
+                if hasattr(self._intrinsics, "preserve_aspect_ratio"):
+                    self._intrinsics.preserve_aspect_ratio = bool(self.cfg.preserve_aspect_ratio)
+                if hasattr(self._intrinsics, "update_with_defaults"):
+                    self._intrinsics.update_with_defaults()
+            if bool(self.cfg.preserve_aspect_ratio) and hasattr(self._device, "set_auto_aspect_ratio"):
+                self._device.set_auto_aspect_ratio()
+            if hasattr(self._device, "show_network_fw_progress_bar"):
+                self._device.show_network_fw_progress_bar()
             return True
-        if IMX500 is None:
-            return False
-        self._device = IMX500(self.cfg.model_path)
-        self._intrinsics = getattr(self._device, "network_intrinsics", None)
-        if self._intrinsics is None and NetworkIntrinsics is not None:
-            self._intrinsics = NetworkIntrinsics()
-            self._intrinsics.task = "object detection"
-        if self._intrinsics is not None:
-            if str(getattr(self._intrinsics, "task", "object detection")) != "object detection":
-                raise RuntimeError("IMX500 model is not an object detection model")
-            labels = self._load_labels()
-            if labels:
-                self._intrinsics.labels = labels
-            if self.cfg.inference_rate is not None:
-                self._intrinsics.inference_rate = int(self.cfg.inference_rate)
-            if hasattr(self._intrinsics, "preserve_aspect_ratio"):
-                self._intrinsics.preserve_aspect_ratio = bool(self.cfg.preserve_aspect_ratio)
-            if hasattr(self._intrinsics, "update_with_defaults"):
-                self._intrinsics.update_with_defaults()
-        if bool(self.cfg.preserve_aspect_ratio) and hasattr(self._device, "set_auto_aspect_ratio"):
-            self._device.set_auto_aspect_ratio()
-        if hasattr(self._device, "show_network_fw_progress_bar"):
-            self._device.show_network_fw_progress_bar()
-        return True
 
     def attach_camera(self, picam: Any, metadata_source: Optional[Any] = None) -> None:
-        self._picam = picam
-        self._metadata_source = metadata_source
+        with self._lock:
+            self._picam = picam
+            self._metadata_source = metadata_source
 
     def start(self) -> bool:
-        if self.running:
-            return True
-        if not self.prepare() or self._picam is None:
-            return False
-        self._stop.clear()
-        if self._metadata_source is not None and hasattr(self._metadata_source, "subscribe_metadata"):
-            self._unsubscribe = self._metadata_source.subscribe_metadata(self._on_metadata)
+        with self._lock:
+            if self._running:
+                return True
+            if not self.prepare() or self._picam is None:
+                return False
+            self._stop.clear()
+            if self._metadata_source is not None and hasattr(self._metadata_source, "subscribe_metadata"):
+                self._unsubscribe = self._metadata_source.subscribe_metadata(self._on_metadata)
+                self._running = True
+                return True
+            self._thread = threading.Thread(target=self._metadata_loop, name="imx500-inference", daemon=True)
+            self._thread.start()
             self._running = True
             return True
-        self._thread = threading.Thread(target=self._metadata_loop, name="imx500-inference", daemon=True)
-        self._thread.start()
-        self._running = True
-        return True
 
     def stop(self) -> None:
         self._stop.set()
-        if self._unsubscribe is not None:
+        with self._lock:
+            unsub = self._unsubscribe
+            self._unsubscribe = None
+            thread = self._thread
+            self._thread = None
+        if unsub is not None:
             try:
-                self._unsubscribe()
+                unsub()
             except Exception:
                 pass
-        self._unsubscribe = None
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-        self._thread = None
-        self._running = False
+        if thread and thread.is_alive():
+            thread.join(timeout=2.0)
+        with self._lock:
+            self._running = False
 
     def select_target(self, label: str = "person", strategy: str = "largest", track_id: Optional[int] = None) -> dict[str, Any]:
         return self.tracker.select(label, strategy, track_id)
@@ -159,19 +169,27 @@ class Imx500Runner:
         return {"ok": True, "count": len(tracks), "tracks": tracks, "selection": self.tracker.selection()}
 
     def status(self) -> dict[str, Any]:
+        with self._lock:
+            frame_id = self._frame_id
+            last_pub = self._last_publish_ts
+            last_err = self._last_error
+            running = bool(self._running)
+            cam_num = self.camera_num
+            inf_rate = self.inference_rate
+            reason = self._status_reason()
         return {
             "enabled": bool(self.cfg.enabled),
             "available": self.available,
-            "running": self.running,
-            "reason": self._status_reason(),
+            "running": running,
+            "reason": reason,
             "model_path": self.cfg.model_path,
             "model_exists": os.path.exists(self.cfg.model_path),
             "confidence": self.cfg.confidence,
-            "inference_rate": self.inference_rate,
-            "camera_num": self.camera_num,
-            "frame_id": self._frame_id,
-            "last_publish_age_s": max(0.0, time.time() - self._last_publish_ts) if self._last_publish_ts else None,
-            "last_error": self._last_error,
+            "inference_rate": inf_rate,
+            "camera_num": cam_num,
+            "frame_id": frame_id,
+            "last_publish_age_s": max(0.0, time.time() - last_pub) if last_pub else None,
+            "last_error": last_err,
             "import_error": IMX500_IMPORT_ERROR,
             "tracking": self.target(),
         }
@@ -216,22 +234,27 @@ class Imx500Runner:
 
     def _on_metadata(self, metadata: dict[str, Any]) -> None:
         now = time.time()
-        if now - self._last_publish_ts < max(0.01, float(self.cfg.publish_interval_s)):
-            return
+        with self._lock:
+            if now - self._last_publish_ts < max(0.01, float(self.cfg.publish_interval_s)):
+                return
         try:
             snapshot = self._parse(metadata)
             if snapshot is not None:
+                with self._lock:
+                    self._last_publish_ts = now
+                    self._last_error = ""
                 self.bus.publish(snapshot)
-                self._last_publish_ts = now
-                self._last_error = ""
         except Exception as exc:
-            self._last_error = str(exc)
+            with self._lock:
+                self._last_error = str(exc)
             logger.debug("IMX500 inference failed: %s", exc)
 
     def _parse(self, metadata: dict[str, Any]) -> Optional[OnSensorSnapshot]:
-        if self._device is None:
+        with self._lock:
+            device = self._device
+        if device is None:
             return None
-        outputs = self._device.get_outputs(metadata, add_batch=True)
+        outputs = device.get_outputs(metadata, add_batch=True)
         if outputs is None:
             return None
         boxes, scores, classes = self._unpack(outputs)
@@ -255,10 +278,12 @@ class Imx500Runner:
             )
         tracked = self.tracker.update(detections)
         target = self.tracker.target()
-        self._frame_id += 1
+        with self._lock:
+            self._frame_id += 1
+            frame_id = self._frame_id
         return OnSensorSnapshot(
             ts=time.time(),
-            frame_id=self._frame_id,
+            frame_id=frame_id,
             width=width,
             height=height,
             detections=tracked,
@@ -268,13 +293,25 @@ class Imx500Runner:
         )
 
     def _unpack(self, outputs: Any) -> Tuple[Any, Any, Any]:
+        if outputs is None:
+            return [], [], []
+        try:
+            n_out = len(outputs)
+        except TypeError:
+            return [], [], []
+        if n_out == 0:
+            return [], [], []
+
         if str(getattr(self._intrinsics, "postprocess", "")) == "nanodet" and postprocess_nanodet_detection is not None:
-            boxes, scores, classes = postprocess_nanodet_detection(
+            dets = postprocess_nanodet_detection(
                 outputs=outputs[0],
                 conf=float(self.cfg.confidence),
                 iou_thres=float(self.cfg.iou),
                 max_out_dets=int(self.cfg.max_detections),
-            )[0]
+            )
+            if dets is None or len(dets) == 0:
+                return [], [], []
+            boxes, scores, classes = dets[0]
             try:
                 from picamera2.devices.imx500.postprocess import scale_boxes  # type: ignore
 
@@ -283,13 +320,20 @@ class Imx500Runner:
             except Exception:
                 pass
             return boxes, scores, classes
-        
+
         if isinstance(outputs[0], dict):
             return outputs[0].get("boxes", []), outputs[0].get("scores", []), outputs[0].get("classes", [])
-        return outputs[0][0], outputs[1][0], outputs[2][0]
+        if n_out < 3:
+            return [], [], []
+        b0, s0, c0 = outputs[0], outputs[1], outputs[2]
+        if len(b0) == 0 or len(s0) == 0 or len(c0) == 0:
+            return [], [], []
+        return b0[0], s0[0], c0[0]
 
     def _normalise_box(self, box: Any, metadata: dict[str, Any], width: int, height: int) -> Tuple[float, float, float, float]:
         values = [float(value) for value in box]
+        if len(values) < 4:
+            return (0.0, 0.0, 0.0, 0.0)
         if bool(getattr(self._intrinsics, "bbox_normalization", False)):
             _, input_h = self._device.get_input_size()
             values = [value / float(input_h) for value in values]

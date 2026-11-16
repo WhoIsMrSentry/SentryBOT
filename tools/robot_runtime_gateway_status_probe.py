@@ -5,6 +5,7 @@ import glob
 import json
 import os
 import platform
+import shlex
 import socket
 import subprocess
 import sys
@@ -16,14 +17,30 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path.cwd()
-OUT_MD = ROOT / "ROBOT_RUNTIME_GATEWAY_STATUS_REPORT.md"
-OUT_JSON = ROOT / "robot_runtime_gateway_status_report.json"
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tools._audit_common import (  # noqa: E402
+    VOICE_CONFIG_FILES,
+    read_text,
+    rel as _common_rel,
+    resolve_output_paths,
+    safe_json,
+    safe_yaml,
+    summarize,
+    table,
+    write_audit_reports,
+)
+
+MD_NAME = "ROBOT_RUNTIME_GATEWAY_STATUS_REPORT.md"
+JSON_NAME = "robot_runtime_gateway_status_report.json"
 
 SAFE_GET_ENDPOINTS = [
     "/healthz",
     "/status",
     "/health",
+    "/arduino/healthz",
     "/camera/status",
     "/camera/healthz",
     "/camera/onsensor/latest",
@@ -40,6 +57,7 @@ SAFE_GET_ENDPOINTS = [
     "/speech/status",
     "/speak/status",
     "/wakeword/status",
+    "/wakeword/healthz",
 ]
 
 FORBIDDEN_ENDPOINTS = [
@@ -61,9 +79,7 @@ CONFIG_FILES = [
     "config/robot_arm_policy.json",
     "modules/camera/config/config.yml",
     "modules/vlm_bridge/config/config.yml",
-    "modules/speak/config/config.yml",
-    "modules/speech/config/config.yml",
-    "modules/wakeword/config/config.yml",
+    *VOICE_CONFIG_FILES,
     "companion_roadmap_checkpoint.json",
     "robot_capability_source_contract.json",
 ]
@@ -79,44 +95,8 @@ RUNTIME_FILES = [
 ]
 
 
-def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
-
-
-def safe_json(path: Path) -> Any:
-    try:
-        return json.loads(read_text(path))
-    except Exception as exc:
-        return {"_error": str(exc)}
-
-
-def safe_yaml(path: Path) -> Any:
-    try:
-        import yaml  # type: ignore
-    except Exception as exc:
-        return {"_yaml_available": False, "_error": str(exc)}
-    try:
-        return yaml.safe_load(read_text(path))
-    except Exception as exc:
-        return {"_yaml_available": True, "_error": str(exc)}
-
-
-def summarize(value: Any, depth: int = 0) -> Any:
-    if depth > 2:
-        return "..."
-    if isinstance(value, dict):
-        out: dict[str, Any] = {}
-        for key, item in list(value.items())[:60]:
-            if isinstance(item, dict):
-                out[str(key)] = {"type": "object", "keys": list(item.keys())[:24], "count": len(item)}
-            elif isinstance(item, list):
-                out[str(key)] = {"type": "list", "count": len(item)}
-            else:
-                out[str(key)] = item
-        return out
-    if isinstance(value, list):
-        return {"type": "list", "count": len(value), "sample": value[:5]}
-    return value
+def rel(path: Path) -> str:
+    return _common_rel(path, ROOT)
 
 
 def detect_platform() -> dict[str, Any]:
@@ -284,20 +264,15 @@ def file_summary() -> list[dict[str, Any]]:
     return rows
 
 
-def table(headers: list[str], rows: list[list[Any]]) -> str:
-    out = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
-    for row in rows:
-        out.append("| " + " | ".join(str(x).replace("\n", "<br>")[:500] for x in row) + " |")
-    return "\n".join(out)
-
-
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Robot-first SentryBOT gateway status probe. Status-only; no camera/hardware start.")
     parser.add_argument("--gateway-base-url", default="http://127.0.0.1:8080")
     parser.add_argument("--timeout", type=float, default=1.5)
     parser.add_argument("--start-gateway-cmd", default="", help="Optional explicit command. Not used unless supplied.")
     parser.add_argument("--start-wait-s", type=float, default=8.0)
-    args = parser.parse_args()
+    parser.add_argument("--output-dir", default=None, help="Directory where reports are written (default: <repo_root>/reports).")
+    args = parser.parse_args(argv)
+    out_md, out_json = resolve_output_paths(ROOT, args.output_dir, MD_NAME, JSON_NAME)
 
     platform_info = detect_platform()
     devices = linux_devices()
@@ -316,10 +291,11 @@ def main() -> int:
         env.setdefault("SENTRYBOT_ROBOT_STATUS_PROBE", "1")
         started_command = args.start_gateway_cmd
         try:
+            cmd_parts = shlex.split(args.start_gateway_cmd, posix=(os.name != "nt"))
             started_process = subprocess.Popen(
-                args.start_gateway_cmd,
+                cmd_parts,
                 cwd=str(ROOT),
-                shell=True,
+                shell=False,
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -468,11 +444,10 @@ def main() -> int:
         md.append(f"- {step}")
     md.append("")
 
-    OUT_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    OUT_MD.write_text("\n".join(md), encoding="utf-8")
+    write_audit_reports(out_md, out_json, md, data)
 
-    print("[WRITE] ROBOT_RUNTIME_GATEWAY_STATUS_REPORT.md")
-    print("[WRITE] robot_runtime_gateway_status_report.json")
+    print(f"[WRITE] {rel(out_md) if out_md.is_relative_to(ROOT) else out_md}")
+    print(f"[WRITE] {rel(out_json) if out_json.is_relative_to(ROOT) else out_json}")
     print(f"[SUMMARY] gateway_reachable={gateway_reachable}")
     print(f"[SUMMARY] blockers={len(blockers)}")
     print(f"[SUMMARY] warnings={len(warnings)}")

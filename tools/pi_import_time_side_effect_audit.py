@@ -3,7 +3,6 @@ from __future__ import annotations
 import contextlib
 import importlib
 import io
-import json
 import os
 import py_compile
 import sys
@@ -13,13 +12,22 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path.cwd()
-ROOT_STR = str(ROOT)
-if ROOT_STR not in sys.path:
-    sys.path.insert(0, ROOT_STR)
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-OUT_MD = ROOT / "PI_IMPORT_TIME_SIDE_EFFECT_AUDIT.md"
-OUT_JSON = ROOT / "pi_import_time_side_effect_audit.json"
+from tools._audit_common import (  # noqa: E402
+    iter_repo_files,
+    parse_output_dir_arg,
+    read_text,
+    rel as _common_rel,
+    resolve_output_paths,
+    table,
+    write_audit_reports,
+)
+
+MD_NAME = "PI_IMPORT_TIME_SIDE_EFFECT_AUDIT.md"
+JSON_NAME = "pi_import_time_side_effect_audit.json"
 
 SAFE_ENV = {
     "SENTRYBOT_DISABLE_AUTOSTART": "true",
@@ -60,24 +68,11 @@ SEARCH_TERMS = [
 
 
 def rel(path: Path) -> str:
-    return str(path.relative_to(ROOT)).replace("\\", "/")
-
-
-def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    return _common_rel(path, ROOT)
 
 
 def iter_runtime_py() -> list[Path]:
-    roots = [ROOT / "modules", ROOT / "apps", ROOT / "services"]
-    out = []
-    for root in roots:
-        if root.exists():
-            out.extend(
-                p for p in root.rglob("*.py")
-                if ".venv" not in p.parts
-                and "__pycache__" not in p.parts
-            )
-    return sorted(set(out))
+    return iter_repo_files(ROOT, ["modules", "apps", "services"], suffixes={".py"})
 
 
 def compile_runtime() -> list[dict[str, Any]]:
@@ -166,14 +161,9 @@ def candidate_files() -> list[dict[str, Any]]:
     return records
 
 
-def table(headers: list[str], rows: list[list[Any]]) -> str:
-    out = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
-    for row in rows:
-        out.append("| " + " | ".join(str(x).replace("\n", "<br>")[:900] for x in row) + " |")
-    return "\n".join(out)
-
-
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    output_dir = parse_output_dir_arg(argv, description="Pi import-time side-effect audit")
+    out_md, out_json = resolve_output_paths(ROOT, output_dir, MD_NAME, JSON_NAME)
     compile_failures = compile_runtime()
     probes = [import_probe(name) for name in CRITICAL_MODULES]
     noisy = [p for p in probes if p.get("stdout_len", 0) > 0 or p.get("stderr_len", 0) > 0]
@@ -285,11 +275,10 @@ def main() -> int:
         md.append(f"- {step}")
     md.append("")
 
-    OUT_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-    OUT_MD.write_text("\n".join(md), encoding="utf-8")
+    write_audit_reports(out_md, out_json, md, data)
 
-    print("[WRITE] PI_IMPORT_TIME_SIDE_EFFECT_AUDIT.md")
-    print("[WRITE] pi_import_time_side_effect_audit.json")
+    print(f"[WRITE] {rel(out_md) if out_md.is_relative_to(ROOT) else out_md}")
+    print(f"[WRITE] {rel(out_json) if out_json.is_relative_to(ROOT) else out_json}")
     for k, v in summary.items():
         print(f"[SUMMARY] {k}={v}")
     print("[DONE] Pi import-time side-effect audit complete")

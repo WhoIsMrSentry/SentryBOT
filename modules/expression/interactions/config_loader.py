@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, Optional
 
@@ -8,11 +9,13 @@ try:
 except Exception:  # pragma: no cover
     yaml = None
 
+logger = logging.getLogger("interactions.config_loader")
+
 
 def load_config(config_path: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Load YAML config for interactions module with sane defaults.
 
-    Priority: explicit path > modules/interactions/config/config.yml > defaults
+    Priority: explicit path > modules/expression/interactions/config/config.yml > defaults
     """
     base = {
         "server": {"host": "0.0.0.0", "port": 8095},
@@ -21,7 +24,8 @@ def load_config(config_path: Optional[str] = None, overrides: Optional[Dict[str,
             "num_leds": 23,
             "segments": [
                 {"name": "jewel", "start": 0, "count": 7, "reverse": False},
-                {"name": "stick", "start": 7, "count": 16, "reverse": False},
+                {"name": "stick_left", "start": 7, "count": 8, "reverse": False},
+                {"name": "stick_right", "start": 15, "count": 8, "reverse": False},
             ],
         },
         "thresholds": {
@@ -44,10 +48,13 @@ def load_config(config_path: Optional[str] = None, overrides: Optional[Dict[str,
 
     data: Dict[str, Any] = {}
     if p and os.path.exists(p) and yaml is not None:
-        with open(p, "r", encoding="utf-8") as f:
-            loaded = yaml.safe_load(f) or {}
-            if isinstance(loaded, dict):
-                data = loaded
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                loaded = yaml.safe_load(f) or {}
+                if isinstance(loaded, dict):
+                    data = loaded
+        except Exception as exc:
+            logger.warning("Failed to parse interactions config '%s': %s", p, exc)
 
     # merge shallowly
     def _merge(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:

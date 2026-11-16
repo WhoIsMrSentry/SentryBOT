@@ -67,9 +67,6 @@ class OwnerGuardMixin:
             return True
         return False
 
-    def _handle_owner_commands(self, text: str, speaker: str | None) -> bool:
-        return False
-
     def _owner_guard_enabled(self) -> bool:
         return bool(self.owner_cfg.get("enabled") and self.owner_cfg.get("require_presence", True))
 
@@ -171,7 +168,11 @@ class OwnerGuardMixin:
                 return True
         # Check person memory / social database for owner relationship
         try:
-            record = self.client.get_person_memory(name)
+            record = (
+                self._get_cached_person_memory(name)
+                if hasattr(self, "_get_cached_person_memory")
+                else self.client.get_person_memory(name)
+            )
             if record:
                 p_data = record.get("record") or {}
                 rel = str(p_data.get("relationship", "")).lower()
@@ -274,7 +275,7 @@ class OwnerGuardMixin:
         return cfg if isinstance(cfg, dict) else {}
 
     def _social_db(self):
-        return getattr(self.mood, "_social_db", None)
+        return getattr(self, "social_db", None) or getattr(self.mood, "_social_db", None)
 
     def _sync_owner_session(self, owner_present: bool) -> None:
         cfg = self._owner_sessions_cfg()

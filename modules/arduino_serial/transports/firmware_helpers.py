@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 
@@ -19,10 +21,30 @@ from ..contract import (
     build_sound_play_cmd,
     build_stepper_cfg_cmd,
     build_stepper_cmd,
+    build_telemetry_start_cmd,
     build_track_cmd,
     build_tune_cmd,
     build_zero_set_cmd,
 )
+
+logger = logging.getLogger("arduino_serial.firmware")
+
+
+def _normalize_sound_out(value: Optional[str], *, required: bool = False) -> Optional[str]:
+    if value is None:
+        if required:
+            raise ValueError("sound output mode must be loud or quiet")
+        return None
+    normalized = str(value).strip().lower()
+    if normalized not in ("loud", "quiet"):
+        label = "mode" if required else "out"
+        raise ValueError(f"{label} must be loud or quiet")
+    return normalized
+
+
+def _parse_version_tuple(raw: Any) -> tuple[int, ...]:
+    nums = [int(x) for x in re.findall(r"\d+", str(raw or ""))]
+    return tuple(nums)
 
 
 class FirmwareHelpersMixin:
@@ -31,20 +53,58 @@ class FirmwareHelpersMixin:
     CUTE_SOUND_CATALOG: Dict[str, Dict[str, Any]]
     EMOTION_TO_CUTE: Dict[str, str]
     _last_hb: float
+    cfg: Dict[str, Any]
+    _firmware_info: Dict[str, Any]
     request: Callable[..., Any]
     send: Callable[..., Any]
 
+    def verify_firmware_hello(self, resp: Dict[str, Any]) -> Dict[str, Any]:
+        """Record reported firmware version/capabilities and check optional compatibility requirements."""
+        cfg = getattr(self, "cfg", {}) or {}
+        fw_ver = str(resp.get("fw_ver") or resp.get("version") or "").strip()
+        raw_caps = resp.get("capabilities")
+        caps = [str(c) for c in raw_caps] if isinstance(raw_caps, list) else []
+        min_ver = str(cfg.get("min_firmware_version") or "").strip()
+        req_caps = [str(c) for c in (cfg.get("required_capabilities") or []) if str(c).strip()]
+
+        compatible = True
+        reasons: list[str] = []
+        if min_ver:
+            parsed_fw = _parse_version_tuple(fw_ver)
+            parsed_min = _parse_version_tuple(min_ver)
+            if not parsed_fw or (parsed_min and parsed_fw < parsed_min):
+                compatible = False
+                reasons.append(f"fw_ver={fw_ver!r} < required={min_ver!r}")
+        if req_caps:
+            missing = [c for c in req_caps if c not in caps]
+            if missing:
+                compatible = False
+                reasons.append(f"missing_capabilities={missing}")
+
+        info = {
+            "checked": True,
+            "fw_ver": fw_ver or None,
+            "capabilities": caps,
+            "compatible": compatible,
+            "issues": reasons,
+        }
+        self._firmware_info = info
+        if not compatible:
+            logger.warning("Arduino firmware compatibility mismatch: %s", "; ".join(reasons))
+        return info
+
     def hello(self) -> Dict[str, Any]:
-        return self.request(build_simple_cmd("hello"))
+        resp = self.request(build_simple_cmd("hello"))
+        if isinstance(resp, dict):
+            self.verify_firmware_hello(resp)
+        return resp
 
     def heartbeat(self) -> None:
         self.send(build_simple_cmd("hb"))
-        self._last_hb = time.time()
+        self._last_hb = time.monotonic()
 
     def telemetry_start(self, interval_ms: int) -> Dict[str, Any]:
-        payload = build_simple_cmd("telemetry_start")
-        payload["interval_ms"] = int(interval_ms)
-        return self.request(payload)
+        return self.request(build_telemetry_start_cmd(interval_ms=interval_ms))
 
     def telemetry_stop(self) -> Dict[str, Any]:
         return self.request(build_simple_cmd("telemetry_stop"))
@@ -145,18 +205,13 @@ class FirmwareHelpersMixin:
     def policy(
         self, pose: Optional[List[int]] = None, steppers: Optional[List[int]] = None
     ) -> Dict[str, Any]:
-        payload = build_policy_cmd()
-        if pose is not None:
-            if len(pose) != SERVO_COUNT:
-                raise ValueError(f"pose must have {SERVO_COUNT} elements")
-            payload["pose"] = pose
-        if steppers is not None:
-            if len(steppers) != 2:
-                raise ValueError("steppers must have 2 elements")
-            payload["steppers"] = steppers
-        return self.request(payload)
+        if pose is not None and len(pose) != SERVO_COUNT:
+            raise ValueError(f"pose must have {SERVO_COUNT} elements")
+        if steppers is not None and len(steppers) != 2:
+            raise ValueError("steppers must have 2 elements")
+        return self.request(build_policy_cmd(pose=pose, steppers=steppers))
 
-    def track(self, **kwargs: Any) -> Dict[str, Any]:
+    def track(self, source: str = "autonomy", **kwargs: Any) -> Dict[str, Any]:
         payload = build_track_cmd(
             head_tilt=kwargs.get("head_tilt"),
             head_pan=kwargs.get("head_pan"),
@@ -164,10 +219,7 @@ class FirmwareHelpersMixin:
             tilt=kwargs.get("tilt"),
             pan=kwargs.get("pan"),
         )
-        payload.update(
-            {k: v for k, v in kwargs.items() if v is not None and k not in payload}
-        )
-        return self.request(payload)
+        return self.request(payload, source=source)
 
     def drive(self, value: int) -> Dict[str, Any]:
         return self.request(build_drive_cmd(value=value))
@@ -209,28 +261,19 @@ class FirmwareHelpersMixin:
         return self.request(build_cute_cmd(name))
 
     def sound_output(self, mode: str) -> Dict[str, Any]:
-        mode_low = str(mode).strip().lower()
-        if mode_low not in ("loud", "quiet"):
-            raise ValueError("mode must be loud or quiet")
+        mode_low = _normalize_sound_out(mode, required=True)
+        assert mode_low is not None
         return self.request(build_sound_output_cmd(mode_low))
 
     def buzzer(
         self, freq: int = 2200, ms: int = 60, out: Optional[str] = None
     ) -> Dict[str, Any]:
-        out_low: Optional[str] = None
-        if out is not None:
-            out_low = str(out).strip().lower()
-            if out_low not in ("loud", "quiet"):
-                raise ValueError("out must be loud or quiet")
+        out_low = _normalize_sound_out(out)
         payload = build_buzzer_cmd(freq=int(freq), ms=int(ms), out=out_low)
         return self.request(payload)
 
     def sound_play(self, name: str, out: Optional[str] = None) -> Dict[str, Any]:
-        out_low: Optional[str] = None
-        if out is not None:
-            out_low = str(out).strip().lower()
-            if out_low not in ("loud", "quiet"):
-                raise ValueError("out must be loud or quiet")
+        out_low = _normalize_sound_out(out)
         payload = build_sound_play_cmd(name=str(name), out=out_low)
         return self.request(payload)
 

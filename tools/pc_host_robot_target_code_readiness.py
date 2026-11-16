@@ -14,15 +14,25 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path.cwd()
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-# Ensure project root is importable when this tool is executed from tools/.
-ROOT_STR = str(ROOT)
-if ROOT_STR not in sys.path:
-    sys.path.insert(0, ROOT_STR)
+from tools._audit_common import (  # noqa: E402
+    VOICE_CONFIG_FILES,
+    parse_output_dir_arg,
+    read_text,
+    rel as _common_rel,
+    resolve_output_paths,
+    safe_json,
+    safe_yaml,
+    summarize,
+    table,
+    write_audit_reports,
+)
 
-OUT_MD = ROOT / "PC_HOST_ROBOT_TARGET_CODE_READINESS.md"
-OUT_JSON = ROOT / "pc_host_robot_target_code_readiness.json"
+MD_NAME = "PC_HOST_ROBOT_TARGET_CODE_READINESS.md"
+JSON_NAME = "pc_host_robot_target_code_readiness.json"
 
 SAFE_ENV = {
     "SENTRYBOT_DISABLE_AUTOSTART": "true",
@@ -36,7 +46,7 @@ ROBOT_CRITICAL_FILES = [
     "modules/autonomy/services/companion_goal_executor.py",
     "modules/autonomy/services/companion_auto_execute_gate.py",
     "modules/autonomy/services/companion_goal_selector.py",
-    "modules/autonomy/services/companion_behavior_loop.py",
+    "modules/autonomy/services/behavior_planner.py",
     "modules/camera/api/router.py",
     "modules/camera/services/capture.py",
     "modules/camera/services/imx500_runner.py",
@@ -44,10 +54,10 @@ ROBOT_CRITICAL_FILES = [
     "modules/vlm_bridge/api/router.py",
     "modules/vlm_bridge/services/processor.py",
     "modules/vlm_bridge/services/llm_client.py",
-    "modules/expression/services/output_bridge.py",
-    "modules/speech/xSpeechService.py",
-    "modules/speak/xSpeakService.py",
-    "modules/wakeword/xWakewordService.py",
+    "modules/expression/semantic/services/output_bridge.py",
+    "modules/voice/speech/xSpeechService.py",
+    "modules/voice/speak/xSpeakService.py",
+    "modules/voice/wakeword/xWakewordService.py",
     "tools/robot_runtime_gateway_status_probe.py",
     "tools/robot_capability_probe.py",
     "tools/robot_hardware_gap_report.py",
@@ -62,7 +72,7 @@ ROBOT_CRITICAL_MODULES = [
     "modules.autonomy.services.companion_goal_executor",
     "modules.autonomy.services.companion_auto_execute_gate",
     "modules.autonomy.services.companion_goal_selector",
-    "modules.autonomy.services.companion_behavior_loop",
+    "modules.autonomy.services.behavior_planner",
     "modules.camera.api.router",
     "modules.camera.services.capture",
     "modules.camera.services.imx500_runner",
@@ -82,9 +92,7 @@ CONFIG_FILES = [
     "config/robot_arm_policy.json",
     "modules/camera/config/config.yml",
     "modules/vlm_bridge/config/config.yml",
-    "modules/speak/config/config.yml",
-    "modules/speech/config/config.yml",
-    "modules/wakeword/config/config.yml",
+    *VOICE_CONFIG_FILES,
 ]
 
 DANGEROUS_CALLS = [
@@ -127,45 +135,7 @@ class Case:
 
 
 def rel(path: Path) -> str:
-    return str(path.relative_to(ROOT)).replace("\\", "/")
-
-
-def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
-
-
-def safe_json(path: Path) -> Any:
-    try:
-        return json.loads(read_text(path))
-    except Exception as exc:
-        return {"_error": str(exc)}
-
-
-def safe_yaml(path: Path) -> Any:
-    try:
-        import yaml  # type: ignore
-    except Exception as exc:
-        return {"_yaml_available": False, "_error": str(exc)}
-    try:
-        return yaml.safe_load(read_text(path))
-    except Exception as exc:
-        return {"_yaml_available": True, "_error": str(exc)}
-
-
-def summarize(value: Any) -> Any:
-    if isinstance(value, dict):
-        out = {}
-        for key, item in list(value.items())[:60]:
-            if isinstance(item, dict):
-                out[str(key)] = {"type": "object", "keys": list(item.keys())[:24], "count": len(item)}
-            elif isinstance(item, list):
-                out[str(key)] = {"type": "list", "count": len(item)}
-            else:
-                out[str(key)] = item
-        return out
-    if isinstance(value, list):
-        return {"type": "list", "count": len(value), "sample": value[:8]}
-    return value
+    return _common_rel(path, ROOT)
 
 
 def parse_file(path: Path) -> dict[str, Any]:
@@ -280,14 +250,9 @@ def platform_probe() -> dict[str, Any]:
     }
 
 
-def table(headers: list[str], rows: list[list[Any]]) -> str:
-    out = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
-    for row in rows:
-        out.append("| " + " | ".join(str(x).replace("\n", "<br>")[:600] for x in row) + " |")
-    return "\n".join(out)
-
-
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    output_dir = parse_output_dir_arg(argv, description="PC-host robot-target code readiness audit")
+    out_md, out_json = resolve_output_paths(ROOT, output_dir, MD_NAME, JSON_NAME)
     os.environ.update(SAFE_ENV)
 
     file_records = [parse_file(ROOT / name) for name in ROBOT_CRITICAL_FILES]
@@ -398,11 +363,10 @@ def main() -> int:
         md.append(f"- {step}")
     md.append("")
 
-    OUT_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-    OUT_MD.write_text("\n".join(md), encoding="utf-8")
+    write_audit_reports(out_md, out_json, md, data)
 
-    print("[WRITE] PC_HOST_ROBOT_TARGET_CODE_READINESS.md")
-    print("[WRITE] pc_host_robot_target_code_readiness.json")
+    print(f"[WRITE] {rel(out_md) if out_md.is_relative_to(ROOT) else out_md}")
+    print(f"[WRITE] {rel(out_json) if out_json.is_relative_to(ROOT) else out_json}")
     for c in cases:
         print(f"[CASE] {c.name}={c.status} {c.reason}")
     print(f"[SUMMARY] overall_ok={data['overall_ok']}")

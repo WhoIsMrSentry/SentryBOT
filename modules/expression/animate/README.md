@@ -22,8 +22,9 @@ YAML tabanlı servo animasyon yürütücüsüdür. `arduino_serial.set_pose()` �
 ## API (Gateway altında `/animate/*`)
 
 - `GET /animate/list` — mevcut animasyon isimleri
-- `POST /animate/run?name=&speed=1.0&loop=false` — thread'de çalıştırır (timeout korumalı)
-- `POST /animate/stop` — çalışan animasyonu durdurur
+- `GET /animate/status` — aktif animasyon adı, adım indeksi (`step_index`), toplam adım, `loop` ve `degraded` durumu
+- `POST /animate/run?name=&speed=1.0&loop=false` — ön-doğrulama sonrası `_run_lock` + kesilebilir `Event.wait` ile çalıştırır (`speed <= 0` veya traversal → 400, eksik dosya → 404)
+- `POST /animate/stop?return_to_rest=false` — çalışan animasyonu anında keser ve opsiyonel olarak `rest_pose` konumuna döndürür
 
 ## Multimodal YAML Şeması
 
@@ -43,9 +44,11 @@ Legacy 8 değerli pozlarda son iki değer head tilt/pan olarak yorumlanır.
 ## Konfigürasyon
 
 `modules/expression/animate/config/config.yml`:
-- `animations_dir` (null → varsayılan `modules/expression/animate/animations`)
-- `default_speed`
-- `run_timeout_s` modül config'inde tanımlı DEĞİLDİR; animasyon YAML'ı başına ayarlanabilir, aksi hâlde router fallback'i **30.0 s** uygular
+- `animations_dir` (`null` → varsayılan `modules/expression/animate/animations`)
+- `default_speed` (varsayılan `1.0`)
+- `interpolate` (`true` iken `duration_ms` servo easing ve adım zamanlamasında kullanılır)
+- `run_timeout_s` (varsayılan `30.0`)
+- `rest_pose`, `idle_breathing_period_s`, `idle_tilt_amp_deg`, `idle_ear_amp_deg` (`ProceduralMotionEngine` boşta nefes/kulak mikro salınımı için)
 
 ## İlişkiler
 

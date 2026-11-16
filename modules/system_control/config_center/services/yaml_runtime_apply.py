@@ -1,13 +1,40 @@
-"""Map saved module YAML onto :class:`RuntimeConfigRegistry` keys (subset)."""
+"""Map saved module YAML onto :class:`RuntimeConfigRegistry` keys."""
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
+from modules.common.config_loader import clear_agent_config_cache
+
 try:
     from .runtime_registry import RuntimeConfigRegistry
 except Exception:  # pragma: no cover - degrade import sandbox
     RuntimeConfigRegistry = None  # type: ignore
+
+# Static table mapping (module) -> tuple of (yaml_flat_key, runtime_key_name)
+_MODULE_KEY_MAPS: Dict[str, Tuple[Tuple[str, str], ...]] = {
+    "camera": (
+        ("imx500.enabled", "imx500.enabled"),
+        ("imx500.confidence", "imx500.confidence"),
+    ),
+    "neopixel": (
+        ("brightness", "brightness"),
+        ("fps", "fps"),
+        ("default_effect", "default_effect"),
+    ),
+    "speak": (
+        ("tts.rate", "tts.rate"),
+        ("tts.volume", "tts.volume"),
+        ("tts.engine", "tts.engine"),
+    ),
+    "autonomy": (
+        ("enabled", "enabled"),
+        ("tick_interval_s", "tick_interval_s"),
+    ),
+    "state_manager": (
+        ("defaults.operational", "operational"),
+    ),
+}
 
 
 def _flatten_dict(obj: Dict[str, Any], prefix: str = "") -> Dict[str, Any]:
@@ -30,44 +57,59 @@ def _try_set(registry: "RuntimeConfigRegistry", module: str, name: str, value: A
     return False, f"{module}.{name} ({outcome.get('error')})"
 
 
+def _apply_key_pairs(
+    registry: "RuntimeConfigRegistry",
+    module: str,
+    pairs: List[Tuple[str, Any]],
+    applied: List[str],
+    failed: List[str],
+) -> None:
+    for key_name, val in pairs:
+        ok, msg = _try_set(registry, module, key_name, val)
+        (applied if ok else failed).append(msg)
+
+
 def apply_module_yaml(registry: Optional["RuntimeConfigRegistry"], module: str, doc: Dict[str, Any]) -> Dict[str, Any]:
-    """Hot-apply a narrow slice of knobs after YAML is written."""
+    """Refresh config cache and hot-apply mapped runtime knobs after YAML is written."""
+    clear_agent_config_cache()
     applied: List[str] = []
     failed: List[str] = []
     if registry is None or RuntimeConfigRegistry is None:
-        return {"ok": True, "applied": [], "failed": [], "requires_runtime_registry": True}
+        return {"ok": True, "applied": [], "failed": [], "cache_cleared": True, "requires_runtime_registry": True}
+
+    doc_dict = doc if isinstance(doc, dict) else {}
+    flat = _flatten_dict(doc_dict)
 
     if module == "vlm_bridge":
-        flat = _flatten_dict(doc if isinstance(doc, dict) else {})
+        pairs: List[Tuple[str, Any]] = []
         for fk, fv in flat.items():
             if fk == "vision.processing_mode":
-                ok, msg = _try_set(registry, "vlm_bridge", "vision.processing_mode", fv)
-                (applied if ok else failed).append(msg)
+                pairs.append(("vision.processing_mode", fv))
             elif fk.startswith("vision.mode_categories."):
                 suffix = fk[len("vision.mode_categories.") :]
-                ok, msg = _try_set(registry, "vlm_bridge", f"mode_categories.{suffix}", fv)
-                (applied if ok else failed).append(msg)
-        modes_block = doc.get("vision", {}).get("modes", {}) if isinstance(doc.get("vision", {}), dict) else {}
+                pairs.append((f"mode_categories.{suffix}", fv))
+        vision_block = doc_dict.get("vision", {})
+        modes_block = vision_block.get("modes", {}) if isinstance(vision_block, dict) else {}
         if isinstance(modes_block, dict):
             for k, v in modes_block.items():
-                ok, msg = _try_set(registry, "vlm_bridge", f"modes.{k}", v)
-                (applied if ok else failed).append(msg)
-        return {"ok": len(failed) == 0, "applied": applied, "failed": failed, "requires_runtime_registry": False}
+                pairs.append((f"modes.{k}", v))
+        _apply_key_pairs(registry, "vlm_bridge", pairs, applied, failed)
+        return {
+            "ok": len(failed) == 0,
+            "applied": applied,
+            "failed": failed,
+            "cache_cleared": True,
+            "requires_runtime_registry": False,
+        }
 
-    flat = _flatten_dict(doc if isinstance(doc, dict) else {})
-    if module == "camera":
-        enabled = flat.get("imx500.enabled")
-        confidence = flat.get("imx500.confidence")
-        if enabled is not None:
-            ok, msg = _try_set(registry, "camera", "imx500.enabled", enabled)
-            (applied if ok else failed).append(msg)
-        if confidence is not None:
-            ok, msg = _try_set(registry, "camera", "imx500.confidence", confidence)
-            (applied if ok else failed).append(msg)
+    key_map = _MODULE_KEY_MAPS.get(module, ())
+    pairs = [(runtime_name, flat[yaml_key]) for yaml_key, runtime_name in key_map if yaml_key in flat]
+    _apply_key_pairs(registry, module, pairs, applied, failed)
 
     return {
         "ok": len(failed) == 0,
         "applied": applied,
         "failed": failed,
+        "cache_cleared": True,
         "requires_runtime_registry": len(applied) == 0,
     }

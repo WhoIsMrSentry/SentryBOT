@@ -70,27 +70,132 @@ class ExpressionArbiter:
         self._visual_lock_default_s = float(self._config.get("visual_lock_default_s", 2.2))
         self._visual_lock_strong_s = float(self._config.get("visual_lock_strong_s", 4.5))
         self._visual_state_hold_s = float(self._config.get("visual_state_hold_s", 3.0))
-        
-        # Transition graph (which emotions can follow which)
-        self._visual_transition_graph = {
-            Emotion.NEUTRAL: [Emotion.CALM, Emotion.CURIOSITY, Emotion.JOY, Emotion.SADNESS, Emotion.FEAR, Emotion.ANGER, Emotion.SURPRISE],
-            Emotion.CALM: [Emotion.NEUTRAL, Emotion.CURIOSITY, Emotion.JOY, Emotion.SADNESS],
-            Emotion.CURIOSITY: [Emotion.NEUTRAL, Emotion.CALM, Emotion.JOY, Emotion.SURPRISE, Emotion.EXCITEMENT],
-            Emotion.JOY: [Emotion.NEUTRAL, Emotion.CALM, Emotion.LOVE, Emotion.EXCITEMENT, Emotion.PRIDE],
-            Emotion.LOVE: [Emotion.JOY, Emotion.NEUTRAL, Emotion.CALM],
-            Emotion.SADNESS: [Emotion.NEUTRAL, Emotion.CALM, Emotion.WORRIED, Emotion.GLOOMY],
-            Emotion.FEAR: [Emotion.NEUTRAL, Emotion.WORRIED, Emotion.SURPRISE],
-            Emotion.ANGER: [Emotion.NEUTRAL, Emotion.FURIOUS, Emotion.SUSPICIOUS],
+        self._expression_gen: int = 0
+
+        # Transition graph covering all 29 canonical Emotion states
+        self._visual_transition_graph: dict[Emotion, list[Emotion]] = {
+            Emotion.NEUTRAL: [e for e in Emotion if e is not Emotion.NEUTRAL],
+            Emotion.CALM: [
+                Emotion.NEUTRAL, Emotion.CURIOSITY, Emotion.JOY, Emotion.SADNESS,
+                Emotion.TIRED, Emotion.BORED,
+            ],
+            Emotion.CURIOSITY: [
+                Emotion.NEUTRAL, Emotion.CALM, Emotion.JOY, Emotion.SURPRISE,
+                Emotion.EXCITEMENT, Emotion.CONFUSION, Emotion.SUSPICIOUS,
+            ],
+            Emotion.JOY: [
+                Emotion.NEUTRAL, Emotion.CALM, Emotion.LOVE, Emotion.EXCITEMENT,
+                Emotion.PRIDE, Emotion.KAWAII, Emotion.COOL,
+            ],
+            Emotion.LOVE: [Emotion.JOY, Emotion.NEUTRAL, Emotion.CALM, Emotion.KAWAII, Emotion.EMBARRASSMENT],
+            Emotion.SADNESS: [Emotion.NEUTRAL, Emotion.CALM, Emotion.WORRIED, Emotion.GLOOMY, Emotion.TIRED],
+            Emotion.FEAR: [Emotion.NEUTRAL, Emotion.WORRIED, Emotion.SURPRISE, Emotion.NERVOUS],
+            Emotion.ANGER: [Emotion.NEUTRAL, Emotion.FURIOUS, Emotion.SUSPICIOUS, Emotion.DEVIL],
             Emotion.FURIOUS: [Emotion.ANGER, Emotion.NEUTRAL],
-            Emotion.SURPRISE: [Emotion.NEUTRAL, Emotion.AWE, Emotion.CURIOSITY, Emotion.EXCITEMENT],
-            Emotion.EXCITEMENT: [Emotion.JOY, Emotion.NEUTRAL, Emotion.SURPRISE, Emotion.WIRED],
-            Emotion.WORRIED: [Emotion.NEUTRAL, Emotion.FEAR, Emotion.SADNESS],
-            Emotion.DISGUST: [Emotion.NEUTRAL, Emotion.ANGER, Emotion.GLOOMY],
-            Emotion.CONFUSION: [Emotion.NEUTRAL, Emotion.CURIOSITY, Emotion.DISORIENTED],
-            Emotion.BORED: [Emotion.NEUTRAL, Emotion.CALM, Emotion.CURIOSITY],
-            Emotion.TIRED: [Emotion.NEUTRAL, Emotion.CALM, Emotion.SADNESS],
+            Emotion.SURPRISE: [Emotion.NEUTRAL, Emotion.AWE, Emotion.CURIOSITY, Emotion.EXCITEMENT, Emotion.FEAR],
+            Emotion.EXCITEMENT: [Emotion.JOY, Emotion.NEUTRAL, Emotion.SURPRISE, Emotion.WIRED, Emotion.PRIDE],
+            Emotion.WORRIED: [Emotion.NEUTRAL, Emotion.FEAR, Emotion.SADNESS, Emotion.NERVOUS],
+            Emotion.DISGUST: [Emotion.NEUTRAL, Emotion.ANGER, Emotion.GLOOMY, Emotion.SUSPICIOUS],
+            Emotion.CONFUSION: [Emotion.NEUTRAL, Emotion.CURIOSITY, Emotion.DISORIENTED, Emotion.SURPRISE],
+            Emotion.BORED: [Emotion.NEUTRAL, Emotion.CALM, Emotion.CURIOSITY, Emotion.TIRED],
+            Emotion.TIRED: [Emotion.NEUTRAL, Emotion.CALM, Emotion.SADNESS, Emotion.BORED],
+            Emotion.PRIDE: [Emotion.NEUTRAL, Emotion.JOY, Emotion.CALM, Emotion.COOL],
+            Emotion.EMBARRASSMENT: [Emotion.NEUTRAL, Emotion.CALM, Emotion.SADNESS, Emotion.NERVOUS, Emotion.LOVE],
+            Emotion.AWE: [Emotion.NEUTRAL, Emotion.CURIOSITY, Emotion.JOY, Emotion.SURPRISE],
+            Emotion.GLOOMY: [Emotion.NEUTRAL, Emotion.SADNESS, Emotion.CALM, Emotion.TIRED],
+            Emotion.COOL: [Emotion.NEUTRAL, Emotion.CALM, Emotion.JOY, Emotion.PRIDE],
+            Emotion.DEVIL: [Emotion.NEUTRAL, Emotion.ANGER, Emotion.EXCITEMENT, Emotion.COOL],
+            Emotion.KAWAII: [Emotion.NEUTRAL, Emotion.JOY, Emotion.LOVE, Emotion.CALM],
+            Emotion.DEAD: [Emotion.NEUTRAL, Emotion.TIRED, Emotion.SADNESS],
+            Emotion.SMOKING: [Emotion.NEUTRAL, Emotion.CALM, Emotion.ANGER, Emotion.TIRED],
+            Emotion.WIRED: [Emotion.NEUTRAL, Emotion.EXCITEMENT, Emotion.NERVOUS, Emotion.CALM],
+            Emotion.NERVOUS: [Emotion.NEUTRAL, Emotion.WORRIED, Emotion.CALM, Emotion.FEAR],
+            Emotion.DISORIENTED: [Emotion.NEUTRAL, Emotion.CONFUSION, Emotion.CURIOSITY, Emotion.CALM],
+            Emotion.SUSPICIOUS: [Emotion.NEUTRAL, Emotion.CURIOSITY, Emotion.ANGER, Emotion.WORRIED],
         }
-    
+
+    def _evaluate_guards(
+        self,
+        canon: Emotion,
+        raw_emotion: str | Emotion,
+        now: float,
+        force: bool,
+    ) -> dict[str, Any] | None:
+        is_emergency = str(raw_emotion).strip().lower() in {
+            "error", "danger", "alert", "estop", "alarm", "emergency", "critical",
+        }
+        effective_force = bool(force) or is_emergency
+        if effective_force:
+            return None
+        if now - self._last_expression[1] < self._min_interval_s:
+            return {"ok": False, "reason": "rate_limited", "emotion": canon.value}
+        if now < self._visual_lock_until:
+            return {
+                "ok": False,
+                "reason": "visual_locked",
+                "lock_reason": self._visual_lock_reason,
+                "remaining_s": round(self._visual_lock_until - now, 1),
+            }
+        if self._last_expression[1] > 0.0:
+            current = self._vocab.canonical(self._visual_state_emotion)
+            allowed = self._visual_transition_graph.get(current, [])
+            if allowed and canon != current and canon not in allowed:
+                if now - self._visual_state_since < self._visual_state_hold_s:
+                    return {
+                        "ok": False,
+                        "reason": "transition_blocked",
+                        "current": current.value,
+                        "allowed": [e.value for e in allowed],
+                    }
+        return None
+
+    @staticmethod
+    def _clamp_head_target(pan_delta: int, tilt_delta: int) -> tuple[int, int]:
+        pan = max(30, min(150, 90 + int(pan_delta)))
+        tilt = max(60, min(120, 90 + int(tilt_delta)))
+        return pan, tilt
+
+    async def preview_emotion(
+        self,
+        emotion: str | Emotion,
+        intensity: float = 1.0,
+        duration_s: float = 3.0,
+        modalities: list[str] | None = None,
+        text: str | None = None,
+        language: str = "tr",
+        force: bool = False,
+    ) -> dict[str, Any]:
+        """Dry-run evaluation without side effects or visual-lock mutation."""
+        canon = self._vocab.canonical(emotion)
+        raw_render = self._vocab.render(canon)
+        scaled_render = self._scale_render(raw_render, intensity)
+        selected = list(modalities or ["leds", "oled", "voice", "head", "ears"])
+        head_pan, head_tilt = self._clamp_head_target(
+            scaled_render.head_pan_delta, scaled_render.head_tilt_delta
+        )
+        async with self._lock:
+            now = time.time()
+            blocked = self._evaluate_guards(canon, emotion, now, force)
+            lock_remaining = round(max(0.0, self._visual_lock_until - now), 3)
+            current_emotion = self._visual_state_emotion
+        return {
+            "ok": True,
+            "dry_run": True,
+            "would_execute": blocked is None,
+            "blocked_reason": blocked.get("reason") if blocked else None,
+            "blocked": blocked,
+            "current_emotion": current_emotion,
+            "visual_lock_remaining_s": lock_remaining,
+            "emotion": canon.value,
+            "intensity": intensity,
+            "duration_s": duration_s,
+            "modalities": selected,
+            "text": text,
+            "language": language,
+            "head_target": {"pan": head_pan, "tilt": head_tilt},
+            "render": self._render_to_dict(scaled_render),
+        }
+
     async def express_emotion(
         self,
         emotion: str | Emotion,
@@ -101,102 +206,84 @@ class ExpressionArbiter:
         language: str = "tr",
         force: bool = False,
     ) -> dict[str, Any]:
-        """
-        Express a canonical emotion across all modalities atomically.
-        
-        Args:
-            emotion: Canonical emotion name (e.g., "anger", "joy", "curiosity")
-            intensity: 0.1-2.0 (0.1=subtle, 1.0=normal, 2.0=extreme)
-            duration_s: How long to hold the expression (0.5-30.0)
-            modalities: Subset of ["leds", "oled", "voice", "head", "ears"]
-            text: Optional text to speak (requires "voice" modality)
-            language: BCP-47 language code for TTS
-            force: Skip visual lock and min interval checks
-        
-        Returns:
-            Dict with expression details and render hints used
-        """
-        async with self._lock:
-            # Resolve canonical emotion
-            canon = self._vocab.canonical(emotion)
-            render = self._vocab.render(canon)
-            
-            now = time.time()
-            
-            # Emergency or critical alarms automatically bypass visual lock and rate limits
-            is_emergency = (
-                canon in {Emotion.FEAR, Emotion.FURIOUS, Emotion.ANGER}
-                or str(emotion).strip().lower() in {"error", "danger", "alert", "estop", "alarm", "emergency", "critical"}
-            )
-            effective_force = force or is_emergency
+        """Express a canonical emotion across all modalities atomically."""
+        canon = self._vocab.canonical(emotion)
+        base_render = self._vocab.render(canon)
 
-            # Rate limiting (unless forced or emergency)
-            if not effective_force:
-                if now - self._last_expression[1] < self._min_interval_s:
-                    return {"ok": False, "reason": "rate_limited", "emotion": canon.value}
-                
-                # Visual lock (prevents rapid emotion switching)
-                if now < self._visual_lock_until:
-                    return {
-                        "ok": False,
-                        "reason": "visual_locked",
-                        "lock_reason": self._visual_lock_reason,
-                        "remaining_s": round(self._visual_lock_until - now, 1),
-                    }
-                
-                # Transition graph check
-                current = self._vocab.canonical(self._visual_state_emotion)
-                allowed = self._visual_transition_graph.get(current, [])
-                if allowed and canon not in allowed:
-                    # Allow transition only after hold time
-                    if now - self._visual_state_since < self._visual_state_hold_s:
-                        return {
-                            "ok": False,
-                            "reason": "transition_blocked",
-                            "current": current.value,
-                            "allowed": [e.value for e in allowed],
-                        }
-            
-            # Cancel any active expression
-            if self._active_task:
-                self._active_task.cancel()
-                try:
-                    await self._active_task
-                except asyncio.CancelledError:
-                    pass
-            
-            # Prepare modalities
-            modalities = modalities or ["leds", "oled", "voice", "head"]
-            
-            # Apply intensity scaling to render
-            render = self._scale_render(render, intensity)
-            
-            # Start new expression
+        async with self._lock:
+            now = time.time()
+            blocked = self._evaluate_guards(canon, emotion, now, force)
+            if blocked is not None:
+                return blocked
+            self._expression_gen += 1
+            my_gen = self._expression_gen
+            prev_task = self._active_task
+            self._active_task = None
+
+        # Cancel and await previous expression OUTSIDE self._lock so slow adapters never stall callers
+        if prev_task is not None and not prev_task.done():
+            prev_task.cancel()
+            try:
+                await asyncio.wait_for(prev_task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            except Exception:
+                pass
+
+        async with self._lock:
+            if my_gen != self._expression_gen:
+                return {"ok": False, "reason": "superseded", "emotion": canon.value}
+            now = time.time()
+            selected_modalities = list(modalities or ["leds", "oled", "voice", "head", "ears"])
+            render = self._scale_render(base_render, intensity)
             self._active_task = asyncio.create_task(
-                self._run_expression(render, duration_s, modalities, text, language)
+                self._run_expression(render, duration_s, selected_modalities, text, language)
             )
-            
-            # Update visual state tracking
             self._visual_state_emotion = canon.value
             self._visual_state_since = now
-            
-            # Set visual lock
             is_strong = canon in self._strong_visual_emotions
             lock_s = self._visual_lock_strong_s if is_strong else self._visual_lock_default_s
             self._visual_lock_until = max(self._visual_lock_until, now + max(0.2, lock_s * intensity))
             self._visual_lock_reason = f"emotion:{canon.value}"
-            
             self._last_expression = (canon.value, now)
-            
             return {
                 "ok": True,
                 "emotion": canon.value,
                 "intensity": intensity,
                 "duration_s": duration_s,
-                "modalities": modalities,
+                "modalities": selected_modalities,
                 "render": self._render_to_dict(render),
             }
-    
+
+    async def stop(self) -> None:
+        """Cancel any active expression task and reset hardware cleanly."""
+        async with self._lock:
+            self._expression_gen += 1
+            task = self._active_task
+            self._active_task = None
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(task, timeout=2.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            except Exception:
+                pass
+
+    async def _reset_hardware(self, modalities: list[str]) -> None:
+        cleanup = []
+        if "leds" in modalities and self._clients.neopixel and hasattr(self._clients.neopixel, "turn_off"):
+            cleanup.append(self._clients.neopixel.turn_off())
+        if "head" in modalities and self._clients.head and hasattr(self._clients.head, "move_head"):
+            cleanup.append(self._clients.head.move_head(90, 90))
+        if "ears" in modalities and self._clients.piservo and hasattr(self._clients.piservo, "set_ears"):
+            cleanup.append(self._clients.piservo.set_ears("neutral"))
+        if cleanup:
+            try:
+                await asyncio.gather(*cleanup, return_exceptions=True)
+            except Exception:
+                pass
+
     async def _run_expression(
         self,
         render: EmotionRender,
@@ -207,43 +294,42 @@ class ExpressionArbiter:
     ) -> None:
         """Run all modality tasks concurrently."""
         tasks = []
-        
+
         if "leds" in modalities and self._clients.neopixel:
             tasks.append(self._run_neopixel(render, duration_s))
-        
+
         if "oled" in modalities and self._clients.oled:
             tasks.append(self._run_oled(render, duration_s))
-        
+
         if "head" in modalities and self._clients.head:
             tasks.append(self._run_head(render, duration_s))
-        
+
         if "ears" in modalities and self._clients.piservo:
             tasks.append(self._run_ears(render, duration_s))
-        
+
         if "voice" in modalities and text and self._clients.speak:
             tasks.append(self._run_voice(render, text, language))
-        
+
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-    
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except asyncio.CancelledError:
+                await self._reset_hardware(modalities)
+                raise
+
     async def _run_neopixel(self, render: EmotionRender, duration_s: float) -> None:
-        """Run NeoPixel effect with random palette variant."""
+        """Run NeoPixel effect with random palette variant (already scaled by _scale_render)."""
         try:
-            # Pick random variant for organic feel
             rgb = random.choice(render.neopixel_variants) if render.neopixel_variants else render.neopixel_rgb
-            
-            # Intensity affects speed (higher intensity = faster)
-            speed = render.neopixel_speed * (2.0 - min(1.0, render.intensity))
-            
             await self._clients.neopixel.set_effect(
                 effect=render.neopixel_effect,
                 color=rgb,
-                speed=speed,
+                speed=render.neopixel_speed,
                 duration_s=duration_s,
             )
         except Exception as e:
             logger.debug("Neopixel expression failed: %s", e)
-    
+
     async def _run_oled(self, render: EmotionRender, duration_s: float) -> None:
         """Run OLED animation."""
         try:
@@ -255,25 +341,23 @@ class ExpressionArbiter:
             )
         except Exception as e:
             logger.debug("OLED expression failed: %s", e)
-    
+
     async def _run_head(self, render: EmotionRender, duration_s: float) -> None:
         """Move head with micro-saccades for lifelike behavior."""
         try:
-            pan = 90 + int(render.head_pan_delta * render.intensity * random.uniform(0.8, 1.2))
-            tilt = 90 + int(render.head_tilt_delta * render.intensity * random.uniform(0.8, 1.2))
-            
-            # Clamp to safe ranges
-            pan = max(30, min(150, pan))
-            tilt = max(50, min(130, tilt))
-            
+            pan = 90 + int(render.head_pan_delta * random.uniform(0.8, 1.2))
+            tilt = 90 + int(render.head_tilt_delta * random.uniform(0.8, 1.2))
+            pan, tilt = self._clamp_head_target(pan - 90, tilt - 90)
+
             await self._clients.head.move_head(pan, tilt)
-            
-            # Micro-saccade after 30% of duration
+
             if duration_s > 1.0:
                 await asyncio.sleep(duration_s * 0.3)
                 pan2 = max(30, min(150, pan + random.randint(-5, 5)))
-                tilt2 = max(50, min(130, tilt + random.randint(-3, 3)))
+                tilt2 = max(60, min(120, tilt + random.randint(-3, 3)))
                 await self._clients.head.move_head(pan2, tilt2)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.debug("Head expression failed: %s", e)
     

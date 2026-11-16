@@ -14,7 +14,7 @@ flowchart TD
 
     AUTO_CHK -- "Evet" --> MIGRATE("migrate calisir:<br>CREATE TABLE IF NOT EXISTS + schema_version kaydi")
     AUTO_CHK -- "Hayir" --> ATTACH_REPOS
-    MIGRATE --> ATTACH_REPOS("10 repository ornegi<br>olusturulup self'e baglanir")
+    MIGRATE --> ATTACH_REPOS("11 repository ornegi<br>olusturulup self'e baglanir")
 
     ATTACH_REPOS --> READY("db.persons / db.moments / ...<br>kullanima hazir")
     READY --> CLOSE("db.close ile<br>baglanti kapatilir")
@@ -48,8 +48,8 @@ erDiagram
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
 
-1. **Tek Paylaşımlı Bağlantı + Kilit**
-   - `SocialDB`, `check_same_thread=False` ile açılan tek bir `sqlite3.connect` bağlantısını `threading.RLock` arkasında paylaşır. **`if`** birden fazla thread aynı anda yazmaya çalışırsa, `execute`/`transaction` çağrıları kilidi sırayla alır; SQLite seviyesinde `BEGIN IMMEDIATE` ile yazma çakışmaları engellenir.
+1. **Tek Paylaşımlı Bağlantı, RLock & `_tx_depth`**
+   - `SocialDB`, `check_same_thread=False` ile açılan tek bir `sqlite3.connect` bağlantısını `threading.RLock` arkasında paylaşır. **`if`** aynı thread içinde iç içe `transaction()` çağrılırsa thread-local `_tx_depth` sayacı yalnızca en dış blokta `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` yürütür; `backup()` ise çevrimiçi `sqlite3.Connection.backup()` kullanır.
 2. **Canonical İsim ile Tekilleştirme**
    - `PersonsRepo.upsert`, ismi `_canon()` ile (strip + lowercase) normalize eder. **`if`** aynı `canonical_name` zaten varsa mevcut kayıt güncellenir (seen_count artırılabilir); **değilse** yeni `person_id` (`uuid4` kısaltması) ile satır eklenir — aynı kişi için birden fazla kayıt oluşmaz.
 3. **Idempotent Migrasyon**

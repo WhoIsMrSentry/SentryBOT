@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -16,7 +17,13 @@ except Exception:  # pragma: no cover
     from modules.expression.semantic.api.router import get_router  # type: ignore
     from modules.expression.semantic.config_loader import load_config  # type: ignore
     from modules.expression.semantic.services.arbitrator import ExpressionArbiter, ModalityClients  # type: ignore
-    from modules.expression.semantic.services.adapters import NeopixelAdapter, OledAdapter, SpeakAdapter, HeadAdapter, PiServoAdapter  # type: ignore
+    from modules.expression.semantic.services.adapters import (  # type: ignore
+        HeadAdapter,
+        NeopixelAdapter,
+        OledAdapter,
+        PiServoAdapter,
+        SpeakAdapter,
+    )
     from modules.expression.semantic.services.state import SemanticExpressionEngine  # type: ignore
     from modules.expression.semantic.services.output_bridge import ExpressionOutputBridge  # type: ignore
 
@@ -30,8 +37,8 @@ class xExpressionService:
     async ExpressionArbiter with semantic emotion rendering.
     """
 
-    def __init__(self, config_overrides: dict | None = None) -> None:
-        self.cfg = load_config(overrides=config_overrides)
+    def __init__(self, config_overrides: dict | None = None, config_path: str | None = None) -> None:
+        self.cfg = load_config(config_path=config_path, overrides=config_overrides)
         self.engine = SemanticExpressionEngine(self.cfg)
         self.arbiter = self._build_arbiter()
         self.output_bridge = ExpressionOutputBridge(self.engine)
@@ -42,9 +49,9 @@ class xExpressionService:
         if not enabled:
             logger.info("Adapters disabled in config; arbiter without clients")
             return ExpressionArbiter(ModalityClients(), config=self.cfg.get("arbiter", {}))
-        
+
         gateway_url = str(adp_cfg.get("gateway_url", "http://127.0.0.1:8080")).rstrip("/")
-        
+
         clients = ModalityClients(
             neopixel=NeopixelAdapter(gateway_url, adp_cfg.get("neopixel_timeout", 2.0)),
             oled=OledAdapter(gateway_url, adp_cfg.get("oled_timeout", 2.0)),
@@ -57,8 +64,29 @@ class xExpressionService:
     def start(self) -> None:
         return None
 
+    async def astop(self) -> None:
+        self.output_bridge.close()
+        await self.arbiter.stop()
+        try:
+            from modules.common.http_client import close_all_clients
+
+            await close_all_clients()
+        except Exception:
+            pass
+
     def stop(self) -> None:
-        return None
+        self.output_bridge.close()
+        task = getattr(self.arbiter, "_active_task", None)
+        if task is not None and not task.done():
+            try:
+                task.cancel()
+            except Exception:
+                pass
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self.astop())
+        except RuntimeError:
+            pass
 
     def get_state(self) -> dict:
         return self.engine.get_state()
@@ -75,27 +103,28 @@ class xExpressionService:
     def on_interaction_event(self, event_type: str, data: dict | None = None) -> None:
         self.engine.on_interaction_event(event_type, data)
         try:
-            self.output_bridge.apply()
+            self.output_bridge.apply_async()
         except Exception:
             logger.debug("expression output apply skipped", exc_info=True)
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
-    load_config(config_path)
-    service = xExpressionService()
-    
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        # Get the router and inject arbiter
-        router = get_router(service.engine)
+    service = xExpressionService(config_path=config_path)
+    router = get_router(service.engine)
+    if hasattr(router, "set_arbiter"):
         router.set_arbiter(service.arbiter)
-        app.include_router(router)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        service.start()
         try:
             yield
         finally:
-            pass
-    
+            await service.astop()
+
     app = FastAPI(lifespan=lifespan)
+    app.state.service = service
+    app.include_router(router)
     return app
 
 

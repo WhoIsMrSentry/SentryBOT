@@ -72,11 +72,9 @@ erDiagram
 
 ## ⚙️ Detaylı Karar Mantığı (if/else)
 
-1. **Güvenlik (Directory Traversal Koruması)**
-   - API'ye dışarıdan `name=../../../etc/passwd` gibi zararlı şeyler gelebilir.
-   - **`if`** `os.path.abspath` animasyon dizininin dışına taşıyorsa, dosya okumasını derhal reddeder. Sadece `modules/animate/animations/` altındaki `.yml` dosyalarını işler.
-2. **Değişken Hız Katsayısı (Speed Multiplier)**
-   - Autonomy beyni animasyon çağırırken robotun o anki duygu durumuna göre `speed` katsayısı gönderir (Örn mutluysa x1.2 hızlı, üzgünse x0.5 yavaş).
-   - Motor, YAML'da yazan saf `duration_ms` değerini alır ve `(duration_ms / speed)` yaparak yeni bekleme süresini (timeout delay) hesaplar. Arduino'ya da hareketin ne kadar sürede tamamlanacağını (`duration`) bu yeni hesapla gönderir ki servo aniden seğirmesin, pürüzsüz ("smooth") gitsin.
-3. **Loop ve Non-Blocking Çalışma**
-   - Animasyonlar robotun beynini 10 saniye boyunca kilitlememelidir. Bu yüzden `run_animation` tetiklendiğinde Python arkada yeni bir `threading.Thread` başlatıp bu sleep/döngü işini ayrıştırır ve HTTP yanıtını anında döner `{"ok": True}`. Robot konuşurken veya başka iş yaparken servolar hareket etmeye devam eder.
+1. **Güvenlik (Directory Traversal ve Çakışma Koruması)**
+   - API'ye dışarıdan `name=../...` geldiğinde `_resolve_path` yol ayraçlarını ve `os.path.realpath` sınırını doğrulayıp HTTP `400` döner. Eşzamanlı çağrılarda önceki animasyon `_stop_event` ile durdurulup `_run_lock` altında seri yürütme sağlanır.
+2. **Değişken Hız Katsayısı & Kesilebilir Bekleme**
+   - Motor hem `duration_ms` hem `hold_ms` değerlerini `speed` çarpanıyla ölçekler ve `threading.Event.wait(...)` ile bekler; `POST /animate/stop?return_to_rest=true` ile bekleme kesilip `rest_pose`'a dönülebilir.
+3. **Asenkron Yürütme & Durum İzleme**
+   - `loop=true` çağrıları `start_async()` ile hemen `200` dönerken, sonlu çağrılar `run_in_threadpool` + `asyncio.wait_for(..., run_timeout_s)` ile FastAPI olay döngüsünü bloklamadan yürütülür ve `GET /animate/status` ile izlenir.

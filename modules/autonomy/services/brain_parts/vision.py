@@ -22,9 +22,13 @@ class VisionMixin:
             return
         self.state["last_vision_poll"] = now
 
-        # Use visual context importance score to influence persona polish
+        # Use visual context importance score to influence persona polish (shared TTL cache)
         try:
-            ctx_resp = self.client.get_visual_context()
+            ctx_resp = (
+                self._get_cached_visual_context()
+                if hasattr(self, "_get_cached_visual_context")
+                else self.client.get_visual_context()
+            )
             if ctx_resp and ctx_resp.get("available"):
                 ctx_data = ctx_resp.get("context", {})
                 importance = float(ctx_data.get("importance_score", 0.0))
@@ -207,8 +211,12 @@ class VisionMixin:
                 except Exception:
                     pass
             try:
-                record = self.client.get_person_memory(name)
-                rel = ((record.get("record") or {}).get("relationship") or "neutral").lower()
+                record = (
+                    self._get_cached_person_memory(name)
+                    if hasattr(self, "_get_cached_person_memory")
+                    else self.client.get_person_memory(name)
+                )
+                rel = (((record or {}).get("record") or {}).get("relationship") or "neutral").lower()
                 if rel in ["friend", "owner", "family"]:
                     happiness_boost += 15
                 elif rel in ["enemy", "stranger", "threat"]:
@@ -247,7 +255,11 @@ class VisionMixin:
             return None
         summary = None
         try:
-            record = self.client.get_person_memory(name)
+            record = (
+                self._get_cached_person_memory(name)
+                if hasattr(self, "_get_cached_person_memory")
+                else self.client.get_person_memory(name)
+            )
             if record:
                 summary = ((record.get("record") or {}).get("last_summary") or {}).get("text")
         except Exception:

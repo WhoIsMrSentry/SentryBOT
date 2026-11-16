@@ -183,72 +183,50 @@ class xArduinoSerialService(RfidHandlerMixin, SerialLoopsMixin, EspTransportMixi
 - `read_line() -> Optional[str]`: Zaman aşımı korumalı olarak tek satır okur ve UTF-8 decode eder.
 
 #### `EspTransportMixin` (`transports/esp_transport.py`)
-- ESP32 HTTP köprüsü üzerinden iletişim kurar.
-- **Circuit Breaker (Devre Kesici):**
-  - Arka arkaya `esp_pause_after_failures` (varsayılan: 5) kez bağlantı hatası alınırsa devre kesici açılır.
-  - Servis `esp_pause_sec` (varsayılan: 120 sn) boyunca istek atmayı durdurur (`_esp_paused_until`), sistemi HTTP kilitlenmelerinden korur.
+- ESP32 HTTP köprüsü üzerinden iletişim kurar (`_esp_lock` korumalı `requests.Session` ve `time.monotonic()` devre kesici).
+- `_request_locked_esp` açık verilen `timeout` değerini korur (`None` ise `request_timeout_ms` kullanır) ve `_response_matches_request` ile `seq`/`ack_seq` eşleşmesini doğrular.
+- Başarılı ESP `hb`/komut yanıtları `watchdog.feed()` çağırır; `neopixel_request` ACK'ları `build_ack_cmd` + `self.send()` ile her iki taşımada da iletilir.
 
-#### `PortDetector` (`services/port_detector.py`)
-- Linux üzerinde `/dev/ttyACM*` ve `/dev/ttyUSB*` glob desenlerini tarar.
-- Windows ortamında `pyserial.tools.list_ports` ile aktif `COM` portlarını bularak Arduino cihazını otomatik eşleştirir.
+#### `PortDetector` (`services/port_detector.py`) & `HardwareSafetyWatchdog` (`services/safety_watchdog.py`)
+- `PortDetector`, `pyserial` (`serial.tools.list_ports`) ve `/dev/serial/by-id/*` glob desenlerini kullanır; `xArduinoSerialService` dışında geri modül bağımlılığı tutmaz.
+- `HardwareSafetyWatchdog`, `time.monotonic()` + `threading.Event.wait()` ile çalışır; opsiyonel `only_while_moving` bayrağını destekler ve trip anında `build_simple_cmd("estop")` tetikler.
 
 ---
 
-### 3.4 Kafa Hakemi Entegrasyonu (`HeadArbiterTransportWrapper`)
+### 3.4 Kafa Hakemi ve Kontrat Katmanı (`HeadArbiterTransportWrapper`, `contract.py`)
 
-- Robotun kafa motorları (`index: 0` Pan, `index: 1` Tilt) çoklu alt sistemlerden komut alabilir:
-  - Görme Modülü (`vlm_bridge`): İnsan yüzünü takip eder.
-  - Ses Modülü (`speech`): Konuşan kişinin ses açısına döner.
-  - Otonom Canlılık (`liveliness`): Rastgele çevreye bakınır.
-- `HeadArbiterTransportWrapper`, gelen açı komutlarını `HeadControlArbiter` kurallarına göre filtreler; düşük öncelikli canlılık hareketlerinin yüksek öncelikli yüz/ses takibini bozmasını engeller.
+- `HeadArbiterTransportWrapper` `0.0` koordinatlarını falsy saymadan okur, son eksen durumunu `threading.Lock` ile korur ve hakem hatasında **fail-closed** (`allowed=False`) davranır.
+- `command_validators.py` Python `bool` ve sonlu olmayan `NaN`/`Inf` değerlerini reddeder; `contract.py` eksik `build_ack_cmd` ve `build_telemetry_start_cmd` üreticilerini sağlar.
 
 ---
 
 ## 4. REST API Endpoint Tablosu (`:8091`)
 
-| Metot | Uç Nokta | Açıklama | Örnek İstek Gövdesi |
+| Metot | Uç Nokta | Açıklama | Not |
 |---|---|---|---|
-| `POST` | `/arduino/send` | Doğrulanmış genel NDJSON komutu gönderir | `{"cmd": "ping"}` |
-| `POST` | `/arduino/servo` | Belirli bir servoyu hareket ettirir | `{"index": 0, "deg": 90.0}` |
-| `POST` | `/arduino/pose` | Tüm kafa servolarını tek seferde konumlandırır | `{"pose": [90.0, 75.0, 45.0, 45.0], "duration_ms": 300}` |
-| `POST` | `/arduino/stepper` | Adım motoru sürüş komutu | `{"id": 0, "mode": "step", "value": 200}` |
-| `POST` | `/arduino/drive` | Diferansiyel robot sürüşü | `{"vx": 0.2, "vtheta": 0.0, "duration_ms": 1000}` |
-| `POST` | `/arduino/cute` | Piezo buzzer'dan duygusal melodi çalar | `{"name": "happy"}` |
-| `POST` | `/arduino/liveliness` | Baş canlılık hareketlerini açar/kapatır | `{"mode": "breathing", "enabled": true, "amplitude_deg": 5.0}` |
-| `GET` | `/arduino/status` | Seri port bağlantı ve telemetri durumunu döner | Yanıt: `{"connected": true, "port": "/dev/ttyACM0", "metrics": {...}}` |
-| `POST` | `/arduino/ping` | Donanıma ping paketi atar ve ACK doğrular | Yanıt: `{"ok": true, "pong": true}` |
+| `GET` | `/arduino/healthz` | `hello()` + `fw_ver`/yetenek uyumluluk denetimi | `min_firmware_version` |
+| `GET` | `/arduino/watchdog/status` | Watchdog aktiflik, trip ve besleme yaşı durumu | Salt okunur |
+| `POST` | `/arduino/watchdog/reset` | Triplenmiş safety watchdog'u yeniden kurar | Devre dışıysa `503` |
+| `POST` | `/arduino/send` | Doğrulanmış tek yönlü NDJSON komutu (`400`/`403`/`503`) | `contract.py` zorunlu |
+| `POST` | `/arduino/request` | Yanıt beklemeli/yeniden denemeli NDJSON komutu | `seq` eşleştirmeli |
+| `GET` | `/arduino/metrics` | Thread-safe `get_metrics()` sayacı kopyası | `rx_count`/`tx_count`/`acks_sent` |
+| `GET` | `/arduino/rfid/last` & `/authorize` | Son RFID etiketi ve pencere/allowlist yetkisi | `rfid.allowed_uids` |
 
 ---
 
-## 5. Konfigürasyon Referansı (`config.yml` ve `agent.yaml`)
+## 5. Konfigürasyon Referansı (`config/config.yml`)
 
 ```yaml
-arduino_serial:
-  transport: "serial"               # "serial" veya "esp_http"
-  
-  # USB Seri Port Ayarları
-  port: "auto"                      # "auto" (otomatik bul) veya "/dev/ttyACM0" / "COM3"
-  baudrate: 115200                  # Standart 115200 8N1
-  timeout: 1.0                      # Okuma zaman aşımı (saniye)
-  write_timeout: 1.0
-
-  # ESP32 HTTP Köprü Ayarları
-  esp_base_url: "http://127.0.0.1:8091"
-  esp_timeout_sec: 1.2
-  esp_connect_timeout_sec: 0.4
-  esp_pause_after_failures: 5       # 5 hata sonrası devre kesici açılır
-  esp_pause_sec: 120.0              # Devre kesici bekleme süresi
-
-  # Kafa ve Canlılık Ayarları
-  head_arbiter_enabled: true
-  liveliness:
-    enabled: true
-    default_mode: "subtle"
-    amplitude_deg: 8.0
-    period_ms: 1200
-
-  # RC522 RFID Ayarları
-  rfid:
-    enabled: true
-    debounce_sec: 2.0
+transport: esp_http
+esp_base_url: "http://sentrybot-2.local:8080"
+esp_timeout_sec: 2.5
+esp_connect_timeout_sec: 1.5
+esp_pause_after_failures: 5
+esp_pause_sec: 120
+heartbeat_ms: 2000
+watchdog:
+  enabled: true
+  timeout_s: 6.0
+  check_interval_s: 0.5
+  only_while_moving: false
 ```

@@ -8,13 +8,16 @@ from typing import Optional
 logger = logging.getLogger("autonomy.capability")
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
 class CapabilityHealthMixin:
     """Mixin for capability health checks, model asset statuses, and owner identification."""
 
     def _batch04_model_asset_status(self) -> dict:
         try:
             from modules.common.model_asset_truth import collect_asset_truth
-            return collect_asset_truth(Path.cwd())
+            return collect_asset_truth(_REPO_ROOT)
         except Exception as exc:
             return {"ok": False, "available": False, "error": str(exc)}
 
@@ -44,14 +47,14 @@ class CapabilityHealthMixin:
             if isinstance(self.config.get("owner_learning", {}), dict)
             else {}
         )
-        cur = getattr(self, "_batch04_owner_learning", None)
+        cur = getattr(self, "_owner_learning_instance", None)
         if cur is None:
             cur = OwnerPersonLearning(
                 cfg,
                 client=self.client,
                 memory=getattr(self, "world_memory", None),
             )
-            setattr(self, "_batch04_owner_learning", cur)
+            setattr(self, "_owner_learning_instance", cur)
         return cur
 
     def get_owner_learning_status(self) -> dict:

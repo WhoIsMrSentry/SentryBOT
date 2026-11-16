@@ -1,14 +1,83 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger("autonomy.perception_context")
 
 
 class PerceptionContextMixin:
     """Mixin for perception context fusion, visual/audio observation, and sound interrupts."""
+
+    def _get_cache_lock(self) -> threading.RLock:
+        lock = getattr(self, "_cache_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._cache_lock = lock
+        return lock
+
+    def _get_cached_visual_context(self, max_age_s: Optional[float] = None) -> Any:
+        """Share fresh get_visual_context() snapshots across mixins within a short TTL."""
+        vcfg = getattr(self, "_vision_cfg", None)
+        default_ttl = float(vcfg.get("context_cache_ttl_s", 1.5)) if isinstance(vcfg, dict) else 1.5
+        ttl = max(0.0, float(default_ttl if max_age_s is None else max_age_s))
+        now = time.time()
+        lock = self._get_cache_lock()
+        if ttl > 0.0:
+            with lock:
+                cached = getattr(self, "_visual_ctx_cache", None)
+                if isinstance(cached, tuple) and len(cached) == 2:
+                    ts, data = cached
+                    if now - float(ts) <= ttl:
+                        return data
+        if not hasattr(self.client, "get_visual_context"):
+            return None
+        resp = self.client.get_visual_context()
+        if isinstance(resp, dict):
+            with lock:
+                self._visual_ctx_cache = (now, resp)
+        return resp
+
+    def _get_cached_person_memory(self, name: str, max_age_s: Optional[float] = None) -> Any:
+        """Cache get_person_memory(name) per tick/short TTL to avoid repeated HTTP lookups."""
+        key = str(name or "").strip()
+        if not key or not hasattr(self.client, "get_person_memory"):
+            return None
+        vcfg = getattr(self, "_vision_cfg", None)
+        default_ttl = float(vcfg.get("person_memory_cache_ttl_s", 10.0)) if isinstance(vcfg, dict) else 10.0
+        ttl = max(0.0, float(default_ttl if max_age_s is None else max_age_s))
+        now = time.time()
+        lock = self._get_cache_lock()
+        cache = getattr(self, "_person_mem_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            self._person_mem_cache = cache
+        if ttl > 0.0:
+            with lock:
+                entry = cache.get(key)
+                if isinstance(entry, tuple) and len(entry) == 2 and (now - float(entry[0])) <= ttl:
+                    return entry[1]
+        record = self.client.get_person_memory(key)
+        with lock:
+            cache[key] = (now, record)
+            if len(cache) > 64:
+                oldest = sorted(cache.items(), key=lambda kv: float(kv[1][0]))[:16]
+                for old_k, _ in oldest:
+                    cache.pop(old_k, None)
+        return record
+
+    def _emit_step_event_async(self, event_type: str, prompt: str) -> None:
+        if not (getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False)):
+            return
+        if hasattr(self, "_dispatch_agent_step_event"):
+            self._dispatch_agent_step_event(event_type, prompt)
+        else:
+            try:
+                self.agent.step_event(event_type, prompt)
+            except Exception as exc:
+                logger.debug("%s event step_event failed: %s", event_type, exc)
 
     def get_canonical_perception_context(self, base: object = None) -> dict:
         """Merge current vision/audio state into one status-only autonomy context."""
@@ -71,7 +140,7 @@ class PerceptionContextMixin:
         if not hasattr(self.client, "emit_agent_event"):
             return
         try:
-            ctx_resp = self.client.get_visual_context()
+            ctx_resp = self._get_cached_visual_context()
             if not (isinstance(ctx_resp, dict) and ctx_resp.get("available")):
                 return
             ctx = ctx_resp.get("context", {}) if isinstance(ctx_resp.get("context", {}), dict) else {}
@@ -100,16 +169,14 @@ class PerceptionContextMixin:
             if hazards:
                 self.client.emit_agent_event("hazard_detected", {"count": len(hazards)})
                 self.appraise_event("visual_hazard", intensity=min(1.0, len(hazards) / 3.0))
-                if getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
-                    try:
-                        prompt = (
-                            f"EVENT: Visual hazard detected! {len(hazards)} hazard(s) in view. "
-                            f"React appropriately - express alarm, move to safety, or investigate. "
-                            f"Use your tools (like express_emotion) to act, then confirm briefly."
-                        )
-                        self.agent.step_event("hazard_detected", prompt)
-                    except Exception as exc:
-                        logger.debug("Hazard event step_event failed: %s", exc)
+                self._emit_step_event_async(
+                    "hazard_detected",
+                    (
+                        f"EVENT: Visual hazard detected! {len(hazards)} hazard(s) in view. "
+                        f"React appropriately - express alarm, move to safety, or investigate. "
+                        f"Use your tools (like express_emotion) to act, then confirm briefly."
+                    ),
+                )
                 return
             owner_seen = False
             new_people = 0
@@ -124,29 +191,25 @@ class PerceptionContextMixin:
                     new_people += 1
             if owner_seen:
                 self.client.emit_agent_event("owner_follow_intent", {})
-                if getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
-                    try:
-                        prompt = (
-                            f"EVENT: Your owner just appeared in view! "
-                            f"Express joy/excitement. Greet them naturally, move your head toward them, "
-                            f"maybe say something warm. Use your tools (like express_emotion) to act, then confirm briefly."
-                        )
-                        self.agent.step_event("owner_seen", prompt)
-                    except Exception as exc:
-                        logger.debug("Owner seen event step_event failed: %s", exc)
+                self._emit_step_event_async(
+                    "owner_seen",
+                    (
+                        f"EVENT: Your owner just appeared in view! "
+                        f"Express joy/excitement. Greet them naturally, move your head toward them, "
+                        f"maybe say something warm. Use your tools (like express_emotion) to act, then confirm briefly."
+                    ),
+                )
             elif new_people > 0:
                 self.client.emit_agent_event("new_person_seen", {"count": new_people})
                 self.appraise_event("new_person", intensity=min(1.0, new_people / 2.0))
-                if getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
-                    try:
-                        prompt = (
-                            f"EVENT: You see {new_people} new person/people you don't recognize. "
-                            f"React with curiosity or caution. Turn toward them, maybe say hello or observe silently. "
-                            f"Use your tools (like express_emotion) to express your reaction, then confirm in one sentence."
-                        )
-                        self.agent.step_event("new_person_seen", prompt)
-                    except Exception as exc:
-                        logger.debug("New person event step_event failed: %s", exc)
+                self._emit_step_event_async(
+                    "new_person_seen",
+                    (
+                        f"EVENT: You see {new_people} new person/people you don't recognize. "
+                        f"React with curiosity or caution. Turn toward them, maybe say hello or observe silently. "
+                        f"Use your tools (like express_emotion) to express your reaction, then confirm in one sentence."
+                    ),
+                )
             elif self.state.get("vision_context_needs", {}).get("new_object"):
                 self.appraise_event("new_object", intensity=0.5)
                 self.client.emit_agent_event("new_object_seen", {})
@@ -160,16 +223,14 @@ class PerceptionContextMixin:
                         logger.debug("New object agentic decision failed: %s", exc)
             elif self.state.get("is_bored"):
                 self.client.emit_agent_event("idle_comment_request", {"prompt": "look around and comment naturally"})
-                if getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
-                    try:
-                        prompt = (
-                            f"EVENT: You're bored and nothing's happening. Look around the room and make a "
-                            f"spontaneous comment or observation. Pick something interesting to look at, "
-                            f"express a brief thought. Use your tools (like express_emotion), then speak naturally."
-                        )
-                        self.agent.step_event("idle_comment", prompt)
-                    except Exception as exc:
-                        logger.debug("Idle comment event step_event failed: %s", exc)
+                self._emit_step_event_async(
+                    "idle_comment",
+                    (
+                        f"EVENT: You're bored and nothing's happening. Look around the room and make a "
+                        f"spontaneous comment or observation. Pick something interesting to look at, "
+                        f"express a brief thought. Use your tools (like express_emotion), then speak naturally."
+                    ),
+                )
         except Exception:
             pass
 

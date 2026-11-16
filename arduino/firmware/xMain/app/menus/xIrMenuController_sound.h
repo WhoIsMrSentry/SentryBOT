@@ -2,7 +2,7 @@
 #ifndef SENTRY_APP_IR_MENU_CONTROLLER_SOUND_H
 #define SENTRY_APP_IR_MENU_CONTROLLER_SOUND_H
 
-#if IR_ENABLED
+#if VIRTUAL_MENU_ENABLED
 
 #include "../xIrMenuController.h"
 
@@ -131,7 +131,7 @@ void IrMenuController::tickMorse(){
   }
 
   const char c = _morsePattern[_morseIdx++];
-  const uint16_t freq = (g_buzzerDefaultOut==BUZZER_OUT_LOUD)?g_buzzerFreqLoud:g_buzzerFreqQuiet;
+  const uint16_t freq = (g_buzzerDefaultOut == BUZZER_OUT_LOUD) ? g_buzzerFreqLoud : g_buzzerFreqQuiet;
   const uint16_t dotMs = 80;
   const uint16_t dashMs = 240;
   const uint16_t gapMs = 80;
@@ -139,15 +139,13 @@ void IrMenuController::tickMorse(){
 
   if (c == '.'){
     if (g_buzzerBothEnabled){
-      g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, dotMs);
-      g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, dotMs);
-    } else g_buzzer.beepOn(BUZZER_OUT_LOUD, freq, dotMs);
+      g_buzzer.beepBoth(freq, dotMs);
+    } else g_buzzer.beepOn(g_buzzerDefaultOut, freq, dotMs);
     _morseNextMs = now + (unsigned long)dotMs + (unsigned long)gapMs;
   } else if (c == '-'){
     if (g_buzzerBothEnabled){
-      g_buzzer.beepOn(BUZZER_OUT_LOUD, g_buzzerFreqLoud, dashMs);
-      g_buzzer.beepOn(BUZZER_OUT_QUIET, g_buzzerFreqQuiet, dashMs);
-    } else g_buzzer.beepOn(BUZZER_OUT_LOUD, freq, dashMs);
+      g_buzzer.beepBoth(freq, dashMs);
+    } else g_buzzer.beepOn(g_buzzerDefaultOut, freq, dashMs);
     _morseNextMs = now + (unsigned long)dashMs + (unsigned long)gapMs;
   } else {
     _morseNextMs = now + (unsigned long)longGapMs;
@@ -156,8 +154,8 @@ void IrMenuController::tickMorse(){
 }
 
 String IrMenuController::textToMorse(const String &text){
-  // Basic A-Z 0-9 mapping; unknown chars produce word gap
-  static const char *map[36] = {
+  // Stored in Flash (PROGMEM) on AVR so 36 entries consume zero SRAM.
+  static const char MORSE_TABLE[36][6] PROGMEM = {
     ".-","-...","-.-.","-..",".","..-.","--.","....","..",
     ".---","-.-",".-..","--","-.","---",".--.","--.-",".-.",
     "...","-","..-","...-",".--","-..-","-.--","--..",
@@ -165,24 +163,25 @@ String IrMenuController::textToMorse(const String &text){
   };
   String out = "";
   out.reserve((size_t)text.length() * 6 + 4);
+  char codeBuf[6];
   for (int i=0;i<text.length();i++){
     char c = text[i];
     if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
     if (c >= 'A' && c <= 'Z'){
-      out += map[c - 'A'];
+      strcpy_P(codeBuf, MORSE_TABLE[c - 'A']);
+      out += codeBuf;
       out += ' '; // letter gap
     } else if (c >= '0' && c <= '9'){
-      out += map[26 + (c - '0')];
+      strcpy_P(codeBuf, MORSE_TABLE[26 + (c - '0')]);
+      out += codeBuf;
       out += ' ';
-    } else if (c == ' '){
-      out += '/'; // word gap marker -> treated as long gap by tickMorse
     } else {
-      out += '/';
+      out += '/'; // word gap marker
     }
   }
   return out;
 }
 
-#endif // IR_ENABLED
+#endif // VIRTUAL_MENU_ENABLED
 
 #endif // SENTRY_APP_IR_MENU_CONTROLLER_SOUND_H

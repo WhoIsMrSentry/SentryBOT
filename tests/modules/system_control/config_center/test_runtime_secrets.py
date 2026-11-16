@@ -6,7 +6,7 @@ import yaml
 
 
 def test_inject_runtime_secrets_prefers_env():
-    from modules.system_control.config_center.runtime_secrets import inject_runtime_secrets
+    from modules.common.config_loader import inject_runtime_secrets
 
     cfg = inject_runtime_secrets(
         {"agent": {"auth_token": ""}},
@@ -20,7 +20,7 @@ def test_committed_agent_yaml_auth_tokens_are_empty():
     agent_token = str((raw.get("agent") or {}).get("auth_token") or "").strip()
     vlm_token = str(((raw.get("vlm_bridge") or {}).get("remote") or {}).get("auth_token") or "").strip()
     tts_token = str(
-        ((((raw.get("speak") or {}).get("tts") or {}).get("remote") or {}).get("auth_token") or "")
+        (((raw.get("speak") or {}).get("tts") or {}).get("remote") or {}).get("auth_token") or ""
     ).strip()
     assert agent_token == ""
     assert vlm_token == ""

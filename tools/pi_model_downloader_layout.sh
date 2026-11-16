@@ -3,6 +3,8 @@ set -euo pipefail
 ROOT="${SENTRYBOT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PIPER_TR_MODEL_URL="${PIPER_TR_MODEL_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/main/tr/tr_TR/dfki/medium/tr_TR-dfki-medium.onnx}"
 PIPER_TR_CONFIG_URL="${PIPER_TR_CONFIG_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/main/tr/tr_TR/dfki/medium/tr_TR-dfki-medium.onnx.json}"
+PIPER_EN_MODEL_URL="${PIPER_EN_MODEL_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx}"
+PIPER_EN_CONFIG_URL="${PIPER_EN_CONFIG_URL:-https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium/en_US-lessac-medium.onnx.json}"
 DOWNLOAD_EN="${DOWNLOAD_EN:-0}"
 mkdir -p "$ROOT/data/piper_models/tr_TR-dfki-medium" "$ROOT/data/downloads"
 fetch() {
@@ -17,6 +19,11 @@ fetch() {
 }
 fetch "$PIPER_TR_MODEL_URL" "$ROOT/data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx"
 fetch "$PIPER_TR_CONFIG_URL" "$ROOT/data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx.json"
+if [[ "$DOWNLOAD_EN" == "1" ]]; then
+  mkdir -p "$ROOT/data/piper_models/en_US-lessac-medium"
+  fetch "$PIPER_EN_MODEL_URL" "$ROOT/data/piper_models/en_US-lessac-medium/en_US-lessac-medium.onnx"
+  fetch "$PIPER_EN_CONFIG_URL" "$ROOT/data/piper_models/en_US-lessac-medium/en_US-lessac-medium.onnx.json"
+fi
 
 python_bin="$ROOT/.venv/bin/python"
 if [[ ! -x "$python_bin" ]]; then python_bin="python3"; fi

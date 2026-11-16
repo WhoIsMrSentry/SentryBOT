@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import sqlite3
 import tempfile
 import threading
 import time
@@ -20,6 +21,9 @@ import yaml
 logger = logging.getLogger("autonomy.cloud_backup")
 
 _CONFIG_PATH = Path(__file__).resolve().parent.parent.parent.parent / "config" / "cloud_backup.yml"
+_DB_SUFFIXES = {".db", ".sqlite", ".sqlite3"}
+_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
 
 
 class CloudBackupSync:
@@ -36,6 +40,7 @@ class CloudBackupSync:
         self._stop_event = threading.Event()
         self._worker: Optional[threading.Thread] = None
         self._last_backup_ts: float = 0.0
+        self._session = requests.Session()
 
     def _load_config(self, user_cfg: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         defaults = {
@@ -74,6 +79,44 @@ class CloudBackupSync:
         self._stop_event.set()
         if self._worker and self._worker.is_alive():
             self._worker.join(timeout=2.0)
+        session = getattr(self, "_session", None)
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+    def _stage_backup_files(self, db_dir: Path, stage_dir: Path) -> None:
+        """Stage consistent SQLite online backups and optional assets into stage_dir."""
+        for item in db_dir.rglob("*"):
+            if not item.is_file():
+                continue
+            name_lower = item.name.lower()
+            if name_lower.endswith(_SIDECAR_SUFFIXES):
+                continue
+            rel = item.relative_to(db_dir)
+            suffix = item.suffix.lower()
+            dest = stage_dir / rel
+            if suffix in _DB_SUFFIXES:
+                if not self.include_databases:
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                src_conn = sqlite3.connect(f"file:{item}?mode=ro", uri=True)
+                dst_conn = sqlite3.connect(str(dest))
+                try:
+                    src_conn.backup(dst_conn)
+                    dst_conn.commit()
+                finally:
+                    dst_conn.close()
+                    src_conn.close()
+            elif suffix in _IMAGE_SUFFIXES:
+                if not self.include_images:
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, dest)
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, dest)
 
     def trigger_backup_now(self) -> Dict[str, Any]:
         """Manually trigger a cloud backup snapshot."""
@@ -83,13 +126,15 @@ class CloudBackupSync:
         try:
             logger.info("Performing cloud backup snapshot...")
             with tempfile.TemporaryDirectory() as tmp_dir:
-                zip_path = Path(tmp_dir) / "sentrybot_backup.zip"
-                # Locate database files
+                tmp_root = Path(tmp_dir)
+                stage_dir = tmp_root / "staging"
+                stage_dir.mkdir(parents=True, exist_ok=True)
+                zip_path = tmp_root / "sentrybot_backup.zip"
                 db_dir = Path(__file__).resolve().parent.parent.parent.parent / "data"
                 if not db_dir.exists():
                     db_dir.mkdir(parents=True, exist_ok=True)
-                
-                shutil.make_archive(str(zip_path.with_suffix("")), "zip", db_dir)
+                self._stage_backup_files(db_dir, stage_dir)
+                shutil.make_archive(str(zip_path.with_suffix("")), "zip", stage_dir)
                 
                 headers = {}
                 token = self.cfg.get("auth_token")
@@ -97,7 +142,7 @@ class CloudBackupSync:
                     headers["Authorization"] = f"Bearer {token}"
 
                 with open(zip_path, "rb") as f:
-                    resp = requests.post(
+                    resp = self._session.post(
                         self.endpoint_url,
                         files={"backup_file": f},
                         headers=headers,

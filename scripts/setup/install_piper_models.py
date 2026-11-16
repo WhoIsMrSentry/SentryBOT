@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import shutil
 import ssl
 import sys
 import urllib.request
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TARGET_ROOT = REPO_ROOT / "data" / "piper_models"
@@ -75,11 +77,90 @@ def _format_bytes(num: int) -> str:
     return f"{num / (1024 * 1024):.1f} MiB"
 
 
-def _download(url: str, dest: Path, *, insecure: bool) -> None:
+def compute_sha256(path: Path, chunk_bytes: int = 1024 * 512) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while True:
+            chunk = handle.read(chunk_bytes)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest().lower()
+
+
+def verify_sha256(path: Path, expected_sha256: Optional[str]) -> bool:
+    """Verify SHA256 digest when an expected hash is provided; returns True if valid or unpinned."""
+    expected = str(expected_sha256 or "").strip().lower()
+    if not expected:
+        return True
+    actual = compute_sha256(path)
+    return actual == expected
+
+
+def _load_sha256_manifest(manifest_path: Optional[Path] = None) -> Dict[str, str]:
+    """Load optional relpath -> sha256 overrides from checksums.json or config/model_assets.json."""
+    out: Dict[str, str] = {}
+    candidates = []
+    if manifest_path is not None:
+        candidates.append(manifest_path)
+    candidates.extend([TARGET_ROOT / "checksums.json", REPO_ROOT / "config" / "model_assets.json"])
+    for cand in candidates:
+        if not cand.exists():
+            continue
+        try:
+            data = json.loads(cand.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            # Support flat map {"tr_TR-.../....onnx": "<hex>"}
+            for k, v in data.items():
+                if isinstance(v, str) and len(v.strip()) == 64:
+                    out[str(k)] = v.strip().lower()
+            # Support model_assets.json nested assets specs with model_sha256 / config_sha256
+            assets = data.get("assets")
+            if isinstance(assets, dict):
+                for spec in assets.values():
+                    if not isinstance(spec, dict):
+                        continue
+                    if spec.get("model_path") and spec.get("model_sha256"):
+                        out[str(Path(spec["model_path"]).name)] = str(spec["model_sha256"]).strip().lower()
+                    if spec.get("config_path") and spec.get("config_sha256"):
+                        out[str(Path(spec["config_path"]).name)] = str(spec["config_sha256"]).strip().lower()
+    return out
+
+
+def _validate_downloaded_artifact(
+    path: Path,
+    expected_sha256: Optional[str] = None,
+    *,
+    is_json: Optional[bool] = None,
+) -> None:
+    if not path.exists() or path.stat().st_size <= 0:
+        raise ValueError(f"Downloaded file is empty: {path}")
+    check_json = is_json if is_json is not None else (path.suffix == ".json" or ".json." in path.name)
+    if check_json:
+        json.loads(path.read_text(encoding="utf-8"))
+    if not verify_sha256(path, expected_sha256):
+        actual = compute_sha256(path)
+        raise ValueError(f"SHA256 mismatch for {path.name}: expected={expected_sha256} actual={actual}")
+
+
+def _download(
+    url: str,
+    dest: Path,
+    *,
+    insecure: bool,
+    expected_sha256: Optional[str] = None,
+) -> str:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists() and dest.stat().st_size > 0:
-        print(f"  skip (exists): {dest.relative_to(REPO_ROOT)}")
-        return
+        if expected_sha256 and not verify_sha256(dest, expected_sha256):
+            print(f"  re-download (SHA256 mismatch): {dest.relative_to(REPO_ROOT)}")
+        else:
+            if dest.suffix == ".json":
+                json.loads(dest.read_text(encoding="utf-8"))
+            print(f"  skip (exists): {dest.relative_to(REPO_ROOT)}")
+            return compute_sha256(dest)
 
     if insecure:
         try:
@@ -91,49 +172,80 @@ def _download(url: str, dest: Path, *, insecure: bool) -> None:
 
     headers = {"User-Agent": "SentryBOT-piper-install/1.0"}
     print(f"  download: {url}")
+    tmp_path = dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
     try:
-        import requests  # type: ignore
+        downloaded = False
+        try:
+            import requests  # type: ignore
 
-        with requests.get(
-            url,
-            stream=True,
-            timeout=(30, 900),
-            verify=not insecure,
-            headers=headers,
-        ) as resp:
-            resp.raise_for_status()
-            total = int(resp.headers.get("content-length", 0) or 0)
-            done = 0
-            with dest.open("wb") as handle:
-                for chunk in resp.iter_content(chunk_size=1024 * 512):
-                    if not chunk:
-                        continue
-                    handle.write(chunk)
-                    done += len(chunk)
-                    if total > 0:
-                        pct = min(100, int(done * 100 / total))
-                        print(
-                            f"\r    {_format_bytes(done)} / {_format_bytes(total)} ({pct}%)",
-                            end="",
-                            flush=True,
-                        )
-            print()
-        return
-    except ImportError:
-        pass
+            with requests.get(
+                url,
+                stream=True,
+                timeout=(30, 900),
+                verify=not insecure,
+                headers=headers,
+            ) as resp:
+                resp.raise_for_status()
+                total = int(resp.headers.get("content-length", 0) or 0)
+                done = 0
+                with tmp_path.open("wb") as handle:
+                    for chunk in resp.iter_content(chunk_size=1024 * 512):
+                        if not chunk:
+                            continue
+                        handle.write(chunk)
+                        done += len(chunk)
+                        if total > 0:
+                            pct = min(100, int(done * 100 / total))
+                            print(
+                                f"\r    {_format_bytes(done)} / {_format_bytes(total)} ({pct}%)",
+                                end="",
+                                flush=True,
+                            )
+                print()
+                downloaded = True
+        except ImportError:
+            pass
 
-    req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req, context=_ssl_context(insecure=insecure), timeout=900) as resp:
-        with dest.open("wb") as handle:
-            shutil.copyfileobj(resp, handle)
+        if not downloaded:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, context=_ssl_context(insecure=insecure), timeout=900) as resp:
+                with tmp_path.open("wb") as handle:
+                    shutil.copyfileobj(resp, handle)
+
+        _validate_downloaded_artifact(
+            tmp_path,
+            expected_sha256=expected_sha256,
+            is_json=(dest.suffix == ".json"),
+        )
+        tmp_path.replace(dest)
+        sha_hex = compute_sha256(dest)
+        sidecar = dest.with_name(dest.name + ".sha256")
+        sidecar.write_text(f"{sha_hex}  {dest.name}\n", encoding="utf-8")
+        return sha_hex
+    except Exception:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
-def _install_pack(name: str, files: Iterable[VoiceFile], *, insecure: bool) -> None:
+def _install_pack(
+    name: str,
+    files: Iterable[VoiceFile],
+    *,
+    insecure: bool,
+    checksums: Optional[Dict[str, str]] = None,
+) -> None:
     print(f"\n=== {name} ===")
+    cs = checksums or {}
     for url, rel in files:
         dest = TARGET_ROOT / rel
+        expected = cs.get(rel) or cs.get(dest.name)
         try:
-            _download(url, dest, insecure=insecure)
+            sha_hex = _download(url, dest, insecure=insecure, expected_sha256=expected)
+            print(f"  sha256: {sha_hex[:16]}... ({dest.name})")
         except Exception as exc:
             print(f"  FAILED {rel}: {exc}", file=sys.stderr)
             raise
@@ -169,18 +281,33 @@ def main(argv: List[str] | None = None) -> int:
         help=f"Single pack: {', '.join(VOICE_PACKS.keys())}",
     )
     parser.add_argument("--insecure", action="store_true", help="Skip TLS certificate verification")
+    parser.add_argument("--checksum-manifest", default=None, help="Optional JSON file mapping filenames to SHA256 digests")
+    parser.add_argument("--verify", action="store_true", help="Verify existing files against checksum manifest/sidecars")
     args = parser.parse_args(argv)
     insecure = bool(args.insecure or os.getenv("PIPER_INSTALL_INSECURE", "").strip().lower() in {"1", "true", "yes"})
 
     packs = _select_packs(args)
     TARGET_ROOT.mkdir(parents=True, exist_ok=True)
+    checksums = _load_sha256_manifest(Path(args.checksum_manifest) if args.checksum_manifest else None)
 
     if insecure:
         print("NOTE: TLS verification disabled.", file=sys.stderr)
 
     print(f"Target directory: {TARGET_ROOT}")
+    if args.verify:
+        for pack in packs:
+            for _url, rel in VOICE_PACKS[pack]:
+                dest = TARGET_ROOT / rel
+                expected = checksums.get(rel) or checksums.get(dest.name)
+                if not dest.exists():
+                    print(f"  MISSING: {rel}", file=sys.stderr)
+                    return 2
+                _validate_downloaded_artifact(dest, expected_sha256=expected)
+                print(f"  OK: {rel} (sha256={compute_sha256(dest)[:16]}...)")
+        return 0
+
     for pack in packs:
-        _install_pack(pack, VOICE_PACKS[pack], insecure=insecure)
+        _install_pack(pack, VOICE_PACKS[pack], insecure=insecure, checksums=checksums)
 
     print("\nDone. Set speak.tts.engine=piper and voice paths in config/agent.yaml")
     print("Default Turkish: data/piper_models/tr_TR-dfki-medium/tr_TR-dfki-medium.onnx")

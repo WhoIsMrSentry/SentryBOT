@@ -43,11 +43,24 @@ modules/arduino_serial/
 │   ├── esp_transport.py                  # ESP32 WiFi / HTTP Köprü İstemcisi
 │   └── firmware_helpers.py               # Donanım El Sıkışma & Versiyon Kontrolü
 └── services/                             # Yardımcı Donanım Servisleri
-    ├── port_detector.py                  # Linux / Windows Otomatik Port Tespiti
-    ├── rfid_handler.py                   # RC522 RFID Etiket Okuma & Debounce (2.0s)
-    ├── cute_catalog.py                   # Duygusal Buzzer Melodileri Kataloğu
-    └── serial_loops.py                   # Dedicated RX Thread & Queue (max: 100)
+    ├── port_detector.py                  # Doğrudan pyserial / Glob Otomatik Port Tespiti
+    ├── rfid_handler.py                   # RC522 RFID Etiket Okuma & Yetkilendirme Penceresi
+    ├── safety_watchdog.py                # Monotonic / Event.wait Tabanlı Watchdog & E-STOP
+    ├── cute_catalog.py                   # cute_mapping.json Tek Kaynaklı Buzzer Kataloğu
+    ├── driver.py                         # Atomik ArduinoDriver (track tabanlı set_head)
+    └── serial_loops.py                   # Seri RX/TX + Asenkron Kuyruklu Telemetri İşçisi
 ```
+
+---
+
+## Güvenlik, Watchdog ve Protokol Kuralları
+
+- **Watchdog & `esp_http` Beslemesi:** Başarılı ESP `/send` (`hb` dahil) ve `/request` cevapları `watchdog.feed(...)` çağırır; `watchdog.timeout_s` (`6.0s`) `> 2 * heartbeat_ms` (`2000ms`) olacak şekilde ayarlıdır ve timeout tetiklemesi `build_simple_cmd("estop")` üretir.
+- **Eşzamanlılık & İstek Doğrulaması:** `_esp_http` (`requests.Session`) ve devre kesici durumu `_esp_lock` (`RLock`), metrikler `_metrics_lock` (`get_metrics()`), kafa hakemi eksenleri fail-closed kilitli sarmalayıcı (`HeadArbiterTransportWrapper`) ile korunur.
+- **Yeni Teşhis Uçları (`/arduino/*`):**
+  - `GET /arduino/watchdog/status` ve `POST /arduino/watchdog/reset`
+  - `GET /arduino/healthz` içinde `hello()` kaynaklı `fw_ver` ve `capabilities` uyumluluk raporu (`min_firmware_version`, `required_capabilities`)
+  - Hata durumları artık HTTP `200` yerine `400` (geçersiz parametre), `403` (hakem reddi) ve `503` (taşıma/watchdog devre dışı) olarak döner.
 
 ---
 
