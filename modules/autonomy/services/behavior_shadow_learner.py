@@ -1,8 +1,10 @@
+import hashlib
 import logging
 import time
 import yaml
-from pathlib import Path
 from typing import Any, Dict, List
+
+from .storage_utils import resolve_autonomy_path
 
 logger = logging.getLogger("autonomy.shadow_learner")
 
@@ -17,7 +19,7 @@ class BehaviorShadowLearner:
         self.enabled = bool(self.config.get("enabled", True))
         self.window_s = float(self.config.get("window_s", 15.0))
         self.min_repetitions = int(self.config.get("min_repetitions", 3))
-        self.save_path = Path(str(self.config.get("save_path", "config/learned_behaviors.yml")))
+        self.save_path = resolve_autonomy_path(self.config.get("save_path"), "config/learned_behaviors.yml")
         
         self.gap_s = float(self.config.get("gap_s", 5.0))
         
@@ -42,6 +44,10 @@ class BehaviorShadowLearner:
                 yaml.dump(self._learned_macros, f, allow_unicode=True)
         except Exception as exc:
             logger.error(f"Failed to save learned behaviors: {exc}")
+
+    def observe(self, action_type: str, payload: Dict[str, Any], context: Dict[str, Any] | None = None):
+        """Compatibility alias delegating to observe_action."""
+        return self.observe_action(action_type, payload)
 
     def observe_action(self, action_type: str, payload: Dict[str, Any]):
         """
@@ -75,7 +81,8 @@ class BehaviorShadowLearner:
         self._episode_counts[sequence] += 1
         
         if self._episode_counts[sequence] >= self.min_repetitions:
-            macro_name = f"learned_macro_{hash(sequence) % 10000}"
+            digest = hashlib.sha256(sequence.encode("utf-8")).hexdigest()[:8]
+            macro_name = f"learned_macro_{digest}"
             if macro_name not in self._learned_macros:
                 logger.info(f"SHADOW MODE: Learned a new behavior macro: {sequence}")
                 self._learned_macros[macro_name] = {
@@ -105,9 +112,11 @@ class BehaviorShadowLearner:
                 if act_type == "head_move" and hasattr(client, "move_head"):
                     client.move_head(payload.get("pan", 90), payload.get("tilt", 90))
                 elif act_type == "neopixel" and hasattr(client, "set_neopixel"):
+                    effect = str(payload.get("effect") or payload.get("mode", "solid"))
                     client.set_neopixel(
-                        mode=payload.get("mode", "solid"),
+                        effect=effect,
                         emotions=payload.get("emotions", ["neutral"]),
+                        lease_source="shadow_learner",
                     )
                 elif act_type == "express_emotion" and hasattr(client, "express_emotion"):
                     client.express_emotion(
