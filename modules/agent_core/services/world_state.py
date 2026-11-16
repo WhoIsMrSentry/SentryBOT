@@ -135,14 +135,18 @@ class WorldState:
             "time_of_day": time_of_day
         }
         
+        with self._state_lock:
+            state_copy = dict(self.state)
+            env_copy = dict(self.environment)
+
         context = {
             "chrono": chrono,
-            "sensors": self.state
+            "sensors": state_copy,
         }
         # Only surface the environment block when we actually have a scene, so
         # the prompt stays lean when vision is idle.
-        if self.environment.get("scene_summary") or self.environment.get("people_present"):
-            context["environment"] = self.environment
+        if env_copy.get("scene_summary") or env_copy.get("people_present"):
+            context["environment"] = env_copy
 
         state_str = json.dumps(context, indent=2)
         injected = f"{base_prompt}\n\n[SYSTEM WORLD STATE]\n{state_str}\n"

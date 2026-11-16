@@ -120,7 +120,7 @@ class ActionArbiter:
         self._cooldowns: Dict[str, float] = {}
         # (type, payload_hash) -> timestamp of last dispatch
         self._recent_dispatches: Dict[str, float] = {}
-        # resource_group -> (source, expiry)
+        # resource_group -> (source, expiry, priority)
         self._exclusive_locks: Dict[str, tuple] = {}
         # registered dispatch callbacks: type -> callable
         self._dispatch_handlers: Dict[str, Callable[[ActionRequest], Any]] = {}
@@ -185,20 +185,25 @@ class ActionArbiter:
         # Since we dispatch immediately, this mainly clears exclusive locks.
         count = 0
         with self._lock:
-            for group, (locked_source, _exp) in list(self._exclusive_locks.items()):
+            for group, lock_info in list(self._exclusive_locks.items()):
+                locked_source = lock_info[0]
                 if locked_source == source:
                     del self._exclusive_locks[group]
                     count += 1
         return count
 
-    # â”€â”€ Query â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # ── Query ─────────────────────────────────────────────────────────
     def get_exclusive_status(self) -> Dict[str, Any]:
         with self._lock:
             now = time.time()
             result = {}
-            for group, (src, exp) in self._exclusive_locks.items():
+            for group, lock_info in self._exclusive_locks.items():
+                src = lock_info[0]
+                exp = lock_info[1]
+                pri = int(lock_info[2]) if len(lock_info) > 2 else self._source_base_priority(src)
                 result[group] = {
                     "source": src,
+                    "priority": pri,
                     "expires_in_s": round(max(0, exp - now), 2),
                     "active": exp > now,
                 }
@@ -244,10 +249,11 @@ class ActionArbiter:
         if group:
             locked = self._exclusive_locks.get(group)
             if locked:
-                locked_source, locked_exp = locked
+                locked_source = locked[0]
+                locked_exp = locked[1]
+                locked_priority = int(locked[2]) if len(locked) > 2 else self._source_base_priority(locked_source)
                 if locked_exp > now:
-                    # Compare priority â€“ higher wins
-                    locked_priority = self._source_base_priority(locked_source)
+                    # Compare stored lock priority – higher wins
                     if locked_source != req.source and req.priority <= locked_priority:
                         return {
                             "ok": False,
@@ -261,8 +267,8 @@ class ActionArbiter:
                         req.action_id, locked_source, group,
                         req.priority, locked_priority,
                     )
-            # Acquire lock
-            self._exclusive_locks[group] = (req.source, req.expires_at)
+            # Acquire lock with actual request priority
+            self._exclusive_locks[group] = (req.source, req.expires_at, int(req.priority))
 
         # 6. Dispatch
         self._recent_dispatches[dedup_key] = now
@@ -310,7 +316,7 @@ class ActionArbiter:
         }
         self._cooldowns = {k: v for k, v in self._cooldowns.items() if v > now}
         expired_groups = [
-            g for g, (_, exp) in self._exclusive_locks.items() if exp <= now
+            g for g, lock_info in self._exclusive_locks.items() if lock_info[1] <= now
         ]
         for g in expired_groups:
             del self._exclusive_locks[g]

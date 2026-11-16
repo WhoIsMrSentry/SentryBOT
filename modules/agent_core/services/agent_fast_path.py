@@ -89,7 +89,12 @@ class AgentFastPathMixin:
         max_chars = getattr(self, "fast_path_max_chars", 180)
         return len(str(user_prompt or "").strip()) <= max_chars
 
-    def _native_loop_messages(self, session_language: str) -> List[Dict[str, Any]]:
+    def _native_loop_messages(
+        self,
+        session_language: str,
+        world_context: str = "",
+        survival_override: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         try:
             from modules.common.system_prompts import persona_prompt_with_language
         except Exception:
@@ -110,7 +115,12 @@ class AgentFastPathMixin:
                 "call the matching tool instead of only describing it, then confirm "
                 "briefly in one sentence in the user's language."
             )
-        history = list(getattr(self, "chat_history", []))
+        if survival_override:
+            system_prompt = f"{system_prompt}\n\n{survival_override}"
+        if world_context:
+            system_prompt = f"{system_prompt}\n\n[World State]\n{world_context}"
+        get_snap = getattr(self, "_get_history_snapshot", None)
+        history = get_snap() if callable(get_snap) else list(getattr(self, "chat_history", []))
         dec = getattr(self, "_last_laya_fast_path_decision", None)
         raw_ans = getattr(dec, "raw_answers", None) if dec is not None else None
         action_hint = raw_ans.get("action_hint") if isinstance(raw_ans, dict) else None

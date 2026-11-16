@@ -77,19 +77,14 @@ class GoalPolicyGate:
         required = list(candidate.required_capabilities or [])
         if intent == "resume_existing_goal":
             required = []
+        has_registry = bool(getattr(self.capabilities, "registry_capability_count", 0) or self.capabilities.describe().get("registry_capability_count"))
         for cap in required:
             if not self.capabilities.is_capability_enabled(cap):
                 violations.append(f"capability_disabled:{cap}")
-            elif available and cap not in available and self.capabilities.has_registry_capability(cap) is False:
+            elif has_registry and not self.capabilities.has_registry_capability(cap) and cap not in available:
                 violations.append(f"capability_unavailable:{cap}")
-            elif available and self.capabilities.describe().get("registry_capability_count"):
-                if not self.capabilities.has_registry_capability(cap) and cap not in available:
-                    violations.append(f"capability_unavailable:{cap}")
-            elif self.capabilities.describe().get("registry_capability_count"):
-                if not self.capabilities.has_registry_capability(cap):
-                    # Soft: registry loaded but capability missing
-                    if cap not in available:
-                        violations.append(f"capability_unavailable:{cap}")
+            elif available and cap not in available and not self.capabilities.has_registry_capability(cap):
+                violations.append(f"capability_unavailable:{cap}")
 
         if float(candidate.estimated_risk) > 0.8 and not context.policy_constraints.allow_irreversible:
             violations.append("risk_too_high")

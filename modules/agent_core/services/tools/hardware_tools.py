@@ -110,13 +110,19 @@ class HardwareToolsMixin:
             return f"Lights queued: {effect_name} RGB={rgb if rgb is not None else 'default'}"
         return result
 
+    def _send_arduino_request(self, payload: Dict[str, Any], timeout: float = 1.0) -> Any:
+        public_fn = getattr(self.client, "arduino_request", None) if self.client is not None else None
+        if callable(public_fn):
+            return public_fn(payload, timeout=timeout)
+        return self._http.arduino_request(payload, timeout=timeout)
+
     def print_to_lcd(self, top: str, bottom: str) -> str:
         if not self.client:
             return "Error: Hardware client disconnected."
         try:
             from modules.arduino_serial.contract import build_lcd_cmd
 
-            self.client._arduino_request(build_lcd_cmd(top=top, bottom=bottom))
+            self._send_arduino_request(build_lcd_cmd(top=top, bottom=bottom))
             return f"Printed to LCD: '{top}' / '{bottom}'"
         except Exception as e:
             return f"Failed to print to LCD: {e}"
@@ -127,7 +133,7 @@ class HardwareToolsMixin:
         try:
             from modules.arduino_serial.contract import build_simple_cmd
 
-            resp = self.client._arduino_request(build_simple_cmd("rfid_last"))
+            resp = self._send_arduino_request(build_simple_cmd("rfid_last"))
             if isinstance(resp, dict) and resp.get("ok"):
                 return f"Last RFID: {resp.get('rfid', 'None')}"
             return f"Last RFID Response: {resp}"
@@ -150,37 +156,58 @@ class HardwareToolsMixin:
         ttl_ms: int = 5000,
         payload: dict = None,
     ) -> str:
-        """Submit an action to the action arbiter."""
+        """Submit an action to the action arbiter (in-process when bound, HTTP fallback)."""
         if payload is None:
             payload = {}
         try:
-            resp = self._http.post(
-                "agent/actions/queue",
-                json_data={
-                    "type": action_type,
-                    "priority": priority,
-                    "ttl_ms": ttl_ms,
-                    "payload": payload,
-                    "source": "agent_core",
-                },
-                timeout=2.0,
-            )
-            if resp.status_code != 200:
-                return f"Queue action failed: HTTP {resp.status_code}"
-            try:
-                data = resp.json()
-            except Exception:
-                return "Queue action failed: invalid JSON response"
-            if data.get("ok") is True:
+            arbiter = getattr(self, "action_arbiter", None)
+            if arbiter is not None:
+                from modules.agent_core.services.action_arbiter import ActionRequest
+
+                data = arbiter.submit(
+                    ActionRequest(
+                        type=str(action_type or "").strip(),
+                        source="agent_core",
+                        priority=int(priority),
+                        ttl_ms=int(ttl_ms),
+                        payload=dict(payload),
+                    )
+                )
+            else:
+                resp = self._http.post(
+                    "agent/actions/queue",
+                    json_data={
+                        "type": action_type,
+                        "priority": priority,
+                        "ttl_ms": ttl_ms,
+                        "payload": payload,
+                        "source": "agent_core",
+                    },
+                    timeout=2.0,
+                )
+                if resp.status_code != 200:
+                    return f"Queue action failed: HTTP {resp.status_code}"
+                try:
+                    data = resp.json()
+                except Exception:
+                    return "Queue action failed: invalid JSON response"
+            if isinstance(data, dict) and data.get("ok") is True:
                 action_id = data.get("action_id", "unknown")
                 return f"Action queued: {action_id}"
-            reason = data.get("reason") or data.get("error") or data.get("message") or "unknown"
+            reason = (
+                (data.get("reason") or data.get("error") or data.get("message") or "unknown")
+                if isinstance(data, dict)
+                else "unknown"
+            )
             return f"Queue action rejected: {reason}"
         except Exception as exc:
             return f"Queue action failed: {exc}"
 
     def get_action_status(self) -> str:
         try:
+            arbiter = getattr(self, "action_arbiter", None)
+            if arbiter is not None:
+                return str({"ok": True, "exclusive_locks": arbiter.get_exclusive_status()})
             resp = self._http.get("agent/actions/status", timeout=2.0)
             if resp.status_code == 200:
                 return str(resp.json())
@@ -190,6 +217,10 @@ class HardwareToolsMixin:
 
     def cancel_action(self, action_id: str) -> str:
         try:
+            arbiter = getattr(self, "action_arbiter", None)
+            if arbiter is not None:
+                ok = bool(arbiter.cancel(str(action_id)))
+                return str({"ok": ok, "action_id": str(action_id)})
             resp = self._http.post(
                 "agent/actions/cancel",
                 json_data={"action_id": str(action_id)},

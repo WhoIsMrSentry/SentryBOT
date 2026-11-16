@@ -18,7 +18,36 @@ def get_core_router(agent) -> APIRouter:
 
     @router.get("/healthz")
     def healthz() -> Dict[str, Any]:
-        return {"ok": True, "state": "BUSY" if agent.is_busy else "IDLE"}
+        laya = getattr(agent, "laya_engine", None)
+        s1_summary: Dict[str, Any] = {"available": laya is not None}
+        if laya is not None and hasattr(laya, "get_telemetry"):
+            try:
+                tel = laya.get_telemetry() or {}
+                s1_summary = {
+                    "available": True,
+                    "backend": tel.get("cascade_backend") or ("laya" if hasattr(laya, "decide") else "none"),
+                    "last_backend": tel.get("last_backend", ""),
+                    "tier_counts": tel.get("tier_counts", {}),
+                    "cache": tel.get("cache", {}),
+                }
+            except Exception:
+                s1_summary = {"available": True}
+        pm = getattr(agent, "progress_manager", None)
+        arbiters_summary: Dict[str, Any] = {}
+        if pm is not None and hasattr(pm, "arbiter_snapshot"):
+            try:
+                arbiters_summary = pm.arbiter_snapshot()
+            except Exception:
+                arbiters_summary = {}
+        registry = getattr(agent, "tool_registry", None)
+        tool_metrics = registry.metrics() if registry is not None and hasattr(registry, "metrics") else {}
+        return {
+            "ok": True,
+            "state": "BUSY" if agent.is_busy else "IDLE",
+            "system1": s1_summary,
+            "arbiters": arbiters_summary,
+            "tool_metrics": tool_metrics,
+        }
 
     @router.get("/latency/latest")
     def latest_latency() -> Dict[str, Any]:
@@ -59,6 +88,31 @@ def get_core_router(agent) -> APIRouter:
         traces = store.query(limit=capped)
         return {"ok": True, "available": True, "count": len(traces), "traces": traces}
 
+    @router.get("/goals/status")
+    def goals_status() -> Dict[str, Any]:
+        """Read-only active/waiting GoalStore snapshot + latest replan reason."""
+        store = getattr(agent, "goal_store", None)
+        trace_store = getattr(agent, "decision_traces", None)
+        latest_replan = (
+            trace_store.latest_replan()
+            if trace_store is not None and hasattr(trace_store, "latest_replan")
+            else None
+        )
+        if store is None or not hasattr(store, "status_summary"):
+            return {
+                "ok": True,
+                "available": False,
+                "goals": [],
+                "counts": {"active": 0, "waiting": 0, "replanning": 0, "terminal": 0},
+                "latest_replan": latest_replan,
+            }
+        return {
+            "ok": True,
+            "available": True,
+            **store.status_summary(),
+            "latest_replan": latest_replan,
+        }
+
     @router.post("/speech/interrupt")
     def speech_interrupt() -> Dict[str, Any]:
         return {"ok": True, "cleared": agent.speech_arbiter.interrupt_all()}
@@ -71,7 +125,12 @@ def get_core_router(agent) -> APIRouter:
         language: Optional[str] = Body(default=None, embed=True),
         speaker: Optional[str] = Body(default=None, embed=True),
     ) -> Dict[str, Any]:
-        use_native = bool(getattr(agent, "api_native_tools", False)) if native_tools is None else bool(native_tools)
+        use_native = (
+            bool(getattr(agent, "api_native_tools", False))
+            and not bool(getattr(agent, "tri_layer_enabled", False))
+            if native_tools is None
+            else bool(native_tools)
+        )
         trace_id = str(trace_id or uuid.uuid4().hex[:16])
         result = agent.step(
             query,
@@ -117,7 +176,12 @@ def get_core_router(agent) -> APIRouter:
         event_q: queue.Queue[Dict[str, Any]] = queue.Queue()
         done = threading.Event()
         result_holder: Dict[str, Any] = {}
-        use_native = bool(getattr(agent, "api_native_tools", False)) if native_tools is None else bool(native_tools)
+        use_native = (
+            bool(getattr(agent, "api_native_tools", False))
+            and not bool(getattr(agent, "tri_layer_enabled", False))
+            if native_tools is None
+            else bool(native_tools)
+        )
         trace_id = str(trace_id or uuid.uuid4().hex[:16])
 
         def emit(event: Dict[str, Any]) -> None:

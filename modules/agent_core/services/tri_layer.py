@@ -1,29 +1,18 @@
 from __future__ import annotations
-import os as _sentrybot_env_os
 
-def _sentrybot_agent_ollama_host() -> str:
-    return (
-        _sentrybot_env_os.environ.get("OLLAMA_HOST")
-        or _sentrybot_env_os.environ.get("SENTRYBOT_OLLAMA_BASE_URL")
-        or _sentrybot_env_os.environ.get("SENTRYBOT_REMOTE_OLLAMA_URL")
-        or _sentrybot_env_os.environ.get("SENTRYBOT_OLLAMA_URL")
-        or "http://whoismrsentry.local:11434"
-    ).rstrip("/")
-
-def _sentrybot_force_agent_ollama_env() -> None:
-    host = _sentrybot_agent_ollama_host()
-    _sentrybot_env_os.environ["OLLAMA_HOST"] = host
-    _sentrybot_env_os.environ["OLLAMA_BASE_URL"] = host
-    _sentrybot_env_os.environ.setdefault("SENTRYBOT_OLLAMA_BASE_URL", host)
-    _sentrybot_env_os.environ.setdefault("SENTRYBOT_REMOTE_OLLAMA_URL", host)
-    _sentrybot_env_os.environ.setdefault("SENTRYBOT_OLLAMA_URL", host)
-
-_sentrybot_force_agent_ollama_env()
-
-
-from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence
+from dataclasses import dataclass, field
+import os
 import re
+from typing import Any, Dict, List, Sequence
+
+
+def _default_subagent_model() -> str:
+    return (
+        os.environ.get("SENTRYBOT_OLLAMA_MODEL")
+        or os.environ.get("SENTRYBOT_MODEL")
+        or os.environ.get("SENTRYBOT_LLM_MODEL")
+        or "qwen3.5:9b"
+    ).strip()
 
 
 @dataclass(frozen=True)
@@ -33,34 +22,53 @@ class SubAgentProfile:
     goal: str
     allowed_tools: Sequence[str]
     keywords: Sequence[str]
+    enabled: bool = True
+    temperature: float = 0.2
+    top_p: float = 0.9
+    top_k: int = 20
+    num_predict: int = 512
+    num_ctx: int = 8192
+    repeat_penalty: float = 1.05
+    timeout: int = 60
+    stream: bool = False
+    thinking: bool = False
+    keep_alive: str = "5m"
+    model_override: str = ""
+    extra_options: Dict[str, Any] = field(default_factory=dict)
 
-# Compatibility fallback: older profiles may not define system_prompt.
-def _subagent_profile_system_prompt(self):
-    for attr in ("prompt", "instructions", "description", "role", "module"):
-        value = getattr(self, attr, None)
-        if value:
-            return str(value)
-    name = getattr(self, "name", self.__class__.__name__)
-    return f"You are {name}, a SentryBOT sub-agent. Use available tools safely and briefly."
+    @property
+    def name(self) -> str:
+        return str(self.module or self.role or self.__class__.__name__)
 
-if not hasattr(SubAgentProfile, "system_prompt"):
-    SubAgentProfile.system_prompt = property(_subagent_profile_system_prompt)
+    @property
+    def system_prompt(self) -> str:
+        parts = [str(self.role).strip(), str(self.goal).strip()]
+        text = ". ".join(p for p in parts if p)
+        return text or f"You are {self.name}, a SentryBOT sub-agent. Use available tools safely and briefly."
 
+    @property
+    def model(self) -> str:
+        return self.model_override.strip() or _default_subagent_model()
 
-# Compatibility fallback: older profiles may not define name.
-def _subagent_profile_name(self):
-    for attr in ("id", "profile_id", "module", "role"):
-        value = getattr(self, attr, None)
-        if value:
-            return str(value)
-    return self.__class__.__name__
+    @property
+    def max_tokens(self) -> int:
+        return self.num_predict
 
-if not hasattr(SubAgentProfile, "name"):
-    SubAgentProfile.name = property(_subagent_profile_name)
+    @property
+    def max_output_tokens(self) -> int:
+        return self.num_predict
 
+    @property
+    def context_window(self) -> int:
+        return self.num_ctx
 
-# Compatibility fallback: older profiles may not define enabled.
-SubAgentProfile.enabled = True
+    @property
+    def tools(self) -> List[str]:
+        return list(self.allowed_tools)
+
+    @property
+    def options(self) -> Dict[str, Any]:
+        return dict(self.extra_options)
 
 
 def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[str, SubAgentProfile]:
@@ -426,69 +434,3 @@ class TriLayerRouter:
             return list(self.default_modules[: self.max_subagents])
         ranked = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
         return [name for name, _ in ranked[: self.max_subagents]]
-
-
-# SENTRYBOT compatibility fallback fields for older/newer SubAgentProfile callers.
-def _sentrybot_subagent_model(self):
-    return (
-        _sentrybot_env_os.environ.get("SENTRYBOT_OLLAMA_MODEL")
-        or _sentrybot_env_os.environ.get("SENTRYBOT_MODEL")
-        or _sentrybot_env_os.environ.get("SENTRYBOT_LLM_MODEL")
-        or "qwen3.5:9b"
-    )
-
-def _sentrybot_subagent_tools(self):
-    return []
-
-if "SubAgentProfile" in globals():
-    if not hasattr(SubAgentProfile, "temperature"):
-        SubAgentProfile.temperature = property(lambda self: 0.2)
-    if not hasattr(SubAgentProfile, "top_p"):
-        SubAgentProfile.top_p = property(lambda self: 0.9)
-    if not hasattr(SubAgentProfile, "max_tokens"):
-        SubAgentProfile.max_tokens = property(lambda self: 512)
-    if not hasattr(SubAgentProfile, "max_output_tokens"):
-        SubAgentProfile.max_output_tokens = property(lambda self: 512)
-    if not hasattr(SubAgentProfile, "timeout"):
-        SubAgentProfile.timeout = property(lambda self: 60)
-    if not hasattr(SubAgentProfile, "model"):
-        SubAgentProfile.model = property(_sentrybot_subagent_model)
-    if not hasattr(SubAgentProfile, "tools"):
-        SubAgentProfile.tools = property(_sentrybot_subagent_tools)
-
-
-# SENTRYBOT extra SubAgentProfile Ollama option fallbacks.
-def _sentrybot_profile_copy_default(value):
-    if isinstance(value, dict):
-        return dict(value)
-    if isinstance(value, list):
-        return list(value)
-    return value
-
-def _sentrybot_profile_default_property(value):
-    return property(lambda self, v=value: _sentrybot_profile_copy_default(v))
-
-if "SubAgentProfile" in globals():
-    _sentrybot_profile_defaults = {
-        "num_predict": 512,
-        "num_ctx": 8192,
-        "context_window": 8192,
-        "top_k": 20,
-        "top_p": 0.9,
-        "temperature": 0.2,
-        "repeat_penalty": 1.05,
-        "presence_penalty": 0.0,
-        "frequency_penalty": 0.0,
-        "mirostat": 0,
-        "seed": 0,
-        "timeout": 60,
-        "stream": False,
-        "thinking": False,
-        "format": None,
-        "stop": [],
-        "keep_alive": "5m",
-        "options": {},
-    }
-    for _sentrybot_attr, _sentrybot_value in _sentrybot_profile_defaults.items():
-        if not hasattr(SubAgentProfile, _sentrybot_attr):
-            setattr(SubAgentProfile, _sentrybot_attr, _sentrybot_profile_default_property(_sentrybot_value))

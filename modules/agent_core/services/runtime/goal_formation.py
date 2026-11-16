@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -96,10 +97,31 @@ class GoalFormationService:
         self.generator = GoalCandidateGenerator(cfg=raw, model_assist_fn=model_assist_fn)
         self.evaluator = GoalEvaluator(cfg=raw)
         self.policy_gate = GoalPolicyGate(capabilities=self.capabilities, cfg=raw)
+        self._state_lock = threading.RLock()
         self._last_decision: Optional[GoalFormationDecision] = None
         self._last_ingested_outcome_ts: float = 0.0
 
+    def last_decision(self) -> Optional[GoalFormationDecision]:
+        with self._state_lock:
+            return self._last_decision
+
     def form(
+        self,
+        snapshot: Dict[str, Any],
+        *,
+        owner_present: bool = False,
+        now: Optional[float] = None,
+        previous_plan: Optional[Dict[str, Any]] = None,
+    ) -> GoalFormationDecision:
+        with self._state_lock:
+            return self._form_locked(
+                snapshot,
+                owner_present=owner_present,
+                now=now,
+                previous_plan=previous_plan,
+            )
+
+    def _form_locked(
         self,
         snapshot: Dict[str, Any],
         *,

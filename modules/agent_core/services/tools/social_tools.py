@@ -9,6 +9,35 @@ if TYPE_CHECKING:
 logger = logging.getLogger("agent.tools.social")
 
 
+def _get_world_rag() -> Any:
+    try:
+        from modules.cognitive_memory.services.world_memory_rag import get_default as _get_default_wm
+
+        return _get_default_wm()
+    except Exception:
+        return None
+
+
+def _format_expression_summary(
+    canon: str,
+    intensity: float,
+    dur: float,
+    mods: List[str],
+    render: Any,
+) -> str:
+    neo = render.get("neopixel", {}) if isinstance(render, dict) and isinstance(render.get("neopixel"), dict) else {}
+    oled = render.get("oled", {}) if isinstance(render, dict) and isinstance(render.get("oled"), dict) else {}
+    voice = render.get("voice", {}) if isinstance(render, dict) and isinstance(render.get("voice"), dict) else {}
+    return (
+        f"Expressed {canon} (intensity={intensity:.2f}, "
+        f"{dur:.1f}s) across {', '.join(mods)}. "
+        f"Render: LED={neo.get('effect', 'n/a')} "
+        f"RGB={neo.get('rgb', 'n/a')}, "
+        f"OLED={oled.get('animation', 'n/a')}, "
+        f"TTS={voice.get('tone', 'n/a')}"
+    )
+
+
 class SocialToolsMixin:
     """Social and Interaction tools for ToolRegistry."""
 
@@ -68,47 +97,69 @@ class SocialToolsMixin:
         text: str | None = None,
         language: str = "tr",
     ) -> str:
-        """Express an emotion across all modalities through the Expression service."""
+        """Express an emotion across all modalities through shared arbiters and Expression service."""
         if not self.client:
             return "Error: Hardware client disconnected."
         try:
-            int(min(2.0, max(0.1, float(intensity))))
+            intensity_val = min(2.0, max(0.1, float(intensity)))
             dur = min(30.0, max(0.5, float(duration_s)))
             mods = list(modalities) if modalities else ["leds", "oled", "voice", "head"]
             try:
                 from modules.common.emotion_vocab import get_vocab
 
                 render = get_vocab().get_render_dict(emotion)
-                canon = render["canonical"]
+                canon = render["canonical"] if isinstance(render, dict) else str(emotion).strip().lower()
             except Exception:
                 render = None
                 canon = str(emotion).strip().lower()
-            try:
-                resp = self._http.post(
-                    "/expression/express",
-                    json_data={
-                        "emotion": canon,
-                        "intensity": round(float(intensity), 3),
-                        "duration_s": round(float(dur), 3),
-                        "modalities": mods,
-                        "text": text,
-                        "language": str(language or "tr"),
-                    },
-                    timeout=3.0,
+
+            expr_arbiter = getattr(self, "expression_arbiter", None)
+            if expr_arbiter is not None and "leds" in mods and hasattr(expr_arbiter, "claim_lights"):
+                if not expr_arbiter.claim_lights(
+                    "agent_core",
+                    force=False,
+                    priority=60,
+                    ttl_s=dur + 0.3,
+                ):
+                    return "Expression skipped: lights_locked"
+
+            payload = {
+                "emotion": canon,
+                "intensity": round(intensity_val, 3),
+                "duration_s": round(float(dur), 3),
+                "modalities": mods,
+                "text": text,
+                "language": str(language or "tr"),
+            }
+            arbiter = getattr(self, "action_arbiter", None)
+            if arbiter is not None:
+                from modules.agent_core.services.action_arbiter import ActionRequest
+
+                decision = arbiter.submit(
+                    ActionRequest(
+                        type="express",
+                        source="agent_core",
+                        priority=60,
+                        ttl_ms=int(dur * 1000) + 1000,
+                        payload=payload,
+                    )
                 )
+                if not decision.get("ok"):
+                    return f"Expression skipped: {decision.get('reason', 'arbiter_denied')}"
+                if isinstance(decision.get("result"), dict):
+                    res_data = decision["result"].get("data") or decision["result"]
+                    if not res_data.get("ok", True):
+                        return f"Expression skipped: {res_data.get('reason', 'unknown')}"
+                    return _format_expression_summary(canon, intensity_val, dur, mods, render)
+
+            try:
+                resp = self._http.post("/expression/express", json_data=payload, timeout=3.0)
                 if resp.status_code == 200:
                     body = resp.json()
                     ok = body.get("ok", False)
                     if not ok:
                         return f"Expression skipped: {body.get('reason', 'unknown')}"
-                    return (
-                        f"Expressed {canon} (intensity={intensity:.2f}, "
-                        f"{duration_s:.1f}s) across {', '.join(mods)}. "
-                        f"Render: LED={render['neopixel']['effect']} "
-                        f"RGB={render['neopixel']['rgb'] if render else 'n/a'}, "
-                        f"OLED={render['oled']['animation'] if render else 'n/a'}, "
-                        f"TTS={render['voice']['tone'] if render else 'n/a'}"
-                    )
+                    return _format_expression_summary(canon, intensity_val, dur, mods, render)
                 return f"Expression failed: HTTP {resp.status_code}"
             except Exception as exc:
                 return f"Expression failed: {exc}"
@@ -139,17 +190,16 @@ class SocialToolsMixin:
             except Exception:
                 pass
 
-        # 2. WorldMemoryRAG (structured facts, objects, places, people, habits)
-        try:
-            from modules.cognitive_memory.services.world_memory_rag import WorldMemoryRAG
-
-            wm = WorldMemoryRAG()
-            wm_res = wm.recall(q, limit=4)
-            for item in (wm_res.get("items") or []) if isinstance(wm_res, dict) else []:
-                if float(item.get("rank_score", 0.0)) >= 0.20:
-                    results.append(f"[world:{item.get('kind', 'fact')}:{item.get('name', '')}] {item.get('summary', '')}")
-        except Exception:
-            pass
+        # 2. WorldMemoryRAG (process-wide lazy singleton)
+        wm = _get_world_rag()
+        if wm is not None:
+            try:
+                wm_res = wm.recall(q, limit=4)
+                for item in (wm_res.get("items") or []) if isinstance(wm_res, dict) else []:
+                    if float(item.get("rank_score", 0.0)) >= 0.20:
+                        results.append(f"[world:{item.get('kind', 'fact')}:{item.get('name', '')}] {item.get('summary', '')}")
+            except Exception:
+                pass
 
         # 3. ChatRAG (semantic long-term dialogue chunks with ONNX E5 rerank)
         try:
@@ -182,33 +232,33 @@ class SocialToolsMixin:
             except Exception:
                 pass
 
-        try:
-            from modules.cognitive_memory.services.world_memory_rag import WorldMemoryRAG
+        wm = _get_world_rag()
+        if wm is not None:
+            try:
+                res = wm.observe(
+                    {
+                        "kind": cat,
+                        "name": subj,
+                        "summary": cleaned_fact,
+                        "confidence": 0.90,
+                        "salience": 0.85,
+                    },
+                    source="agent_tool",
+                )
+                if isinstance(res, dict) and res.get("ok"):
+                    saved_to.append("world_memory_rag")
+            except Exception:
+                pass
 
-            wm = WorldMemoryRAG()
-            res = wm.observe(
-                {
-                    "kind": cat,
-                    "name": subj,
-                    "summary": cleaned_fact,
-                    "confidence": 0.90,
-                    "salience": 0.85,
-                },
-                source="agent_tool",
-            )
-            if isinstance(res, dict) and res.get("ok"):
-                saved_to.append("world_memory_rag")
-        except Exception:
-            pass
+        if cat in ("conversation", "dialogue", "chat") or "world_memory_rag" not in saved_to:
+            try:
+                from modules.cognitive_memory.services.chat_rag import get_default as _get_chat_rag
 
-        try:
-            from modules.cognitive_memory.services.chat_rag import get_default as _get_chat_rag
-
-            rag = _get_chat_rag()
-            if rag.ingest(person_id=subj, role="fact", text=cleaned_fact, kind=cat):
-                saved_to.append("chat_rag")
-        except Exception:
-            pass
+                rag = _get_chat_rag()
+                if rag.ingest(person_id=subj, role="fact", text=cleaned_fact, kind=cat):
+                    saved_to.append("chat_rag")
+            except Exception:
+                pass
 
         if not saved_to:
             return "Error: could not persist fact."

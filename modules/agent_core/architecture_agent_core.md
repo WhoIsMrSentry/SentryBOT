@@ -222,3 +222,23 @@ agent_core:
     max_working_memory_items: 10
     consolidation_interval_s: 600
 ```
+
+---
+
+## 6. Sağlık, Hakem Bütçesi ve Dinamik MCP Araç Köprüsü
+
+- **System-1 LRU Ön-Önbellek (`System1CascadeEngine`):** `OrderedDict` tabanlı `128` kayıtlı niyet ve duygu önbelleği (`cache_stats()`, `invalidate_cache()`), tekrarlayan refleks/duygu sorgularında kural/embedding yükünü azaltır.
+- **`GET /agent/healthz` Bütçe Özeti:** Standart `ok`/`state` alanlarının yanında `system1` (`backend`, `tier_counts`, `cache`), `arbiters` (`arbiter_snapshot()`) ve `tool_metrics` sayaçlarını döner.
+- **`ToolRegistry` & Dinamik MCP Araçları (`services/tools/tool_registry.py`):**
+  - Çağrı öncesi şema/tip/zorunlu alan süzgeci (`_validate_and_filter_args`), paylaşımlı `HttpClient` (`requests.Session`) ve per-tool `calls`/`errors`/`timeouts` (`metrics()`) içerir.
+  - `McpClientService` bağlandığında (`attach_mcp_client`) yalnızca halihazırda bağlı canlı MCP sunucu araçlarını `mcp__<server>__<tool>` şeması olarak `get_tool_schema()` içine ekler.
+- **Yaşam Döngüsü ve Eşzamanlılık:** `xAgentCoreService.create_app()` FastAPI `lifespan` ile kapanışta `agent.stop()` (`MemoryConsolidator.shutdown()`, `ToolRegistry.close()`, handler `Session.close()`, `GoalStore.close()`) çağırır; `WorldState`, `ProgressManager`, `chat_history` ve atomik `TopologicalMap.save_map()` kilit altındadır.
+
+---
+
+## 7. Bilişsel Runtime Kalıcılığı ve Tanı (`services/runtime/`)
+
+- **Kalıcı & Thread-Safe `GoalStore` (`services/runtime/goal_store.py`):** `RLock` koruması ve `goal_persistence.backend: sqlite` opsiyonuyla yeniden başlatmalarda yoldaş hedeflerini korur; `status_summary()` ile `GET /agent/goals/status` ucunu besler.
+- **Birleşik İyileştirme & Yeniden Planlama (`services/runtime/recovery_helpers.py`):** `AgentRuntime` ve `CompanionExecutionLoop`, ortak `build_replan_context`, `merge_approved_plan` ve `run_contextual_replan` (`ContextualReplanner` + `PlanPolicyGate`) yardımcısını paylaşır; `RuntimeBudgetUsage` `WAITING` uyku aralıkları dışında `active_elapsed_s` biriktirir.
+- **Karar İzleri & Dönen `JSONL` (`services/runtime/decision_trace.py`):** Thread-safe `DecisionTraceStore`, opsiyonel `decision_trace_log_path` ile boyuta dayalı dönen sanitizasyonlu JSONL yazar ve `latest_replan()` döner.
+- **Araç Risk Sıralaması (`services/runtime/capability_index.py`):** Ön-ek (`prefix`) eşleşmeli yetenek aramalarında aday araçları araç-düzeyi risk önbelleğine göre sıralar.

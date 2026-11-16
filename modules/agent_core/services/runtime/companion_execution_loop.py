@@ -14,12 +14,12 @@ from .capability_index import CapabilityIndex
 from .contextual_replanner import ContextualReplanner, LLMAssistFn
 from .decision_trace import DecisionTraceStore
 from .goal_store import GoalStore
-from .plan_policy_gate import ApprovedPlan, PlanPolicyGate, Reject
+from .plan_policy_gate import PlanPolicyGate
 from .progress_tracker import ProgressTracker
 from .recovery import FailureClassifier, RecoveryManager
+from .recovery_helpers import build_replan_context, run_contextual_replan
 from .schemas import (
     Budget,
-    CandidatePlan,
     Evaluation,
     FailureClass,
     Goal,
@@ -159,7 +159,12 @@ class CompanionExecutionLoop:
         self.traces = (
             traces
             if traces is not None
-            else DecisionTraceStore(maxlen=int(raw.get("decision_trace_maxlen", 64)))
+            else DecisionTraceStore(
+                maxlen=int(raw.get("decision_trace_maxlen", 64)),
+                log_path=raw.get("decision_trace_log_path") or None,
+                max_bytes=int(raw.get("decision_trace_log_max_bytes", 262144)),
+                backup_count=int(raw.get("decision_trace_log_backups", 2)),
+            )
         )
         self.classifier = classifier or FailureClassifier()
         self.recovery = recovery or RecoveryManager()
@@ -172,6 +177,7 @@ class CompanionExecutionLoop:
             max_iterations=int(raw.get("max_iterations", 12)),
             max_retries=int(raw.get("max_retries", 2)),
             max_replans=int(raw.get("max_replans", 2)),
+            max_execution_time_s=float(raw.get("max_execution_time_s", 60.0)),
         )
         self.goal_store = goal_store
         self.contextual_replan_enabled = bool(replan_cfg.get("enabled", True))
@@ -227,122 +233,126 @@ class CompanionExecutionLoop:
         self._used_translated: set = set()
         last_observation: Optional[Dict[str, Any]] = None
         last_evaluation: Optional[Dict[str, Any]] = None
+        self.usage.begin_active()
 
-        while True:
-            exceeded = self.usage.exceeded(self.budget)
-            if exceeded:
-                remaining = any(
-                    s.status in {StepStatus.PENDING, StepStatus.READY} for s in plan.steps
+        try:
+            while True:
+                exceeded = self.usage.exceeded(self.budget)
+                if exceeded:
+                    remaining = any(
+                        s.status in {StepStatus.PENDING, StepStatus.READY} for s in plan.steps
+                    )
+                    if remaining and exceeded in {"max_iterations", "max_execution_time"}:
+                        self.state = RuntimeState.WAITING_FOR_INPUT
+                        goal.status = GoalStatus.WAITING
+                        stop_reason = exceeded
+                    else:
+                        self.state = RuntimeState.BUDGET_EXCEEDED
+                        stop_reason = exceeded
+                        goal.status = GoalStatus.FAILED
+                    break
+
+                self.usage.iterations += 1
+                plan_step = plan.next_ready_step() if plan else None
+                if plan_step is None:
+                    required_steps = [
+                        s for s in plan.steps if s.status not in {StepStatus.SKIPPED}
+                    ]
+                    applied = bool(required_steps) and all(
+                        s.status == StepStatus.SUCCEEDED for s in required_steps
+                    )
+                    self.state = RuntimeState.COMPLETED if applied else RuntimeState.FAILED
+                    goal.status = GoalStatus.COMPLETED if applied else GoalStatus.FAILED
+                    stop_reason = "completed" if applied else "plan_exhausted"
+                    break
+
+                exec_step, capability, params = self._resolve_execution_step(plan_step, steps)
+                plan_step.status = StepStatus.RUNNING
+                signature = f"{capability}:{sorted((params or {}).items())}"
+
+                raw_result = self._execute_step(exec_step, capability, params, execute_capability)
+                step_results.append(raw_result)
+
+                success = bool(raw_result.get("ok"))
+                failure = classify_capability_result(raw_result)
+                observation = Observation(
+                    source=f"capability.{capability or 'semantic'}",
+                    result=raw_result,
+                    success=success,
+                    confidence=0.9 if success else 0.2,
+                    action_id=plan_step.id,
+                    metadata={"capability": capability, "failure_class": failure.value},
                 )
-                if remaining and exceeded in {"max_iterations", "max_execution_time"}:
-                    self.state = RuntimeState.WAITING_FOR_INPUT
-                    goal.status = GoalStatus.WAITING
-                    stop_reason = exceeded
-                else:
-                    self.state = RuntimeState.BUDGET_EXCEEDED
-                    stop_reason = exceeded
+                obs_dict = observation.to_dict()
+                observations.append(obs_dict)
+                last_observation = obs_dict
+
+                evaluation = Evaluation(
+                    execution_success=success,
+                    goal_success=False,
+                    should_replan=failure
+                    in {FailureClass.INVALID_PLAN, FailureClass.UNEXPECTED_RESULT, FailureClass.INSUFFICIENT_CONTEXT},
+                    confidence=observation.confidence,
+                    reason="ok" if success else failure.value,
+                    failure_class=failure,
+                )
+                last_evaluation = evaluation.to_dict()
+
+                stall = self.progress.record(signature, progressed=success)
+                if stall:
+                    self.state = RuntimeState.FAILED
                     goal.status = GoalStatus.FAILED
-                break
+                    stop_reason = stall
+                    self._trace(goal.id, plan_step, capability, evaluation, stop_reason, raw_result)
+                    break
 
-            self.usage.iterations += 1
-            plan_step = plan.next_ready_step() if plan else None
-            if plan_step is None:
-                required_steps = [
-                    s for s in plan.steps if s.status not in {StepStatus.SKIPPED}
-                ]
-                applied = bool(required_steps) and all(
-                    s.status == StepStatus.SUCCEEDED for s in required_steps
+                self._trace(goal.id, plan_step, capability, evaluation, "continue" if success else "recover", raw_result)
+
+                if success:
+                    plan_step.status = StepStatus.SUCCEEDED
+                    continue
+
+                plan_step.status = StepStatus.FAILED
+                recovery = self._recovery_for(failure, capability, plan_step.id)
+                handled = self._apply_recovery(
+                    recovery,
+                    goal=goal,
+                    plan=plan,
+                    failed_step=plan_step,
+                    failure=failure,
+                    capability=capability,
+                    params=params,
+                    observation=observation,
+                    evaluation=evaluation,
+                    execute_capability=execute_capability,
+                    step_results=step_results,
+                    observations=observations,
                 )
-                self.state = RuntimeState.COMPLETED if applied else RuntimeState.FAILED
-                goal.status = GoalStatus.COMPLETED if applied else GoalStatus.FAILED
-                stop_reason = "completed" if applied else "plan_exhausted"
-                break
+                if handled.get("continue_failure"):
+                    continue
+                if handled.get("stop"):
+                    stop_reason = str(handled.get("reason") or "recovery_stop")
+                    if stop_reason == "ask_user" or recovery.should_ask_user:
+                        goal.status = GoalStatus.WAITING
+                        self.state = RuntimeState.WAITING_FOR_INPUT
+                    else:
+                        goal.status = GoalStatus.FAILED if recovery.should_abort else GoalStatus.WAITING
+                        self.state = RuntimeState.FAILED if recovery.should_abort else RuntimeState.WAITING_FOR_INPUT
+                    applied = bool(handled.get("applied"))
+                    break
+                if handled.get("replanned"):
+                    self.usage.replans += 1
+                    goal.status = GoalStatus.ACTIVE
+                    continue
+                if handled.get("retried") or handled.get("switched"):
+                    continue
 
-            exec_step, capability, params = self._resolve_execution_step(plan_step, steps)
-            plan_step.status = StepStatus.RUNNING
-            signature = f"{capability}:{sorted((params or {}).items())}"
-
-            raw_result = self._execute_step(exec_step, capability, params, execute_capability)
-            step_results.append(raw_result)
-
-            success = bool(raw_result.get("ok"))
-            failure = classify_capability_result(raw_result)
-            observation = Observation(
-                source=f"capability.{capability or 'semantic'}",
-                result=raw_result,
-                success=success,
-                confidence=0.9 if success else 0.2,
-                action_id=plan_step.id,
-                metadata={"capability": capability, "failure_class": failure.value},
-            )
-            obs_dict = observation.to_dict()
-            observations.append(obs_dict)
-            last_observation = obs_dict
-
-            evaluation = Evaluation(
-                execution_success=success,
-                goal_success=False,
-                should_replan=failure
-                in {FailureClass.INVALID_PLAN, FailureClass.UNEXPECTED_RESULT, FailureClass.INSUFFICIENT_CONTEXT},
-                confidence=observation.confidence,
-                reason="ok" if success else failure.value,
-                failure_class=failure,
-            )
-            last_evaluation = evaluation.to_dict()
-
-            stall = self.progress.record(signature, progressed=success)
-            if stall:
-                self.state = RuntimeState.FAILED
+                stop_reason = str(handled.get("reason") or recovery.reason or "unhandled_failure")
                 goal.status = GoalStatus.FAILED
-                stop_reason = stall
-                self._trace(goal.id, plan_step, capability, evaluation, stop_reason, raw_result)
+                self.state = RuntimeState.FAILED
                 break
-
-            self._trace(goal.id, plan_step, capability, evaluation, "continue" if success else "recover", raw_result)
-
-            if success:
-                plan_step.status = StepStatus.SUCCEEDED
-                continue
-
-            plan_step.status = StepStatus.FAILED
-            recovery = self._recovery_for(failure, capability, plan_step.id)
-            handled = self._apply_recovery(
-                recovery,
-                goal=goal,
-                plan=plan,
-                failed_step=plan_step,
-                failure=failure,
-                capability=capability,
-                params=params,
-                observation=observation,
-                evaluation=evaluation,
-                execute_capability=execute_capability,
-                step_results=step_results,
-                observations=observations,
-            )
-            if handled.get("continue_failure"):
-                continue
-            if handled.get("stop"):
-                stop_reason = str(handled.get("reason") or "recovery_stop")
-                if stop_reason == "ask_user" or recovery.should_ask_user:
-                    goal.status = GoalStatus.WAITING
-                    self.state = RuntimeState.WAITING_FOR_INPUT
-                else:
-                    goal.status = GoalStatus.FAILED if recovery.should_abort else GoalStatus.WAITING
-                    self.state = RuntimeState.FAILED if recovery.should_abort else RuntimeState.WAITING_FOR_INPUT
-                applied = bool(handled.get("applied"))
-                break
-            if handled.get("replanned"):
-                self.usage.replans += 1
-                goal.status = GoalStatus.ACTIVE
-                continue
-            if handled.get("retried") or handled.get("switched"):
-                continue
-
-            stop_reason = recovery.reason or "unhandled_failure"
-            goal.status = GoalStatus.FAILED
-            self.state = RuntimeState.FAILED
-            break
+        finally:
+            self.usage.pause_active()
 
         snapshot = self._persist_snapshot(
             goal,
@@ -499,14 +509,15 @@ class CompanionExecutionLoop:
         if recovery.should_abort:
             return {"stop": True, "reason": recovery.reason or "abort", "applied": False}
 
+        retry_attempted = False
         if (
             recovery.should_retry
             and capability in READ_ONLY_CAPABILITIES
             and self._retry_counts.get(failed_step.id, 0) < self.budget.max_retries
         ):
+            retry_attempted = True
             self._retry_counts[failed_step.id] = self._retry_counts.get(failed_step.id, 0) + 1
             self.usage.retries += 1
-            failed_step.status = StepStatus.READY
             retry = self._execute_step(
                 dict(failed_step.metadata.get("translated_step") or failed_step.metadata.get("action") or {}),
                 capability,
@@ -514,19 +525,25 @@ class CompanionExecutionLoop:
                 execute_capability,
             )
             step_results.append({**retry, "recovery": "retry"})
-            if retry.get("ok"):
+            retry_ok = bool(retry.get("ok"))
+            observations.append(
+                Observation(
+                    source=f"capability.{capability}",
+                    result=retry,
+                    success=retry_ok,
+                    action_id=failed_step.id,
+                    metadata={"recovery": "retry"},
+                ).to_dict()
+            )
+            if retry_ok:
                 failed_step.status = StepStatus.SUCCEEDED
-                observations.append(
-                    Observation(
-                        source=f"capability.{capability}",
-                        result=retry,
-                        success=True,
-                        action_id=failed_step.id,
-                        metadata={"recovery": "retry"},
-                    ).to_dict()
-                )
-                return {"retried": True, "applied": False}
-            return {"retried": True, "applied": False}
+                return {"retried": True, "succeeded": True, "applied": False}
+            failed_step.status = StepStatus.FAILED
+            if not recovery.should_switch_tool and not recovery.should_replan:
+                if self._retry_counts.get(failed_step.id, 0) < self.budget.max_retries:
+                    failed_step.status = StepStatus.READY
+                    return {"retried": False, "attempted_retry": True, "continue_failure": True, "applied": False}
+                return {"retried": False, "reason": "retry_failed", "applied": False}
 
         if recovery.should_switch_tool and recovery.alternate_tool:
             alt = str(recovery.alternate_tool)
@@ -534,23 +551,26 @@ class CompanionExecutionLoop:
                 alt_params = dict(params)
                 alt_params["reason"] = alt_params.get("reason") or "recovery_switch"
                 alt_result = execute_capability(alt, alt_params)
+                alt_ok = bool(alt_result.get("ok"))
                 step_results.append({**alt_result, "recovery": "switch_capability", "alternate": alt})
                 observations.append(
                     Observation(
                         source=f"capability.{alt}",
                         result=alt_result,
-                        success=bool(alt_result.get("ok")),
+                        success=alt_ok,
                         action_id=failed_step.id,
                         metadata={"recovery": "switch_capability", "from": capability},
                     ).to_dict()
                 )
-                if alt_result.get("ok"):
+                if alt_ok:
                     failed_step.status = StepStatus.SUCCEEDED
                     failed_step.metadata["recovered_via"] = alt
-                    return {"switched": True, "applied": False}
-                return {"switched": True, "applied": False}
+                    return {"switched": True, "succeeded": True, "applied": False}
+                failed_step.status = StepStatus.FAILED
+                if not recovery.should_replan:
+                    return {"switched": False, "reason": "switch_failed", "applied": False}
 
-        if recovery.should_replan and self.usage.replans < self.budget.max_replans:
+        if recovery.should_replan and self.usage.can_replan(self.budget):
             applied_replan = self._contextual_replan(
                 goal=goal,
                 plan=plan,
@@ -565,7 +585,7 @@ class CompanionExecutionLoop:
         if recovery.should_ask_user:
             return {"stop": True, "reason": "ask_user", "applied": False}
 
-        if capability in READ_ONLY_CAPABILITIES and not recovery.should_abort:
+        if capability in READ_ONLY_CAPABILITIES and not recovery.should_abort and not retry_attempted:
             failed_step.status = StepStatus.READY
             return {"continue_failure": True}
 
@@ -583,104 +603,68 @@ class CompanionExecutionLoop:
     ) -> bool:
         self.state = RuntimeState.REPLANNING
         goal.status = GoalStatus.REPLANNING
-        context = self._build_replan_context(
+        context = build_replan_context(
             goal=goal,
             plan=plan,
             failed_step=failed_step,
             observation=observation,
             evaluation=evaluation,
+            capabilities=self.capabilities,
+            policy_constraints=self.policy_constraints,
+            budget=self.budget,
+            usage=self.usage,
+            recovery_history=self._recovery_history,
         )
 
-        candidate: Optional[CandidatePlan] = None
-        if self.contextual_replan_enabled:
-            candidate = self.replanner.replan(context)
-
-        decision = self.policy_gate.approve(candidate, context) if candidate is not None else None
-        if isinstance(decision, Reject) or decision is None:
-            violations = decision.violations if isinstance(decision, Reject) else ["no_candidate"]
-            self.traces.record(
-                goal_id=goal.id,
-                decision="contextual_replan",
-                reason="policy_rejected" if isinstance(decision, Reject) else "no_candidate",
-                tool=str((failed_step.required_capabilities or ["?"])[0]),
-                result_summary=";".join(violations)[:200],
-                next_action="fallback_or_abort",
-                evaluation=evaluation.to_dict(),
-                metadata={
-                    "capability": (failed_step.required_capabilities or [""])[0],
-                    "failure_class": failure.value,
-                    "strategy_hint": (candidate.strategy_hint if candidate else ""),
-                    "planner_source": (candidate.source if candidate else "none"),
-                    "policy_approved": False,
-                    "plan_version": plan.version,
-                    "recovery": {"action": "reject", "violations": violations},
-                },
+        approved = (
+            run_contextual_replan(
+                replanner=self.replanner,
+                policy_gate=self.policy_gate,
+                traces=self.traces,
+                goal=goal,
+                plan=plan,
+                failed_step=failed_step,
+                failure=failure,
+                observation=observation,
+                evaluation=evaluation,
+                context=context,
             )
-            # Fallback observe/wait (Batch 3 path) — still gated.
-            fallback_plan = observation_replan(plan, failed_step, failure)
-            if fallback_plan is None:
-                return False
-            CandidatePlan(
-                plan=Plan(
-                    goal_id=goal.id,
-                    steps=[s for s in plan.steps if s.metadata.get("replan")],
-                    version=plan.version,
-                    metadata=dict(plan.metadata),
-                ),
-                replan_reason="policy_reject_fallback_observe_wait",
-                strategy_hint="observe_wait",
-                source="fallback_observe_wait",
-            )
-            # observation_replan already mutated plan; record and accept as fallback
-            self.traces.record(
-                goal_id=goal.id,
-                decision="contextual_replan",
-                reason="fallback_observe_wait",
-                tool=str((failed_step.required_capabilities or ["?"])[0]),
-                result_summary="fallback_after_reject",
-                next_action="execute",
-                evaluation=evaluation.to_dict(),
-                metadata={
-                    "capability": (failed_step.required_capabilities or [""])[0],
-                    "failure_class": failure.value,
-                    "strategy_hint": "observe_wait",
-                    "planner_source": "fallback_observe_wait",
-                    "policy_approved": True,
-                    "plan_version": plan.version,
-                    "recovery": {"action": "fallback"},
-                },
-            )
+            if self.contextual_replan_enabled
+            else None
+        )
+        if approved is not None:
             self._recovery_history.append(
-                {"strategy": "fallback_observe_wait", "failure_class": failure.value}
+                {
+                    "strategy": approved.candidate.strategy_hint,
+                    "source": approved.candidate.source,
+                    "failure_class": failure.value,
+                }
             )
             return True
 
-        approved: ApprovedPlan = decision
-        self._merge_approved_plan(plan, failed_step, approved)
+        fallback_plan = observation_replan(plan, failed_step, failure)
+        if fallback_plan is None:
+            return False
         self.traces.record(
             goal_id=goal.id,
             decision="contextual_replan",
-            reason=approved.candidate.replan_reason or "contextual_replan",
+            reason="fallback_observe_wait",
             tool=str((failed_step.required_capabilities or ["?"])[0]),
-            result_summary=approved.candidate.strategy_hint,
+            result_summary="fallback_after_reject",
             next_action="execute",
             evaluation=evaluation.to_dict(),
             metadata={
                 "capability": (failed_step.required_capabilities or [""])[0],
                 "failure_class": failure.value,
-                "strategy_hint": approved.candidate.strategy_hint,
-                "planner_source": approved.candidate.source,
+                "strategy_hint": "observe_wait",
+                "planner_source": "fallback_observe_wait",
                 "policy_approved": True,
                 "plan_version": plan.version,
-                "recovery": {"action": "approve", "source": approved.candidate.source},
+                "recovery": {"action": "fallback"},
             },
         )
         self._recovery_history.append(
-            {
-                "strategy": approved.candidate.strategy_hint,
-                "source": approved.candidate.source,
-                "failure_class": failure.value,
-            }
+            {"strategy": "fallback_observe_wait", "failure_class": failure.value}
         )
         return True
 
@@ -693,38 +677,18 @@ class CompanionExecutionLoop:
         observation: Observation,
         evaluation: Evaluation,
     ) -> ReplanContext:
-        available = list(self.capabilities.describe().get("registry_capabilities") or [])
-        return ReplanContext(
-            original_goal=goal,
-            current_plan=plan,
+        return build_replan_context(
+            goal=goal,
+            plan=plan,
             failed_step=failed_step,
             observation=observation,
             evaluation=evaluation,
-            recovery_history=list(self._recovery_history),
-            available_capabilities=available,
+            capabilities=self.capabilities,
             policy_constraints=self.policy_constraints,
-            budget_remaining={
-                "iterations_remaining": max(0, self.budget.max_iterations - self.usage.iterations),
-                "retries_remaining": max(0, self.budget.max_retries - self.usage.retries),
-                "replans_remaining": max(0, self.budget.max_replans - self.usage.replans - 1),
-            },
+            budget=self.budget,
+            usage=self.usage,
+            recovery_history=self._recovery_history,
         )
-
-    def _merge_approved_plan(self, plan: Plan, failed_step: PlanStep, approved: ApprovedPlan) -> None:
-        failed_step.status = StepStatus.FAILED
-        for step in plan.steps:
-            if step.id == failed_step.id:
-                continue
-            if step.status not in {StepStatus.PENDING, StepStatus.READY}:
-                continue
-            step.status = StepStatus.SKIPPED
-            step.metadata["skipped_reason"] = "replaced_by_contextual_replan"
-        plan.steps.extend(list(approved.plan.steps))
-        plan.version = max(plan.version + 1, int(approved.plan.version or plan.version + 1))
-        plan.metadata["replanned"] = True
-        plan.metadata["replan_reason"] = approved.candidate.replan_reason
-        plan.metadata["strategy_hint"] = approved.candidate.strategy_hint
-        plan.metadata["planner_source"] = approved.candidate.source
 
     def _persist_snapshot(
         self,

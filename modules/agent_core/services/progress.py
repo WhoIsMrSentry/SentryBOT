@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -139,6 +140,7 @@ class ProgressManager:
         self._token_languages: Dict[str, str] = {}  # token -> session language (tr|en)
         self._last_progress_text: Dict[str, str] = {}  # token -> last spoken text
         self._latest_event: Dict[str, Any] = {}
+        self._lock = threading.RLock()
         # Optional arbiter references injected after construction.
         self._action_arbiter: Optional[Any] = None
         self._vision_arbiter: Optional[Any] = None
@@ -200,17 +202,20 @@ class ProgressManager:
         """Create a new cancel token for a request lifecycle."""
         import uuid
         token = uuid.uuid4().hex[:10]
-        self._active_tokens[token] = time.time()
-        # Keep the bare 2-letter code; the catalog decides which languages exist.
         lang = str(language or "tr").strip().lower()[:2] or "tr"
-        self._token_languages[token] = lang
+        with self._lock:
+            self._active_tokens[token] = time.time()
+            # Keep the bare 2-letter code; the catalog decides which languages exist.
+            self._token_languages[token] = lang
         return token
 
     def _lang_for(self, token: str) -> str:
-        return self._token_languages.get(token, "tr")
+        with self._lock:
+            return self._token_languages.get(token, "tr")
 
     def is_active(self, token: str) -> bool:
-        return token in self._active_tokens
+        with self._lock:
+            return token in self._active_tokens
 
     def _emit_interaction(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
         if not self._interaction_emit_fn:
@@ -282,9 +287,10 @@ class ProgressManager:
         """Mark request as final – cancel all stale progress messages."""
         self._emit_interaction("agent.processing.end", {"token": token})
         self._cancel_stale(token)
-        self._active_tokens.pop(token, None)
-        self._token_languages.pop(token, None)
-        self._last_progress_text.pop(token, None)
+        with self._lock:
+            self._active_tokens.pop(token, None)
+            self._token_languages.pop(token, None)
+            self._last_progress_text.pop(token, None)
 
     def cancel_stale(self, token: str = "") -> None:
         """Cancel stale progress messages for a specific token or all."""
@@ -324,10 +330,8 @@ class ProgressManager:
     def _handle_progress_persona_start(self, event, token):
         if not token:
             return
-        # Only speak the "putting the answer together" filler when the request
-        # has already been running long enough to feel slow; quick turns should
-        # go straight to the final answer.
-        started = self._active_tokens.get(token)
+        with self._lock:
+            started = self._active_tokens.get(token)
         if started is not None and (time.time() - started) < self._persona_start_min_elapsed_s:
             return
         msg = _msg(self._lang_for(token), "persona_start", "Putting the answer together.")
@@ -346,7 +350,8 @@ class ProgressManager:
     def on_progress_event(self, event: Dict[str, Any]) -> None:
         event_type = str(event.get("type", "")).strip()
         token = str(event.get("token", "")).strip()
-        self._latest_event = {"timestamp": time.time(), "token": token, "event": dict(event)}
+        with self._lock:
+            self._latest_event = {"timestamp": time.time(), "token": token, "event": dict(event)}
         handler_name = self._PROGRESS_HANDLER_NAMES.get(event_type)
         if handler_name:
             getattr(self, handler_name)(event, token)
@@ -358,10 +363,11 @@ class ProgressManager:
 
         # Dedup: don't repeat the same text for the same token
         if token:
-            last = self._last_progress_text.get(token, "")
-            if last == text:
-                return
-            self._last_progress_text[token] = text
+            with self._lock:
+                last = self._last_progress_text.get(token, "")
+                if last == text:
+                    return
+                self._last_progress_text[token] = text
 
         # Route to SpeechArbiter if available
         if self._speech_arbiter is not None and hasattr(self._speech_arbiter, "enqueue_progress"):
@@ -388,9 +394,10 @@ class ProgressManager:
                 self._speech_arbiter.cancel_progress()
 
     def get_latest_event(self) -> Dict[str, Any]:
-        if not self._latest_event:
-            return {}
-        return dict(self._latest_event)
+        with self._lock:
+            if not self._latest_event:
+                return {}
+            return dict(self._latest_event)
 
 
 __all__ = ["ProgressManager", "PROGRESS_TYPES"]

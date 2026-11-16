@@ -7,7 +7,7 @@ from typing import Any, Dict
 import yaml
 
 from modules.common.config_loader import load_agent_config
-from modules.common.model_policy import get_model_policy, set_required_model
+from modules.common.model_policy import LOCAL_MODEL, get_model_policy
 from modules.common.ollama_url import (
     default_ollama_base_url,
     is_bad_ollama_url,
@@ -15,13 +15,9 @@ from modules.common.ollama_url import (
 )
 
 
-# Set required model globally (enforced by model_policy when strict mode enabled)
-_REQUIRED_OLLAMA_MODEL = "qwen3.5:9b"
-set_required_model(_REQUIRED_OLLAMA_MODEL)
-
-
 def _required_model() -> str:
-    return _REQUIRED_OLLAMA_MODEL
+    policy = get_model_policy()
+    return str(getattr(policy, "_required_model", None) or LOCAL_MODEL)
 
 
 def _read_declared_models_from_file(path_value: Any) -> list[tuple[str, str]]:
@@ -60,6 +56,9 @@ def _read_declared_models_from_file(path_value: Any) -> list[tuple[str, str]]:
 
 
 def _raise_if_bad_model(model: Any, source: str) -> None:
+    policy = get_model_policy()
+    if not getattr(policy, "_strict_single_model", True):
+        return
     required = _required_model()
     model = str(model or "").strip()
     if model and model != required:

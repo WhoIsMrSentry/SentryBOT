@@ -8,6 +8,14 @@ logger = logging.getLogger("agent.handlers")
 
 def register_default_action_handlers(orchestrator: Any) -> None:
     """Bind ActionArbiter actions to concrete side effects for the orchestrator."""
+    try:
+        import requests  # type: ignore
+
+        session = requests.Session()
+        orchestrator._handler_http_session = session
+    except Exception:
+        requests = None  # type: ignore
+        session = None
 
     def _handle_speak(req):
         text = str(req.payload.get("text", "")).strip()
@@ -26,17 +34,25 @@ def register_default_action_handlers(orchestrator: Any) -> None:
         return {"ok": True}
 
     def _http_post(path: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        try:
-            import requests  # type: ignore
-        except Exception as exc:
-            return {"ok": False, "reason": "no_requests", "error": str(exc)}
+        if requests is None and session is None:
+            return {"ok": False, "reason": "no_requests"}
         url = f"{orchestrator._gateway_base_url}{path}"
         try:
-            resp = requests.post(
-                url,
-                json=payload or {},
-                timeout=orchestrator._action_http_timeout_s,
-            )
+            post_fn = getattr(requests, "post", None)
+            if post_fn is not None and getattr(post_fn, "__module__", "") != "requests.api":
+                resp = post_fn(
+                    url,
+                    json=payload or {},
+                    timeout=orchestrator._action_http_timeout_s,
+                )
+            elif session is not None:
+                resp = session.post(
+                    url,
+                    json=payload or {},
+                    timeout=orchestrator._action_http_timeout_s,
+                )
+            else:
+                return {"ok": False, "reason": "no_requests"}
             if resp.status_code != 200:
                 return {"ok": False, "reason": "http_error", "status": resp.status_code}
             try:
@@ -180,7 +196,25 @@ def register_default_action_handlers(orchestrator: Any) -> None:
 
         return {"ok": True, "event_type": event_type, "spoken": False, "text": text}
 
+    def _handle_express(req):
+        payload = req.payload if isinstance(req.payload, dict) else {}
+        mods = payload.get("modalities") or ["leds", "oled", "voice", "head"]
+        if "leds" in mods and getattr(orchestrator, "expression_arbiter", None) is not None:
+            try:
+                dur = min(30.0, max(0.5, float(payload.get("duration_s", 3.0) or 3.0)))
+            except (TypeError, ValueError):
+                dur = 3.0
+            if not orchestrator.expression_arbiter.claim_lights(
+                req.source,
+                force=req.priority >= 90,
+                priority=int(req.priority),
+                ttl_s=dur + 0.3,
+            ):
+                return {"ok": False, "reason": "lights_locked"}
+        return _http_post("/expression/express", payload)
+
     orchestrator.action_arbiter.register_handler("speak", _handle_speak)
+    orchestrator.action_arbiter.register_handler("express", _handle_express)
     orchestrator.action_arbiter.register_handler("head_move", _handle_head)
     orchestrator.action_arbiter.register_handler("lights", _handle_lights)
     orchestrator.action_arbiter.register_handler("vision_query", _handle_vision_query)
