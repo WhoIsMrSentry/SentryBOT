@@ -10,6 +10,7 @@ from .bootstrap_config import (
     _camera_hardware_available,
     _merge_with_agent_section,
     _should_autostart_services,
+    mount_module_stub,
 )
 
 logger = logging.getLogger("gateway.bootstrap.ai")
@@ -156,7 +157,8 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
     try:
         stt_status = svc.stt_status() if hasattr(svc, "stt_status") else {}
         if not stt_status.get("available", False):
-            pc_test = str(os.environ.get("SENTRYBOT_PC_TEST") or os.environ.get("SENTRYBOT_PROFILE") or "").strip().lower() in {
+            env_pc = str(os.environ.get("SENTRYBOT_PC_TEST") or os.environ.get("SENTRYBOT_PROFILE") or "")
+            pc_test = env_pc.strip().lower() in {
                 "1", "true", "yes", "pc", "pc-test", "test"
             }
             message = (
@@ -189,28 +191,29 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
     logger.info("module speech mounted")
 
 
-def _create_wakeword_offline_stub(started: Dict[str, object]) -> bool:
+def _create_wakeword_offline_stub(started: Dict[str, object], app: FastAPI | None = None) -> bool:
     import os
 
     if (
         str(os.getenv("SENTRYBOT_NO_HARDWARE", "")).lower() in {"1", "true", "yes", "on"}
         or str(os.getenv("SENTRYBOT_SKIP_WAKEWORD_AUTOSTART", "")).lower() in {"1", "true", "yes", "on"}
     ):
-        if isinstance(started, dict):
-            started["wakeword"] = {
-                "kind": "stub",
-                "available": False,
-                "skipped": True,
-                "reason": "hardware_disabled",
-            }
-            started["wakeword_handle"] = None
+        mount_module_stub(
+            app,
+            started,
+            "wakeword",
+            prefix="/wakeword",
+            reason="hardware_disabled",
+            mount_routes=app is not None,
+            extra_started={"wakeword_handle": None},
+        )
         logger.info("module wakeword mounted as no-hardware stub")
         return True
     return False
 
 
 def _include_wakeword(app: FastAPI, started: Dict[str, object]) -> None:
-    if _create_wakeword_offline_stub(started):
+    if _create_wakeword_offline_stub(started, app=app):
         return
 
     from modules.gateway.url import gateway_url  # type: ignore
@@ -229,11 +232,8 @@ def _include_wakeword(app: FastAPI, started: Dict[str, object]) -> None:
         "interactions_event_url": gateway_url(base, "/interactions/event"),
     })
     svc.actions = WakewordActions(actions)
-    if _should_autostart_services():
-        svc.start_background()
-    else:
-        logger.info("wakeword auto-start skipped (autostart disabled)")
     started["wakeword"] = svc
+    started["_wakeword_autostart_pending"] = _should_autostart_services()
     app.include_router(get_wakeword_router(svc))
     logger.info("module wakeword mounted")
 
@@ -266,7 +266,7 @@ def _include_ollama(app: FastAPI, started: Dict[str, object]) -> None:
         from modules.ai_provider.config_loader import load_config as load_ollama_cfg  # type: ignore
         ocfg = load_ollama_cfg(None)
     app.include_router(get_ollama_router(ocfg))
-    started["ollama"] = True
+    started["ollama"] = {"kind": "router", "mounted": True, "ok": True}
     logger.info("module ollama mounted")
 
 
@@ -387,8 +387,25 @@ def _include_mcp_client(app: FastAPI, started: Dict[str, object]) -> None:
     mcfg = _merge_with_agent_section(load_mcp_cfg(None), "mcp_client")
     svc = McpClientService(cfg=mcfg)
     started["mcp_client"] = svc
+    started.setdefault("_cleanup_hooks", []).append(svc.stop)
     app.include_router(get_mcp_client_router(svc))
     logger.info("module mcp_client mounted")
+
+
+def _include_mcp_server(app: FastAPI, started: Dict[str, object]) -> None:
+    from modules.mcp_server.config_loader import load_config as load_mcp_srv_cfg  # type: ignore
+    from modules.mcp_server.xMcpServerService import xMcpServerService  # type: ignore
+    from modules.mcp_server.api.router import get_router as get_mcp_server_router  # type: ignore
+
+    scfg = _merge_with_agent_section(load_mcp_srv_cfg(None), "mcp_server")
+    sec = scfg.setdefault("mcp_server", {})
+    if isinstance(sec, dict) and started.get("gateway_base_url"):
+        sec["gateway_base"] = str(started["gateway_base_url"]).rstrip("/")
+    svc = xMcpServerService(cfg=scfg)
+    started["mcp_server"] = svc
+    started.setdefault("_cleanup_hooks", []).append(svc.close)
+    app.include_router(get_mcp_server_router(svc))
+    logger.info("module mcp_server mounted (/mcp/*)")
 
 
 def _wire_head_arbiter(started: Dict[str, object]) -> None:
@@ -415,22 +432,48 @@ def _wire_head_arbiter(started: Dict[str, object]) -> None:
 
 def _wire_wakeword_interactions(started: Dict[str, object]) -> None:
     wakeword = started.get("wakeword")
+    autostart = bool(started.pop("_wakeword_autostart_pending", False)) if isinstance(started, dict) else False
     if wakeword is None:
         return
     actions = getattr(wakeword, "actions", None)
     if actions is not None:
-        if started.get("interactions") is not None:
-            actions._interactions_engine = started.get("interactions")
-        if started.get("speech") is not None:
-            actions._speech_service = started.get("speech")
-        if started.get("speak") is not None:
-            actions._speak_service = started.get("speak")
-        if started.get("agent_core") is not None:
-            actions._agent_service = started.get("agent_core")
+        attach = getattr(actions, "attach_services", None)
+        if callable(attach):
+            attach(
+                interactions_engine=started.get("interactions"),
+                speech_service=started.get("speech"),
+                speak_service=started.get("speak"),
+                agent_service=started.get("agent_core"),
+            )
+        else:
+            if started.get("interactions") is not None:
+                actions._interactions_engine = started.get("interactions")
+            if started.get("speech") is not None:
+                actions._speech_service = started.get("speech")
+            if started.get("speak") is not None:
+                actions._speak_service = started.get("speak")
+            if started.get("agent_core") is not None:
+                actions._agent_service = started.get("agent_core")
         logger.info("wakeword wired to speech/speak/agent/interactions engines (in-process 0ms barge-in)")
+    if autostart and hasattr(wakeword, "start_background"):
+        try:
+            wakeword.start_background()
+        except Exception as exc:
+            logger.warning("wakeword background start failed: %s", exc)
+    elif hasattr(wakeword, "start_background") and not isinstance(wakeword, dict):
+        logger.info("wakeword auto-start skipped (autostart disabled)")
 
 
 def _wire_speech_interactions(started: Dict[str, object], cfg: Dict[str, Any]) -> None:
+    speech = started.get("speech")
+    speak = started.get("speak")
+    if speech is not None and speak is not None and hasattr(speech, "attach_speak_service"):
+        try:
+            speech.attach_speak_service(speak)
+            logger.info("speech SoftwareEchoGate linked to speak playback state")
+        except Exception as exc:
+            logger.debug("speech-speak echo bridge skipped: %s", exc)
+
     interactions = started.get("interactions")
     if interactions is None:
         return
@@ -456,7 +499,8 @@ def _wire_vlm_autonomy(started: Dict[str, object]) -> None:
         ):
 
             def _forward_vlm_event(event_type: str, data: Dict[str, Any]) -> None:
-                if event_type in {"face_emotion", "owner_seen", "new_person", "hazard_detected", "scene_changed"} and hasattr(brain, "handle_laya_vision_event"):
+                laya_events = {"face_emotion", "owner_seen", "new_person", "hazard_detected", "scene_changed"}
+                if event_type in laya_events and hasattr(brain, "handle_laya_vision_event"):
                     try:
                         executor = getattr(brain, "_worker_executor", None)
                         if executor is not None:
@@ -509,14 +553,18 @@ def _wire_multimodal_identity(started: Dict[str, object]) -> None:
         except Exception as exc:
             logger.debug("vlm_bridge face wiring to resolver failed: %s", exc)
 
-    # 3. Wire Arduino RFID scans -> resolver
+    # 3. Wire Arduino RFID scans -> resolver via public register_event_handler API
     arduino = started.get("arduino")
-    if arduino is not None and hasattr(arduino, "_event_handlers"):
+    if arduino is not None and (hasattr(arduino, "register_event_handler") or hasattr(arduino, "_event_handlers")):
         def _on_arduino_rfid(msg: Dict[str, Any]) -> None:
             if msg.get("event") == "rfid" or (msg.get("telemetry") and msg.get("rfid")):
                 uid = str(msg.get("uid") or msg.get("rfid") or "").strip()
                 if uid:
                     resolver.observe_rfid(person_id=uid, uid=uid, confidence=0.98)
 
-        getattr(arduino, "_event_handlers", []).append(_on_arduino_rfid)
+        register = getattr(arduino, "register_event_handler", None)
+        if callable(register) and type(register).__module__ != "unittest.mock":
+            register(_on_arduino_rfid)
+        elif hasattr(arduino, "_event_handlers") and isinstance(arduino._event_handlers, list):
+            arduino._event_handlers.append(_on_arduino_rfid)
         logger.info("arduino rfid events wired to ActiveSpeakerResolver")

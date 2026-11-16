@@ -8,6 +8,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from modules.common.http_client import close_all_clients
+
 from .config_loader import load_config
 from .services.agent_api_compat import install_agent_api_compat
 
@@ -60,16 +62,22 @@ def _check_insecure_defaults(cfg: dict) -> list[str]:
     agent_cfg = agent_cfg if isinstance(agent_cfg, dict) else {}
     auth_token = str(agent_cfg.get("auth_token", "") or "").strip()
     if auth_token in ("", "changeme", "your-auth-token", "replace_me"):
-        warnings.append("SECURITY WARNING: agent.auth_token is using default/empty value 'changeme' - please set a strong token in config/agent.yaml")
-    
+        warnings.append(
+            "SECURITY WARNING: agent.auth_token is using default/empty value 'changeme' "
+            "- please set a strong token in config/agent.yaml"
+        )
+
     # Check esp_link WiFi password
     esp_cfg = cfg.get("esp_link", {}) if isinstance(cfg.get("esp_link", {}), dict) else {}
     network_cfg = esp_cfg.get("network", {}) if isinstance(esp_cfg.get("network", {}), dict) else {}
     wifi_password = str(network_cfg.get("password", "") or "").strip()
     wifi_ssid = str(network_cfg.get("ssid", "") or "").strip()
     if wifi_password and wifi_password == wifi_ssid and wifi_ssid == "SentryBOT":
-        warnings.append("SECURITY WARNING: esp_link WiFi password equals SSID ('SentryBOT') - please set a strong unique password in modules/esp_link/config/config.yml")
-    
+        warnings.append(
+            "SECURITY WARNING: esp_link WiFi password equals SSID ('SentryBOT') "
+            "- please set a strong unique password in modules/esp_link/config/config.yml"
+        )
+
     # Check vlm_bridge auth_token
     local_vlm_cfg = cfg.get("vlm_bridge")
     vlm_cfg = local_vlm_cfg if isinstance(local_vlm_cfg, dict) and local_vlm_cfg else root_cfg.get("vlm_bridge", {})
@@ -77,14 +85,20 @@ def _check_insecure_defaults(cfg: dict) -> list[str]:
     remote_cfg = vlm_cfg.get("remote", {}) if isinstance(vlm_cfg.get("remote", {}), dict) else {}
     vlm_auth = str(remote_cfg.get("auth_token", "") or "").strip()
     if vlm_auth in ("", "changeme", "your-auth-token", "replace_me"):
-        warnings.append("SECURITY WARNING: vlm_bridge.remote.auth_token is using default/empty value 'changeme' - please set a strong token in config/agent.yaml")
-    
+        warnings.append(
+            "SECURITY WARNING: vlm_bridge.remote.auth_token is using default/empty value 'changeme' "
+            "- please set a strong token in config/agent.yaml"
+        )
+
     # Check gateway api_keys
     sec = cfg.get("security", {}) if isinstance(cfg.get("security", {}), dict) else {}
     api_keys = sec.get("api_keys", [])
     env_api_key = str(os.environ.get("SENTRY_API_KEY", "") or "").strip()
     if not api_keys and not env_api_key and sec.get("enabled", False):
-        warnings.append("SECURITY WARNING: gateway security.enabled=true but no api_keys configured - API will reject all non-loopback requests")
+        warnings.append(
+            "SECURITY WARNING: gateway security.enabled=true but no api_keys configured "
+            "- API will reject all non-loopback requests"
+        )
     
     return warnings
 
@@ -105,7 +119,7 @@ def _build_security_policy(cfg: dict) -> dict:
         "exempt_prefixes": _listify(
             sec.get(
                 "exempt_prefixes",
-                ["/docs", "/redoc", "/openapi.json", "/health", "/healthz", "/status"],
+                ["/docs", "/redoc", "/openapi.json", "/health", "/healthz", "/readyz", "/status"],
             )
         ),
         "admin_write_prefixes": _listify(
@@ -136,166 +150,149 @@ def _build_security_policy(cfg: dict) -> dict:
     }
 
 
-def create_app(config_path: str | None = None) -> FastAPI:
-    cfg = load_config(config_path)
-    security = _build_security_policy(cfg)
-    
-    # Check for insecure defaults at startup
-    for warning in _check_insecure_defaults(cfg):
-        logger.warning(warning)
+def _mount_bootstrap(app: FastAPI, cfg: dict) -> None:
+    started: dict = {}
+    app.state.started = started
+    try:
+        from .services.bootstrap import bootstrap  # type: ignore
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        # Bootstrap modules in startup phase so we can start async services cleanly.
-        started = {}
+        started = bootstrap(app, cfg) or {}
         app.state.started = started
         try:
-            from .services.bootstrap import bootstrap  # type: ignore
+            from .services.agent_core_binding import ensure_agent_core_bound
 
-            started = bootstrap(app, cfg) or {}
-            app.state.started = started
-            try:
-                from .services.agent_core_binding import ensure_agent_core_bound
-
-                ensure_agent_core_bound(app, cfg, app.state.started)
-            except Exception as exc:
-                logger.warning("agent core binding failed: %s", exc)
-            started["_startup_health"] = {"ok": True, "stage": "ready", "started_services": sorted(k for k in started if not k.startswith("_"))}
-            app.state.startup_health = started["_startup_health"]  # type: ignore[attr-defined]
+            ensure_agent_core_bound(app, cfg, app.state.started)
         except Exception as exc:
-            health = {"ok": False, "stage": "bootstrap", "error": str(exc)}
-            app.state.startup_health = health  # type: ignore[attr-defined]
-            app.state.started["_startup_health"] = health  # type: ignore[attr-defined]
-            logger.exception("gateway bootstrap failed; health will report degraded state")
+            logger.warning("agent core binding failed: %s", exc)
+        started["_startup_health"] = {
+            "ok": True,
+            "stage": "ready",
+            "started_services": sorted(k for k in started if not str(k).startswith("_")),
+            "boot_total_ms": started.get("_boot_total_ms", 0.0),
+        }
+        app.state.startup_health = started["_startup_health"]  # type: ignore[attr-defined]
+    except Exception as exc:
+        health = {"ok": False, "stage": "bootstrap", "error": str(exc)}
+        app.state.startup_health = health  # type: ignore[attr-defined]
+        app.state.started["_startup_health"] = health  # type: ignore[attr-defined]
+        logger.exception("gateway bootstrap failed; health will report degraded state")
 
-        # Mount core router after bootstrap so it receives the started dict reference
-        try:
-            from .api.router import get_router as get_core_router  # type: ignore
+    try:
+        from .api.router import get_router as get_core_router  # type: ignore
 
-            app.include_router(get_core_router(cfg, app.state.started))  # type: ignore[attr-defined]
-        except Exception as exc:
-            logger.warning("gateway core router mount failed: %s", exc)
+        app.include_router(get_core_router(cfg, app.state.started))  # type: ignore[attr-defined]
+    except Exception as exc:
+        logger.warning("gateway core router mount failed: %s", exc)
 
-        # Start async-only services that were exposed by bootstrap (e.g., notifier bot)
-        try:
-            nb = (app.state.started or {}).get("notifier_bot")
-            if nb and (app.state.started or {}).get("notifier_polling_enabled"):
-                try:
-                    await nb.start()
-                except Exception as e:
-                    logger.warning("notifier start failed: %s", e)
-        except Exception:
-            pass
-
-        try:
-            yield
-        finally:
-            # Shutdown: stop async services then attempt best-effort stop/close on started services
-            try:
-                nb = (app.state.started or {}).get("notifier_bot")
-                if nb and (app.state.started or {}).get("notifier_polling_enabled"):
-                    try:
-                        await nb.stop()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-            for name, svc in list((app.state.started or {}).items()):
-                try:
-                    if name in ("notifier_bot", "notifier_polling_enabled"):
-                        continue
-                    if hasattr(svc, "stop") and callable(getattr(svc, "stop")):
-                        try:
-                            res = svc.stop()
-                            if inspect.isawaitable(res):
-                                await res
-                        except BaseException:
-                            pass
-                    elif hasattr(svc, "shutdown") and callable(
-                        getattr(svc, "shutdown")
-                    ):
-                        try:
-                            res = svc.shutdown()
-                            if inspect.isawaitable(res):
-                                await res
-                        except BaseException:
-                            pass
-                    elif hasattr(svc, "close") and callable(getattr(svc, "close")):
-                        try:
-                            res = svc.close()
-                            if inspect.isawaitable(res):
-                                await res
-                        except BaseException:
-                            pass
-                except Exception:
-                    pass
-
-    app = FastAPI(title="SentryBOT Gateway", lifespan=lifespan)
-    # ensure state exists as a dict reference
-    app.state.started = {}  # type: ignore[attr-defined]
-
-    if security.get("enabled", False):
-
-        @app.middleware("http")
-        async def _security_middleware(request, call_next):
-            path = str(request.url.path or "")
-            method = str(request.method or "GET").upper()
-
-            if method == "OPTIONS":
-                return await call_next(request)
-
-            for prefix in security["exempt_prefixes"]:
-                if path.startswith(prefix):
-                    return await call_next(request)
-
-            is_read_only = method in {"GET", "HEAD"}
-            is_protected_read = is_read_only and any(
-                path.startswith(prefix) for prefix in security["protected_get_prefixes"]
-            )
-
-            # Read-only access is left open by default; write operations and
-            # the sensitive read endpoints in protected_get_prefixes (camera,
-            # speech, state, telemetry, vlm, agent, autonomy, social...) are
-            # subject to the same key check as writes below.
-            if is_read_only and not is_protected_read:
-                return await call_next(request)
-
-            if security.get("trust_loopback", True) and _client_is_loopback(request):
-                return await call_next(request)
-
-            key = request.headers.get(
-                security["api_key_header"]
-            ) or request.query_params.get("api_key")
-            if not key or str(key) not in security["valid_keys"]:
-                return JSONResponse(
-                    status_code=401, content={"ok": False, "error": "unauthorized"}
-                )
-
-            needs_admin = any(
-                path.startswith(prefix) for prefix in security["admin_write_prefixes"]
-            )
-            if needs_admin:
-                header_role = (
-                    str(request.headers.get(security["role_header"], ""))
-                    .strip()
-                    .lower()
-                )
-                is_admin = str(key) in security["admin_keys"] or header_role == "admin"
-                if not is_admin:
-                    return JSONResponse(
-                        status_code=403,
-                        content={"ok": False, "error": "admin_required"},
-                    )
-
-            return await call_next(request)
-
+    # Install agent compat routes AFTER bootstrap & core binding so real agent_core routes keep priority.
     try:
         install_agent_api_compat(app)
     except Exception as exc:
         logger.warning("agent api compat route install failed: %s", exc)
 
+
+async def _shutdown_started_services(started: dict) -> None:
+    for hook in list(started.get("_cleanup_hooks", []) if isinstance(started, dict) else []):
+        try:
+            res = hook()
+            if inspect.isawaitable(res):
+                await res
+        except Exception as exc:
+            logger.debug("cleanup hook failed during shutdown: %s", exc)
+
+    nb = started.get("notifier_bot") if isinstance(started, dict) else None
+    if nb is not None:
+        try:
+            await nb.stop()
+        except Exception as exc:
+            logger.warning("notifier bot stop failed during shutdown: %s", exc)
+
+    for name, svc in list((started or {}).items()):
+        if str(name).startswith("_") or name in ("notifier_bot", "notifier_polling_enabled"):
+            continue
+        for method_name in ("stop", "shutdown", "close"):
+            fn = getattr(svc, method_name, None)
+            if callable(fn):
+                try:
+                    res = fn()
+                    if inspect.isawaitable(res):
+                        await res
+                except Exception as exc:
+                    logger.debug("service %s.%s failed during shutdown: %s", name, method_name, exc)
+                break
+
+    try:
+        await close_all_clients()
+    except Exception as exc:
+        logger.debug("closing shared http clients failed: %s", exc)
+
+
+def _register_security_middleware(app: FastAPI, security: dict) -> None:
+    if not security.get("enabled", False):
+        return
+
+    @app.middleware("http")
+    async def _security_middleware(request, call_next):
+        path = str(request.url.path or "")
+        method = str(request.method or "GET").upper()
+
+        if method == "OPTIONS":
+            return await call_next(request)
+
+        for prefix in security["exempt_prefixes"]:
+            if path.startswith(prefix):
+                return await call_next(request)
+
+        is_read_only = method in {"GET", "HEAD"}
+        is_protected_read = is_read_only and any(
+            path.startswith(prefix) for prefix in security["protected_get_prefixes"]
+        )
+        if is_read_only and not is_protected_read:
+            return await call_next(request)
+
+        if security.get("trust_loopback", True) and _client_is_loopback(request):
+            return await call_next(request)
+
+        key = request.headers.get(security["api_key_header"]) or request.query_params.get("api_key")
+        if not key or str(key) not in security["valid_keys"]:
+            return JSONResponse(status_code=401, content={"ok": False, "error": "unauthorized"})
+
+        needs_admin = any(path.startswith(prefix) for prefix in security["admin_write_prefixes"])
+        if needs_admin and str(key) not in security["admin_keys"]:
+            return JSONResponse(status_code=403, content={"ok": False, "error": "admin_required"})
+
+        return await call_next(request)
+
+
+def create_app(config_path: str | None = None) -> FastAPI:
+    cfg = load_config(config_path)
+    security = _build_security_policy(cfg)
+
+    for warning in _check_insecure_defaults(cfg):
+        logger.warning(warning)
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        _mount_bootstrap(app, cfg)
+
+        try:
+            nb = (app.state.started or {}).get("notifier_bot")
+            if nb and (app.state.started or {}).get("notifier_polling_enabled"):
+                await nb.start()
+        except Exception as exc:
+            logger.warning("notifier start failed: %s", exc)
+
+        try:
+            yield
+        finally:
+            await _shutdown_started_services(getattr(app.state, "started", {}) or {})
+
+    app = FastAPI(title="SentryBOT Gateway", lifespan=lifespan)
+    app.state.started = {}  # type: ignore[attr-defined]
+    _register_security_middleware(app, security)
     return app
+
+
 if __name__ == "__main__":
     import uvicorn
 

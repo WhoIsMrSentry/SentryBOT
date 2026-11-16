@@ -5,28 +5,38 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import re
 import time
-import urllib.request
 from typing import Any, Dict, List, Optional
 
 from fastapi import Request
 
-# Consolidated duplicates (audit FIX-12): both legacy helpers now live in
-# modules.common.ollama_url; local names kept as aliases for call sites.
-from modules.common.ollama_url import (  # noqa: E402,F401
+from modules.common.http_client import get_http_client
+from modules.common.ollama_url import (  # noqa: F401
     ensure_ollama_host_env as _ensure_ollama_host_env,
     ensure_sentrybot_ollama_host_env as _sentrybot_ensure_ollama_host_env,
+)
+from .agent_core_binding import (
+    _find_existing,
+    _is_agent_like,
+    _state_get,
+    ensure_agent_core_bound,
 )
 
 DEFAULT_MODEL = "qwen3.5:9b"
 DEFAULT_OLLAMA_BASE_URL = "http://whoismrsentry.local:11434"
-_AGENT_STATE_NAMES = ("agent_service", "agent", "agent_core", "agent_runtime", "sentrybot_agent")
 
-_TOOL_ACTION_KEYWORDS = (
-    "set_lights", "lights", "light", "neopixel", "led", "rgb",
-    "emotion", "set_emotion", "speak", "say", "queue_action",
-    "tool", "use the", "using the", "execute", "run",
-    "red", "green", "blue", "solid", "rainbow", "blink",
+_TOOL_ACTION_PATTERNS = (
+    re.compile(
+        r"\b(?:set_lights|set_emotion|express_emotion|queue_action|"
+        r"look_around|face_focus|follow_owner|stop_follow)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:neopixel|rgb)\b", re.I),
+    re.compile(r"\b(?:set|turn|switch|change)\s+(?:the\s+)?(?:lights?|leds?)\b", re.I),
+    re.compile(r"\bleds?\s+to\b", re.I),
+    re.compile(r"\b(?:use\s+the\s+tool|call\s+tool|speak\s+aloud|say\s+aloud)\b", re.I),
+    re.compile(r"\b(?:işıkları|ışıkları\s+yak|ışıkları\s+kapat|led\s+rengi|sesli\s+söyle|duygu\s+ayarla)\b", re.I),
 )
 
 _REFUSAL_SNIPPETS = (
@@ -58,36 +68,13 @@ def _payload_prompt(payload: Dict[str, Any]) -> str:
         if isinstance(msg, str) and msg.strip():
             return f"{event_type.strip()}: {msg.strip()}"
         return event_type.strip()
-    return "Set the lights to red."
-
-
-def _state_get(app: Any, name: str) -> Any:
-    try:
-        return getattr(app.state, name)
-    except Exception:
-        return None
-
-
-def _is_agent_like(obj: Any) -> bool:
-    return obj is not None and any(
-        callable(getattr(obj, name, None))
-        for name in ("step", "step_event", "turn", "chat", "run", "handle_event")
-    )
+    return ""
 
 
 def _find_agent_service(request: Request) -> Any:
-    for name in _AGENT_STATE_NAMES:
-        svc = _state_get(request.app, name)
-        if _is_agent_like(svc):
-            return svc
-    for container_name in ("started", "services"):
-        container = _state_get(request.app, container_name)
-        if isinstance(container, dict):
-            for name in _AGENT_STATE_NAMES:
-                svc = container.get(name)
-                if _is_agent_like(svc):
-                    return svc
-    return None
+    started = _state_get(request.app, "started")
+    found = _find_existing(request.app, started if isinstance(started, dict) else {})
+    return found[0] if found is not None else None
 
 
 def _ensure_bound_agent(request: Request, cfg: Optional[Dict[str, Any]] = None) -> Any:
@@ -95,8 +82,6 @@ def _ensure_bound_agent(request: Request, cfg: Optional[Dict[str, Any]] = None) 
     if _is_agent_like(agent):
         return agent
     try:
-        from modules.gateway.services.agent_core_binding import ensure_agent_core_bound
-
         started = _state_get(request.app, "started")
         if not isinstance(started, dict):
             started = {}
@@ -271,7 +256,7 @@ def _get_tool_schema_from_agent(agent: Any) -> tuple[List[Dict[str, Any]], Dict[
     return _minimal_tools(), info
 
 
-def _ollama_tool_call(prompt: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
+async def _ollama_tool_call(prompt: str, tools: List[Dict[str, Any]]) -> Dict[str, Any]:
     started = time.time()
     base_url = _ollama_base_url()
     model = _ollama_model()
@@ -282,21 +267,19 @@ def _ollama_tool_call(prompt: str, tools: List[Dict[str, Any]]) -> Dict[str, Any
         "messages": [
             {
                 "role": "system",
-                "content": "Use the provided tool when appropriate. Return a tool call only when the user asks for robot action.",
+                "content": (
+                    "Use the provided tool when appropriate. "
+                    "Return a tool call only when the user asks for robot action."
+                ),
             },
             {"role": "user", "content": prompt},
         ],
         "tools": tools or _minimal_tools(),
         "options": {"temperature": 0, "num_predict": 128},
     }
-    req = urllib.request.Request(
-        f"{base_url}/api/chat",
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(req, timeout=90) as response:
-        data = json.loads(response.read().decode("utf-8", errors="replace"))
+    client = get_http_client(base_url, timeout=90.0)
+    response = await client.post("/api/chat", json=body, timeout=90.0)
+    data = response.json() if response.content else {}
     message = data.get("message") or {}
     raw_tool_calls = message.get("tool_calls") or []
     return {
@@ -509,7 +492,7 @@ async def _tool_bridge_with_real_agent(
     real_errors: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     tools, schema_info = _get_tool_schema_from_agent(agent)
-    ollama_result = _ollama_tool_call(prompt, tools)
+    ollama_result = await _ollama_tool_call(prompt, tools)
     executions: List[Dict[str, Any]] = []
 
     for call in ollama_result.get("tool_calls", []):
@@ -569,13 +552,17 @@ async def _tool_bridge_with_real_agent(
     }
 
 
-def _ollama_tool_fallback(prompt: str) -> Dict[str, Any]:
-    return _ollama_tool_call(prompt, _minimal_tools())
+async def _ollama_tool_fallback(prompt: str) -> Dict[str, Any]:
+    return await _ollama_tool_call(prompt, _minimal_tools())
 
 
 def _prompt_wants_tool_action(prompt: str, payload: object = None) -> bool:
-    hay = (str(prompt or "") + " " + str(payload or "")).lower()
-    return any(k in hay for k in _TOOL_ACTION_KEYWORDS)
+    if isinstance(payload, dict) and (payload.get("action") or payload.get("tool") or payload.get("tools")):
+        return True
+    text = str(prompt or "").strip()
+    if not text:
+        return False
+    return any(pattern.search(text) for pattern in _TOOL_ACTION_PATTERNS)
 
 
 def _result_actions_empty(result: object) -> bool:
@@ -636,7 +623,7 @@ async def _handle_step(request: Request) -> Dict[str, Any]:
         if real.get("ok"):
             return {k: v for k, v in real.items() if k != "errors"}
         return await _tool_bridge_with_real_agent(request, agent, prompt, real.get("errors", []))
-    return {"ok": True, "source": "gateway_agent_compat_ollama", "result": _ollama_tool_fallback(prompt)}
+    return {"ok": True, "source": "gateway_agent_compat_ollama", "result": await _ollama_tool_fallback(prompt)}
 
 
 async def _handle_event(request: Request) -> Dict[str, Any]:

@@ -101,22 +101,48 @@ def _find_existing(app: Any, started: Dict[str, Any]) -> Optional[Tuple[Any, str
     return None
 
 
-def _call_attempts(target: Any, app: Any, cfg: Dict[str, Any], started: Dict[str, Any]):
-    return (
-        ((), {}),
-        ((cfg,), {}),
-        ((cfg, started), {}),
-        ((), {"config": cfg}),
-        ((), {"cfg": cfg}),
-        ((), {"settings": cfg}),
-        ((), {"started": started}),
-        ((), {"services": started}),
-        ((), {"app": app}),
-        ((), {"config": cfg, "started": started}),
-        ((), {"cfg": cfg, "started": started}),
-        ((), {"config": cfg, "services": started}),
-        ((), {"app": app, "config": cfg, "started": started}),
-    )
+def _build_constructor_kwargs(
+    target: Any,
+    app: Any,
+    cfg: Dict[str, Any],
+    started: Dict[str, Any],
+) -> tuple[tuple[Any, ...], Dict[str, Any]]:
+    try:
+        sig = inspect.signature(target)
+    except (TypeError, ValueError):
+        return (), {}
+
+    params = sig.parameters
+    accepts_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+    if accepts_varkw:
+        return (), {"config": cfg, "started": started}
+
+    kwargs: Dict[str, Any] = {}
+    mapping = {
+        "config": cfg,
+        "cfg": cfg,
+        "config_overrides": cfg,
+        "settings": cfg,
+        "started": started,
+        "services": started,
+        "app": app,
+    }
+    for param_name in params:
+        if param_name in mapping:
+            kwargs[param_name] = mapping[param_name]
+
+    if not kwargs:
+        positional_only = [
+            p
+            for p in params.values()
+            if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+            and p.default is inspect.Parameter.empty
+        ]
+        if len(positional_only) == 1:
+            return (cfg,), {}
+        if len(positional_only) >= 2:
+            return (cfg, started), {}
+    return (), kwargs
 
 
 def _construct(target: Any, app: Any, cfg: Dict[str, Any], started: Dict[str, Any]) -> Tuple[Optional[Any], list[str]]:
@@ -128,16 +154,24 @@ def _construct(target: Any, app: Any, cfg: Dict[str, Any], started: Dict[str, An
     if not callable(target):
         return None, [f"not_callable:{target!r}"]
 
-    for args, kwargs in _call_attempts(target, app, cfg, started):
+    from_cfg = getattr(target, "from_config", None)
+    if callable(from_cfg):
         try:
-            obj = target(*args, **kwargs)
+            obj = from_cfg(cfg, started=started)
             if _is_agent_like(obj):
                 return obj, errors
-            errors.append(f"{target}:constructed_not_agent_like:{type(obj).__name__}")
-        except TypeError as exc:
-            errors.append(f"{target}:type:{exc}")
+            errors.append(f"{target}.from_config:not_agent_like:{type(obj).__name__}")
         except Exception as exc:
-            errors.append(f"{target}:error:{type(exc).__name__}:{exc}")
+            errors.append(f"{target}.from_config:{type(exc).__name__}:{exc}")
+
+    args, kwargs = _build_constructor_kwargs(target, app, cfg, started)
+    try:
+        obj = target(*args, **kwargs)
+        if _is_agent_like(obj):
+            return obj, errors
+        errors.append(f"{target}:constructed_not_agent_like:{type(obj).__name__}")
+    except Exception as exc:
+        errors.append(f"{target}:{type(exc).__name__}:{exc}")
 
     return None, errors
 
@@ -192,7 +226,11 @@ def _discover_agent(app: Any, cfg: Dict[str, Any], started: Dict[str, Any]) -> T
     return None, "not_found", errors
 
 
-def ensure_agent_core_bound(app: Any, cfg: Optional[Dict[str, Any]] = None, started: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def ensure_agent_core_bound(
+    app: Any,
+    cfg: Optional[Dict[str, Any]] = None,
+    started: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     cfg = cfg if isinstance(cfg, dict) else {}
 
     if started is None or not isinstance(started, dict):

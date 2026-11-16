@@ -20,6 +20,7 @@ include:
   autonomy: true
   agent_core: true
   mcp_client: true
+  mcp_server: true
   telemetry: true
   diagnostics: true
   state_manager: true
@@ -28,6 +29,7 @@ include:
   notifier: false
   runtime_console: true
   config_center: true
+  calibration: false
 speech:
   listening: false
 
@@ -44,6 +46,7 @@ security:
     - /openapi.json
     - /health
     - /healthz
+    - /readyz
     - /status
   admin_write_prefixes:
     - /config
