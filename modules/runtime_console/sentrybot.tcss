@@ -317,6 +317,20 @@ ServiceCard:hover, .service_card:hover {
     color: #cccccc;
 }
 
+#decision_trace_panel {
+    height: auto;
+    min-height: 5;
+    background: $surface;
+    border: round $secondary;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+#decision_trace_content {
+    color: #cccccc;
+    padding: 0 1;
+}
+
 /* Action Control Bar */
 #main_action_bar {
     layout: horizontal;
@@ -390,6 +404,12 @@ ServiceCard:hover, .service_card:hover {
 
 #log_scroll_toggle {
     min-width: 17;
+    margin-right: 1;
+    height: 3;
+}
+
+#log_export_btn {
+    min-width: 18;
     margin-right: 1;
     height: 3;
 }
@@ -870,6 +890,18 @@ SysInfoModal, ThemeSelectorModal {
     height: 3;
     margin-bottom: 1;
     align: center middle;
+}
+
+#memory_tab_bar {
+    layout: horizontal;
+    height: 3;
+    margin-bottom: 1;
+    align: left middle;
+}
+
+.memory_tab_btn {
+    min-width: 16;
+    margin-right: 1;
 }
 
 #memory_query_input {
