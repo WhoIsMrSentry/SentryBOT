@@ -1,23 +1,18 @@
 # LogWrapper Modülü Mimarisi
 
-LogWrapper modülü (`modules/logwrapper`), sistem genelindeki standart `logger` (logging) akışlarını toplayarak, hem konsola renkli bastıran (rich tabanlı) hem de WebSocket üzerinden web paneline anlık olarak (canlı log streaming) ileten merkezi log yakalayıcısıdır.
+LogWrapper modülü (`modules/runtime_console/logwrapper`), sistem genelindeki standart `logging` akışlarını toplayarak `logs/sentry.log`, ayrı seviye/TUI dosyalarına (`warnings.log`, `errors.log`, yalnızca `runtime_console` için `tui.log`), terminal `RuntimeConsoleLogHandler` panosuna ve `InMemoryLogHandler` bellek ring-buffer'ına güvenli biçimde aktaran merkezi günlük katmanıdır.
 
-## 🏗️ İş Akışı ve Karar Mekanizmaları (Flowchart)
+## 🏗️ İş Akışı ve Veri Akışı (Flowchart)
 
 ```mermaid
 flowchart TD
-    %% Log Yakalama Akışı
-    G_LOG("Herhangi Bir Modülde<br>logger.error/info") --> CATCH_HND("WebSocketLogHandler<br>Yakalar (Intercept)")
-    
-    CATCH_HND --> FMT_JSON("Zaman, Modül Adı, Renk<br>Bilgilerini JSON Yap")
-    
-    FMT_JSON --> WS_BCAST("Tüm Aktif WebSocket<br>İstemcilerine Yolla")
-    
-    %% WS İstekleri
-    FRONTEND("Web Arayüzü<br>(Admin Panel)") --> REQ_WS("WS /logs/stream")
-    REQ_WS --> ADD_CLIENT("İstemciyi Aktif Listeye<br>(clients_set) Ekle")
-    ADD_CLIENT --> WAIT_LOGS("Log Bekleme Döngüsü")
-    WS_BCAST --> WAIT_LOGS
+    G_LOG["Tüm Modüller<br>(logging.getLogger)"] --> FILTER["EndpointFilter &<br>DEFAULT_HIDDEN_PATHS"]
+    FILTER --> MEM["InMemoryLogHandler<br>(self.lock korumalı ring buffer)"]
+    FILTER --> FMT["build_formatter<br>(human veya json.dumps)"]
+    FILTER --> ROUTE{"separate_files.enabled?"}
+    ROUTE -- "true & runtime_console" --> F_TUI["logs/tui.log (propagate=False)"]
+    ROUTE -- "root handlers" --> F_MAIN["logs/sentry.log + warnings.log + errors.log"]
+    MEM --> REST_API["REST API (GET /logs/, POST /logs/level)"]
 ```
 
 ## 🔄 İlişkisel Etkileşimler (Veri Akışı)

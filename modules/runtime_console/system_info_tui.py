@@ -7,27 +7,31 @@ Displays ASCII art logo and system information in a TUI.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+import re
 import sys
 import time
 
-repo_root = str(Path(__file__).resolve().parents[2])
-if repo_root not in sys.path:
-    sys.path.insert(0, repo_root)
-
+from modules.runtime_console.services.async_gateway_probe import resolve_base_url
 from modules.runtime_console.services.system_info_collector import (
     SystemInfo,
     get_system_info,
 )
 from modules.runtime_console.services.tui_ascii_helpers import (
     Palette,
-    get_terminal_size,
-    enable_virtual_terminal,
-    load_ascii_art,
-    get_ascii_art_width,
     crop_ansi,
+    enable_virtual_terminal,
+    get_ascii_art_width,
+    get_terminal_size,
+    load_ascii_art,
 )
-from modules.runtime_console.themes import get_saved_theme_name, get_theme
+from modules.runtime_console.themes import get_saved_theme_name, get_theme_spec
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def _visible_ljust(text: str, width: int) -> str:
+    visible = len(_ANSI_RE.sub("", text))
+    return text + (" " * max(0, width - visible))
 
 
 @dataclass
@@ -77,7 +81,7 @@ def format_info_lines(info: SystemInfo, pal: Palette, label_width: int = 18) -> 
         lines.append(fmt("Font:", info.terminal_font))
     lines.append(fmt("Packages:", info.packages))
     lines.append(fmt("Python:", info.python_version))
-    lines.append(fmt("Gateway:", f"http://{info.local_ip if info.local_ip != 'Unknown' else '127.0.0.1'}:8080"))
+    lines.append(fmt("Gateway:", resolve_base_url()))
     lines.append(fmt("SentryBOT:", info.sentrybot_version))
 
     if pal.enabled:
@@ -94,6 +98,10 @@ def render_frame(state: UIState, pal: Palette, primary_color: str) -> list[str]:
     width, height = state.width, state.height
     art = state.ascii_art
     info_lines = state.info_lines
+    body_rows = max(1, height - 1)
+    max_offset = max(0, len(info_lines) - body_rows)
+    offset = max(0, min(state.scroll_offset, max_offset))
+    visible_info = info_lines[offset:]
 
     art_width = get_ascii_art_width(art)
     gap = "  "
@@ -101,7 +109,7 @@ def render_frame(state: UIState, pal: Palette, primary_color: str) -> list[str]:
     available_right = max(10, width - right_start)
 
     output = []
-    for i in range(height - 1):
+    for i in range(body_rows):
         line_parts = []
         if i < len(art):
             art_line = art[i]
@@ -111,33 +119,34 @@ def render_frame(state: UIState, pal: Palette, primary_color: str) -> list[str]:
 
         line_parts.append(gap)
 
-        if i < len(info_lines):
-            info_line = info_lines[i]
+        if i < len(visible_info):
+            info_line = visible_info[i]
             line_parts.append(crop_ansi(info_line, available_right))
         else:
             line_parts.append("")
 
         output.append("".join(line_parts))
 
-    status = pal.dim(f" ↑↓ scroll  q quit  |  {width}x{height}  ")
-    output.append(status.ljust(width))
+    status = pal.dim(f" ↑↓ scroll ({offset}/{max_offset})  q quit  |  {width}x{height}  ")
+    output.append(_visible_ljust(status, width))
     return output
 
 
-def run_tui() -> int:
+def run_tui(*, colors: bool = True, ascii_only: bool = False) -> int:
     enable_virtual_terminal()
 
-    state = UIState()
+    state = UIState(color_enabled=colors)
     state.width, state.height = get_terminal_size()
-    pal = Palette(enabled=True)
+    pal = Palette(enabled=colors)
 
     state.ascii_art = load_ascii_art()
+    if ascii_only:
+        state.ascii_art = [line.encode("ascii", errors="replace").decode("ascii") for line in state.ascii_art]
     info = get_system_info()
     state.info_lines = format_info_lines(info, pal)
 
     saved_theme_name = get_saved_theme_name()
-    theme_obj = get_theme(saved_theme_name)
-    primary_color = theme_obj.primary
+    primary_color = str(get_theme_spec(saved_theme_name).get("primary", "#FA1E4E"))
 
     try:
         import msvcrt
@@ -158,6 +167,7 @@ def run_tui() -> int:
             frame = render_frame(state, pal, primary_color)
             print("\x1b[H" + "\n".join(frame), end="", flush=True)
 
+            max_scroll = max(0, len(state.info_lines) - max(1, state.height - 1))
             if is_windows:
                 if msvcrt.kbhit():
                     key = msvcrt.getwch()
@@ -166,10 +176,7 @@ def run_tui() -> int:
                         if key == "H":
                             state.scroll_offset = max(0, state.scroll_offset - 1)
                         elif key == "P":
-                            state.scroll_offset = min(
-                                max(0, len(state.info_lines) - state.height + 3),
-                                state.scroll_offset + 1
-                            )
+                            state.scroll_offset = min(max_scroll, state.scroll_offset + 1)
                     elif key in ("q", "Q", "\x1b"):
                         state.running = False
                     elif key == "\r":
@@ -180,14 +187,15 @@ def run_tui() -> int:
                 if ready:
                     key = sys.stdin.read(1)
                     if key == "\x1b":
-                        seq = sys.stdin.read(2)
-                        if seq == "[A":
-                            state.scroll_offset = max(0, state.scroll_offset - 1)
-                        elif seq == "[B":
-                            state.scroll_offset = min(
-                                max(0, len(state.info_lines) - state.height + 3),
-                                state.scroll_offset + 1
-                            )
+                        seq_ready, _, _ = select.select([sys.stdin], [], [], 0.02)
+                        if not seq_ready:
+                            state.running = False
+                        else:
+                            seq = sys.stdin.read(2)
+                            if seq == "[A":
+                                state.scroll_offset = max(0, state.scroll_offset - 1)
+                            elif seq == "[B":
+                                state.scroll_offset = min(max_scroll, state.scroll_offset + 1)
                     elif key in ("q", "Q"):
                         state.running = False
                     elif key in ("\n", "\r"):
@@ -214,12 +222,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.once:
         pal = Palette(enabled=not args.no_color)
         art = load_ascii_art()
+        if args.ascii_only:
+            art = [line.encode("ascii", errors="replace").decode("ascii") for line in art]
         info = get_system_info()
         lines = format_info_lines(info, pal)
 
         saved_theme_name = get_saved_theme_name()
-        theme_obj = get_theme(saved_theme_name)
-        primary_color = theme_obj.primary
+        primary_color = str(get_theme_spec(saved_theme_name).get("primary", "#FA1E4E"))
 
         width, height = get_terminal_size()
         art_width = get_ascii_art_width(art)
@@ -232,7 +241,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{pal.hex(left.ljust(art_width), primary_color)}  {right}")
         return 0
 
-    return run_tui()
+    return run_tui(colors=not args.no_color, ascii_only=args.ascii_only)
 
 
 if __name__ == "__main__":

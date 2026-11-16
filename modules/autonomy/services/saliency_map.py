@@ -13,7 +13,7 @@ en önemli olanını seçip robotun dikkat odağını (Focus of Attention) belir
 
 from __future__ import annotations
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 @dataclass
@@ -23,7 +23,7 @@ class SaliencyTarget:
     pan_hint: Optional[int] = None
     tilt_hint: Optional[int] = None
     label: str = ""
-    metadata: Dict[str, Any] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
 class SaliencyMapEngine:
     def __init__(self) -> None:

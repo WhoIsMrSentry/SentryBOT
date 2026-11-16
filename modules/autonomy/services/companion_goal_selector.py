@@ -113,7 +113,15 @@ class CompanionGoalSelector(CompanionGoalPoliciesMixin, CompanionGoalPlansMixin)
         )
         if urgency_override:
             safety_floor = max(0.0, min(1.0, _as_float(urgency_cfg.get("safety_score_floor"), 0.75)))
-            scores["safety"] = max(safety_floor, _as_float(scores.get("safety"), 0.0))
+            if snap.get("scale") == "0..100" or "risk" in snap:
+                current_risk = _as_float(snap.get("risk"), 0.0)
+                snap["risk"] = round(max(safety_floor, current_risk), 3)
+                snap["safety_level"] = round(max(0.0, 1.0 - snap["risk"]), 3)
+                if isinstance(snap.get("normalized_scores"), dict):
+                    snap["normalized_scores"]["risk"] = snap["risk"]
+                    snap["normalized_scores"]["safety"] = snap["safety_level"]
+            else:
+                scores["safety"] = max(safety_floor, _as_float(scores.get("safety"), 0.0))
             dominant = "safety"
             recommended = "pause_and_observe"
             snap["dominant_need"] = dominant
@@ -157,6 +165,9 @@ class CompanionGoalSelector(CompanionGoalPoliciesMixin, CompanionGoalPlansMixin)
         if bool(plan.get("deferred")):
             auto_execute = False
 
+        from .needs_engine import extract_risk_and_safety
+
+        risk_val, safety_level = extract_risk_and_safety(snap, scores)
         out: Dict[str, Any] = {
             "ok": True,
             "available": bool(self.enabled),
@@ -166,6 +177,8 @@ class CompanionGoalSelector(CompanionGoalPoliciesMixin, CompanionGoalPlansMixin)
             "recommended_goal": recommended,
             "intent": intent,
             "behavior": plan.get("behavior", "calm_idle"),
+            "risk": risk_val,
+            "safety_level": safety_level,
             "pet_companion": pet_companion,
             "pet_intent": str(pet_companion.get("intent") or ""),
             "pet_expression_hint": str(pet_companion.get("expression_hint") or ""),

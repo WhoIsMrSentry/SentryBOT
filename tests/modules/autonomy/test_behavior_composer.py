@@ -35,9 +35,12 @@ def test_behavior_composer_plan_execution():
     # Verify calls
     mock_brain.memory.add_event.assert_called_with("I thought: I want to rest in the quiet corner")
     mock_client.express_emotion.assert_called_once_with(
-        emotion="gloomy", intensity=0.7, duration=20.0, source="behavior_composer"
+        emotion="gloomy", intensity=0.7, duration_s=20.0
     )
-    mock_client.set_neopixel.assert_called_once()
+    mock_client.set_neopixel.assert_called_once_with(
+        effect="breathe", emotions=["blue"], duration=10.0, lease_source="behavior_composer"
+    )
+    mock_client.oled_show.assert_called_once_with("sleepy")
     mock_client.queue_action.assert_any_call("cute_sound", priority=65, payload={"sound": "confused", "mode": "play_emotion"})
     mock_brain._speak_with_mood.assert_called_once_with("Dinlenmeye çekiliyorum.", emotion="calm")
     mock_brain.execute_safe_rest_corner.assert_called_once()

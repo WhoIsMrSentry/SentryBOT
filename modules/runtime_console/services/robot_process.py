@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import atexit
 import json
 import os
-import signal
 import subprocess
 import sys
 import threading
@@ -13,19 +11,21 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from .async_gateway_probe import resolve_base_url
 from .models import Snapshot
 
 
 class RobotProcess:
+    """Legacy synchronous process helper retained only for tui_v2 compatibility."""
+
     def __init__(self, root: Path, enabled: bool, profile: str | None = None) -> None:
         self.root = root
         self.enabled = enabled
         self.proc: subprocess.Popen[str] | None = None
-        self.output_log = root / "logs" / "tui.log"
+        self.output_log = root / "logs" / "runtime_stdout.log"
         self.pid_file = root / "logs" / "sentrybot.pid"
         self.thread: threading.Thread | None = None
         self.profile = str(profile or "")
-        atexit.register(self.stop)
 
     def start(self) -> str:
         if not self.enabled:
@@ -76,17 +76,6 @@ class RobotProcess:
                 fh.flush()
 
     def stop(self) -> None:
-        # Reap an orphaned robot process recorded in the pid file (R58):
-        # if the TUI was SIGKILLed, run_robot.py keeps running and the pid
-        # file is the only handle to it. Clean it up on the next stop.
-        pid_from_file: int | None = None
-        try:
-            if self.pid_file.exists():
-                raw = self.pid_file.read_text(encoding="utf-8").strip()
-                pid_from_file = int(raw) if raw.isdigit() else None
-        except Exception:
-            pid_from_file = None
-
         try:
             if self.pid_file.exists():
                 self.pid_file.unlink()
@@ -94,11 +83,6 @@ class RobotProcess:
             pass
 
         if self.proc is None or self.proc.poll() is not None:
-            if pid_from_file and pid_from_file != os.getpid():
-                try:
-                    os.kill(pid_from_file, signal.SIGTERM)
-                except Exception:
-                    pass
             return
         self.proc.terminate()
         try:
@@ -117,7 +101,10 @@ class RobotProcess:
 
 
 def _gateway_base_url() -> str:
-    return os.getenv("SENTRYBOT_TUI_GATEWAY_URL", "http://127.0.0.1:8080").rstrip("/")
+    env_override = str(os.getenv("SENTRYBOT_TUI_GATEWAY_URL", "")).strip().rstrip("/")
+    if env_override:
+        return env_override
+    return resolve_base_url()
 
 
 def _json_get(path: str, timeout: float = 0.20) -> tuple[dict[str, Any] | None, str]:

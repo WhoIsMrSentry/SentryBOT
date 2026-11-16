@@ -122,10 +122,15 @@ class DecisionMixin:
                 except Exception:
                     pass
 
+            t0 = time.monotonic()
             decision = laya.decide_with_context(last_speech, visual_context=visual_ctx)
+            elapsed_ms = (time.monotonic() - t0) * 1000.0
             if decision is None:
                 return
             self.state["laya_last_decision"] = decision
+            self.state["laya_last_inference_ms"] = round(
+                float(getattr(decision, "inference_ms", None) or elapsed_ms), 2
+            )
             if getattr(self, "agent", None) is not None:
                 try:
                     self.agent._precomputed_laya_decision = (last_speech, decision)
@@ -308,8 +313,13 @@ class DecisionMixin:
             return True
         return random.random() < float(cfg.get("fallback_random_chance", 0.12))
 
+    def _resolve_social_db(self):
+        if hasattr(self, "_social_db") and callable(self._social_db):
+            return self._social_db()
+        return getattr(self, "social_db", None) or getattr(self.mood, "_social_db", None)
+
     def _mood_trend_summary(self) -> str:
-        db = getattr(self.mood, "_social_db", None)
+        db = self._resolve_social_db()
         if db is None:
             return ""
         try:
@@ -325,7 +335,7 @@ class DecisionMixin:
             return ""
 
     def _last_sighting_summary(self, speaker: str = "") -> str:
-        db = getattr(self.mood, "_social_db", None)
+        db = self._resolve_social_db()
         if db is None:
             return ""
         try:
@@ -338,7 +348,6 @@ class DecisionMixin:
         except Exception:
             return ""
 
-
     def _try_begin_agentic_decision(self) -> bool:
         """Reserve the single agentic-decision worker slot."""
         lock = getattr(self, "_agentic_decision_lock", None)
@@ -346,11 +355,13 @@ class DecisionMixin:
             if getattr(self, "_agentic_decision_in_progress", False):
                 return False
             self._agentic_decision_in_progress = True
+            self._agentic_decision_started_at = time.time()
             return True
         with lock:
             if getattr(self, "_agentic_decision_in_progress", False):
                 return False
             self._agentic_decision_in_progress = True
+            self._agentic_decision_started_at = time.time()
             return True
 
     def _finish_agentic_decision(self) -> None:
@@ -358,9 +369,43 @@ class DecisionMixin:
         lock = getattr(self, "_agentic_decision_lock", None)
         if lock is None:
             self._agentic_decision_in_progress = False
+            self._agentic_decision_started_at = 0.0
             return
         with lock:
             self._agentic_decision_in_progress = False
+            self._agentic_decision_started_at = 0.0
+
+    def _dispatch_agent_step_event(
+        self,
+        event_type: str,
+        prompt: str,
+        *,
+        trace_id: Optional[str] = None,
+    ) -> None:
+        """Run agent.step_event off the main brain loop when worker executor is available."""
+        agent_svc = getattr(self, "agent", None)
+        if agent_svc is None or not hasattr(agent_svc, "step_event"):
+            return
+
+        def _run() -> None:
+            t0 = time.monotonic()
+            try:
+                if trace_id:
+                    agent_svc.step_event(event_type, prompt, trace_id=trace_id)
+                else:
+                    agent_svc.step_event(event_type, prompt)
+                self.state["agent_last_latency_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
+            except Exception as exc:
+                logger.debug("Agent step_event (%s) failed: %s", event_type, exc)
+
+        executor = getattr(self, "_worker_executor", None)
+        if executor is not None:
+            try:
+                executor.submit(_run)
+                return
+            except Exception:
+                pass
+        _run()
 
     def _submit_agentic_decision(self, reason: str = "boredom", context_note: str = "") -> bool:
         """Start one agentic decision if none is already running."""
@@ -440,8 +485,12 @@ class DecisionMixin:
 
             try:
                 if self.agent:
-                    self.agent.memory.remember("agentic_decision", "I got bored so I decided to act on my own.")
+                    agent_mem = getattr(self.agent, "memory", None)
+                    if agent_mem is not None and hasattr(agent_mem, "remember"):
+                        agent_mem.remember("agentic_decision", "I got bored so I decided to act on my own.")
+                    t0 = time.monotonic()
                     res = self.agent.step(prompt)
+                    self.state["agent_last_latency_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
                     if isinstance(res, dict):
                         # Free-plan orchestration through BehaviorComposer
                         plan_payload = res.get("plan") if isinstance(res.get("plan"), dict) else None
@@ -616,28 +665,24 @@ class DecisionMixin:
         wm = getattr(self, "world_memory", None)
         if wm is not None and hasattr(wm, "observe"):
             mem_lock = getattr(self, "_memory_write_lock", None)
+            obs_payload = {
+                "kind": "episode",
+                "name": "dream_reflection",
+                "summary": summary,
+                "confidence": 0.85,
+                "tags": ["dream_cycle", "reflection"],
+            }
             try:
                 if mem_lock is not None:
                     with mem_lock:
-                        wm.observe(
-                            kind="episode",
-                            name="dream_reflection",
-                            summary=summary,
-                            confidence=0.85,
-                            source="dream_cycle",
-                            tags=["dream_cycle", "reflection"],
-                        )
+                        wm.observe(obs_payload, source="dream_cycle")
                 else:
-                    wm.observe(
-                        kind="episode",
-                        name="dream_reflection",
-                        summary=summary,
-                        confidence=0.85,
-                        source="dream_cycle",
-                        tags=["dream_cycle", "reflection"],
-                    )
+                    wm.observe(obs_payload, source="dream_cycle")
             except TypeError:
-                wm.observe("episode", "dream_reflection", summary)
+                try:
+                    wm.observe(obs_payload)
+                except Exception as exc2:
+                    logger.debug("world_memory.observe fallback failed in dream reflection: %s", exc2)
             except Exception as exc:
                 logger.debug("world_memory.observe failed in dream reflection: %s", exc)
         return record

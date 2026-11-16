@@ -26,29 +26,30 @@ python -m modules.runtime_console.tui_app
 
 ```
 modules/runtime_console/
-├── tui_app.py                        # Ana Textual Asenkron TUI Uygulaması
-├── themes.py                         # Renk Temaları (Dark, Cyberpunk, Monokai)
+├── tui_app.py                        # Ana Textual Asenkron TUI Uygulaması (SentryBotApp)
+├── tui_v2.py                         # CLI başlatıcı (--ascii, --no-color, --no-alt, --no-run)
+├── themes.py                         # Lazy Textual Tema Kaydı ve kalıcı tema tercihi
 ├── sentrybot.tcss                    # Textual CSS Stil Dosyası
-├── system_info_tui.py                # Canlı Donanım ve Telemetri Kartı
-├── architecture_runtime_console.dot  # Graphviz Mimari Diyagram Kaynağı
-├── architecture_runtime_console.svg  # Derlenmiş Vektörel Mimari Şema
-├── architecture_runtime_console.md   # Kapsamlı Teknik & Sınıf Referansı
-├── README.md                         # Bu doküman
-├── logwrapper/                       # Merkezi Log Altyapısı
-│   ├── __init__.py                   # init_logging() Singleton
-│   ├── separate_file_routing.py      # Seviye Bazlı Dosya Ayrıştırıcı (warnings, errors)
-│   └── run_rotator.py                # Oturum Loglarını Arşivleme & Temizleme
-└── widgets/                          # TUI Sekme Bileşenleri ve Kartlar
+├── system_info_tui.py                # Canlı Donanım ve Telemetri Kartı (kaydırmalı TUI)
+├── dashboard.py                      # Akıllı terminal log handler (sınırlı/kilitli tekilleştirme)
+├── renderer.py                       # ASCII / Unicode uyumlu konsol panel oluşturucu
+├── config_loader.py                  # Merkezi DEFAULT_HIDDEN_PATHS ve YAML yükleyici
+├── api/router.py                     # /runtime_console/healthz ve korumalı /runtime_console/events
+├── services/                         # AsyncGatewayProbe, AsyncRobotManager, AsyncLogStreamer, hardware
+├── logwrapper/                       # Merkezi Log Altyapısı (init_logging, run_rotator, handlers, api)
+└── widgets/                          # TabMain, TabLogs (Ctrl+S dışa aktarım), TabTelemetry, TabControls, TabConfig, Modal'lar
 ```
 
 ---
 
 ## 🖥️ TUI Sekmeleri ve Özellikler
 
-- **Ana Sekme (Tab Main):** Canlı log akışı, servis sağlık durumu ve süreç butonları.
-- **Telemetri (Tab Telemetry):** CPU, RAM ve sıcaklık geçmişi grafikleri.
-- **Konfigürasyon (Tab Config):** YAML ağacı ve dinamik ayar görüntüleyici.
-- **Kısayollar:** `q` (Çıkış), `t` (Tema değiştir), `c` (Logları temizle), `1..3` (Sekme geçişi).
+- **01: MAIN (`TabMain`):** CPU/RAM/Disk yükü, servis sağlık kartları, gerçek yeniden başlatma sayacı (`restart_count`), Living Needs göstergesi ve **Autonomy Goal & DecisionTrace Live Feed** kartı. Veri yoksa sahte varsayılanlar yerine `"N/A"` gösterir.
+- **02: LOGS (`TabLogs`):** `collections.deque` destekli canlı log akışı, seviye/metin filtresi ve `Ctrl+S` / **Export (Ctrl+S)** düğmesiyle filtrelenmiş logları `logs/exports/` altına dışa aktarma.
+- **03: TELEMETRY (`TabTelemetry`):** IMU, ultrasonik engel radarı, pan/tilt/kulak servo çubukları, VU-metre ve DoA radarı.
+- **04: CONTROLS (`TabControls`):** `AsyncGatewayProbe` ile tek kalıcı `httpx.AsyncClient` paylaşarak Arduino teleop (`pos`), E-STOP (`/state/set/operational`), `/chat` ve tanılama iş akışlarını çalıştırır.
+- **05: CONFIG (`TabConfig`) ve Modallar (`m`, `t`, `i`):** YAML düzenleyici, canlı tema önizleme ve `MemoryExplorerModal` (`SocialDB` + `WorldMemory` sekmeleri ve arka plan SQLite okuma).
+- **Kısayollar:** `F1..F5` (Sekmeler), `Ctrl+S` (Log dışa aktar), `Ctrl+L` (Logları temizle), `Ctrl+R`/`Ctrl+K` (Robot restart/stop), `t`/`F6` (Tema), `i`/`F7` (SysInfo), `m`/`F8` (Memory Explorer), `q`/`Ctrl+C` (Çıkış).
 
 ---
 

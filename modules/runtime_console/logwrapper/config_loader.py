@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any, Dict, Optional
 
-try:
-    import yaml  # type: ignore
-except Exception:  # pragma: no cover
-    yaml = None  # Lazy optional dependency
-
+from ..config_loader import DEFAULT_HIDDEN_PATHS, load_yaml_with_defaults
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "enable_console": True,
     "console_level": "INFO",
+    "console": {
+        "mode": "dashboard",
+        "colors": True,
+        "show_background_requests": False,
+        "aggregate_repeated_messages": True,
+        "repeat_summary_interval_s": 30,
+        "event_history": 8,
+        "max_message_width": 92,
+        "border": "rounded",
+        "hidden_paths": list(DEFAULT_HIDDEN_PATHS),
+    },
     "enable_file": True,
     "file_path": "logs/sentry.log",
     "rotate_bytes": 2 * 1024 * 1024,  # 2MB
@@ -21,6 +29,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "capture_warnings": True,
     # Per-module level overrides, e.g. {"uvicorn": "WARNING"}
     "module_levels": {},
+    "separate_files": {
+        "enabled": False,
+        "warnings_path": "logs/warnings.log",
+        "errors_path": "logs/errors.log",
+        "tui_path": "logs/tui.log",
+    },
 }
 
 
@@ -28,32 +42,17 @@ def load_config(base_dir: Optional[str] = None, overrides: Optional[Dict[str, An
     """YAML config.yml dosyasını ve opsiyonel override'ları yükler.
 
     Arama sırası:
-    - modules/logwrapper/config/config.yml
     - base_dir altında config/config.yml (eğer verildiyse)
+    - modules/runtime_console/logwrapper/config/config.yml
 
     overrides sözlüğü sağlanırsa, YAML üzerindeki değerlere baskın gelir.
     """
-    cfg: Dict[str, Any] = dict(DEFAULT_CONFIG)
-
-    candidates = []
+    candidates: list[Path] = []
     if base_dir:
-        candidates.append(os.path.join(base_dir, "config", "config.yml"))
-    # Default module path
-    here = os.path.dirname(__file__)
-    candidates.append(os.path.join(here, "config", "config.yml"))
+        candidates.append(Path(base_dir) / "config" / "config.yml")
+    candidates.append(Path(__file__).resolve().parent / "config" / "config.yml")
 
-    for path in candidates:
-        if os.path.exists(path):
-            if yaml is None:
-                break
-            with open(path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            if isinstance(data, dict):
-                cfg.update(data)
-            break
-
-    if overrides:
-        cfg.update({k: v for k, v in overrides.items() if v is not None})
+    cfg = load_yaml_with_defaults(DEFAULT_CONFIG, candidates, overrides=overrides)
 
     # Normalize env overrides (e.g., LOG_LEVEL, LOG_FILE)
     env_level = os.getenv("LOG_LEVEL")

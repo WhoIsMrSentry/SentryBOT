@@ -1,10 +1,10 @@
 # Runtime Console Modülü Mimari ve Teknik Dokümantasyonu (TUI Dashboard & Central Logging)
 
 > **Modül:** `modules/runtime_console`  
-> **Kapsam:** `tui_app.py`, `logwrapper/`, `themes.py`, `system_info_tui.py`, `dashboard.py`, `renderer.py`, `widgets/`, `api/`  
-> **Tasarım Deseni:** Terminal User Interface (Textual TUI / Rich), Central Log Multiplexer, Run Session Rotator, Ring Buffer Memory Sink  
-> **Varsayılan Port:** Gateway (`:8080`) altında `/console/*` olarak sunulur  
-> **Temel Rol:** Tüm sistemin loglarını toplayan, gürültüyü süzüp dosyalara ayıran ve operatöre zengin interaktif terminal paneli sunan arayüz
+> **Kapsam:** `tui_app.py`, `tui_v2.py`, `logwrapper/`, `themes.py`, `system_info_tui.py`, `dashboard.py`, `renderer.py`, `widgets/`, `services/`, `api/`  
+> **Tasarım Deseni:** Terminal User Interface (Textual TUI / Rich), Non-Blocking Thread/Async Pollers, Central Log Multiplexer, Run Session Rotator, Ring Buffer Memory Sink  
+> **Varsayılan Port:** Gateway (`:8080`) altında `/runtime_console/*` olarak sunulur  
+> **Temel Rol:** Tüm sistemin loglarını toplayan, gürültüyü süzüp dosyalara ayıran ve operatöre gerçek zamanlı asenkron terminal kontrol merkezi sunan arayüz
 
 ---
 
@@ -100,36 +100,33 @@ sequenceDiagram
 
 ---
 
-### 3.2 `tui_app.py` (`SentryBotApp`)
+### 3.2 `tui_app.py` (`SentryBotApp`) ve Async Servisler
 
-Textual tabanlı asenkron terminal uygulaması:
-- **Sekmeler (Tabs):**
-  - `TabMain`: Canlı log akışı, servis sağlık kartları ve süreç yeniden başlatma düğmeleri.
-  - `TabTelemetry`: CPU, RAM, SoC Sıcaklık ve batarya grafik geçmişi.
-  - `TabConfig`: `agent.yaml` ve `config.yml` ağaç yapısı ve Tree-Sitter sözdizimi vurgulayıcısı.
-- **Klavye Kısayolları:**
-  - `q`: Uygulamadan çıkış.
-  - `t`: Tema değiştirme (Dark $\rightarrow$ Cyberpunk $\rightarrow$ Monokai).
-  - `c`: Konsol loglarını temizleme.
-  - `1..3`: Sekmeler arasında hızlı geçiş.
+Textual tabanlı asenkron terminal uygulaması (`--ascii`, `--no-color`, `--no-alt`, `--no-run` bayraklarını `tui_v2.py` üzerinden alır):
+- **Arka Plan İşçileri ve İstemci Paylaşımı:**
+  - Donanım örneklemesi (`get_cpu_info` `interval=None`, `get_memory_info`, `get_disk_info`) `asyncio.to_thread()` ile event loop dışına taşınır; yerel IP çözümü (`get_local_ip`) öncelikli olarak `psutil.net_if_addrs()` ve `socket.gethostbyname_ex` kullanır.
+  - `AsyncGatewayProbe`, kalıcı tek bir `httpx.AsyncClient` yönetir (`get_client()`), gateway veya alt uç noktalar çevrimdışına düştüğünde eski telemetriyi temizler ve `/agent/decision-traces/latest?limit=5` dahil gerçek backend uç noktalarını okur; `TabControls` aynı istemciyi paylaşır ve arka plan iş parçacığından `query_one()` çağırmadan `call_from_thread()` üzerinden yazar.
+  - `AsyncRobotManager`, subprocess stdout çıktısını `logs/sentry.log` yerine `logs/runtime_stdout.log` dosyasına yönlendirir (Windows üzerinde `rotate_run_logs` dosya kilidini önler) ve `restart_count` sayacını izler.
+  - `AsyncLogStreamer`, disk okumasını `asyncio.to_thread()` üzerinden yapar; `TabLogs`, `collections.deque(maxlen=2000)` kullanır ve `Ctrl+S` ile filtrelenmiş logları `logs/exports/` içine dışa aktarır.
+  - `MemoryExplorerModal`, gerçek `SocialDB` şemasını (`sightings`+`persons`, `owner_sessions`, `mood_snapshots`) ve `WorldMemory` sekmesini (`world_memories`, `world_observations`) `@work(thread=True)` içinde sorgular.
 
 ---
 
-### 3.3 `themes.py` (Tema ve Stil Yöneticisi)
+### 3.3 `themes.py` (Lazy Tema ve Stil Yöneticisi)
 
-- `ThemeRegistry`:
-  - Desteklenen temalar: `dark_matter`, `cyberpunk_neon`, `monokai_pro`.
-  - TCSS (`sentrybot.tcss`) dosyasındaki CSS değişkenlerini (`$primary`, `$accent`, `$background`) seçilen temaya göre derler (`test_all_themes_compile_stylesheet`).
+- Pure-data `_THEME_SPECS` ve lazy `_LazyThemeMapping` sayesinde modül import anında `textual` yüklenmez; temalar ilk erişimde oluşturulur ve `CONFIG_PATH` depo köküne sabitlenmiştir (`config/tui_theme.txt`).
+- TCSS (`sentrybot.tcss`) dosyasındaki CSS değişkenlerini (`$primary`, `$secondary`, `$background`) seçilen temaya göre derler (`test_all_themes_compile_stylesheet`).
 
 ---
 
-## 4. REST API Endpoint Tablosu (`:8080/console`)
+## 4. REST API Endpoint Tablosu (`:8080/runtime_console` & `/logs`)
 
-| Metot | Uç Nokta | Açıklama | Örnek Yanıt |
+| Metot | Uç Nokta | Açıklama | Güvenlik / Doğrulama |
 |---|---|---|---|
-| `GET` | `/console/healthz` | Konsol ve log sisteminin sağlık durumu | `{"ok": true, "log_count": 420}` |
-| `GET` | `/console/logs/recent` | Bellekteki son $N$ satır logu döner | `{"logs": ["[INFO] [camera] Frame captured", ...]}` |
-| `POST` | `/console/theme` | Aktif TUI temasını değiştirir | `{"theme": "cyberpunk_neon"}` |
+| `GET` | `/runtime_console/healthz` | Konsol event bus sağlık durumu | Açık (health check) |
+| `GET` | `/runtime_console/events` | Son çalışma zamanı konsol olayları (`limit` `1..200`) | Token (`X-Auth-Token` / `X-API-Key` / `Bearer`) veya yalnızca loopback |
+| `GET` | `/logs/` | `InMemoryLogHandler` içindeki son log kayıtları (`n` `1..5000`) | Ring-buffer okuma |
+| `POST` | `/logs/level` | Logger seviyesi güncelleme (`DEBUG..CRITICAL`) | Geçersiz seviye adlarında HTTP `400` |
 
 ---
 

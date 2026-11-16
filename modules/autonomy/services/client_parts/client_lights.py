@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, Optional
 
+from modules.common.color_utils import normalize_color
+
 logger = logging.getLogger("autonomy.client_lights")
 
 _LIGHTS_LOCKED = {"ok": False, "reason": "lights_locked"}
@@ -48,27 +50,7 @@ class ClientLightsMixin:
 
     @staticmethod
     def _parse_rgb(color: Any) -> tuple[int, int, int] | None:
-        if isinstance(color, (list, tuple)) and len(color) >= 3:
-            try:
-                return (int(color[0]) & 255, int(color[1]) & 255, int(color[2]) & 255)
-            except (TypeError, ValueError):
-                return None
-        if isinstance(color, str):
-            s = color.strip()
-            if s.startswith("#") and len(s) >= 7:
-                try:
-                    v = int(s[1:7], 16)
-                    return ((v >> 16) & 255, (v >> 8) & 255, v & 255)
-                except ValueError:
-                    return None
-            if "," in s:
-                parts = [p.strip() for p in s.split(",")]
-                if len(parts) >= 3:
-                    try:
-                        return (int(parts[0]) & 255, int(parts[1]) & 255, int(parts[2]) & 255)
-                    except ValueError:
-                        return None
-        return None
+        return normalize_color(color)
 
     def animate_neopixel(
         self,
@@ -118,21 +100,16 @@ class ClientLightsMixin:
         )
 
     def emote_neopixel(self, emotions: list[str], duration: float = 0.25) -> Any:
-        url = self.urls.get("neopixel")
-        if not url or not emotions:
+        if not self.urls.get("neopixel") or not emotions:
             return None
         if not self._lights_gate(ttl_s=float(duration) + 0.3):
             return dict(_LIGHTS_LOCKED)
-        try:
-            import requests
-            params: dict = {"duration": float(duration)}
-            if len(emotions) == 1:
-                params["emotion"] = str(emotions[0])
-            else:
-                params["emotions"] = [str(e) for e in emotions if str(e).strip()]
-            return requests.post(f"{url}/emote", params=params, timeout=float(self.request_timeouts.get("default_post_s", 1.0)))
-        except Exception:
-            return None
+        params: dict = {"duration": float(duration)}
+        if len(emotions) == 1:
+            params["emotion"] = str(emotions[0])
+        else:
+            params["emotions"] = [str(e) for e in emotions if str(e).strip()]
+        return self._post("neopixel", "/emote", params=params)
 
     def set_neopixel_segment_effect(self, segment: str, effect: str, color=None, emotions=None, iterations=None, lease_source: str = "autonomy") -> Any:
         name = str(effect or "PULSE").strip().upper() or "PULSE"
@@ -150,52 +127,22 @@ class ClientLightsMixin:
         return self.set_neopixel(name, emotions=emotions, color=color, lease_source=lease_source)
 
     def fill_neopixel_segment_color(self, segment: str, r: int, g: int, b: int) -> Any:
-        url = self.urls.get("neopixel")
-        if not url:
+        if not self.urls.get("neopixel") or not self._lights_gate():
             return None
-        if not self._lights_gate():
-            return None
-        try:
-            import requests
-            requests.post(
-                f"{url}/fill",
-                params={"r_": int(r), "g": int(g), "b": int(b), "segment": str(segment)},
-                timeout=1.0,
-            )
-            return {"ok": True}
-        except Exception as exc:
-            logger.debug("Failed to fill neopixel segment color: %s", exc)
-            return None
+        return self._post("neopixel", "/fill", params={"r_": int(r), "g": int(g), "b": int(b), "segment": str(segment)})
 
     def apply_neopixel_preset(self, name: str) -> Any:
-        url = self.urls.get("neopixel")
-        if not url:
+        if not self.urls.get("neopixel") or not self._lights_gate():
             return None
-        if not self._lights_gate():
-            return None
-        try:
-            import requests
-            resp = requests.post(f"{url}/preset/apply", params={"name": str(name)}, timeout=1.0)
-            return resp.json() if resp.status_code == 200 else None
-        except Exception as exc:
-            logger.debug("Failed to apply neopixel preset: %s", exc)
-            return None
+        return self._post("neopixel", "/preset/apply", params={"name": str(name)})
 
-    def fill_neopixel_color(self, r: int, g: int, b: int) -> None:
-        url = self.urls.get("neopixel")
-        if not url:
+    def fill_neopixel_color(self, r: int, g: int, b: int) -> Any:
+        if not self.urls.get("neopixel") or not self._lights_gate():
             return None
-        if not self._lights_gate():
-            return None
-        try:
-            import requests
-            requests.post(
-                f"{url}/fill",
-                params={"r_": int(r), "g": int(g), "b": int(b)},
-                timeout=1.0,
-            )
-        except Exception as exc:
-            logger.debug("Failed to fill neopixel color: %s", exc)
+        resp = self._post("neopixel", "/fill", params={"r_": int(r), "g": int(g), "b": int(b)})
+        if resp is None:
+            logger.debug("Failed to fill neopixel color (%s, %s, %s)", r, g, b)
+        return resp
 
     def fill_neopixel(self, r: int, g: int, b: int) -> None:
         if not self._lights_gate():

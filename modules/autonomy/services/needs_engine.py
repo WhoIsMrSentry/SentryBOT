@@ -13,6 +13,57 @@ def _clamp(value: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return max(lo, min(hi, v))
 
 
+def normalize_unit_score(value: Any, *, scale_100: Optional[bool] = None, default: float = 0.0) -> float:
+    """Normalize a 0..1 or 0..100 need axis score onto [0.0, 1.0]."""
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return _clamp(default, 0.0, 1.0)
+    if scale_100 is True or (scale_100 is None and num > 1.5):
+        num /= 100.0
+    return max(0.0, min(1.0, num))
+
+
+def is_pct_scale_scores(snapshot: Optional[Dict[str, Any]], scores: Optional[Dict[str, Any]]) -> bool:
+    """Return True when scores follow CompanionNeedsEngine's 0..100 scale."""
+    snap = snapshot if isinstance(snapshot, dict) else {}
+    if snap.get("scale") == "0..100":
+        return True
+    score_map = scores if isinstance(scores, dict) else {}
+    for val in score_map.values():
+        try:
+            if float(val) > 1.5:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def extract_risk_and_safety(
+    snapshot: Optional[Dict[str, Any]],
+    scores: Optional[Dict[str, Any]] = None,
+) -> tuple[float, float]:
+    """Resolve canonical (risk, safety_level) in [0.0, 1.0] across CompanionNeedsEngine, LivingNeedsEngine, and unit payloads."""
+    snap = snapshot if isinstance(snapshot, dict) else {}
+    score_map = scores if isinstance(scores, dict) else (snap.get("scores") if isinstance(snap.get("scores"), dict) else {})
+    if "risk" in snap and snap.get("risk") is not None:
+        risk = normalize_unit_score(snap.get("risk"))
+        return round(risk, 4), round(max(0.0, 1.0 - risk), 4)
+    norm_map = snap.get("normalized_scores") if isinstance(snap.get("normalized_scores"), dict) else {}
+    if "risk" in norm_map and norm_map.get("risk") is not None:
+        risk = normalize_unit_score(norm_map.get("risk"), scale_100=False)
+        return round(risk, 4), round(max(0.0, 1.0 - risk), 4)
+    pct_scale = is_pct_scale_scores(snap, score_map)
+    if "safety" in score_map and score_map.get("safety") is not None:
+        raw_safety = normalize_unit_score(score_map.get("safety"), scale_100=pct_scale)
+        if pct_scale:
+            # CompanionNeedsEngine 0..100: high=safe -> risk = 1 - safety_level
+            return round(max(0.0, 1.0 - raw_safety), 4), round(raw_safety, 4)
+        # LivingNeedsEngine & policy test vectors 0..1: high=danger/hazard
+        return round(raw_safety, 4), round(max(0.0, 1.0 - raw_safety), 4)
+    return 0.0, 1.0
+
+
 @dataclass
 class NeedsSnapshot:
     ok: bool
@@ -192,7 +243,18 @@ class CompanionNeedsEngine:
             },
         )
         self._last_snapshot = snap
-        return snap.to_dict()
+        out = snap.to_dict()
+        safety_level = round(normalize_unit_score(safety, scale_100=True), 3)
+        risk = round(max(0.0, 1.0 - safety_level), 3)
+        out["scale"] = "0..100"
+        out["safety_level"] = safety_level
+        out["risk"] = risk
+        out["normalized_scores"] = {
+            **{k: round(normalize_unit_score(v, scale_100=True), 3) for k, v in scores.items()},
+            "safety": safety_level,
+            "risk": risk,
+        }
+        return out
 
     def snapshot(self) -> Dict[str, Any]:
         if self._last_snapshot is None:

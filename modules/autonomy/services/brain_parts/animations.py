@@ -139,17 +139,19 @@ class AnimationSupportMixin:
         self.client.move_head(pan, tilt)
 
     def _stretch_fallback(self) -> None:
-        self.client.move_head(45, 130)
-        time.sleep(1)
-        self.client.move_head(135, 130)
-        time.sleep(1)
-        self.client.move_head(90, 90)
+        for pan, tilt, wait_s in ((45, 130, 1.0), (135, 130, 1.0), (90, 90, 0.0)):
+            if getattr(self, "running", True) is False:
+                return
+            self.client.move_head(pan, tilt)
+            if wait_s > 0.0:
+                time.sleep(wait_s)
 
     def _blink_fallback(self) -> None:
         self.client.push_interaction_event("autonomy.blink")
 
     def _perform_owner_scan(self) -> None:
-        sweep = [60, 120, 90]
-        for pan in sweep:
+        for pan in (60, 120, 90):
+            if getattr(self, "running", True) is False:
+                return
             self.client.move_head(pan, self.state["current_tilt"])
             time.sleep(0.2)

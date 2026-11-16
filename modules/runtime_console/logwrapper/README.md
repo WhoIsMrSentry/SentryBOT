@@ -24,8 +24,8 @@ Graph'ta `init_logging` çağrıcıları:
 
 ## API (Gateway altında `/logs/*`)
 
-- `GET /logs/?n=200` — son log kayıtları
-- `POST /logs/level` — logger seviyesi değiştirme
+- `GET /logs/?n=200` — bellek ring-buffer içindeki son log kayıtları (`n` `1..5000` sınırlandırılır)
+- `POST /logs/level` — logger seviyesi değiştirme (bilinmeyen seviyelerde HTTP `400`)
 
 ## Kullanım
 
@@ -36,12 +36,14 @@ init_logging()  # mümkün olduğunca erken
 ```
 
 Gateway bootstrap sırasında log modülü mount edilebilir; başarısız olsa bile diğer modüller çalışmaya devam eder.
+`separate_files.enabled: true` olduğunda `tui_file` yalnızca `runtime_console` logger'ına (`propagate: False`) bağlanır ve `root` handler'larına eklenmez; böylece `logs/tui.log` diğer modüllerle kirlenmez veya çift yazılmaz. `json_format: true` çıktıları `json.dumps` ile üretilir ve `InMemoryLogHandler` okumaları `self.lock` ile korunur.
 
 ## Konfigürasyon
 
-`modules/logwrapper/config/config.yml`:
-- konsol/dosya seviyeleri
+`modules/runtime_console/logwrapper/config/config.yml`:
+- konsol/dosya seviyeleri (`separate_files.enabled` kapalı olsa da `dictConfig` hatasız çalışır)
 - format (JSON veya okunabilir)
+- merkezi `DEFAULT_HIDDEN_PATHS` tabanlı `hidden_paths` gürültü filtresi
 - modül bazlı override'lar
 
 Env override: `LOG_LEVEL`, `LOG_FILE`

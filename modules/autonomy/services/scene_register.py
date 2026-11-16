@@ -171,24 +171,28 @@ class SceneRegister:
             if now - last_ts >= self.window_s:
                 self._motion_energy[r] = 0.0
 
+    def _is_region_clear_locked(self, region: str) -> bool:
+        """Check region clearance without acquiring lock or pruning again."""
+        if self._motion_energy.get(region, 0.0) > 0.35:
+            return False
+        for p in self._people.values():
+            if p.region == region:
+                return False
+        return True
+
     def is_region_clear(self, region: str) -> bool:
         """Return True if the region has no recent people and low motion energy."""
         with self._lock:
             now = time.time()
             self._prune_expired_locked(now)
-            if self._motion_energy.get(region, 0.0) > 0.35:
-                return False
-            for p in self._people.values():
-                if p.region == region:
-                    return False
-            return True
+            return self._is_region_clear_locked(region)
 
     def get_clear_regions(self) -> List[str]:
         """Return list of regions that are currently empty and quiet."""
         with self._lock:
             now = time.time()
             self._prune_expired_locked(now)
-            return [r for r in REGIONS_3X3 if self.is_region_clear(r)]
+            return [r for r in REGIONS_3X3 if self._is_region_clear_locked(r)]
 
     def get_scene_state(self) -> Dict[str, Any]:
         """Return full structured scene snapshot."""
@@ -215,7 +219,7 @@ class SceneRegister:
                     }
                     for s in self._sound_events
                 ],
-                "clear_regions": self.get_clear_regions(),
+                "clear_regions": [r for r in REGIONS_3X3 if self._is_region_clear_locked(r)],
                 "last_change_ts": self._last_change_ts,
                 "notes": self._general_notes,
             }
@@ -259,7 +263,7 @@ class SceneRegister:
             clear_spots = [
                 REGION_NAMES_TR.get(r, r)
                 for r in ["bottom_left", "bottom_right", "top_right", "top_left"]
-                if self.is_region_clear(r)
+                if self._is_region_clear_locked(r)
             ]
             if clear_spots:
                 parts.append(f"Sakin/boş köşeler: {', '.join(clear_spots[:2])}")

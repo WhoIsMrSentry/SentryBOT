@@ -245,24 +245,30 @@ class ScenarioRitualsMixin:
                 vision = self.state.get("vision_context_needs", {}).get("summary", "no context")
 
                 def _reflect_and_store():
-                    # C4: reflection writes memory/social_db from a side
-                    # thread — serialize against the brain dream-cycle's
-                    # prune/consolidate pass via the shared write lock.
-                    lock = getattr(self, "_memory_write_lock", None)
+                    # C4: perform slow LLM synthesis outside _memory_write_lock so
+                    # dream-cycle pruning/consolidation is never blocked by network I/O;
+                    # only hold _memory_write_lock for the storage write itself.
                     try:
+                        reflection_mem = self.reflection_planner.reflect(plan, result, needs, vision)
+                        if not (reflection_mem and hasattr(self, "observe_world_memory")):
+                            return
+                        lock = getattr(self, "_memory_write_lock", None)
                         if lock is not None:
                             with lock:
-                                reflection_mem = self.reflection_planner.reflect(plan, result, needs, vision)
-                                if reflection_mem and hasattr(self, "observe_world_memory"):
-                                    self.observe_world_memory(reflection_mem, source="reflection_planner")
-                        else:
-                            reflection_mem = self.reflection_planner.reflect(plan, result, needs, vision)
-                            if reflection_mem and hasattr(self, "observe_world_memory"):
                                 self.observe_world_memory(reflection_mem, source="reflection_planner")
+                        else:
+                            self.observe_world_memory(reflection_mem, source="reflection_planner")
                     except Exception as e:
                         logger.error(f"Reflection failed: {e}")
 
-                threading.Thread(target=_reflect_and_store, daemon=True).start()
+                executor = getattr(self, "_worker_executor", None)
+                if executor is not None:
+                    try:
+                        executor.submit(_reflect_and_store)
+                    except Exception:
+                        threading.Thread(target=_reflect_and_store, daemon=True).start()
+                else:
+                    threading.Thread(target=_reflect_and_store, daemon=True).start()
 
             return result
         except Exception as exc:

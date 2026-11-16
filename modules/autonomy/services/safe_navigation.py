@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import json
+import threading
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from .storage_utils import atomic_write_json, read_json_dict, resolve_autonomy_path
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -34,41 +35,37 @@ class SafeNavigationMemory:
         self.cfg = dict(self.DEFAULTS)
         self.cfg.update(raw)
         self.client = client
-        self.path = Path(str(self.cfg.get("places_path") or self.DEFAULTS["places_path"]))
-        if not self.path.is_absolute():
-            self.path = Path.cwd() / self.path
+        self._lock = threading.RLock()
+        self.path = resolve_autonomy_path(self.cfg.get("places_path"), str(self.DEFAULTS["places_path"]))
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._last: Dict[str, Any] = {"ok": True, "available": False, "reason": "never_executed"}
         self._ensure_defaults()
 
     def _ensure_defaults(self) -> None:
-        if self.path.exists():
-            return
-        data = {
-            "places": [
-                {
-                    "id": "quiet_corner",
-                    "kind": "rest_place",
-                    "name": "quiet_corner",
-                    "summary": "Default quiet rest place. Base motion stays disabled until a real map confirms it.",
-                    "safety_score": 0.55,
-                    "learned": False,
-                    "pose_only": True,
-                    "created_ts": time.time(),
-                }
-            ]
-        }
-        self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            if self.path.exists():
+                return
+            data = {
+                "places": [
+                    {
+                        "id": "quiet_corner",
+                        "kind": "rest_place",
+                        "name": "quiet_corner",
+                        "summary": "Default quiet rest place. Base motion stays disabled until a real map confirms it.",
+                        "safety_score": 0.55,
+                        "learned": False,
+                        "pose_only": True,
+                        "created_ts": time.time(),
+                    }
+                ]
+            }
+            atomic_write_json(self.path, data, lock=self._lock)
 
     def _load(self) -> Dict[str, Any]:
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {"places": []}
-        except Exception:
-            return {"places": []}
+        return read_json_dict(self.path, lambda: {"places": []}, lock=self._lock)
 
     def _save(self, data: Dict[str, Any]) -> None:
-        self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_json(self.path, data, lock=self._lock)
 
     def list_places(self) -> Dict[str, Any]:
         data = self._load()

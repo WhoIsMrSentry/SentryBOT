@@ -36,7 +36,8 @@ def get_router(brain: AutonomyBrain | Any) -> APIRouter:
 
     @router.get("/state")
     def get_state():
-        # Copy: never hand out the live state dict over HTTP (R8).
+        if hasattr(brain, "get_state_snapshot"):
+            return brain.get_state_snapshot()
         return dict(brain.state)
 
     @router.get("/mood")

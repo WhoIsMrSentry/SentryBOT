@@ -9,16 +9,14 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 from modules.common.model_asset_truth import collect_asset_truth
+from modules.common.runtime_target import detect_runtime_target
 
-def _read(path: str) -> str:
-    try:
-        return Path(path).read_text(encoding="utf-8", errors="ignore").strip()
-    except Exception:
-        return ""
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
 
 def is_raspberry_pi() -> bool:
-    model = _read("/proc/device-tree/model") or _read("/sys/firmware/devicetree/base/model")
-    return "raspberry pi" in model.lower()
+    return bool(detect_runtime_target().is_raspberry_pi)
+
 
 class PiHardwareRuntime:
     DEFAULTS = {"require_pi": True, "require_camera": True, "require_esp": False, "camera_device_glob": "/dev/video*"}
@@ -29,12 +27,13 @@ class PiHardwareRuntime:
         self.client = client
         self._last: Dict[str, Any] = {"ok": False, "reason": "never_checked"}
     def status(self) -> Dict[str, Any]:
-        model = _read("/proc/device-tree/model") or _read("/sys/firmware/devicetree/base/model")
-        pi = is_raspberry_pi()
+        target = detect_runtime_target()
+        model = target.model
+        pi = target.is_raspberry_pi
         video_devices = sorted(glob.glob(str(self.cfg.get("camera_device_glob") or "/dev/video*")))
         picamera2 = importlib.util.find_spec("picamera2") is not None
         libcamera = bool(Path("/usr/bin/libcamera-hello").exists()) or bool(os.environ.get("LIBCAMERA_LOG_LEVEL"))
-        assets = collect_asset_truth(Path.cwd())
+        assets = collect_asset_truth(_REPO_ROOT)
         esp = self._esp_status()
         ok = True
         reasons = []
@@ -53,7 +52,7 @@ class PiHardwareRuntime:
         if self.client is None:
             return {"ok": False, "reason": "client_missing"}
         try:
-            resp = self.client.robot_command("hello")
+            resp = self.client.robot_command("get_state")
             return {"ok": bool(isinstance(resp, dict) and resp.get("ok")), "response": resp}
         except Exception as exc:
             return {"ok": False, "reason": str(exc)}

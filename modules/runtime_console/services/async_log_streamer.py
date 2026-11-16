@@ -106,53 +106,64 @@ class AsyncLogStreamer:
         self.running = False
         self._last_pos = 0
 
+    def _read_initial_lines(self, max_initial_lines: int) -> list[str]:
+        if not self.log_path.exists():
+            return []
+        size = self.log_path.stat().st_size
+        read_size = min(size, 100_000)
+        with open(self.log_path, "r", encoding="utf-8", errors="replace") as f:
+            if size > read_size:
+                f.seek(size - read_size)
+                f.readline()  # skip partial line
+            lines = f.readlines()[-max_initial_lines:]
+            self._last_pos = f.tell()
+            return lines
+
+    def _read_new_lines(self) -> list[str]:
+        if not self.log_path.exists():
+            return []
+        current_size = self.log_path.stat().st_size
+        if current_size < self._last_pos:
+            # Log file rotated or truncated
+            self._last_pos = 0
+        if current_size <= self._last_pos:
+            return []
+        with open(self.log_path, "r", encoding="utf-8", errors="replace") as f:
+            f.seek(self._last_pos)
+            new_lines = f.readlines()
+            self._last_pos = f.tell()
+            return new_lines
+
     async def stream_logs(
         self,
         on_entry: Callable[[ParsedLogEntry, Text], None],
         max_initial_lines: int = 150,
     ) -> None:
         self.running = True
-        
-        # Initial read of existing tail
-        if self.log_path.exists():
-            try:
-                size = self.log_path.stat().st_size
-                read_size = min(size, 100_000)
-                with open(self.log_path, "r", encoding="utf-8", errors="replace") as f:
-                    if size > read_size:
-                        f.seek(size - read_size)
-                        f.readline()  # skip partial line
-                    initial_lines = f.readlines()[-max_initial_lines:]
-                    self._last_pos = f.tell()
-                    
-                for line in initial_lines:
-                    if line.strip():
-                        entry = parse_log_line(line)
-                        rich_text = format_log_entry_to_rich(entry)
-                        on_entry(entry, rich_text)
-            except Exception:
-                pass
+
+        # Initial read of existing tail offloaded from asyncio event loop
+        try:
+            initial_lines = await asyncio.to_thread(self._read_initial_lines, max_initial_lines)
+            for line in initial_lines:
+                if line.strip():
+                    entry = parse_log_line(line)
+                    rich_text = format_log_entry_to_rich(entry)
+                    on_entry(entry, rich_text)
+        except asyncio.CancelledError:
+            self.running = False
+            return
+        except Exception:
+            pass
 
         # Tail loop non-blocking
         while self.running:
             try:
-                if self.log_path.exists():
-                    current_size = self.log_path.stat().st_size
-                    if current_size < self._last_pos:
-                        # Log file rotated or truncated
-                        self._last_pos = 0
-
-                    if current_size > self._last_pos:
-                        with open(self.log_path, "r", encoding="utf-8", errors="replace") as f:
-                            f.seek(self._last_pos)
-                            new_lines = f.readlines()
-                            self._last_pos = f.tell()
-
-                        for line in new_lines:
-                            if line.strip():
-                                entry = parse_log_line(line)
-                                rich_text = format_log_entry_to_rich(entry)
-                                on_entry(entry, rich_text)
+                new_lines = await asyncio.to_thread(self._read_new_lines)
+                for line in new_lines:
+                    if line.strip():
+                        entry = parse_log_line(line)
+                        rich_text = format_log_entry_to_rich(entry)
+                        on_entry(entry, rich_text)
             except asyncio.CancelledError:
                 self.running = False
                 break

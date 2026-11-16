@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 import httpx
 
 
@@ -36,6 +36,7 @@ class AsyncGatewayProbe:
         self.companion_data: Dict[str, Any] = {}
         self.status_data: Dict[str, Any] = {}
         self.diagnostics_data: Dict[str, Any] = {}
+        self.decision_traces: List[Dict[str, Any]] = []
         self.error_message: Optional[str] = None
         self._client: Optional[httpx.AsyncClient] = None
 
@@ -43,6 +44,20 @@ class AsyncGatewayProbe:
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(timeout=0.9)
         return self._client
+
+    def get_client(self) -> httpx.AsyncClient:
+        """Public accessor for sharing the persistent AsyncClient with UI widgets."""
+        return self._get_client()
+
+    def _clear_subresources(self) -> None:
+        """Clear stale cached sub-endpoint telemetry when gateway goes offline."""
+        self.state_data = {}
+        self.camera_data = {}
+        self.expression_data = {}
+        self.companion_data = {}
+        self.status_data = {}
+        self.diagnostics_data = {}
+        self.decision_traces = []
 
     async def aclose(self) -> None:
         """Close persistent HTTP client session."""
@@ -60,31 +75,40 @@ class AsyncGatewayProbe:
 
         # 1. Probe primary health/status
         try:
-            resp = await client.get(f"{self.base_url}/healthz")
+            resp = await client.get(f"{self.base_url}/healthz", timeout=0.9)
             if resp.status_code != 200:
-                resp = await client.get(f"{self.base_url}/runtime_console/healthz")
+                resp = await client.get(f"{self.base_url}/runtime_console/healthz", timeout=0.9)
             self.last_probe_ms = (time.perf_counter() - t0) * 1000.0
 
             if resp.status_code == 200:
                 self.online = True
-                self.health_data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {"ok": True}
+                self.health_data = (
+                    resp.json()
+                    if resp.headers.get("content-type", "").startswith("application/json")
+                    else {"ok": True}
+                )
                 self.error_message = None
             else:
                 self.online = False
+                self.health_data = {}
+                self._clear_subresources()
                 self.error_message = f"Gateway HTTP {resp.status_code}"
                 return False
         except Exception:
             self.online = False
             self.last_probe_ms = (time.perf_counter() - t0) * 1000.0
+            self.health_data = {}
+            self._clear_subresources()
             self.error_message = "Gateway offline / unreachable"
             return False
 
         # 2. Concurrently fetch all live telemetry sub-resources
         async def _get(path: str) -> Optional[Dict[str, Any]]:
             try:
-                r = await client.get(f"{self.base_url}{path}")
+                r = await client.get(f"{self.base_url}{path}", timeout=0.9)
                 if r.status_code == 200:
-                    return r.json()
+                    data = r.json()
+                    return data if isinstance(data, dict) else None
             except Exception:
                 pass
             return None
@@ -97,6 +121,7 @@ class AsyncGatewayProbe:
             _get("/expression/state"),
             _get("/status"),
             _get("/diagnostics/report"),
+            _get("/agent/decision-traces/latest?limit=5"),
             return_exceptions=True,
         )
 
@@ -107,30 +132,28 @@ class AsyncGatewayProbe:
         exp_res = results[4] if isinstance(results[4], dict) else None
         stat_res = results[5] if isinstance(results[5], dict) else None
         diag_res = results[6] if isinstance(results[6], dict) else None
+        traces_res = results[7] if isinstance(results[7], dict) else None
 
-        if state_res:
+        if state_res is not None:
             self.state_data = state_res
             self.health_data["state"] = state_res
+        else:
+            self.state_data = {}
 
-        comp_combined = {}
+        comp_combined: Dict[str, Any] = {}
         if needs_res:
             comp_combined.update(needs_res)
         if goal_res:
             comp_combined.update(goal_res)
-        if comp_combined:
-            self.companion_data = comp_combined
+        self.companion_data = comp_combined
 
-        if cam_res:
-            self.camera_data = cam_res
+        self.camera_data = cam_res or {}
+        self.expression_data = exp_res or {}
+        self.status_data = stat_res or {}
+        self.diagnostics_data = diag_res or {}
 
-        if exp_res:
-            self.expression_data = exp_res
-
-        if stat_res:
-            self.status_data = stat_res
-
-        if diag_res:
-            self.diagnostics_data = diag_res
+        raw_traces = traces_res.get("traces") if isinstance(traces_res, dict) else None
+        self.decision_traces = [t for t in raw_traces if isinstance(t, dict)] if isinstance(raw_traces, list) else []
 
         self.last_probe_time = time.time()
         return self.online

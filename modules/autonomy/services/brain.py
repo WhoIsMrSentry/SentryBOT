@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+from dataclasses import asdict, is_dataclass
 import logging
 import threading
 import time
@@ -96,7 +98,10 @@ class AutonomyBrain(
                 if hasattr(thread, "is_alive") and not thread.is_alive():
                     pass
                 else:
-                    thread.join()
+                    try:
+                        thread.join(timeout=2.0)
+                    except TypeError:
+                        thread.join()
             except Exception:
                 pass
         if getattr(self, "_worker_executor", None) is not None:
@@ -105,6 +110,60 @@ class AutonomyBrain(
             except Exception:
                 pass
         logger.info("AutonomyBrain stopped.")
+
+    def get_state_snapshot(self) -> dict[str, Any]:
+        """Return a thread-safe deep snapshot of brain.state enriched with latency & worker health."""
+        lock = getattr(self, "_state_lock", None)
+        raw_state = getattr(self, "state", {})
+        if lock is not None:
+            with lock:
+                items = list(raw_state.items()) if isinstance(raw_state, dict) else []
+        else:
+            items = list(raw_state.items()) if isinstance(raw_state, dict) else []
+
+        snap: dict[str, Any] = {}
+        for key, value in items:
+            try:
+                if is_dataclass(value) and not isinstance(value, type):
+                    snap[key] = asdict(value)
+                else:
+                    snap[key] = copy.deepcopy(value)
+            except Exception:
+                snap[key] = str(value)
+
+        laya_ms = snap.get("laya_last_inference_ms")
+        laya = getattr(self, "laya_engine", None)
+        if laya_ms is None and laya is not None and hasattr(laya, "get_telemetry"):
+            try:
+                telem = laya.get_telemetry() or {}
+                last_list = telem.get("last_decisions") or []
+                if last_list:
+                    laya_ms = last_list[-1].get("ms")
+                elif "avg_inference_ms" in telem:
+                    laya_ms = telem.get("avg_inference_ms")
+            except Exception:
+                pass
+
+        agent_ms = snap.get("agent_last_latency_ms")
+        started_at = float(getattr(self, "_agentic_decision_started_at", 0.0) or 0.0)
+        in_progress = bool(getattr(self, "_agentic_decision_in_progress", False))
+        cfg = getattr(self, "config", {}) if isinstance(getattr(self, "config", {}), dict) else {}
+        agentic_cfg = cfg.get("agentic", {}) if isinstance(cfg.get("agentic"), dict) else {}
+        stall_threshold = max(1.0, float(agentic_cfg.get("worker_stall_threshold_s", 45.0) or 45.0))
+        elapsed_worker_s = round(max(0.0, time.time() - started_at), 2) if (in_progress and started_at > 0.0) else 0.0
+        executor = getattr(self, "_worker_executor", None)
+        snap["telemetry"] = {
+            "laya_latency_ms": float(laya_ms) if laya_ms is not None else None,
+            "agent_latency_ms": float(agent_ms) if agent_ms is not None else None,
+            "worker": {
+                "agentic_in_progress": in_progress,
+                "agentic_elapsed_s": elapsed_worker_s,
+                "stalled": bool(in_progress and elapsed_worker_s >= stall_threshold),
+                "stall_threshold_s": stall_threshold,
+                "executor_active": bool(executor is not None and not getattr(executor, "_shutdown", False)),
+            },
+        }
+        return snap
 
     def _loop(self) -> None:
         logger.info("Brain main loop running.")
@@ -124,7 +183,7 @@ class AutonomyBrain(
 
     def observe_manual_action(self, action_type: str, payload: dict | None = None) -> None:
         if self.shadow_learner:
-            self.shadow_learner.observe(action_type, payload or {}, context={"mood": self.mood.get_dominant_emotion()})
+            self.shadow_learner.observe_action(action_type, payload or {})
 
     def interaction_occurred(self, source: str = "unknown") -> None:
         self.state["last_interaction"] = time.time()

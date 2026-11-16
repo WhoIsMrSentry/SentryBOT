@@ -116,8 +116,7 @@ class BehaviorComposer:
                         self.client.express_emotion(
                             emotion=emo_label,
                             intensity=intensity,
-                            duration=duration,
-                            source="behavior_composer",
+                            duration_s=duration,
                         )
                     results["components"]["emotion"] = emo_label
                 except Exception as exc:
@@ -130,9 +129,10 @@ class BehaviorComposer:
                 try:
                     if hasattr(self.client, "set_neopixel"):
                         self.client.set_neopixel(
-                            mode=effect,
+                            effect=effect,
                             emotions=[palette],
                             duration=float(lights.get("duration_s", 10.0)),
+                            lease_source="behavior_composer",
                         )
                     results["components"]["lights"] = {"effect": effect, "palette": palette}
                 except Exception as exc:
@@ -178,9 +178,15 @@ class BehaviorComposer:
                 if isinstance(posture, dict):
                     if "head_tilt" in posture:
                         head_payload["tilt"] = int(posture["head_tilt"])
-                    if "eyes" in posture and hasattr(self.client, "set_face_state"):
+                    if "eyes" in posture:
+                        eyes_state = str(posture["eyes"])
                         try:
-                            self.client.set_face_state(posture["eyes"])
+                            if hasattr(self.client, "oled_show"):
+                                self.client.oled_show(eyes_state)
+                                results["components"]["eyes"] = eyes_state
+                            elif hasattr(self.client, "set_face_state"):
+                                self.client.set_face_state(eyes_state)
+                                results["components"]["eyes"] = eyes_state
                         except Exception:
                             pass
                 if isinstance(look, dict):
