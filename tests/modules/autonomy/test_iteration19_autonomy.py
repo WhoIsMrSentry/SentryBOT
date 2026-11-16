@@ -128,15 +128,17 @@ def test_topomap_learn_policy_execute_and_stepper_contract(tmp_path):
     assert missing["reason"] == "place_not_found"
 
 
-def test_topomap_safe_nav_and_owner_learning_resolve_relative_to_repo_root():
+def test_topomap_safe_nav_and_owner_learning_resolve_relative_to_repo_root(monkeypatch, tmp_path):
     topo = TopomapMotionExecutor.__new__(TopomapMotionExecutor)
     del topo
     # Relative paths resolve against repo root rather than cwd
     from modules.autonomy.services.storage_utils import resolve_autonomy_path
 
+    expected_root = Path(__file__).resolve().parents[3]
+    monkeypatch.chdir(tmp_path)
     p = resolve_autonomy_path("data/test_probe.json", "data/default.json")
     assert p.is_absolute()
-    assert "Project SentryBOT V5" in str(p)
+    assert p == expected_root / "data" / "test_probe.json"
 
     # Verify SafeNavigationMemory & OwnerPersonLearning accept lock + atomic write cleanly
     assert SafeNavigationMemory is not None
