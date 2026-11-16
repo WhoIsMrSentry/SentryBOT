@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List
+
+from modules.autonomy.services.needs_engine import extract_risk_and_safety, is_pct_scale_scores
 
 logger = logging.getLogger("autonomy.companion_goal_policies")
 
@@ -15,6 +17,41 @@ def _as_float(value: Any, default: float = 0.0) -> float:
 
 def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
+
+
+def _resolve_dot_path(root: Any, path: str) -> Any:
+    current: Any = root
+    for part in str(path or "").split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _suppress_action_types(actions: Any, suppressed: set[str]) -> tuple[List[Any], List[Dict[str, str]]]:
+    items = actions if isinstance(actions, list) else []
+    kept: List[Any] = []
+    removed: List[Dict[str, str]] = []
+    for action in items:
+        action_type = str(action.get("type") or "").strip() if isinstance(action, dict) else ""
+        if action_type in suppressed:
+            removed.append({"type": action_type})
+        else:
+            kept.append(action)
+    return kept, removed
+
+
+def _ensure_semantic_expression(out: Dict[str, Any], semantic: str, source: str) -> None:
+    sem = str(semantic or "").strip()
+    if not sem:
+        return
+    out["pet_expression_hint"] = sem
+    actions = out.get("actions")
+    if not isinstance(actions, list):
+        actions = []
+        out["actions"] = actions
+    if not any(isinstance(action, dict) and str(action.get("semantic") or "") == sem for action in actions):
+        actions.append({"type": "expression", "event": f"semantic.{sem}", "semantic": sem, "source": source})
 
 
 class CompanionGoalPoliciesMixin:
@@ -77,29 +114,20 @@ class CompanionGoalPoliciesMixin:
         policy_root = policy_root if isinstance(policy_root, dict) else {}
         gate = policy_root.get("capability_gate", {})
         gate = gate if isinstance(gate, dict) else {}
-        health_policy = policy_root.get("health", {})
-        health_policy = health_policy if isinstance(health_policy, dict) else {}
+        health_policy = _as_dict(policy_root.get("health"))
         snapshot_path = str(gate.get("snapshot_path") or "capability_health")
-        health = snapshot.get(snapshot_path, {})
-        health = health if isinstance(health, dict) else {}
+        health = _as_dict(snapshot.get(snapshot_path))
         actions = out.get("actions", [])
         actions = actions if isinstance(actions, list) else []
         removed = []
         if bool(health_policy.get("enabled", False)) and health and not bool(health.get("ok", False)):
             suppressed = {str(item).strip() for item in health_policy.get("suppress_action_types", []) if str(item).strip()}
-            kept = []
-            for action in actions:
-                action_type = str(action.get("type") or "") if isinstance(action, dict) else ""
-                if action_type in suppressed:
-                    removed.append({"type": action_type, "reason": str(health_policy.get("reason") or "")})
-                else:
-                    kept.append(action)
-            actions = kept
+            actions, dropped = _suppress_action_types(actions, suppressed)
+            for item in dropped:
+                removed.append({**item, "reason": str(health_policy.get("reason") or "")})
         if bool(gate.get("enabled", False)) and health:
-            capabilities = health.get("capabilities", {})
-            capabilities = capabilities if isinstance(capabilities, dict) else {}
-            requirements = gate.get("default_required", {})
-            requirements = requirements if isinstance(requirements, dict) else {}
+            capabilities = _as_dict(health.get("capabilities"))
+            requirements = _as_dict(gate.get("default_required"))
             kept = []
             for action in actions:
                 action_type = str(action.get("type") or "") if isinstance(action, dict) else ""
@@ -114,9 +142,7 @@ class CompanionGoalPoliciesMixin:
         out["actions"] = actions
         if removed:
             semantic = str(gate.get("fallback_semantic") or health_policy.get("fallback_semantic") or "").strip()
-            if semantic and not any(isinstance(action, dict) and str(action.get("semantic") or "") == semantic for action in actions):
-                actions.append({"type": "expression", "event": f"semantic.{semantic}", "semantic": semantic, "source": "capability_health_policy"})
-                out["pet_expression_hint"] = semantic
+            _ensure_semantic_expression(out, semantic, "capability_health_policy")
             out["capability_guard"] = {
                 "reason": str(gate.get("reason") or health_policy.get("reason") or ""),
                 "removed_actions": removed,
@@ -125,33 +151,20 @@ class CompanionGoalPoliciesMixin:
         return out
 
     def _apply_privacy_policy(self, out: Dict[str, Any], *, snapshot: Dict[str, Any]) -> Dict[str, Any]:
-        policy_root = self.cfg.get("autonomy_policy", {})
-        policy_root = policy_root if isinstance(policy_root, dict) else {}
-        policy = policy_root.get("privacy", {})
-        policy = policy if isinstance(policy, dict) else {}
+        policy = _as_dict(_as_dict(self.cfg.get("autonomy_policy")).get("privacy"))
         if not bool(policy.get("enabled", False)):
             return out
         restricted = {str(item).strip() for item in policy.get("restricted_zones", []) if str(item).strip()}
-        zones = []
-        for path in policy.get("restricted_zone_paths", []):
-            current: Any = snapshot
-            for part in str(path).split("."):
-                current = current.get(part) if isinstance(current, dict) else None
-            if current is not None:
-                zones.append(str(current).strip())
-        guest_present = False
-        for path in policy.get("guest_paths", []):
-            current: Any = snapshot
-            for part in str(path).split("."):
-                current = current.get(part) if isinstance(current, dict) else None
-            guest_present = guest_present or bool(current)
-        restricted_context = bool(restricted.intersection(zones)) or guest_present
-        if not restricted_context:
+        zones = [
+            str(val).strip()
+            for path in policy.get("restricted_zone_paths", [])
+            if (val := _resolve_dot_path(snapshot, str(path))) is not None
+        ]
+        guest_present = any(bool(_resolve_dot_path(snapshot, str(path))) for path in policy.get("guest_paths", []))
+        if not (bool(restricted.intersection(zones)) or guest_present):
             return out
         suppressed = {str(item).strip() for item in policy.get("suppress_action_types", []) if str(item).strip()}
-        actions = out.get("actions", [])
-        actions = actions if isinstance(actions, list) else []
-        out["actions"] = [action for action in actions if not isinstance(action, dict) or str(action.get("type") or "").strip() not in suppressed]
+        out["actions"], _ = _suppress_action_types(out.get("actions", []), suppressed)
         out["privacy"] = {
             "reason": str(policy.get("reason") or ""),
             "zones": zones,
@@ -161,10 +174,7 @@ class CompanionGoalPoliciesMixin:
         return out
 
     def _apply_explanation_policy(self, out: Dict[str, Any]) -> Dict[str, Any]:
-        policy_root = self.cfg.get("autonomy_policy", {})
-        policy_root = policy_root if isinstance(policy_root, dict) else {}
-        policy = policy_root.get("explanation", {})
-        policy = policy if isinstance(policy, dict) else {}
+        policy = _as_dict(_as_dict(self.cfg.get("autonomy_policy")).get("explanation"))
         if not bool(policy.get("enabled", False)):
             return out
         fields = [str(field).strip() for field in policy.get("include", []) if str(field).strip()]
@@ -172,10 +182,7 @@ class CompanionGoalPoliciesMixin:
         return out
 
     def _apply_personalization_policy(self, out: Dict[str, Any], *, snapshot: Dict[str, Any]) -> Dict[str, Any]:
-        policy_root = self.cfg.get("autonomy_policy", {})
-        policy_root = policy_root if isinstance(policy_root, dict) else {}
-        policy = policy_root.get("personalization", {})
-        policy = policy if isinstance(policy, dict) else {}
+        policy = _as_dict(_as_dict(self.cfg.get("autonomy_policy")).get("personalization"))
         if not bool(policy.get("enabled", False)):
             return out
         applied = []
@@ -183,25 +190,11 @@ class CompanionGoalPoliciesMixin:
             if not isinstance(rule, dict):
                 continue
             expected = rule.get("when", True)
-            matched = False
-            for path in rule.get("signal_paths", []):
-                current: Any = snapshot
-                for part in str(path).split("."):
-                    current = current.get(part) if isinstance(current, dict) else None
-                if current == expected:
-                    matched = True
-                    break
-            if not matched:
+            if not any(_resolve_dot_path(snapshot, str(path)) == expected for path in rule.get("signal_paths", [])):
                 continue
             suppressed = {str(item).strip() for item in rule.get("suppress_action_types", []) if str(item).strip()}
-            actions = out.get("actions", [])
-            actions = actions if isinstance(actions, list) else []
-            out["actions"] = [action for action in actions if not isinstance(action, dict) or str(action.get("type") or "").strip() not in suppressed]
-            semantic = str(rule.get("semantic") or "").strip()
-            if semantic:
-                out["pet_expression_hint"] = semantic
-                if not any(isinstance(action, dict) and str(action.get("semantic") or "") == semantic for action in out["actions"]):
-                    out["actions"].append({"type": "expression", "event": f"semantic.{semantic}", "semantic": semantic, "source": "personalization_policy"})
+            out["actions"], _ = _suppress_action_types(out.get("actions", []), suppressed)
+            _ensure_semantic_expression(out, str(rule.get("semantic") or ""), "personalization_policy")
             applied.append({
                 "reason": str(rule.get("reason") or ""),
                 "suppressed_action_types": sorted(suppressed),
@@ -211,17 +204,12 @@ class CompanionGoalPoliciesMixin:
         return out
 
     def _apply_uncertainty_policy(self, out: Dict[str, Any], *, snapshot: Dict[str, Any]) -> Dict[str, Any]:
-        policy_root = self.cfg.get("autonomy_policy", {})
-        policy_root = policy_root if isinstance(policy_root, dict) else {}
-        policy = policy_root.get("uncertainty", {})
-        policy = policy if isinstance(policy, dict) else {}
+        policy = _as_dict(_as_dict(self.cfg.get("autonomy_policy")).get("uncertainty"))
         if not bool(policy.get("enabled", False)):
             return out
         values = []
         for path in policy.get("confidence_paths", []):
-            current: Any = snapshot
-            for part in str(path).split("."):
-                current = current.get(part) if isinstance(current, dict) else None
+            current = _resolve_dot_path(snapshot, str(path))
             if current is None:
                 continue
             try:
@@ -235,14 +223,8 @@ class CompanionGoalPoliciesMixin:
         if observed_confidence >= threshold:
             return out
         suppressed = {str(item).strip() for item in policy.get("suppress_action_types", []) if str(item).strip()}
-        actions = out.get("actions", [])
-        actions = actions if isinstance(actions, list) else []
-        out["actions"] = [action for action in actions if not isinstance(action, dict) or str(action.get("type") or "").strip() not in suppressed]
-        semantic = str(policy.get("fallback_semantic") or "").strip()
-        if semantic:
-            out["pet_expression_hint"] = semantic
-            if not any(isinstance(action, dict) and str(action.get("semantic") or "") == semantic for action in out["actions"]):
-                out["actions"].append({"type": "expression", "event": f"semantic.{semantic}", "semantic": semantic, "source": "uncertainty_policy"})
+        out["actions"], _ = _suppress_action_types(out.get("actions", []), suppressed)
+        _ensure_semantic_expression(out, str(policy.get("fallback_semantic") or ""), "uncertainty_policy")
         out["autonomy_guard"] = {
             "reason": str(policy.get("reason") or ""),
             "observed_confidence": observed_confidence,
@@ -253,11 +235,7 @@ class CompanionGoalPoliciesMixin:
 
     @staticmethod
     def _policy_value(context: Dict[str, Any], path: str) -> float:
-        current: Any = context
-        for token in str(path or "").split("."):
-            if not isinstance(current, dict):
-                return 0.0
-            current = current.get(token)
+        current = _resolve_dot_path(context, path)
         if isinstance(current, bool):
             return 1.0 if current else 0.0
         return _as_float(current, 0.0)
@@ -266,8 +244,18 @@ class CompanionGoalPoliciesMixin:
         policy = _as_dict(self.cfg.get("environment_policy"))
         if not bool(policy.get("enabled", False)):
             return out
+        raw_scores = _as_dict(snapshot.get("normalized_scores") or out.get("scores"))
+        risk_val, safety_level = extract_risk_and_safety(snapshot, _as_dict(out.get("scores")))
+        env_scores = dict(raw_scores)
+        if is_pct_scale_scores(snapshot, _as_dict(out.get("scores"))):
+            # Expose risk as scores.safety to keep 0..1 hazard semantics consistent with safety_hold_threshold
+            env_scores["safety"] = risk_val
+            env_scores["safety_level"] = safety_level
+        env_scores.setdefault("risk", risk_val)
         context = {
-            "scores": _as_dict(out.get("scores")),
+            "scores": env_scores,
+            "risk": risk_val,
+            "safety_level": safety_level,
             "needs": _as_dict(snapshot.get("needs")),
             "perception": {**_as_dict(snapshot.get("perception")), "owner_present": bool(owner_present)},
         }
