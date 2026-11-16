@@ -40,6 +40,8 @@ class EmotionSyncMixin:
             self.client.push_interaction_event(f"mood.{dominant}")
 
         now = time.time()
+        send = False
+        chosen: Optional[str] = None
         with self._express_lock:
             if now - self._last_emotion_sync_ts >= self._visual_emotion_min_interval_s:
                 self._last_emotion_sync_ts = now
@@ -47,9 +49,7 @@ class EmotionSyncMixin:
                 if chosen != self._last_emotion_sent:
                     self._last_emotion_sent = chosen
                     send = True
-                else:
-                    send = False
-        if now - self._last_emotion_sync_ts >= self._visual_emotion_min_interval_s and send:
+        if send and chosen is not None:
             # Network call outside the lock (C3).
             self.client.update_emotions([chosen])
 
