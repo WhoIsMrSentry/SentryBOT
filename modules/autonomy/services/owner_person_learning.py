@@ -1,9 +1,10 @@
 
 from __future__ import annotations
-import json
+import threading
 import time
-from pathlib import Path
 from typing import Any, Dict, Optional
+
+from .storage_utils import atomic_write_json, read_json_dict, resolve_autonomy_path
 
 class OwnerPersonLearning:
     DEFAULTS = {"enabled": True, "profile_path": "data/owner_profile.json", "min_confidence": 0.55}
@@ -12,21 +13,19 @@ class OwnerPersonLearning:
         if isinstance(cfg, dict):
             self.cfg.update(cfg)
         self.client = client; self.memory = memory
-        self.path = Path(str(self.cfg.get("profile_path") or self.DEFAULTS["profile_path"]))
-        if not self.path.is_absolute():
-            self.path = Path.cwd() / self.path
+        self._lock = threading.RLock()
+        self.path = resolve_autonomy_path(self.cfg.get("profile_path"), str(self.DEFAULTS["profile_path"]))
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
-            self.path.write_text(json.dumps({"owners": [], "updated_ts": time.time()}, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            if not self.path.exists():
+                atomic_write_json(self.path, {"owners": [], "updated_ts": time.time()}, lock=self._lock)
         self._last: Dict[str, Any] = {"ok": True, "reason": "never_identified"}
     def _load(self) -> Dict[str, Any]:
-        try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            return data if isinstance(data, dict) else {"owners": []}
-        except Exception:
-            return {"owners": []}
+        return read_json_dict(self.path, lambda: {"owners": []}, lock=self._lock)
     def _save(self, data: Dict[str, Any]) -> None:
-        data["updated_ts"] = time.time(); self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        with self._lock:
+            data["updated_ts"] = time.time()
+            atomic_write_json(self.path, data, lock=self._lock)
     def status(self) -> Dict[str, Any]:
         data = self._load(); return {"ok": True, "available": True, "profile_path": str(self.path), "owners": data.get("owners", []), "last": dict(self._last)}
     def learn(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
