@@ -242,7 +242,7 @@ class OllamaClient:
             raise CircuitOpenError("Ollama circuit breaker is open")
 
         selected_model = model or self.model
-        merged_options: Dict[str, Any] = {"temperature": 0.6}
+        merged_options: Dict[str, Any] = {"temperature": 0.6, "num_ctx": 8192}
         if isinstance(options, dict):
             merged_options.update(options)
 
@@ -252,6 +252,7 @@ class OllamaClient:
             "messages": messages,
             "stream": False,
             "think": False,
+            "keep_alive": getattr(self, "keep_alive", -1),
             "format": format,
             "options": merged_options,
         }
@@ -295,7 +296,7 @@ class OllamaClient:
             raise CircuitOpenError("Ollama circuit breaker is open")
 
         selected_model = model or self.model
-        merged_options: Dict[str, Any] = {"temperature": 0.6}
+        merged_options: Dict[str, Any] = {"temperature": 0.6, "num_ctx": 8192}
         if isinstance(options, dict):
             merged_options.update(options)
 
@@ -305,6 +306,7 @@ class OllamaClient:
             "messages": messages,
             "stream": True,
             "think": False,
+            "keep_alive": getattr(self, "keep_alive", -1),
             "format": format,
             "options": merged_options,
         }

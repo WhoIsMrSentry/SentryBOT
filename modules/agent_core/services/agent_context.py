@@ -144,7 +144,7 @@ class AgentContextMixin(AgentMemorySyncMixin):
             fallback=agent_cfg.get("model") or DEFAULT_CHAT_MODEL,
         )
         self.temperature = agent_cfg.get("temperature", 0.15)
-        self.num_ctx = agent_cfg.get("num_ctx", 4096)
+        self.num_ctx = agent_cfg.get("num_ctx", 8192)
         self.cooldown = agent_cfg.get("cooldown_s", 1.0)
         llm_cfg = config.get("llm", {}) if isinstance(config.get("llm", {}), dict) else {}
         self.llm_provider = str(llm_cfg.get("provider", "ollama")).strip().lower() or "ollama"
@@ -355,12 +355,7 @@ class AgentContextMixin(AgentMemorySyncMixin):
         self.fast_path_max_steps = self._safe_int(fast_cfg.get("max_steps", 2), fallback=2, minimum=1)
         self.subagent_max_steps = self._safe_int(subagent_cfg.get("max_steps", 4), fallback=4, minimum=1)
         self.subagent_workers = self._safe_int(subagent_cfg.get("max_parallel_workers", 3), fallback=3, minimum=1)
-        self.persona_system_prompt = str(
-            persona_cfg.get(
-                "system_prompt",
-                "You are SentryBOT Companion persona. Speak directly to the user in a friendly, concise tone.",
-            )
-        )
+        self.persona_system_prompt = str(persona_cfg.get("system_prompt") or "").strip()
         self.persona_num_predict = self._safe_int(persona_cfg.get("num_predict", 160), fallback=160, minimum=10)
         self.persona_stream_enabled = bool(persona_cfg.get("stream_enabled", persona_cfg.get("stream", False)))
         self.chat_num_predict = self._safe_int(agent_cfg.get("chat_num_predict", 120), fallback=120, minimum=10)
@@ -548,7 +543,7 @@ class AgentContextMixin(AgentMemorySyncMixin):
                 reason = f"http_{status}"
                 self._mark_ollama_unavailable(reason)
                 return reason
-            self._ollama_probe_ok_until = time.monotonic() + 5.0
+            self._ollama_probe_ok_until = time.monotonic() + 60.0
             self._ollama_unavailable_until = 0.0
             self._ollama_unavailable_reason = ""
             return None

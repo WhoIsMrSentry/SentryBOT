@@ -118,7 +118,7 @@ class MemoryConsolidator:
                 resp = self.llm_client.chat(
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
-                    options={"temperature": 0.1, "num_predict": 512},
+                    options={"temperature": 0.1, "num_predict": 512, "num_ctx": 8192},
                 )
                 content = resp.get("message", {}).get("content", "").strip()
             else:

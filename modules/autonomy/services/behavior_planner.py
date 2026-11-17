@@ -113,7 +113,8 @@ class BehaviorPlanner:
                     {"role": "user", "content": user_prompt}
                 ],
                 "think": False,
-                "options": {"temperature": 0.15, "num_predict": 160, "num_ctx": 4096}
+                "keep_alive": -1,
+                "options": {"temperature": 0.15, "num_predict": 160, "num_ctx": 8192}
             }
             if tool_schemas:
                 kwargs["tools"] = tool_schemas

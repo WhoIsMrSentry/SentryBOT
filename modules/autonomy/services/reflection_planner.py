@@ -57,7 +57,8 @@ class ReflectionPlanner:
                 ],
                 format="json",
                 think=False,
-                options={"temperature": 0.1, "num_predict": 180, "num_ctx": 4096}
+                keep_alive=-1,
+                options={"temperature": 0.1, "num_predict": 180, "num_ctx": 8192}
             )
             
             content = response.get("message", {}).get("content", "{}")
