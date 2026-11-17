@@ -32,7 +32,6 @@ social.sqlite3-shm
 social.sqlite3-wal
 yolov8n.pt
 _codeql_detected_source_root
-.cursorrules
 .codebase-memory/*
 !.codebase-memory/graph.db.zst
 !.codebase-memory/artifact.json
@@ -40,10 +39,8 @@ vendor/
 *.ps1
 safe_places.json
 .codebase-memory/
-pi_runtime_stub_legacy_caller_audit.json
-PI_RUNTIME_STUB_LEGACY_CALLER_AUDIT.md
-.venv
 reports/
+.venv
 
 # SentryBOT local/runtime artifacts
 config/*.secrets.env
@@ -63,6 +60,7 @@ data/faces.json
 # SentryBOT local secrets
 .env.local
 *.local.env
+arduino/firmware/esp_bridge/local_config.h
 
 # SentryBOT runtime data/artifacts
 data/*.sqlite3-wal
@@ -87,3 +85,4 @@ models/
 data/voiceprints.*
 data/speaker_id.json
 
+*.txt
