@@ -31,6 +31,7 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
         speech_cfg = cfg.get("speech", {}) if isinstance(cfg.get("speech"), dict) else {}
         self.speech_stream_cfg = dict(speech_cfg)
         self._availability_cache: Dict[str, tuple[float, bool]] = {}
+        self._missing_route_until: Dict[tuple[str, str], float] = {}
         self.head_arbiter = None
         self._session = requests.Session()
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="autonomy_client_worker")
@@ -74,12 +75,22 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
         url = self.urls.get(service)
         if not url:
             return None
+        route_key = (str(service), str(endpoint))
+        cooldowns = getattr(self, "_missing_route_until", None)
+        if cooldowns is not None and time.time() < float(cooldowns.get(route_key, 0.0) or 0.0):
+            return None
         try:
             full_url = f"{url}{endpoint}"
             timeout = float(timeout_s) if timeout_s is not None else float(self.request_timeouts.get("default_post_s", 1.0))
             resp = self._get_session().post(full_url, json=json, params=params, timeout=timeout)
+            if resp.status_code == 404:
+                if cooldowns is not None and service in {"arduino", "animate"}:
+                    cooldowns[route_key] = time.time() + 15.0
+                return None
             if resp.status_code != 200:
                 return None
+            if cooldowns is not None:
+                cooldowns.pop(route_key, None)
             try:
                 return resp.json()
             except ValueError:
@@ -168,6 +179,10 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
     def check_rfid(self, endpoint: str) -> bool:
         if not endpoint:
             return False
+        route_key = ("rfid", str(endpoint))
+        cooldowns = getattr(self, "_missing_route_until", None)
+        if cooldowns is not None and time.time() < float(cooldowns.get(route_key, 0.0) or 0.0):
+            return False
         try:
             from modules.gateway.url import resolve_config_url, resolve_gateway_base_url
             url = resolve_config_url(str(endpoint), self.urls.get("gateway") or resolve_gateway_base_url())
@@ -177,13 +192,21 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
                 url = f"http://127.0.0.1:8080{url[len('@gateway'):]}"
         try:
             resp = self._get_session().get(url, timeout=1.0)
+            if resp.status_code == 404:
+                if cooldowns is not None:
+                    cooldowns[route_key] = time.time() + 30.0
+                return False
             if resp.status_code != 200:
                 return False
+            if cooldowns is not None:
+                cooldowns.pop(route_key, None)
             data = resp.json()
             if isinstance(data, dict):
                 return bool(data.get("authorized") or data.get("ok"))
             return bool(data)
         except Exception as exc:
+            if cooldowns is not None:
+                cooldowns[route_key] = time.time() + 10.0
             logger.debug("RFID check failed: %s", exc)
             return False
 
