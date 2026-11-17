@@ -162,25 +162,33 @@ def main():
             # 1. User approval
             input(">> Hazırsanız [ENTER] tuşuna basın...")
 
-            # 2. Wait 2 seconds with countdown
+            # 2. Interruptible monotonic countdown before recording
             print("Kayıt başlıyor:")
             for s in [2, 1]:
                 print(f"  [ {s} ] saniye...")
-                time.sleep(1.0)
+                step_deadline = time.monotonic() + 1.0
+                while True:
+                    rem = step_deadline - time.monotonic()
+                    if rem <= 0:
+                        break
+                    time.sleep(min(0.1, rem))
             print("  >> [KAYIT BAŞLADI - 5 SANİYE KONUŞUN] <<")
 
-            # 3. Record 5 seconds
+            # 3. Record 5 seconds using monotonic deadline (drift-free & interruptible)
             frames = []
-            start_time = time.time()
             # Clear old buffer
             while capture.read():
                 pass
 
-            while time.time() - start_time < 5.0:
+            record_deadline = time.monotonic() + 5.0
+            while True:
+                remaining = record_deadline - time.monotonic()
+                if remaining <= 0:
+                    break
                 frame = capture.read()
                 if frame:
                     frames.append(frame)
-                time.sleep(0.015)
+                time.sleep(min(0.015, max(0.001, remaining)))
 
             print("  >> [KAYIT TAMAMLANDI] <<\n")
 
