@@ -13,14 +13,12 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 DEFAULT_CHAT_MODEL = "sentry:latest"
-DEFAULT_VISION_MODEL = "qwen3.5:9b"
-DEFAULT_CODER_MODEL = "qwen2.5-coder:7b"
+DEFAULT_VISION_MODEL = "nemotron-3.5-bolt:e4b"
+DEFAULT_CODER_MODEL = "nemotron-3.5-bolt:e4b"
 DEFAULT_UTILITY_MODEL = "nemotron-3.5-bolt:e4b"
 
 DEFAULT_ALLOWED_MODELS: Tuple[str, ...] = (
     DEFAULT_CHAT_MODEL,
-    DEFAULT_VISION_MODEL,
-    DEFAULT_CODER_MODEL,
     DEFAULT_UTILITY_MODEL,
 )
 

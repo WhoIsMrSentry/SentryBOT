@@ -8,9 +8,7 @@ llm:
   use_persona_models: false    # Disable legacy persona model injection
   allowed_models:
     - sentry:latest
-    - qwen3.5:9b
     - nemotron-3.5-bolt:e4b
-    - qwen2.5-coder:7b
 ollama:
   base_url: http://whoismrsentry.local:11434
   model: sentry:latest

@@ -111,14 +111,14 @@ visual_context:
 vision_llm:
   enabled: true
   base_url: http://whoismrsentry.local:11434
-  model: qwen3.5:9b
+  model: nemotron-3.5-bolt:e4b
   timeout_s: 18
   max_image_width: 640
   jpeg_quality: 70
   min_interval_s: 4
   active_question_timeout_s: 15
-  num_predict: 256                         # JSON Ã§Ä±ktÄ± iÃ§in yeterli, hÄ±z kazancÄ±
-  num_ctx: 2048                            # VLM context (image tokens dominate)
+  num_predict: 256                         # JSON çıktısı için yeterli
+  num_ctx: 8192                            # Sohbet/chat ile aynı runner context (reload yok)
 
 person_identity:
   store_path: "modules/vlm_bridge/data/person_identity.json"
@@ -149,21 +149,19 @@ robot:
 
 ollama:
   endpoint: "http://localhost:8080/ollama/chat"
-  model: qwen3.5:9b
+  model: nemotron-3.5-bolt:e4b
   followup_model: sentry:latest
   timeout: 10.0
   num_predict: 100
 
 llm:
   provider: "ollama"                 # ollama | google_ai_studio
-  single_model_mode: false            # Vision uses qwen3.5:9b ONLY; companion chat uses sentry:latest
-  primary_model: qwen3.5:9b
-  model: qwen3.5:9b
+  single_model_mode: false            # Vision uses nemotron-3.5-bolt:e4b; companion chat uses sentry:latest
+  primary_model: nemotron-3.5-bolt:e4b
+  model: nemotron-3.5-bolt:e4b
   allowed_models:
-    - qwen3.5:9b
     - sentry:latest
     - nemotron-3.5-bolt:e4b
-    - qwen2.5-coder:7b
   clm_fallback_enabled: false
   clm_fallback_model: ""   # primary model uygun degilse fallback kullanilmaz
   fallback_on_missing_model: false
