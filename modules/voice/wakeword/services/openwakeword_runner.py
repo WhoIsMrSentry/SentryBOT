@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 import time
 from typing import Dict, Iterable, Optional
+import warnings
 
 try:
     import numpy as np  # type: ignore
@@ -92,7 +93,13 @@ class OpenWakewordRunner(OpenWakewordCalibrationMixin):
         def _try_ctor(kwargs=None, args=None):
             kwargs = kwargs or {}
             args = args or []
-            return model_ctor(*args, **kwargs)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r".*CUDAExecutionProvider.*",
+                    category=UserWarning,
+                )
+                return model_ctor(*args, **kwargs)
 
         tried = []
         last_exc = None

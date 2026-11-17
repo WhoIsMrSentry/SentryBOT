@@ -36,6 +36,8 @@ def _portaudio_device(device: Any) -> Any:
     if isinstance(device, int):
         return device
     text = str(device).strip()
+    if text.lower() in {"", "none", "null", "default"}:
+        return None
     if text.isdigit():
         return int(text)
     return device
@@ -144,6 +146,7 @@ class AudioCapture:
         self._vad = SharedVAD(config.vad_threshold)
 
         # Audio stream / backends
+        self._active_channels = max(1, int(getattr(config, "channels", 1) or 1))
         self._stream = None
         self._pyaudio = None
         self._sd_stream = None
@@ -190,7 +193,7 @@ class AudioCapture:
     def _dispatch_loop(self) -> None:
         """Worker thread: convert frames, update SharedVAD, notify consumers."""
         dtype = np.int16 if self.config.format == "int16" else np.float32
-        ch = max(1, int(self.config.channels))
+        target_ch = max(1, int(self.config.channels))
         while not self._stop_event.is_set() or not self._raw_queue.empty():
             try:
                 item = self._raw_queue.get(timeout=0.1)
@@ -200,11 +203,14 @@ class AudioCapture:
                 break
             raw_bytes, timestamp = item
             try:
+                active_ch = max(1, int(getattr(self, "_active_channels", target_ch)))
                 frame = np.frombuffer(raw_bytes, dtype=dtype)
-                usable = (frame.size // ch) * ch
+                usable = (frame.size // active_ch) * active_ch
                 if usable <= 0:
                     continue
-                frame = frame[:usable].reshape(-1, ch)
+                frame = frame[:usable].reshape(-1, active_ch)
+                if active_ch == 1 and target_ch > 1:
+                    frame = np.repeat(frame, target_ch, axis=1)
 
                 self._frames_captured += 1
                 self._last_frame_time = timestamp
@@ -285,22 +291,41 @@ class AudioCapture:
                 return False
 
             fmt = pyaudio.paInt16 if self.config.format == "int16" else pyaudio.paFloat32
-            self._stream = self._pyaudio.open(
-                format=fmt,
-                channels=self.config.channels,
-                rate=self.config.sample_rate,
-                input=True,
-                input_device_index=device_index,
-                frames_per_buffer=self.config.frame_size,
-                stream_callback=self._audio_callback,
-            )
-            logger.info(
-                "Audio capture started (PyAudio): device=%d, rate=%d, ch=%d",
-                device_index,
-                self.config.sample_rate,
-                self.config.channels,
-            )
-            return True
+            req_ch = max(1, int(self.config.channels))
+            try:
+                dev_info = self._pyaudio.get_device_info_by_index(device_index)
+                max_in = int(dev_info.get("maxInputChannels", 0) or 0)
+            except Exception:
+                max_in = 0
+            preferred_ch = min(req_ch, max_in) if max_in > 0 else req_ch
+            ch_candidates = [preferred_ch] + ([1] if preferred_ch > 1 else [])
+            last_exc = None
+            for cap_ch in ch_candidates:
+                try:
+                    self._active_channels = cap_ch
+                    self._stream = self._pyaudio.open(
+                        format=fmt,
+                        channels=cap_ch,
+                        rate=self.config.sample_rate,
+                        input=True,
+                        input_device_index=device_index,
+                        frames_per_buffer=self.config.frame_size,
+                        stream_callback=self._audio_callback,
+                    )
+                    logger.info(
+                        "Audio capture started (PyAudio): device=%d, rate=%d, ch=%d%s",
+                        device_index,
+                        self.config.sample_rate,
+                        cap_ch,
+                        f" (mono->ch={req_ch})" if cap_ch != req_ch else "",
+                    )
+                    return True
+                except Exception as exc:
+                    last_exc = exc
+                    self._stream = None
+            if last_exc is not None:
+                raise last_exc
+            return False
         except Exception as exc:
             logger.debug("PyAudio capture failed: %s", exc)
             self._cleanup()
@@ -314,31 +339,42 @@ class AudioCapture:
         devs = [_portaudio_device(self.config.device)]
         if self.config.device is not None:
             devs.append(None)
+        req_ch = max(1, int(self.config.channels))
         for dev in devs:
             try:
-                def _sd_cb(indata, frames, time_info, status):
-                    if self._running:
-                        self._enqueue_raw_chunk(bytes(indata), time.time())
+                dev_info = sd.query_devices(dev, "input")
+                max_in = int((dev_info or {}).get("max_input_channels", 0) or 0)
+            except Exception:
+                max_in = 0
+            preferred_ch = min(req_ch, max_in) if max_in > 0 else req_ch
+            ch_candidates = [preferred_ch] + ([1] if preferred_ch > 1 else [])
+            for cap_ch in ch_candidates:
+                try:
+                    def _sd_cb(indata, frames, time_info, status):
+                        if self._running:
+                            self._enqueue_raw_chunk(bytes(indata), time.time())
 
-                self._sd_stream = sd.InputStream(
-                    device=dev,
-                    channels=self.config.channels,
-                    samplerate=self.config.sample_rate,
-                    dtype=self.config.format,
-                    callback=_sd_cb,
-                    blocksize=self.config.frame_size,
-                )
-                self._sd_stream.start()
-                logger.info(
-                    "Audio capture started (sounddevice): device=%s, rate=%d, ch=%d",
-                    dev if dev is not None else "default",
-                    self.config.sample_rate,
-                    self.config.channels,
-                )
-                return True
-            except Exception as exc:
-                logger.debug("sounddevice attempt failed for %s: %s", dev, exc)
-                self._sd_stream = None
+                    self._active_channels = cap_ch
+                    self._sd_stream = sd.InputStream(
+                        device=dev,
+                        channels=cap_ch,
+                        samplerate=self.config.sample_rate,
+                        dtype=self.config.format,
+                        callback=_sd_cb,
+                        blocksize=self.config.frame_size,
+                    )
+                    self._sd_stream.start()
+                    logger.info(
+                        "Audio capture started (sounddevice): device=%s, rate=%d, ch=%d%s",
+                        dev if dev is not None else "default",
+                        self.config.sample_rate,
+                        cap_ch,
+                        f" (mono->ch={req_ch})" if cap_ch != req_ch else "",
+                    )
+                    return True
+                except Exception as exc:
+                    logger.debug("sounddevice attempt failed for %s (ch=%d): %s", dev, cap_ch, exc)
+                    self._sd_stream = None
         return False
 
     def start(self) -> bool:
@@ -463,13 +499,14 @@ class AudioCapture:
         hw_token = f"hw:{hw_match.group(1)}" if hw_match else ""
 
         count = self._pyaudio.get_device_count()
-        for i in range(count):
-            info = self._pyaudio.get_device_info_by_index(i)
-            if info.get("maxInputChannels", 0) < self.config.channels:
-                continue
-            name_low = str(info.get("name", "")).lower()
-            if (target_low and target_low in name_low) or (hw_token and hw_token in name_low):
-                return i
+        for min_ch in (max(1, int(self.config.channels)), 1):
+            for i in range(count):
+                info = self._pyaudio.get_device_info_by_index(i)
+                if info.get("maxInputChannels", 0) < min_ch:
+                    continue
+                name_low = str(info.get("name", "")).lower()
+                if (target_low and target_low != "default" and target_low in name_low) or (hw_token and hw_token in name_low):
+                    return i
 
         try:
             default = self._pyaudio.get_default_input_device_info()
@@ -575,7 +612,7 @@ class AudioRouter:
         """Initialize with config (idempotent)."""
         with self._lock:
             if self._capture and self._capture._running:
-                logger.warning("Audio router already running, ignoring re-init")
+                logger.debug("Audio router already running, ignoring re-init")
                 return
             self.config = config
     
@@ -611,7 +648,7 @@ class AudioRouter:
                 self._capture.register_consumer(name, consumer)
             
             if not self._capture.start():
-                logger.error("Failed to start audio capture")
+                logger.debug("AudioRouter: capture backend unavailable")
                 self._capture = None
                 return False
             
