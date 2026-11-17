@@ -162,6 +162,14 @@ class SpeakService:
         raw = str(text or "").strip()
         if not raw:
             return ""
+        try:
+            from modules.ai_provider.services.tags import strip_speech_control_artifacts
+
+            raw = strip_speech_control_artifacts(raw)
+        except Exception:
+            pass
+        if not raw:
+            return ""
         raw = re.sub(r"```.*?```", " ", raw, flags=re.DOTALL)
         raw = re.sub(r"`([^`]*)`", r"\1", raw)
         raw = re.sub(r"\[(düşünce|thinking|iç ses|reasoning|gerekçe).*?\]", " ", raw, flags=re.IGNORECASE)

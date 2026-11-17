@@ -56,15 +56,14 @@ class VocalMixin(VocalProsodyMixin):
 
     def _handle_speech_command_shortcuts(self, text: str, lang: str, request_id: str) -> bool:
         companion_cfg = self.config.get("companion", {}) if isinstance(self.config.get("companion"), dict) else {}
+        if companion_cfg.get("emotion_command_shortcut", True):
+            if self._handle_emotion_command(text, lang):
+                with self._speech_req_lock:
+                    if self._active_speech_req_id == request_id:
+                        self._speech_busy = False
+                return True
         if companion_cfg.get("voice_ai_tools", True) and getattr(self, "agent", None):
             return False
-        if not companion_cfg.get("emotion_command_shortcut", False):
-            return False
-        if self._handle_emotion_command(text, lang):
-            with self._speech_req_lock:
-                if self._active_speech_req_id == request_id:
-                    self._speech_busy = False
-            return True
         return False
 
     def _process_speech_social_context(self, text: str, voice_speaker: str | None = None) -> str | None:
@@ -148,6 +147,11 @@ class VocalMixin(VocalProsodyMixin):
                     return True
                 self.state["last_interaction"] = time.time()
                 reply_text = str(agent_result.get("text") or "").strip()
+                if reply_text and hasattr(self, "apply_llm_response"):
+                    try:
+                        reply_text = str(self.apply_llm_response(reply_text, None, reply_text, speak=False) or "").strip()
+                    except Exception:
+                        pass
                 if reply_text:
                     final_lang = lang
                     if detect_text_language:

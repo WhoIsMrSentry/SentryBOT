@@ -76,7 +76,49 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         self.sensor_loop.start()
         self.idle_system.start()
         self.speech_arbiter.start()
+        self._start_runtime_warmup_async()
         logger.info("AgentOrchestrator subsystems started.")
+
+    def _start_runtime_warmup_async(self) -> None:
+        """Pre-warm System 1 ONNX and keep primary Ollama model resident in VRAM."""
+        import os
+
+        if os.environ.get("PYTEST_CURRENT_TEST"):
+            return
+        if getattr(self, "_warmup_started", False):
+            return
+        self._warmup_started = True
+
+        def _warmup() -> None:
+            try:
+                from .laya_engine import LayaEngine
+
+                engine = LayaEngine.get_instance()
+                if engine is not None and getattr(engine, "enabled", True):
+                    engine.decide("merhaba")
+            except Exception as exc:
+                logger.debug("System 1 warmup skipped: %s", exc)
+            try:
+                from modules.common.model_roles import DEFAULT_CHAT_MODEL
+
+                client = getattr(self, "ollama_client", None)
+                if client is not None and self._is_real_ollama_client(client):
+                    client.chat(
+                        model=getattr(self, "model", None) or DEFAULT_CHAT_MODEL,
+                        messages=[{"role": "user", "content": "hazır"}],
+                        options={
+                            "num_predict": 1,
+                            "num_ctx": int(getattr(self, "num_ctx", 8192) or 8192),
+                            "temperature": 0.0,
+                        },
+                        think=False,
+                        keep_alive=getattr(self, "ollama_keep_alive", -1),
+                    )
+                    self._ollama_probe_ok_until = time.monotonic() + 60.0
+            except Exception as exc:
+                logger.debug("Ollama warmup skipped: %s", exc)
+
+        threading.Thread(target=_warmup, name="agent-runtime-warmup", daemon=True).start()
 
     def stop(self) -> None:
         if getattr(self, "_stopped_once", False):
@@ -120,7 +162,12 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             self.cooldown = 0.0
         if not prompt:
             return False
-        if not self._turn_lock.acquire(blocking=False):
+        acquired = (
+            self._turn_lock.acquire(timeout=1.5)
+            if bypass_cooldown
+            else self._turn_lock.acquire(blocking=False)
+        )
+        if not acquired:
             return False
         now = time.time()
         if self.is_busy or (not bypass_cooldown and now - self.last_run < self.cooldown):
@@ -226,7 +273,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                 resp = self.ollama_client.chat(
                     model=reflection_model,
                     messages=[{"role": "user", "content": prompt}],
-                    options={"temperature": 0.4},
+                    options={"temperature": 0.4, "num_ctx": int(getattr(self, "num_ctx", 8192) or 8192)},
                 )
                 if isinstance(resp, dict):
                     msg = resp.get("message") or {}
@@ -331,6 +378,14 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         detected_lang: Dict[str, Optional[str]] = {"value": None}
 
         def speak_sentence(sentence: str, index: int) -> None:
+            try:
+                from modules.ai_provider.services.tags import strip_speech_control_artifacts
+
+                sentence = strip_speech_control_artifacts(sentence)
+            except Exception:
+                sentence = str(sentence or "").strip()
+            if not sentence:
+                return
             if detected_lang["value"] is None:
                 lang = session_language
                 try:
@@ -366,6 +421,45 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             self.memory_consolidator.consolidate(prompt, speaker=self._current_speaker())
         except Exception:
             logger.debug("memory consolidation failed", exc_info=True)
+
+    def _try_short_circuit_emotion_command(
+        self,
+        prompt: str,
+        session_language: str,
+        event_type: Optional[str],
+        executed_actions: List[Dict[str, Any]],
+        on_sentence: Optional[Callable[[str, int], None]],
+    ) -> Optional[str]:
+        """Short-circuit 1-2 word emotion imperatives via System 1 without calling Ollama."""
+        if event_type:
+            return None
+        cfg = getattr(self, "config", None)
+        agent_cfg = cfg.get("agent", {}) if isinstance(cfg, dict) and isinstance(cfg.get("agent"), dict) else {}
+        explicit_flag = agent_cfg.get("emotion_command_shortcut")
+        if explicit_flag is False:
+            return None
+        if explicit_flag is None and not self._is_real_ollama_client(getattr(self, "ollama_client", None)):
+            return None
+        try:
+            from modules.autonomy.services.brain_parts.speech_react import SpeechReactMixin
+
+            cmd = SpeechReactMixin._emotion_command_for_text(prompt)
+            if not cmd:
+                return None
+            reply_text = SpeechReactMixin._emotion_command_reply(cmd, session_language)
+            tool_reg = getattr(self, "tool_registry", None)
+            if tool_reg is not None:
+                tool_args = {"emotion": cmd, "intensity": 0.85}
+                exec_fn = getattr(tool_reg, "execute", None) or getattr(tool_reg, "execute_tool", None)
+                if callable(exec_fn):
+                    res = exec_fn("express_emotion", tool_args)
+                    executed_actions.append({"tool": "express_emotion", "args": tool_args, "result": res})
+            if callable(on_sentence) and reply_text:
+                on_sentence(reply_text, 0)
+            return reply_text
+        except Exception as exc:
+            logger.debug("Emotion command short-circuit skipped: %s", exc)
+            return None
 
     def _run_turn_core(
         self,
@@ -441,6 +535,36 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     except Exception:
                         pass
 
+            stream_state = {"spoken": 0}
+            on_sentence = self._make_sentence_callback(session_language, trace_id, stream_state)
+            executed_actions: List[Dict[str, Any]] = []
+
+            short_emotion_reply = self._try_short_circuit_emotion_command(
+                prompt, session_language, event_type, executed_actions, on_sentence
+            )
+            if short_emotion_reply is not None:
+                dialogue_entry = f"User: {prompt} | Bot: {short_emotion_reply}"
+                self._finalize_turn_memory(prompt, short_emotion_reply, dialogue_entry)
+                latency_trace.mark(
+                    trace_id,
+                    "agent.done",
+                    {"steps": 1, "speech_handled": stream_state["spoken"] > 0, "short_circuit": "emotion_command"},
+                )
+                if self.speech_arbiter._speak_fn is None:
+                    latency_trace.finish(trace_id, "done")
+                return {
+                    "text": short_emotion_reply,
+                    "thoughts": "System 1 handled emotion command directly without LLM route.",
+                    "actions": executed_actions,
+                    "plan": [],
+                    "model": "system1",
+                    "route": [],
+                    "subagents": [],
+                    "speech_handled": stream_state["spoken"] > 0,
+                    "trace_id": trace_id,
+                    "latency": latency_trace.get(trace_id),
+                }
+
             provider_error = self._check_provider_availability()
             if provider_error:
                 latency_trace.finish(trace_id, str(provider_error.get("error") or "provider_unavailable"))
@@ -461,9 +585,6 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             final_text = ""
             total_steps = 0
             subagent_reports: List[Dict[str, Any]] = []
-            executed_actions: List[Dict[str, Any]] = []
-            stream_state = {"spoken": 0}
-            on_sentence = self._make_sentence_callback(session_language, trace_id, stream_state)
 
             use_tri_layer = bool(getattr(self, "tri_layer_enabled", False)) and not bool(native_tools) and not is_short_fast
             if use_tri_layer:
@@ -500,6 +621,14 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     ),
                     trace_id=trace_id,
                 )
+
+            if final_text:
+                try:
+                    from modules.ai_provider.services.tags import strip_speech_control_artifacts
+
+                    final_text = strip_speech_control_artifacts(final_text)
+                except Exception:
+                    pass
 
             dialogue_entry = (
                 f"Event({event_type}): {prompt} | Bot: {final_text}"
