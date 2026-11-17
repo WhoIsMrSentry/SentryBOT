@@ -156,7 +156,6 @@ class WakewordService:
             for label in self._openwakeword.run(self._gated_stream(self._stream_iter, capture)):
                 if self._stop_event.is_set():
                     break
-                logger.info("openwakeword detected: %s", label)
                 self._on_wakeword(label)
 
         except Exception as exc:
@@ -228,6 +227,7 @@ class WakewordService:
                 return
             self._last_trigger_ts = now
             self._active_window = True
+        logger.info("openwakeword detected: %s", wakeword)
         self.actions.interrupt_robot_speech()
         logger.info("wakeword candidate: %s at %f (barge-in)", wakeword, now)
         Thread(target=self._command_window, args=(wakeword,), daemon=True).start()

@@ -146,6 +146,7 @@ class VocalMixin(VocalProsodyMixin):
             ):
                 if not self._is_active_request(request_id):
                     return True
+                self.state["last_interaction"] = time.time()
                 reply_text = str(agent_result.get("text") or "").strip()
                 if reply_text:
                     final_lang = lang
@@ -193,6 +194,7 @@ class VocalMixin(VocalProsodyMixin):
             return
         if not self._is_active_request(request_id):
             return
+        self.state["last_interaction"] = time.time()
         self._remember_person_chat(speaker, clean_text, role="assistant")
         final_lang = lang
         if detect_text_language:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -543,3 +544,165 @@ def test_logwrapper_quiets_httpcore_and_urllib3_connectionpool(tmp_path, monkeyp
         root.handlers.clear()
         root.handlers.extend(original_handlers)
         service._MEMORY_HANDLER = original_memory
+
+
+def test_speak_say_stream_recovers_after_wakeword_stop(monkeypatch):
+    import numpy as np
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from modules.voice.speak.api.router import get_router
+    from modules.voice.speak.services import player as player_mod
+    from modules.voice.speak.services.pcm import PCM
+    from modules.voice.speak.xSpeakService import SpeakService
+
+    played: list[int] = []
+
+    class _FakeSD:
+        @staticmethod
+        def play(data, **_kwargs):
+            played.append(len(data))
+
+        @staticmethod
+        def stop():
+            return None
+
+    monkeypatch.setenv("SENTRYBOT_ALLOW_TEST_TTS", "1")
+    monkeypatch.setattr(player_mod, "sd", _FakeSD)
+
+    svc = SpeakService()
+    svc.tts = SimpleNamespace(
+        synthesize=lambda text, overrides=None: PCM(
+            data=np.zeros(220, dtype=np.float32),
+            samplerate=22050,
+            channels=1,
+        ),
+        health=lambda: {"available": True, "engine": "piper"},
+    )
+
+    # Simulate wakeword barge-in BEFORE any playback: sets both instance and module _play_stop
+    svc.stop()
+    assert svc.player.is_stopped is True
+
+    app = FastAPI()
+    app.include_router(get_router(svc))
+    client = TestClient(app)
+
+    resp = client.post(
+        "/speak/say_stream",
+        json={"text": "Birinci cumle burada! Ikinci cumle de burada!", "max_chunk_chars": 40},
+    )
+    assert resp.status_code == 200
+    job_id = resp.json()["job_id"]
+
+    deadline = time.monotonic() + 3.0
+    job = None
+    while time.monotonic() < deadline:
+        job = client.get(f"/speak/jobs/{job_id}").json()["job"]
+        if job and job["status"] in {"done", "failed", "interrupted"}:
+            break
+        time.sleep(0.02)
+
+    assert job is not None
+    assert job["status"] == "done"
+    assert job["done_chunks"] == 2
+    assert len(played) == 2
+
+    # Clean module-global stop event after test
+    svc.player.clear_stop()
+
+
+def test_memory_consolidator_extract_facts_llm_no_kind_keyerror():
+    from modules.agent_core.services.memory_consolidator import MemoryConsolidator
+
+    seen_prompts: list[str] = []
+
+    class _FakeLLM:
+        model = "qwen3.5:9b"
+
+        def chat(self, model, messages, options=None):
+            seen_prompts.append(messages[0]["content"])
+            return {
+                "message": {
+                    "content": '[{"kind": "people", "name": "Emir", "summary": "User name is Emir", "confidence": 0.9}]'
+                }
+            }
+
+    mc = MemoryConsolidator(llm_client=_FakeLLM())
+    facts = mc.extract_facts_llm("User: benim adim Emir {test} | Bot: Merhaba", speaker="Emir")
+    assert len(facts) == 1
+    assert facts[0]["kind"] == "people"
+    assert facts[0]["name"] == "Emir"
+    assert "{test}" in seen_prompts[0]
+
+
+def test_sound_detected_skips_llm_during_speech_and_boredom_suppresses_ack(tmp_path):
+    from modules.agent_core.services.agent import AgentOrchestrator
+    from modules.autonomy.services.brain import AutonomyBrain
+
+    brain = AutonomyBrain(
+        {
+            "llm": {"enabled": True},
+            "defaults": {"boredom_threshold_s": 0.01},
+            "owner_learning": {"profile_path": str(tmp_path / "owners.json")},
+            "safe_navigation": {"places_path": str(tmp_path / "safe.json")},
+            "topomap_motion": {"map_path": str(tmp_path / "topo.json")},
+            "shadow_learner": {"save_path": str(tmp_path / "macros.yml")},
+            "world_memory": {"db_path": str(tmp_path / "wm.db")},
+        }
+    )
+    try:
+        actions: list[str] = []
+        sound_steps: list[str] = []
+        brain.agent = SimpleNamespace(
+            is_busy=False,
+            step_event=lambda evt, prompt, **_kw: sound_steps.append(evt),
+            speech_arbiter=SimpleNamespace(is_speaking=lambda: False),
+        )
+        brain.client = MagicMock()
+        brain.client.is_service_available.return_value = True
+        brain.client.queue_action.side_effect = lambda action_type, **_kw: actions.append(action_type) or {"ok": True}
+        brain.client.push_interaction_event.return_value = {"ok": True}
+        brain.client.is_wakeword_window_active.return_value = True
+        brain.client.get_operational_mode.return_value = "active"
+        brain.client.get_vision_context.return_value = None
+        brain.client.get_vision_results.return_value = []
+        brain.client.check_rfid.return_value = False
+
+        # Wakeword window active -> physical reflex runs, heavy sound_detected LLM step is skipped
+        brain.state["last_sound_reaction_time"] = 0.0
+        brain._react_to_sound(10.0)
+        assert "piservo_reflex" in actions
+        assert sound_steps == []
+
+        # While _speech_busy is True, _think() must not flip is_bored=True right after a turn
+        brain.state["last_interaction"] = 0.0
+        brain._speech_busy = True
+        brain._think()
+        assert brain.state["is_bored"] is False
+        brain._speech_busy = False
+
+        # Boredom agentic step on real AgentOrchestrator must suppress spoken Laya ack fillers
+        ag = AgentOrchestrator(config={"llm": {"enabled": False}, "agent": {"cooldown_s": 0.0}})
+        ag.ollama_client = SimpleNamespace(chat=lambda **_k: {"message": {"content": "Sessiz gozlem."}})
+        ag._probe_ollama_connectivity = lambda: None
+        ag.speech_arbiter._speak_fn = lambda **_k: {"ok": True}
+        ack_calls: list[bool] = []
+        orig_emit_ack = ag.progress_manager.emit_ack
+
+        def _capture_ack(token, custom_text="", *, speak=True):
+            ack_calls.append(bool(speak))
+            return orig_emit_ack(token, custom_text=custom_text, speak=speak)
+
+        ag.progress_manager.emit_ack = _capture_ack
+        brain.agent = ag
+        brain.behavior_composer = None
+        brain._make_agentic_decision(reason="boredom", context_note="unit test")
+        assert ack_calls and all(s is False for s in ack_calls)
+
+        # Regular foreground user step retains spoken ack behavior when not fast-path
+        ack_calls.clear()
+        ag.step("Bu cok uzun ve kapsamli bir arastirma gorevi niteliginde kullanici istegidir " * 3, language="tr")
+        assert ack_calls == [True]
+    finally:
+        brain.stop()

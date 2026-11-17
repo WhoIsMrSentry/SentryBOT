@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import datetime
 import logging
 import random
@@ -68,26 +69,36 @@ class DecisionMixin:
         self._check_owner_presence_appraisal(now)
         self._forward_visual_events_to_agent()
 
-        boredom_threshold = self.config.get("defaults", {}).get("boredom_threshold_s", 20)
-        time_since_interaction = now - self.state["last_interaction"]
-        if time_since_interaction > boredom_threshold:
-            if not self.state["is_bored"]:
-                logger.info("Robot is bored.")
-                self.state["is_bored"] = True
-                self.mood.modify("curiosity", 10)
-                self.memory.add_event("I became bored because nothing happened for a while.")
-            idle_cfg = self.config.get("behaviors", {}).get("idle_tree", {})
-            idle_interval = float(idle_cfg.get("interval_s", 6.0))
-            if now - self._last_idle_action >= idle_interval:
-                agentic_enabled = bool(idle_cfg.get("fallback_to_llm", True)) or bool(
-                    self.config.get("agentic", {}).get("enabled", True)
-                )
-                if agentic_enabled and self._should_agentic_decision(now):
-                    if self._submit_agentic_decision("boredom"):
-                        self._last_agentic_ts = now
-                        self._last_idle_action = now
-        else:
+        conversation_active = (
+            bool(getattr(self, "_speech_busy", False))
+            or bool(hasattr(self, "_robot_is_speaking") and self._robot_is_speaking())
+            or bool(getattr(getattr(self, "agent", None), "is_busy", False))
+        )
+        if conversation_active:
+            self.state["last_interaction"] = max(float(self.state.get("last_interaction", 0.0) or 0.0), now)
             self.state["is_bored"] = False
+            time_since_interaction = 0.0
+        else:
+            boredom_threshold = self.config.get("defaults", {}).get("boredom_threshold_s", 20)
+            time_since_interaction = now - self.state["last_interaction"]
+            if time_since_interaction > boredom_threshold:
+                if not self.state["is_bored"]:
+                    logger.info("Robot is bored.")
+                    self.state["is_bored"] = True
+                    self.mood.modify("curiosity", 10)
+                    self.memory.add_event("I became bored because nothing happened for a while.")
+                idle_cfg = self.config.get("behaviors", {}).get("idle_tree", {})
+                idle_interval = float(idle_cfg.get("interval_s", 6.0))
+                if now - self._last_idle_action >= idle_interval:
+                    agentic_enabled = bool(idle_cfg.get("fallback_to_llm", True)) or bool(
+                        self.config.get("agentic", {}).get("enabled", True)
+                    )
+                    if agentic_enabled and self._should_agentic_decision(now):
+                        if self._submit_agentic_decision("boredom"):
+                            self._last_agentic_ts = now
+                            self._last_idle_action = now
+            else:
+                self.state["is_bored"] = False
 
         alone_threshold = float(self.config.get("defaults", {}).get("alone_threshold_s", 120))
         if time_since_interaction > alone_threshold and (now - self._last_alone_appraisal_ts) > alone_threshold:
@@ -489,7 +500,10 @@ class DecisionMixin:
                     if agent_mem is not None and hasattr(agent_mem, "remember"):
                         agent_mem.remember("agentic_decision", "I got bored so I decided to act on my own.")
                     t0 = time.monotonic()
-                    res = self.agent.step(prompt)
+                    suppress_fn = getattr(self.agent, "suppress_ack", None)
+                    ctx = suppress_fn() if hasattr(self.agent, "_run_turn_core") and callable(suppress_fn) else nullcontext()
+                    with ctx:
+                        res = self.agent.step(prompt)
                     self.state["agent_last_latency_ms"] = round((time.monotonic() - t0) * 1000.0, 2)
                     if isinstance(res, dict):
                         # Free-plan orchestration through BehaviorComposer

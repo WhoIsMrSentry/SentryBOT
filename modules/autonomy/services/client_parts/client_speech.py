@@ -105,6 +105,8 @@ class ClientSpeechMixin:
             job = status.get("job") if isinstance(status.get("job"), dict) else status
             state = str(job.get("status") or "").strip().lower()
             if state in {"done", "failed", "interrupted"}:
+                if state == "failed":
+                    logger.warning("speak_stream failed (job=%s): %s", job_id, job.get("error"))
                 return {"ok": state != "failed", "status": state, "job": job, "job_id": job_id}
             time.sleep(poll_s)
         return {"ok": False, "error": "stream_timeout", "job_id": job_id}

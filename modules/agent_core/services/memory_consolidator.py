@@ -104,7 +104,8 @@ class MemoryConsolidator:
         if not self.llm_client:
             return []
         try:
-            prompt = _FACT_EXTRACTION_PROMPT.format(conversation=conversation)
+            # Use replace rather than str.format() so JSON braces in prompt/text never trigger KeyError.
+            prompt = _FACT_EXTRACTION_PROMPT.replace("{conversation}", str(conversation))
             # Use the LLM client directly (assumes ollama-compatible interface)
             if hasattr(self.llm_client, "chat"):
                 model_name = (

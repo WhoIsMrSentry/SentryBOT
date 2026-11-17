@@ -208,6 +208,6 @@ class OpenWakewordRunner(OpenWakewordCalibrationMixin):
         self._log_periodic_probe(best_label, best_score)
 
         if best_label and best_score >= self._threshold and self._verify_label(best_label):
-            logger.info("openwakeword accepted: %s (score=%s)", best_label, best_score)
+            logger.debug("openwakeword accepted: %s (score=%s)", best_label, best_score)
             return best_label
         return None

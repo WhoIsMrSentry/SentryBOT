@@ -176,6 +176,39 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
         self._availability_cache[svc] = (now, ok)
         return ok
 
+    def is_wakeword_window_active(self, recent_s: float = 6.0) -> bool:
+        """Return True if a wakeword command window is active or triggered very recently."""
+        now = time.time()
+        route_key = ("wakeword", "/status")
+        cooldowns = getattr(self, "_missing_route_until", None)
+        if cooldowns is not None and now < float(cooldowns.get(route_key, 0.0) or 0.0):
+            return False
+        wake_url = str(self.urls.get("wakeword") or "").rstrip("/")
+        if not wake_url:
+            gw = str(self.urls.get("gateway") or "").rstrip("/")
+            if not gw:
+                return False
+            wake_url = f"{gw}/wakeword"
+        try:
+            resp = self._get_session().get(f"{wake_url}/status", timeout=0.2)
+            if resp.status_code == 404:
+                if cooldowns is not None:
+                    cooldowns[route_key] = now + 30.0
+                return False
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            if not isinstance(data, dict):
+                return False
+            if bool(data.get("active_window", False)):
+                return True
+            last_ts = float(data.get("last_trigger_ts", 0.0) or 0.0)
+            return last_ts > 0.0 and (now - last_ts) <= max(0.0, float(recent_s))
+        except Exception:
+            if cooldowns is not None:
+                cooldowns[route_key] = now + 5.0
+            return False
+
     def check_rfid(self, endpoint: str) -> bool:
         if not endpoint:
             return False

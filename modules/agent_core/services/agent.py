@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import logging
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from .agent_context import AgentContextMixin
 from .agent_turn import AgentTurnMixin
@@ -41,8 +42,27 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         self._active_progress_token: str = ""
         self.last_routed_subagents: List[str] = []
         self._turn_lock = threading.Lock()
+        self._ack_tls = threading.local()
         if getattr(self, "_history_lock", None) is None:
             self._history_lock = threading.RLock()
+
+    @contextmanager
+    def suppress_ack(self) -> Iterator[None]:
+        """Suppress immediate spoken ack fillers for autonomous background turns."""
+        tls = getattr(self, "_ack_tls", None)
+        if tls is None:
+            tls = threading.local()
+            self._ack_tls = tls
+        prev = int(getattr(tls, "depth", 0) or 0)
+        tls.depth = prev + 1
+        try:
+            yield
+        finally:
+            tls.depth = prev
+
+    def _is_ack_suppressed(self) -> bool:
+        tls = getattr(self, "_ack_tls", None)
+        return bool(tls is not None and int(getattr(tls, "depth", 0) or 0) > 0)
 
     def start(self) -> None:
         """Start background subsystems."""
@@ -375,8 +395,9 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             use_fast_path = bool(native_tools) or is_short_fast
             self._record_laya_latency(trace_id)
 
+            ack_suppressed = bool(event_type) or self._is_ack_suppressed()
             custom_ack = ""
-            if not event_type:
+            if not ack_suppressed:
                 laya_eng = getattr(self, "laya_engine", None)
                 if laya_eng and getattr(laya_eng, "enabled", True):
                     try:
@@ -410,7 +431,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             self.progress_manager.emit_ack(
                 progress_token,
                 custom_text=custom_ack,
-                speak=bool(not event_type and not use_fast_path),
+                speak=bool(not ack_suppressed and not use_fast_path),
             )
             survival_override, world_context, active_model = self._prepare_turn_context(
                 prompt, session_language, trace_id

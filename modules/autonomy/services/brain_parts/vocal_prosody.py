@@ -82,6 +82,24 @@ class VocalProsodyMixin:
         except Exception:
             return dict(self._EMOTION_TONES.get(str(emotion).lower(), self._EMOTION_TONES["neutral"]))
 
+    def _should_skip_sound_llm(self, now: float) -> bool:
+        """Avoid letting sound_detected background turns starve active user speech."""
+        if bool(getattr(self, "_speech_busy", False)) or self._robot_is_speaking():
+            return True
+        if bool(getattr(getattr(self, "agent", None), "is_busy", False)):
+            return True
+        last_speech_ts = float(self.state.get("last_speech_time", 0.0) or 0.0)
+        if last_speech_ts > 0.0 and (now - last_speech_ts) < 6.0:
+            return True
+        checker = getattr(getattr(self, "client", None), "is_wakeword_window_active", None)
+        if callable(checker):
+            try:
+                if bool(checker(recent_s=6.0)):
+                    return True
+            except Exception:
+                pass
+        return False
+
     def _react_to_sound(self, angle: float) -> None:
         now = time.time()
         last_reaction = float(self.state.get("last_sound_reaction_time", 0.0) or 0.0)
@@ -110,6 +128,10 @@ class VocalProsodyMixin:
         self.mood.modify("curiosity", 5)
         self.mood.modify("energy", 2)
         self.memory.add_event(f"Heard sound at angle {angle}")
+
+        if self._should_skip_sound_llm(now):
+            logger.debug("Skipping sound_detected LLM step during active speech/agent turn")
+            return
 
         ollama_ready = True
         if getattr(self, "client", None) and hasattr(self.client, "is_service_available"):

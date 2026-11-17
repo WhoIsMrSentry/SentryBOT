@@ -215,8 +215,8 @@ class SpeakService:
                     sess.post(url, json=payload, timeout=timeout_s)
                 else:
                     requests.post(url, json=payload, timeout=timeout_s)
-            except Exception:
-                logger.debug("expression event failed: %s", event_type, exc_info=True)
+            except Exception as exc:
+                logger.debug("expression event failed (%s): %s", event_type, exc)
 
         threading.Thread(target=_send, daemon=True).start()
 
