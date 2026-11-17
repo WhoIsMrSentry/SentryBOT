@@ -8,8 +8,8 @@ runtime:
 
 defaults:
   loop_interval_ms: 500
-  boredom_threshold_s: 20
-  alone_threshold_s: 120
+  boredom_threshold_s: 120
+  alone_threshold_s: 180
   mood:
     decay_rate: 0.5
     anger_threshold: 38
@@ -122,7 +122,7 @@ behaviors:
   idle_tree:
     enabled: true
     interval_s: 6
-    fallback_to_llm: true
+    fallback_to_llm: false
     path: modules/autonomy/config/idle_behaviors.yml
   curiosity:
     enabled: true
@@ -221,9 +221,9 @@ request_timeouts:
   ollama_warmup_s: 3.5
   speech_min_interval_s: 2.0
 agentic:
-  enabled: true
-  min_interval_s: 45
-  fallback_random_chance: 0.12
+  enabled: false
+  min_interval_s: 180
+  fallback_random_chance: 0.0
   triggers:
     social_need: 72
     stimulation_need: 68

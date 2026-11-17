@@ -112,7 +112,7 @@ class OpenWakewordCalibrationMixin:
                 "openwakeword probe(calibrating): best=%s score=%.4f threshold=%.4f samples=%d",
                 best_label, best_score, self._threshold, len(self._calibration_scores),
             )
-        else:
+        elif best_score >= 0.05:
             logger.debug("openwakeword probe: best=%s score=%.4f threshold=%.4f", best_label, best_score, self._threshold)
 
     def _verify_label(self, label: str) -> bool:

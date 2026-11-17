@@ -55,9 +55,10 @@ class AgentFastPathMixin:
         if not getattr(self, "fast_path_enabled", False):
             return False
 
-        # System 1 Laya fast-path check
+        # System 1 Laya fast-path check (skip for background/autonomous ack-suppressed turns)
+        ack_suppressed = bool(hasattr(self, "_is_ack_suppressed") and self._is_ack_suppressed())
         laya_engine = getattr(self, "laya_engine", None)
-        if laya_engine is not None and getattr(laya_engine, "enabled", True):
+        if not ack_suppressed and laya_engine is not None and getattr(laya_engine, "enabled", True):
             try:
                 world_state = (
                     self.world_state.get_state()

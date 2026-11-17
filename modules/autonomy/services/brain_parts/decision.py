@@ -69,10 +69,13 @@ class DecisionMixin:
         self._check_owner_presence_appraisal(now)
         self._forward_visual_events_to_agent()
 
-        conversation_active = (
-            bool(getattr(self, "_speech_busy", False))
-            or bool(hasattr(self, "_robot_is_speaking") and self._robot_is_speaking())
-            or bool(getattr(getattr(self, "agent", None), "is_busy", False))
+        agentic_busy = bool(getattr(self, "_agentic_decision_in_progress", False))
+        conversation_active = bool(getattr(self, "_speech_busy", False)) or (
+            not agentic_busy
+            and (
+                bool(hasattr(self, "_robot_is_speaking") and self._robot_is_speaking())
+                or bool(getattr(getattr(self, "agent", None), "is_busy", False))
+            )
         )
         if conversation_active:
             self.state["last_interaction"] = max(float(self.state.get("last_interaction", 0.0) or 0.0), now)
