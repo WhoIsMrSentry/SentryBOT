@@ -46,19 +46,19 @@ def test_real_agent_yaml_role_routing_isolation() -> None:
 
     vlm_cfg = load_vlm_config()
     assert vlm_cfg["llm"]["single_model_mode"] is False
-    assert vlm_cfg["vision_llm"]["model"] == "qwen3.5:9b"
-    assert vlm_cfg["ollama"]["model"] == "qwen3.5:9b"
+    assert vlm_cfg["vision_llm"]["model"] == "nemotron-3.5-bolt:e4b"
+    assert vlm_cfg["ollama"]["model"] == "nemotron-3.5-bolt:e4b"
     assert vlm_cfg["ollama"]["followup_model"] == "sentry:latest"
 
-    # qwen3.5:9b is strictly scoped to visual description roles.
+    # Active routing uses only sentry:latest (chat/persona/followup) and nemotron-3.5-bolt:e4b.
     for role in ("chat", "companion", "persona", "followup"):
         assert resolve_role_model(root_cfg, role) == "sentry:latest"
     for role in ("coder", "code", "developer", "technical"):
-        assert resolve_role_model(root_cfg, role) == "qwen2.5-coder:7b"
+        assert resolve_role_model(root_cfg, role) == "nemotron-3.5-bolt:e4b"
     for role in ("utility", "planner", "reflection", "memory", "translator", "subagent"):
         assert resolve_role_model(root_cfg, role) == "nemotron-3.5-bolt:e4b"
     for role in ("vision", "vlm", "scene_description"):
-        assert resolve_role_model(root_cfg, role) == "qwen3.5:9b"
+        assert resolve_role_model(root_cfg, role) == "nemotron-3.5-bolt:e4b"
 
 
 def test_prompt_role_inference_keeps_identity_on_sentry_and_routes_coding_to_coder() -> None:
@@ -78,7 +78,7 @@ def test_prompt_role_inference_keeps_identity_on_sentry_and_routes_coding_to_cod
     agent.model = DEFAULT_CHAT_MODEL
 
     assert agent._get_active_persona_model("Lütfen kendini tanıt") == "sentry:latest"
-    assert agent._get_active_persona_model("Bana Python script yaz") == "qwen2.5-coder:7b"
+    assert agent._get_active_persona_model("Bana Python script yaz") == "nemotron-3.5-bolt:e4b"
 
 
 def test_background_planners_reflection_memory_and_tri_layer_roles() -> None:
@@ -137,9 +137,9 @@ def test_background_planners_reflection_memory_and_tri_layer_roles() -> None:
     agent._run_subagent_task(profiles["autonomy"], "Durumu kontrol et")
     assert seen_models[-1] == "nemotron-3.5-bolt:e4b"
     agent._run_subagent_task(profiles["coder"], "Python fonksiyonu yaz")
-    assert seen_models[-1] == "qwen2.5-coder:7b"
-    agent._run_subagent_task(SubAgentProfile(module="custom", role="R", goal="G", allowed_tools=(), keywords=(), model_override="qwen2.5-coder:7b"), "code")
-    assert seen_models[-1] == "qwen2.5-coder:7b"
+    assert seen_models[-1] == "nemotron-3.5-bolt:e4b"
+    agent._run_subagent_task(SubAgentProfile(module="custom", role="R", goal="G", allowed_tools=(), keywords=(), model_override="nemotron-3.5-bolt:e4b"), "code")
+    assert seen_models[-1] == "nemotron-3.5-bolt:e4b"
     agent._synthesize_persona_response("Merhaba", [{"module": "autonomy", "text": "hazır"}])
     assert seen_models[-1] == "sentry:latest"
 
@@ -151,7 +151,7 @@ def test_ai_provider_chat_role_routing_translator_and_vlm_followup_split(monkeyp
         model = "sentry:latest"
 
         def list_models(self):
-            return ["sentry:latest", "qwen3.5:9b", "nemotron-3.5-bolt:e4b", "qwen2.5-coder:7b"]
+            return ["sentry:latest", "nemotron-3.5-bolt:e4b"]
 
         def chat(self, messages, format=None, *, options=None, model=None):
             calls.append(model or self.model)
@@ -180,16 +180,16 @@ def test_ai_provider_chat_role_routing_translator_and_vlm_followup_split(monkeyp
 
     r_coder = client.post("/ollama/chat", params={"query": "Fibonacci yaz", "role": "coder"})
     assert r_coder.status_code == 200
-    assert r_coder.json()["model"] == "qwen2.5-coder:7b"
+    assert r_coder.json()["model"] == "nemotron-3.5-bolt:e4b"
 
     r_vision = client.post("/ollama/chat", params={"query": "Sahneyi özetle", "role": "vision"})
     assert r_vision.status_code == 200
-    assert r_vision.json()["model"] == "qwen3.5:9b"
+    assert r_vision.json()["model"] == "nemotron-3.5-bolt:e4b"
 
     r_bad = client.post("/ollama/chat", params={"query": "test", "model": "unlisted-model:1b"})
     assert r_bad.status_code == 400
 
-    # VLM scene description uses qwen3.5:9b; companion greeting followup uses sentry:latest
+    # VLM scene description uses nemotron-3.5-bolt:e4b; companion greeting followup uses sentry:latest
     gen_calls = []
     monkeypatch.setattr(
         "modules.vlm_bridge.services.semantic_describer.generate_text",
@@ -211,6 +211,101 @@ def test_ai_provider_chat_role_routing_translator_and_vlm_followup_split(monkeyp
     ident.memory = SimpleNamespace(get_person=lambda _name: {})
     assert ident._ollama_followup("Emir") == "Hoş geldin Emir!"
 
-    assert ("semantic", "qwen3.5:9b") in gen_calls
+    assert ("semantic", "nemotron-3.5-bolt:e4b") in gen_calls
     assert ("followup", "sentry:latest") in gen_calls
-    assert DEFAULT_VISION_MODEL == "qwen3.5:9b"
+    assert DEFAULT_VISION_MODEL == "nemotron-3.5-bolt:e4b"
+
+
+def test_system1_self_intro_and_emotion_short_circuit_without_ollama() -> None:
+    from modules.agent_core.services.system1_rules import classify
+
+    for text in ("Lütfen kendini tanıt", "Sen kimsin?", "Yeteneklerin neler", "Merhaba"):
+        dec = classify(text)
+        assert dec is not None
+        assert dec.target_module == "agent_core"
+        assert dec.is_direct_command is True
+        assert not dec.is_emergency
+
+    agent = AgentOrchestrator.__new__(AgentOrchestrator)
+    agent.config = {"agent": {"emotion_command_shortcut": True}}
+    agent.ollama_client = MagicMock()
+    executed_tools = []
+    agent.tool_registry = SimpleNamespace(
+        execute_tool=lambda name, args: executed_tools.append((name, args)) or {"ok": True}
+    )
+    spoken = []
+    actions_out = []
+    reply = agent._try_short_circuit_emotion_command(
+        "sinirlen",
+        "tr",
+        None,
+        actions_out,
+        lambda s, idx: spoken.append((s, idx)),
+    )
+    assert reply is not None and "sinirliyim" in reply
+    assert executed_tools == [("express_emotion", {"emotion": "anger", "intensity": 0.85})]
+    assert len(actions_out) == 1
+    assert spoken == [(reply, 0)]
+
+
+def test_inline_control_tags_dispatch_and_strip_from_tts() -> None:
+    from modules.ai_provider.services.tags import extract_llm_tags, strip_speech_control_artifacts
+    from modules.autonomy.services.brain_parts.responses import ResponseTagMixin
+    from modules.voice.speak.xSpeakService import SpeakService
+
+    raw = (
+        "<think>internal plan</think>"
+        "[[oled anim=happy]] [[lights palette=ocean_teal mode=breathe]] [cmd:stand] "
+        "oled_face anger neopixel red "
+        "Merhaba Emir, ben SentryBOT!"
+    )
+    cleaned, actions = extract_llm_tags(raw)
+    assert cleaned == "Merhaba Emir, ben SentryBOT!"
+    assert actions["commands"] == ["stand"]
+    block_types = [b["type"] for b in actions["blocks"]]
+    assert "oled" in block_types
+    assert "lights" in block_types
+    assert strip_speech_control_artifacts(raw) == "Merhaba Emir, ben SentryBOT!"
+    assert SpeakService._clean_text_for_speech(raw) == "Merhaba Emir, ben SentryBOT!"
+
+    class _DummyBrain(ResponseTagMixin):
+        pass
+
+    brain = _DummyBrain()
+    brain.config = {}
+    brain.state = {}
+    brain.mood = SimpleNamespace(get_dominant_emotion=lambda: "joy")
+    oled_anims = []
+    oled_shows = []
+    neopixel_fills = []
+    robot_cmds = []
+    brain.client = SimpleNamespace(
+        oled_anim=lambda name: oled_anims.append(name),
+        oled_show=lambda name: oled_shows.append(name),
+        oled_logo=lambda: None,
+        oled_stop=lambda: None,
+        fill_neopixel_color=lambda r, g, b: neopixel_fills.append((r, g, b)),
+        set_neopixel=lambda *_a, **_k: None,
+        push_interaction_event=lambda *_a, **_k: None,
+        robot_command=lambda c: robot_cmds.append(c),
+    )
+    out_text = brain._handle_llm_actions(raw, None, raw)
+    assert out_text == "Merhaba Emir, ben SentryBOT!"
+    assert "happy" in oled_anims
+    assert "anger" in oled_shows
+    assert (255, 45, 45) in neopixel_fills
+    assert "stand" in robot_cmds
+
+
+def test_turkish_ascii_clauses_never_flip_to_english_voice() -> None:
+    from modules.voice.speak.services.lang_detect import detect_text_language, resolve_speak_language
+
+    for clause in (
+        "Benim adim Sentry, sana nasil yardim edebilirim?",
+        "Tamam Emir, hemen kontrol ediyorum.",
+        "Merhaba Emir nasilsin",
+        "Peki hazirim ve bekliyorum.",
+    ):
+        assert detect_text_language(clause, default="tr") == "tr"
+        assert resolve_speak_language(clause, explicit="tr", prefer_text=True) == "tr"
+

@@ -8,12 +8,22 @@ logger = logging.getLogger("speak.lang_detect")
 
 _TR_CHARS = set("çğıöşüÇĞİÖŞÜ")
 _TR_STOPWORDS = frozenset({
-    "ben", "sen", "o", "biz", "siz", "onlar", "bu", "şu", "o", "bir", "ve", "veya",
-    "için", "ile", "de", "da", "gibi", "kadar", "daha", "çok", "en", "var", "yok",
-    "merhaba", "selam", "evet", "hayır", "tamam", "nasıl", "neden", "ne", "kim",
-    "nerede", "hangi", "bunu", "şunu", "bana", "sana", "ona", "bize", "size", "onlara",
-    "benim", "senin", "onun", "bizim", "sizin", "onların", "yap", "et", "ol", "gel",
-    "git", "bak", "gör", "bil", "istiyorum", "ediyorum", "teşekkürler", "özür",
+    "ben", "sen", "o", "biz", "siz", "onlar", "bu", "şu", "su", "bir", "ve", "veya",
+    "için", "icin", "ile", "de", "da", "gibi", "kadar", "daha", "çok", "cok", "en", "var", "yok",
+    "merhaba", "selam", "selamlar", "evet", "hayır", "hayir", "tamam", "peki", "tabii",
+    "nasıl", "nasil", "nasılsın", "nasilsin", "neden", "ne", "kim", "nerede", "hangi",
+    "bunu", "şunu", "sunu", "bana", "sana", "ona", "bize", "size", "onlara",
+    "benim", "senin", "onun", "bizim", "sizin", "onların", "onlarin",
+    "yap", "et", "ol", "gel", "git", "bak", "gör", "gor", "bil",
+    "istiyorum", "ediyorum", "bakıyorum", "bakiyorum", "dinliyorum", "bekliyorum",
+    "anladım", "anladim", "hazırım", "hazirim", "iyiyim", "buradayım", "buradayim",
+    "teşekkürler", "tesekkurler", "özür", "ozur", "lütfen", "lutfen",
+    "ama", "fakat", "ancak", "ki", "mi", "mu", "ya", "hem", "her", "hiç", "hic",
+    "biraz", "şimdi", "simdi", "hemen", "burada", "orada", "adım", "adim", "ismim", "ismin",
+    "merak", "mutlu", "sinirli", "kızgın", "kizgin", "üzgün", "uzgun", "sakin",
+    "yoldaş", "yoldas", "robotum", "yardım", "yardim", "edebilirim", "yapabilirim",
+    "güzel", "guzel", "harika", "süper", "super", "günaydın", "gunaydin",
+    "akşamlar", "aksamlar", "geceler", "hoş", "hos", "geldin",
 })
 _EN_STOPWORDS = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
@@ -63,23 +73,23 @@ def detect_text_language(text: str, *, default: str = "tr", prefer_online: bool 
 
     if tr_chars >= 2:
         return "tr"
+    if tr_chars >= 1 and tr_hits >= en_hits:
+        return "tr"
     if tr_hits > en_hits:
         return "tr"
-    if en_hits > tr_hits:
+    if en_hits > tr_hits and (en_hits >= 2 or (tr_chars == 0 and tr_hits == 0 and len(words) <= 3)):
         return "en"
     if tr_chars >= 1:
         return "tr"
 
-    if prefer_online and _detect_lang is not None:
+    if prefer_online and _detect_lang is not None and len(words) >= 5 and tr_chars == 0 and tr_hits == 0:
         try:
             detected = normalize_lang(str(_detect_lang(value)), fallback=default)
-            if detected:
+            if detected in {"tr", "en"}:
                 return detected
         except Exception as exc:
             logger.debug("langdetect failed: %s", exc)
 
-    if len(words) >= 3 and tr_chars == 0 and all(ord(c) < 128 for c in value if c.isalpha()):
-        return "en"
     return normalize_lang(default)
 
 
