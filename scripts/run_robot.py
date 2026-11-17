@@ -39,8 +39,13 @@ def _run_coroutine_sync(name: str, method_name: str, coro) -> None:
 def _stop_started_services(app) -> None:
     with _SHUTDOWN_LOCK:
         started = getattr(getattr(app, "state", None), "started", None) or {}
+        if isinstance(started, dict):
+            for sid in started.get("_stopped_service_ids", []) or []:
+                _STOPPED_SERVICE_IDS.add(int(sid))
+            if started.get("_services_stopped"):
+                return
         for name, service in list(started.items()):
-            if name in {"notifier_bot", "notifier_polling_enabled"}:
+            if str(name).startswith("_") or name in {"notifier_bot", "notifier_polling_enabled"}:
                 continue
             key = id(service)
             if key in _STOPPED_SERVICE_IDS:
@@ -58,6 +63,9 @@ def _stop_started_services(app) -> None:
                 finally:
                     _STOPPED_SERVICE_IDS.add(key)
                 break
+        if isinstance(started, dict):
+            started["_stopped_service_ids"] = list(_STOPPED_SERVICE_IDS)
+            started["_services_stopped"] = True
 
 
 def main() -> None:

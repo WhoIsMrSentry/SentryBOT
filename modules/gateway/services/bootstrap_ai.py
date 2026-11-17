@@ -24,6 +24,12 @@ def _include_vlm_bridge(app: FastAPI, started: Dict[str, object], cfg: Dict[str,
     vcfg = load_vlm_cfg(None)
     processor = VisionProcessor(vcfg)
     cam_hw = _camera_hardware_available(cfg)
+    cam_svc = started.get("camera")
+    if cam_hw and cam_svc is not None:
+        if isinstance(cam_svc, dict) and cam_svc.get("kind") == "stub":
+            cam_hw = False
+        elif _should_autostart_services() and hasattr(cam_svc, "running") and not getattr(cam_svc, "running", False):
+            cam_hw = False
     if hasattr(processor, "set_camera_hardware_available"):
         processor.set_camera_hardware_available(cam_hw)
     ardu = started.get("arduino")
@@ -90,11 +96,23 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
         base,
     )
     icfg.setdefault("adapter", {})["http_base_url"] = gateway_url(base, "/neopixel")
+    arduino_mounted = started.get("arduino") is not None and not (
+        isinstance(started.get("arduino"), dict) and started["arduino"].get("kind") == "stub"
+    )
+    if not arduino_mounted:
+        mon = icfg.get("monitor")
+        if isinstance(mon, dict) and mon.get("arduino") is not None:
+            ard_mon = mon.get("arduino")
+            raw_url = str(ard_mon.get("url", "") if isinstance(ard_mon, dict) else "").strip()
+            if not raw_url or raw_url.startswith("@gateway"):
+                mon["arduino"] = None
     eng = InteractionEngine(
         icfg,
         neo_client=started.get("neopixel"),
         expression_arbiter=started.get("expression_arbiter"),
     )
+    if not arduino_mounted:
+        eng.set_state(arduino_connected=False)
     if _should_autostart_services():
         eng.start()
     else:
@@ -277,7 +295,7 @@ def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
     ardu = started.get("arduino")
     anim_overrides = _agent_section("animate") or None
     if ardu is None:
-        logger.warning("animate skipped: arduino module not mounted (no duplicate serial)")
+        logger.info("animate skipped: arduino module not mounted (no duplicate serial)")
         return
     anim = xAnimateService(serial=ardu, config_overrides=anim_overrides)
     if _should_autostart_services() and hasattr(anim, "start"):

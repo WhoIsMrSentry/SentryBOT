@@ -46,12 +46,16 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
 
     def start(self) -> None:
         """Start background subsystems."""
+        self._stopped_once = False
         self.sensor_loop.start()
         self.idle_system.start()
         self.speech_arbiter.start()
         logger.info("AgentOrchestrator subsystems started.")
 
     def stop(self) -> None:
+        if getattr(self, "_stopped_once", False):
+            return
+        self._stopped_once = True
         self.sensor_loop.stop()
         self.idle_system.stop()
         self.speech_arbiter.stop()

@@ -60,6 +60,7 @@ class AutonomyBrain(
     def start(self) -> None:
         if self.running:
             return
+        self._stopped_once = False
         self.running = True
 
         auto_select_persona = bool(self.config.get("llm", {}).get("auto_select_persona", False))
@@ -86,6 +87,8 @@ class AutonomyBrain(
         logger.info("AutonomyBrain started.")
 
     def stop(self) -> None:
+        if getattr(self, "_stopped_once", False) and not getattr(self, "running", False):
+            return
         self.running = False
         if getattr(self, "agent", None) and hasattr(self.agent, "stop"):
             try:
@@ -109,6 +112,7 @@ class AutonomyBrain(
                 self._worker_executor.shutdown(wait=False)
             except Exception:
                 pass
+        self._stopped_once = True
         logger.info("AutonomyBrain stopped.")
 
     def get_state_snapshot(self) -> dict[str, Any]:
