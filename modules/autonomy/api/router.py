@@ -23,6 +23,7 @@ class SpeechFinalPayload(BaseModel):
     text: str = ""
     language: str = ""
     final: bool = True
+    ts: float = 0.0
     voice_speaker: dict | None = None
 
 
@@ -130,7 +131,12 @@ def get_router(brain: AutonomyBrain | Any) -> APIRouter:
         voice_speaker = ""
         if isinstance(payload.voice_speaker, dict):
             voice_speaker = str(payload.voice_speaker.get("name") or "")
-        handled = brain.on_speech_final(payload.text, payload.language, voice_speaker=voice_speaker)
+        handled = brain.on_speech_final(
+            payload.text,
+            payload.language,
+            ts=float(payload.ts or 0.0),
+            voice_speaker=voice_speaker,
+        )
         return {"ok": True, "handled": handled}
 
     @router.post("/apply_actions")

@@ -35,7 +35,12 @@ def _barge_in_urls() -> tuple[str, ...]:
     )
 
 
-def _notify_autonomy(text: str = "", language: str = "", voice_speaker: dict | None = None):
+def _notify_autonomy(
+    text: str = "",
+    language: str = "",
+    voice_speaker: dict | None = None,
+    ts: float = 0.0,
+):
     # 1. Update OLED face subtitle with recognized STT text
     if text:
         try:
@@ -48,7 +53,7 @@ def _notify_autonomy(text: str = "", language: str = "", voice_speaker: dict | N
             pass
 
     # 2. Push final transcript so autonomy reacts immediately
-    payload: dict = {"text": text, "language": language, "final": True}
+    payload: dict = {"text": text, "language": language, "final": True, "ts": float(ts or time.time())}
     if voice_speaker and isinstance(voice_speaker, dict):
         payload["voice_speaker"] = {
             "name": str(voice_speaker.get("name") or ""),
@@ -208,7 +213,7 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
             )
             threading.Thread(
                 target=_notify_autonomy,
-                args=(final_spoken, language, voice_hint if isinstance(voice_hint, dict) else None),
+                args=(final_spoken, language, voice_hint if isinstance(voice_hint, dict) else None, float(last["ts"])),
                 daemon=True,
             ).start()
             if _mark_speaking(True):
@@ -290,8 +295,10 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
     async def direction():
         angle = service.last_angle if hasattr(service, "last_angle") else None
         if angle is None:
-            return {"ok": False, "angle": None}
-        return {"ok": True, "angle": angle}
+            return {"ok": False, "angle": None, "ts": 0.0, "fresh": False}
+        ts = float(getattr(service, "last_angle_ts", 0.0) or 0.0)
+        fresh = True if ts <= 0.0 else (time.time() - ts) <= 3.0
+        return {"ok": True, "angle": angle, "ts": ts, "fresh": fresh}
 
     @router.post("/speech/track/start")
     async def track_start():

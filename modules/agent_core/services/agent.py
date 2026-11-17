@@ -401,8 +401,11 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
 
             provider_error = self._check_provider_availability()
             if provider_error:
-                latency_trace.finish(trace_id, "provider_unavailable")
-                return {**provider_error, "trace_id": trace_id}
+                latency_trace.finish(trace_id, str(provider_error.get("error") or "provider_unavailable"))
+                out = {**provider_error, "trace_id": trace_id}
+                if event_type:
+                    out["text"] = ""
+                return out
 
             self.progress_manager.emit_ack(
                 progress_token,
@@ -487,6 +490,22 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                 "latency": latency_trace.get(trace_id),
             }
         except Exception as exc:
+            is_transport = getattr(self, "_is_provider_transport_error", None)
+            if callable(is_transport) and is_transport(exc):
+                if hasattr(self, "_mark_ollama_unavailable"):
+                    self._mark_ollama_unavailable(exc)
+                logger.warning(
+                    "Agent turn skipped (%s unavailable): %s",
+                    getattr(self, "llm_provider", "ollama"),
+                    exc,
+                )
+                latency_trace.finish(trace_id, "ollama_unavailable", {"detail": repr(exc)})
+                return self._provider_unavailable_payload(
+                    session_language=session_language,
+                    event_type=event_type,
+                    reason=str(exc),
+                    trace_id=trace_id,
+                )
             latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
             raise
         finally:

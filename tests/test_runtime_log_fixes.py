@@ -337,3 +337,209 @@ def test_agent_turn_core_skips_ack_on_unavailable_provider_or_event(monkeypatch)
         event_type="sound_detected",
     )
     assert ack_calls and ack_calls[-1][2] is False
+
+
+def test_env_ollama_base_url_overrides_yaml_across_loaders(tmp_path, monkeypatch):
+    from modules.agent_core import config_loader as agent_core_cfg_loader
+    from modules.common.config_loader import load_agent_config, load_ai_provider_config
+    from modules.common.model_policy import ModelPolicy
+    from modules.common.ollama_url import resolve_env_ollama_base_url
+
+    assert resolve_env_ollama_base_url({"SENTRYBOT_OLLAMA_BASE_URL": "http://127.0.0.1:8080/ollama"}) == ""
+    assert resolve_env_ollama_base_url({"SENTRYBOT_OLLAMA_BASE_URL": "http://127.0.0.1:21434/"}) == "http://127.0.0.1:21434"
+
+    cfg_file = tmp_path / "agent.yaml"
+    cfg_file.write_text(
+        """
+agent:
+  model: qwen3.5:9b
+  ollama_base_url: http://whoismrsentry.local:11434
+llm:
+  provider: ollama
+  model: qwen3.5:9b
+  single_model_mode: true
+ollama:
+  base_url: http://whoismrsentry.local:11434
+  model: qwen3.5:9b
+ollama_service:
+  server:
+    host: 127.0.0.1
+    port: 8099
+vlm_bridge:
+  vision_llm:
+    enabled: true
+    provider: ollama
+    base_url: http://whoismrsentry.local:11434
+""".strip(),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("SENTRYBOT_OLLAMA_BASE_URL", "http://127.0.0.1:21434")
+    root_cfg = load_agent_config(str(cfg_file))
+    assert root_cfg["ollama"]["base_url"] == "http://127.0.0.1:21434"
+    assert root_cfg["agent"]["ollama_base_url"] == "http://127.0.0.1:21434"
+
+    ai_cfg = load_ai_provider_config(str(cfg_file))
+    assert ai_cfg["ollama"]["base_url"] == "http://127.0.0.1:21434"
+
+    agent_cfg = agent_core_cfg_loader.load_config(str(cfg_file))
+    assert agent_cfg["ollama"]["base_url"] == "http://127.0.0.1:21434"
+    assert agent_cfg["agent"]["ollama_base_url"] == "http://127.0.0.1:21434"
+
+    policy_cfg = ModelPolicy().get_provider_config(
+        {"agent": {"ollama_base_url": "http://whoismrsentry.local:11434"}, "ollama": {"base_url": "http://whoismrsentry.local:11434"}}
+    )
+    assert policy_cfg["base_url"] == "http://127.0.0.1:21434"
+
+
+def test_agent_step_handles_ollama_connect_error_without_500(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from modules.agent_core.api.core import get_core_router
+    from modules.agent_core.services.agent import AgentOrchestrator
+    from modules.autonomy.services.brain_parts.vocal import VocalMixin
+
+    ag = AgentOrchestrator(config={"llm": {"enabled": False}})
+    chat_calls = []
+
+    def _failing_chat(**_kw):
+        chat_calls.append(1)
+        raise httpx.ConnectError("[Errno -2] Name or service not known")
+
+    ag.ollama_client = SimpleNamespace(chat=_failing_chat)
+    ag.cooldown = 0.0
+    ag.speech_arbiter._speak_fn = None
+
+    app = FastAPI()
+    app.include_router(get_core_router(ag))
+    tc = TestClient(app)
+
+    r1 = tc.post("/step", json={"query": "Kendini tanit", "language": "tr"})
+    assert r1.status_code == 200
+    d1 = r1.json()
+    assert d1["ok"] is False
+    assert d1["error"] == "ollama_unavailable"
+    assert len(chat_calls) == 1
+
+    # Second call uses 5s negative cache without retrying dead host
+    r2 = tc.post("/step", json={"query": "Tekrar dene", "language": "tr"})
+    assert r2.status_code == 200
+    assert r2.json()["error"] == "ollama_unavailable"
+    assert len(chat_calls) == 1
+
+    # Background step_event stays silent on text
+    r_evt = tc.post("/step_event", json={"event_type": "sound_detected", "event_prompt": "ses"})
+    assert r_evt.status_code == 200
+    assert r_evt.json()["ok"] is False
+    assert r_evt.json()["text"] == ""
+
+    # VocalMixin treats ok=False agent response as unhandled so it doesn't TTS-speak error text
+    spoken = []
+
+    class _VocalHarness(VocalMixin):
+        agent = ag
+        state = {}
+        memory = SimpleNamespace(add_event=lambda *_a: None)
+        mood = SimpleNamespace(get_dominant_emotion=lambda: "neutral")
+        client = SimpleNamespace(speak_preferred=lambda *a, **k: spoken.append(a))
+
+        @staticmethod
+        def _enrich_user_text_with_companion_context(text, speaker=None):
+            return text
+
+        @staticmethod
+        def _is_active_request(_rid):
+            return True
+
+        @staticmethod
+        def _remember_person_chat(*_a, **_k):
+            pass
+
+    vh = _VocalHarness()
+    assert vh._try_agent_core_path("merhaba", "tr", None, "req1") is False
+    assert spoken == []
+
+
+def test_speech_final_dedup_with_ts_and_stale_sound_direction(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from modules.autonomy.api.router import get_router as get_autonomy_router
+    from modules.autonomy.services.brain import AutonomyBrain
+
+    brain = AutonomyBrain(
+        {
+            "llm": {"enabled": False},
+            "owner_learning": {"profile_path": str(tmp_path / "owners.json")},
+            "safe_navigation": {"places_path": str(tmp_path / "safe.json")},
+            "topomap_motion": {"map_path": str(tmp_path / "topo.json")},
+            "shadow_learner": {"save_path": str(tmp_path / "macros.yml")},
+            "world_memory": {"db_path": str(tmp_path / "wm.db")},
+        }
+    )
+    try:
+        heard: list[str] = []
+        brain._dispatch_final_speech = lambda text, **_kw: heard.append(text)
+
+        app = FastAPI()
+        app.include_router(get_autonomy_router(brain))
+        tc = TestClient(app)
+
+        # 1. Push via POST /autonomy/speech with ts=100.5, then poll same ts -> fires ONCE
+        resp = tc.post("/autonomy/speech", json={"text": "Hey Minecraft", "language": "tr", "final": True, "ts": 100.5})
+        assert resp.status_code == 200
+        brain.state["last_speech_time"] = 0.0  # Simulate >2.0s elapsed before poll arrives
+        brain.client = SimpleNamespace(get_last_speech=lambda: {"text": "Hey Minecraft", "language": "tr", "final": True, "ts": 100.5})
+        brain._sense_speech_text()
+        assert heard == ["Hey Minecraft"]
+
+        # 2. Legacy push without ts followed by poll carrying ts within debounce latches ts
+        brain.on_speech_final("Selam", source_lang="tr", ts=0.0)
+        brain.on_speech_final("Selam", source_lang="tr", ts=200.25)
+        brain.state["last_speech_time"] = 0.0  # Even after window expires, same ts=200.25 stays deduped
+        brain.on_speech_final("Selam", source_lang="tr", ts=200.25)
+        assert heard == ["Hey Minecraft", "Selam"]
+
+        # 3. Stale sound direction does not re-trigger every 15s, and skips step_event when ollama is offline
+        sound_events = []
+        brain.agent = SimpleNamespace(step_event=lambda *a, **k: sound_events.append(a))
+        brain.config["llm"] = {"enabled": True}
+        brain.client = SimpleNamespace(
+            get_speech_direction=lambda: {"ok": True, "angle": 0.0, "ts": 50.0, "fresh": True},
+            is_service_available=lambda svc: False,
+            queue_action=lambda *a, **k: {"ok": True},
+            push_interaction_event=lambda *a, **k: {"ok": True},
+        )
+        brain._react_to_sound = lambda angle: sound_events.append(("react", angle))
+        brain._sense_sound_direction()
+        brain.state["last_sound_time"] = 0.0
+        brain._sense_sound_direction()  # Same ts=50.0 -> skipped
+        brain.client.get_speech_direction = lambda: {"ok": True, "angle": 0.0, "ts": 80.0, "fresh": False}
+        brain._sense_sound_direction()  # Stale fresh=False -> skipped
+        assert len(sound_events) == 1
+    finally:
+        brain.stop()
+
+
+def test_logwrapper_quiets_httpcore_and_urllib3_connectionpool(tmp_path, monkeypatch):
+    from modules.runtime_console.logwrapper import xLogService as service
+
+    root = logging.getLogger()
+    original_handlers = list(root.handlers)
+    original_memory = service._MEMORY_HANDLER
+    root.handlers.clear()
+    service._MEMORY_HANDLER = None
+    monkeypatch.chdir(tmp_path)
+    try:
+        service.init_logging({"enable_console": False, "enable_file": False})
+        assert logging.getLogger("httpcore").level == logging.WARNING
+        assert logging.getLogger("httpcore.http11").getEffectiveLevel() == logging.WARNING
+        assert logging.getLogger("urllib3.connectionpool").level == logging.WARNING
+    finally:
+        for handler in logging.getLogger().handlers:
+            handler.close()
+        root.handlers.clear()
+        root.handlers.extend(original_handlers)
+        service._MEMORY_HANDLER = original_memory

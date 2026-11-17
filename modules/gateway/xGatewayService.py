@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from modules.common.config_loader import load_dotenv
 from modules.common.http_client import close_all_clients
 
 from .config_loader import load_config
@@ -278,6 +279,7 @@ def _register_security_middleware(app: FastAPI, security: dict) -> None:
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
+    load_dotenv()
     cfg = load_config(config_path)
     security = _build_security_policy(cfg)
 

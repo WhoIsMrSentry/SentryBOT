@@ -28,7 +28,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "buffer_size": 1000,  # in-memory ring buffer size
     "capture_warnings": True,
     # Per-module level overrides, e.g. {"uvicorn": "WARNING"}
-    "module_levels": {},
+    "module_levels": {
+        "uvicorn.access": "WARNING",
+        "httpx": "WARNING",
+        "httpcore": "WARNING",
+        "urllib3.connectionpool": "WARNING",
+    },
     "separate_files": {
         "enabled": False,
         "warnings_path": "logs/warnings.log",

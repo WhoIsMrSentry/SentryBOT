@@ -214,21 +214,37 @@ class AutonomyBrain(
     def _sense_sound_direction(self) -> None:
         try:
             raw_angle = None
+            angle_ts = 0.0
+            fresh = None
             if hasattr(self.client, "get_sound_direction"):
                 raw_angle = self.client.get_sound_direction()
             elif hasattr(self.client, "get_speech_direction"):
                 dir_obj = self.client.get_speech_direction()
                 if isinstance(dir_obj, dict):
                     raw_angle = dir_obj.get("angle")
+                    try:
+                        angle_ts = float(dir_obj.get("ts", 0.0) or 0.0)
+                    except (TypeError, ValueError):
+                        angle_ts = 0.0
+                    fresh = dir_obj.get("fresh")
                 elif isinstance(dir_obj, (int, float)):
                     raw_angle = dir_obj
             if raw_angle is not None:
+                if fresh is False:
+                    return
                 now = time.time()
                 last_time = float(self.state.get("last_sound_time", 0.0) or 0.0)
+                last_ts = float(self.state.get("last_sound_ts", 0.0) or 0.0)
                 last_angle = self.state.get("last_sound_angle", None)
-                if last_angle is None or abs(float(raw_angle) - float(last_angle)) >= 15.0 or (now - last_time) >= 15.0:
+                if angle_ts > 0.0 and angle_ts == last_ts:
+                    return
+                angle_changed = last_angle is None or abs(float(raw_angle) - float(last_angle)) >= 15.0
+                fresh_retrigger = (angle_ts > last_ts) and (now - last_time) >= 15.0
+                if angle_changed or fresh_retrigger:
                     self.state["last_sound_time"] = now
                     self.state["last_sound_angle"] = raw_angle
+                    if angle_ts > 0.0:
+                        self.state["last_sound_ts"] = angle_ts
                     self.interaction_occurred("sound")
                     logger.info("Processing sound direction: %s", raw_angle)
                     self._react_to_sound(raw_angle)

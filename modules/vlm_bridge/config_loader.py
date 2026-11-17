@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -246,12 +245,13 @@ def _enforce_ollama_policy(
         )
     active_model = required_model if single_model_mode else (model or required_model)
 
+    from modules.common.ollama_url import resolve_env_ollama_base_url
+
     raw_base = (
-        root_agent.get("ollama_base_url")
+        resolve_env_ollama_base_url()
+        or root_agent.get("ollama_base_url")
         or root_llm.get("base_url")
         or root_ollama.get("base_url")
-        or os.getenv("AGENT_OLLAMA_BASE_URL")
-        or os.getenv("OLLAMA_BASE_URL")
         or ""
     )
     base_url = _normalize_ollama_base_url(raw_base) if str(raw_base or "").strip() else default_ollama_base_url()

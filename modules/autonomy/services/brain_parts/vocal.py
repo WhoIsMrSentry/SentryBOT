@@ -139,7 +139,7 @@ class VocalMixin(VocalProsodyMixin):
             elapsed_ms = round((time.monotonic() - t0) * 1000.0, 2)
             if isinstance(getattr(self, "state", None), dict):
                 self.state["agent_last_latency_ms"] = elapsed_ms
-            if isinstance(agent_result, dict) and (
+            if isinstance(agent_result, dict) and agent_result.get("ok", True) is not False and (
                 agent_result.get("text")
                 or agent_result.get("speech_handled")
                 or agent_result.get("actions")

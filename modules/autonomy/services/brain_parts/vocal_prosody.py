@@ -111,7 +111,14 @@ class VocalProsodyMixin:
         self.mood.modify("energy", 2)
         self.memory.add_event(f"Heard sound at angle {angle}")
 
-        if getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
+        ollama_ready = True
+        if getattr(self, "client", None) and hasattr(self.client, "is_service_available"):
+            try:
+                ollama_ready = bool(self.client.is_service_available("ollama"))
+            except Exception:
+                ollama_ready = True
+
+        if ollama_ready and getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
             prompt = (
                 f"You just heard a sudden sound from angle {int(angle)} degrees. "
                 f"Your head turned toward it (pan={int(target_pan)}). "

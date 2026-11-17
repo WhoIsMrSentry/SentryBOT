@@ -242,5 +242,8 @@ class AgentStreamingMixin:
                 },
             }
         except Exception as exc:
+            is_transport = getattr(self, "_is_provider_transport_error", None)
+            if first_token_ts is None and callable(is_transport) and is_transport(exc):
+                raise
             logger.warning("Streaming chat failed, falling back to sync: %s", exc)
             return self._chat_turn(model, messages, tools, options)

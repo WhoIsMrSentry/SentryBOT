@@ -217,7 +217,7 @@ request_timeouts:
   default_get_s: 0.8
   ollama_chat_s: 45.0
   ollama_warmup_s: 3.5
-  speech_min_interval_s: 0.35
+  speech_min_interval_s: 2.0
 agentic:
   enabled: true
   min_interval_s: 45

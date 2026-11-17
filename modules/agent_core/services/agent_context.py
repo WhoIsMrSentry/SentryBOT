@@ -3,7 +3,10 @@ from __future__ import annotations
 from contextlib import nullcontext
 import logging
 import threading
+import time
 from typing import Any, Dict, List, Optional
+
+import requests
 
 from modules.common.ollama_url import normalize_ollama_url
 
@@ -163,6 +166,9 @@ class AgentContextMixin(AgentMemorySyncMixin):
         self.provider_name = self.llm_provider
         self._cached_model_names = []
         self._cached_model_names_ts = 0.0
+        self._ollama_unavailable_until = 0.0
+        self._ollama_unavailable_reason = ""
+        self._ollama_probe_ok_until = 0.0
         if ollama:
             try:
                 self.ollama_base_url = normalize_ollama_url(getattr(self, "ollama_base_url", None))
@@ -463,16 +469,131 @@ class AgentContextMixin(AgentMemorySyncMixin):
             pass
         return None
 
+    @staticmethod
+    def _is_real_ollama_client(client: Any) -> bool:
+        if client is None or ollama is None:
+            return False
+        ollama_cls = getattr(ollama, "Client", None)
+        if not isinstance(ollama_cls, type):
+            return False
+        inner = getattr(client, "_inner", client)
+        return isinstance(inner, ollama_cls)
+
+    @staticmethod
+    def _is_provider_transport_error(exc: BaseException) -> bool:
+        if isinstance(exc, (ConnectionError, TimeoutError, OSError, requests.exceptions.RequestException)):
+            return True
+        if type(exc).__name__ in {
+            "CircuitOpenError",
+            "ConnectError",
+            "ConnectTimeout",
+            "ReadTimeout",
+            "WriteTimeout",
+            "PoolTimeout",
+            "NetworkError",
+            "RemoteProtocolError",
+        }:
+            return True
+        try:
+            import httpx
+
+            if isinstance(exc, httpx.TransportError):
+                return True
+        except Exception:
+            pass
+        try:
+            import httpcore
+
+            if isinstance(exc, (httpcore.NetworkError, httpcore.TimeoutException)):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _mark_ollama_unavailable(self, reason: Any, ttl_s: float = 5.0) -> None:
+        self._ollama_probe_ok_until = 0.0
+        self._ollama_unavailable_until = time.monotonic() + max(0.5, float(ttl_s))
+        self._ollama_unavailable_reason = str(reason or "ollama_unavailable")
+
+    def _probe_ollama_connectivity(self) -> Optional[str]:
+        now = time.monotonic()
+        unavail_until = float(getattr(self, "_ollama_unavailable_until", 0.0) or 0.0)
+        if unavail_until > now:
+            return str(getattr(self, "_ollama_unavailable_reason", "") or "ollama_unavailable")
+
+        client = getattr(self, "ollama_client", None)
+        if client is None:
+            return "ollama_client_missing"
+        if not self._is_real_ollama_client(client):
+            return None
+
+        ok_until = float(getattr(self, "_ollama_probe_ok_until", 0.0) or 0.0)
+        if ok_until > now:
+            return None
+
+        base_url = str(getattr(self, "ollama_base_url", "") or "").strip().rstrip("/")
+        if not base_url:
+            return "ollama_base_url_missing"
+
+        try:
+            resp = requests.get(f"{base_url}/api/tags", timeout=0.6)
+            status = int(getattr(resp, "status_code", 0) or 0)
+            if status >= 500 or status == 0:
+                reason = f"http_{status}"
+                self._mark_ollama_unavailable(reason)
+                return reason
+            self._ollama_probe_ok_until = time.monotonic() + 5.0
+            self._ollama_unavailable_until = 0.0
+            self._ollama_unavailable_reason = ""
+            return None
+        except Exception as exc:
+            self._mark_ollama_unavailable(exc)
+            return str(exc)
+
+    def _provider_unavailable_payload(
+        self,
+        *,
+        session_language: str = "tr",
+        event_type: Optional[str] = None,
+        reason: str = "",
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        lang = str(session_language or "tr").strip().lower()
+        if event_type:
+            text = ""
+        elif lang.startswith("en"):
+            text = "LLM provider is currently unreachable."
+        else:
+            text = "LLM servisine su anda ulasilamiyor."
+        payload: Dict[str, Any] = {
+            "ok": False,
+            "error": "ollama_unavailable",
+            "text": text,
+            "thoughts": f"LLM unavailable: {reason}" if reason else "LLM unavailable.",
+            "actions": [],
+            "plan": [],
+        }
+        if reason:
+            payload["detail"] = reason
+        if trace_id is not None:
+            payload["trace_id"] = trace_id
+        return payload
+
     def _check_provider_availability(self) -> Optional[Dict[str, Any]]:
-        if self.llm_provider != "ollama" and self.provider_client is None:
-            return {
-                "ok": False,
-                "error": "provider_unavailable",
-                "text": f"Provider {self.llm_provider} is not available",
-                "thoughts": f"Provider {self.llm_provider} is not available.",
-                "actions": [],
-                "plan": [],
-            }
+        if self.llm_provider != "ollama":
+            if self.provider_client is None:
+                return {
+                    "ok": False,
+                    "error": "provider_unavailable",
+                    "text": f"Provider {self.llm_provider} is not available",
+                    "thoughts": f"Provider {self.llm_provider} is not available.",
+                    "actions": [],
+                    "plan": [],
+                }
+            return None
+        reason = self._probe_ollama_connectivity()
+        if reason:
+            return self._provider_unavailable_payload(reason=reason)
         return None
 
     def create_agent_runtime(self, **budget_overrides: Any):

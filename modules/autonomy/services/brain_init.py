@@ -336,10 +336,11 @@ class BrainInitMixin:
         self._owner_session_id: int | None = None
         self._reset_daily_timeline()
         self._speech_req_lock = threading.Lock()
+        self._speech_dedup_lock = threading.RLock()
         self._active_speech_req_id: str = ""
         self._speech_busy: bool = False
         self._speech_min_interval_s = float(
-            self.config.get("request_timeouts", {}).get("speech_min_interval_s", 0.35)
+            self.config.get("request_timeouts", {}).get("speech_min_interval_s", 2.0)
         )
         visuals_cfg = (
             self.config.get("visual_state", {})

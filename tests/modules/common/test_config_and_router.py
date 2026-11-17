@@ -40,21 +40,30 @@ def test_ollama_url_constants_and_env(monkeypatch):
     assert DEFAULT_REMOTE_OLLAMA_URL.startswith("http://")
     assert normalize_ollama_url("http://127.0.0.1:8080/ollama") == DEFAULT_LOCAL_OLLAMA_URL
 
-    for var in (
+    import os
+
+    prev_env = {var: os.environ.get(var) for var in (
         "OLLAMA_HOST",
         "OLLAMA_BASE_URL",
         "SENTRYBOT_OLLAMA_BASE_URL",
         "SENTRYBOT_REMOTE_OLLAMA_URL",
         "SENTRYBOT_OLLAMA_URL",
-    ):
+    )}
+    for var in prev_env:
         monkeypatch.delenv(var, raising=False)
 
-    ensure_ollama_host_env()
-    assert monkeypatch  # sanity
-    import os
+    try:
+        ensure_ollama_host_env()
+        assert monkeypatch  # sanity
 
-    assert os.environ["OLLAMA_HOST"] == DEFAULT_REMOTE_OLLAMA_URL
-    assert os.environ["OLLAMA_BASE_URL"] == DEFAULT_REMOTE_OLLAMA_URL
+        assert os.environ["OLLAMA_HOST"] == DEFAULT_REMOTE_OLLAMA_URL
+        assert os.environ["OLLAMA_BASE_URL"] == DEFAULT_REMOTE_OLLAMA_URL
+    finally:
+        for var, orig in prev_env.items():
+            if orig is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = orig
 
 
 def test_model_policy_async_and_custom_mode(monkeypatch):

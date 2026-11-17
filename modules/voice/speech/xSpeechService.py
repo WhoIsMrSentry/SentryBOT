@@ -105,6 +105,7 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         else:
             self._direction = None
         self._last_angle = None
+        self._last_angle_ts = 0.0
 
         pt_cfg = self.cfg.get("pan_tilt", {})
         self._pan = PanTiltController(pt_cfg, sender=self._send_pan)
@@ -364,6 +365,10 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
     @property
     def last_angle(self) -> float | None:
         return self._last_angle
+
+    @property
+    def last_angle_ts(self) -> float:
+        return float(getattr(self, "_last_angle_ts", 0.0) or 0.0)
 
     @property
     def listening(self) -> bool:

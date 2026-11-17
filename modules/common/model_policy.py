@@ -5,7 +5,6 @@ All LLM/VLM routing is forced to local Ollama.
 
 from __future__ import annotations
 
-import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -13,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from modules.common.ollama_url import (
     DEFAULT_REMOTE_OLLAMA_URL,
     is_bad_ollama_url,
+    resolve_env_ollama_base_url,
     unwrap_url,
 )
 
@@ -176,6 +176,10 @@ class ModelPolicy:
         return merged
 
     def _resolve_ollama_base_url(self, config: Dict[str, Any]) -> str:
+        env_url = resolve_env_ollama_base_url()
+        if env_url:
+            return env_url
+
         agent_cfg = config.get("agent", {}) if isinstance(config.get("agent"), dict) else {}
         llm_cfg = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
         ollama_cfg = config.get("ollama", {}) if isinstance(config.get("ollama"), dict) else {}
@@ -184,10 +188,6 @@ class ModelPolicy:
             agent_cfg.get("ollama_base_url"),
             llm_cfg.get("base_url"),
             ollama_cfg.get("base_url"),
-            os.getenv("SENTRYBOT_OLLAMA_BASE_URL"),
-            os.getenv("SENTRYBOT_REMOTE_OLLAMA_URL"),
-            os.getenv("OLLAMA_BASE_URL"),
-            os.getenv("AGENT_OLLAMA_BASE_URL"),
         ]
 
         for source in candidates:

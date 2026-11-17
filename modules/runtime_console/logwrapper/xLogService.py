@@ -253,6 +253,11 @@ def init_logging(overrides: Optional[Dict[str, Any]] = None) -> None:
                 message=r".*WebSocketServerProtocol is deprecated.*",
                 category=DeprecationWarning,
             )
+            warnings.filterwarnings(
+                "ignore",
+                message=r".*'aifc' is deprecated.*",
+                category=DeprecationWarning,
+            )
         except Exception:
             pass
 
