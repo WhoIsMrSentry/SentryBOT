@@ -6,6 +6,8 @@ try:
 except ImportError:
     ollama = None
 
+from modules.common.ollama_compat import call_ollama_chat
+
 from .behavior_planner import format_needs_summary, resolve_planner_llm_settings
 
 logger = logging.getLogger("autonomy.reflection")
@@ -46,7 +48,8 @@ class ReflectionPlanner:
         try:
             logger.info("Generating LLM reflection...")
             client = ollama.Client(host=self.ollama_host)
-            response = client.chat(
+            response = call_ollama_chat(
+                client,
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},

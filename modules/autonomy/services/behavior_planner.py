@@ -7,6 +7,7 @@ try:
 except ImportError:
     ollama = None
 
+from modules.common.ollama_compat import call_ollama_chat
 from modules.common.ollama_url import default_ollama_base_url, normalize_ollama_url
 
 logger = logging.getLogger("autonomy.planner")
@@ -119,7 +120,7 @@ class BehaviorPlanner:
                 kwargs["format"] = "json"
 
             client = ollama.Client(host=self.ollama_host)
-            response = client.chat(**kwargs)
+            response = call_ollama_chat(client, **kwargs)
             
             self._last_plan_time = time.time()
             message = response.get("message", {})

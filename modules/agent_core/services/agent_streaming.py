@@ -6,6 +6,8 @@ import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from modules.common.ollama_compat import call_ollama_chat, chat_accepts_kwarg
+
 from .agent_provider_parser import (
     build_provider_tool_instruction,
     parse_provider_tool_call,
@@ -119,16 +121,7 @@ class AgentStreamingMixin:
 
     @staticmethod
     def _chat_accepts_priority(client: Any) -> bool:
-        chat_fn = getattr(client, "chat", None)
-        if chat_fn is None:
-            return False
-        try:
-            sig = inspect.signature(chat_fn)
-        except (TypeError, ValueError):
-            return hasattr(client, "supports_priority")
-        if "priority" in sig.parameters:
-            return True
-        return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        return chat_accepts_kwarg(client, "priority")
 
     def _chat_maybe_stream(
         self,
@@ -205,7 +198,7 @@ class AgentStreamingMixin:
             if self._chat_accepts_priority(self.ollama_client):
                 stream_kwargs["priority"] = 0
 
-            stream = self.ollama_client.chat(**stream_kwargs)
+            stream = call_ollama_chat(self.ollama_client, **stream_kwargs)
             for chunk in stream:
                 if first_token_ts is None:
                     first_token_ts = time.time()
