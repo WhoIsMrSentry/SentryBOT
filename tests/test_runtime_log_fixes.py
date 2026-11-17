@@ -353,15 +353,15 @@ def test_env_ollama_base_url_overrides_yaml_across_loaders(tmp_path, monkeypatch
     cfg_file.write_text(
         """
 agent:
-  model: qwen3.5:9b
+  model: sentry:latest
   ollama_base_url: http://whoismrsentry.local:11434
 llm:
   provider: ollama
-  model: qwen3.5:9b
+  model: sentry:latest
   single_model_mode: true
 ollama:
   base_url: http://whoismrsentry.local:11434
-  model: qwen3.5:9b
+  model: sentry:latest
 ollama_service:
   server:
     host: 127.0.0.1
