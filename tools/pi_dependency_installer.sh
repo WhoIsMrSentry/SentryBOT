@@ -28,10 +28,10 @@ python3 -m venv "$ROOT/.venv" --system-site-packages
 "$ROOT/.venv/bin/python" -m pip install --upgrade pip wheel setuptools
 REQS=(
   "$ROOT/requirements.txt"
-  "$ROOT/modules/speak/requirements.txt"
-  "$ROOT/modules/wakeword/requirements.txt"
-  "$ROOT/modules/speech/requirements.txt"
-  "$ROOT/modules/agent_core/requirements.txt"
+  "$ROOT/modules/voice/speak/requirements.txt"
+  "$ROOT/modules/voice/wakeword/requirements.txt"
+  "$ROOT/modules/voice/speech/requirements.txt"
+  "$ROOT/modules/runtime_console/requirements.txt"
 )
 for req in "${REQS[@]}"; do
   if [[ -f "$req" ]]; then
