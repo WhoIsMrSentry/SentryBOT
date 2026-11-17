@@ -109,6 +109,7 @@ endpoints:
   notifier: '@gateway/notify'
   autonomy: '@gateway/autonomy'
   agent_core: '@gateway/agent'
+  wakeword: '@gateway/wakeword'
 behaviors:
   idle:
     enabled: true
@@ -127,6 +128,7 @@ behaviors:
     enabled: true
     face_tracking: true
     sound_reaction: true
+    sound_llm_enabled: false
   sleep:
     enabled: true
     start_hour: 3
@@ -134,7 +136,7 @@ behaviors:
     wake_up_action: stretch
 llm:
   enabled: true
-  model: qwen3.5:9b
+  model: nemotron-3.5-bolt:e4b
   auto_select_persona: false
   warmup_on_start: true
   prompt_template: 'Sen duyguları olan bir robotsun.
@@ -306,7 +308,7 @@ companion:
     llm_cooldown_s: 35
     default_language: tr
   voice_ai_tools: true
-  emotion_command_shortcut: false
+  emotion_command_shortcut: true
   owner_sessions:
     enabled: true
     source: vision

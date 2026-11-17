@@ -157,6 +157,15 @@ _CAMERA_DIRECT_RE = tuple(re.compile(p, re.IGNORECASE) for p in _CAMERA_DIRECT_P
 _CAMERA_SOFT_RE = tuple(re.compile(p, re.IGNORECASE) for p in _CAMERA_SOFT_PATTERNS)
 _SPEAK_DIRECT_RE = tuple(re.compile(p, re.IGNORECASE) for p in _SPEAK_DIRECT_PATTERNS)
 _SPEAK_SOFT_RE = tuple(re.compile(p, re.IGNORECASE) for p in _SPEAK_SOFT_PATTERNS)
+_SELF_INTRO_OR_GREETING_RE = re.compile(
+    r"\b("
+    r"kendini\s+tan[ıi]t|kendinden\s+bahset|sen\s+kimsin|ad[ıi]n\s+ne|ismin\s+ne|"
+    r"yeteneklerin(?:\s+neler)?|neler\s+yapabilirsin|ne\s+yapabilirsin|"
+    r"sahibin\s+kim|kim\s+yapt[ıi]|introduce\s+yourself|who\s+are\s+you|"
+    r"what\s+can\s+you\s+do|merhaba|selam(?:lar)?|g[üu]nayd[ıi]n|iyi\s+ak[şs]amlar"
+    r")\b",
+    re.IGNORECASE,
+)
 _AFFECT_RE = {k: tuple(re.compile(p, re.IGNORECASE) for p in v) for k, v in _AFFECT_PATTERNS.items()}
 
 
@@ -392,6 +401,19 @@ def classify(
             urgency_confidence=0.75,
             t0=t0,
             suggested_tool="speak",
+        )
+
+    if _SELF_INTRO_OR_GREETING_RE.search(cleaned):
+        return _build_decision(
+            rule="self_intro_or_greeting",
+            text=text,
+            target_module="agent_core",
+            target_confidence=0.92,
+            direct=True,
+            direct_confidence=0.92,
+            urgency=urgency,
+            urgency_confidence=0.70,
+            t0=t0,
         )
 
     affect = _detect_affect(cleaned)

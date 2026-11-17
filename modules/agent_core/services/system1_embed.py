@@ -113,6 +113,11 @@ _INTENT_CORPUS: Tuple[Tuple[str, bool, str], ...] = (
     ("system2_chat", False, "ışık söndü galiba elektrikler mi kesildi"),
     ("system2_chat", False, "bugün kendimi biraz yorgun hissediyorum"),
     ("system2_chat", False, "yapay zeka hakkında ne düşünüyorsun"),
+    ("system2_chat", False, "lütfen kendini tanıt"),
+    ("system2_chat", False, "kendini tanıt"),
+    ("system2_chat", False, "sen kimsin ve yeteneklerin neler"),
+    ("system2_chat", False, "neler yapabilirsin"),
+    ("system2_chat", False, "merhaba nasılsın"),
 )
 
 _AFFECT_CORPUS: Dict[str, Tuple[str, ...]] = {

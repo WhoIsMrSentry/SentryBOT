@@ -84,6 +84,14 @@ class VocalProsodyMixin:
 
     def _should_skip_sound_llm(self, now: float) -> bool:
         """Avoid letting sound_detected background turns starve active user speech."""
+        behaviors_cfg = self.config.get("behaviors") if isinstance(getattr(self, "config", None), dict) else None
+        curiosity_cfg = behaviors_cfg.get("curiosity") if isinstance(behaviors_cfg, dict) else None
+        if (
+            isinstance(curiosity_cfg, dict)
+            and "sound_llm_enabled" in curiosity_cfg
+            and not bool(curiosity_cfg.get("sound_llm_enabled"))
+        ):
+            return True
         if bool(getattr(self, "_speech_busy", False)) or self._robot_is_speaking():
             return True
         if bool(getattr(getattr(self, "agent", None), "is_busy", False)):
