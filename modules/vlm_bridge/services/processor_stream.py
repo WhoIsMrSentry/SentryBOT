@@ -158,7 +158,16 @@ class ProcessorStreamMixin:
             return True
         try:
             resp = requests.get(probe, timeout=1.0)
-            return resp.status_code == 200
+            if resp.status_code != 200:
+                return False
+            if probe.endswith("/healthz"):
+                try:
+                    data = resp.json()
+                    if isinstance(data, dict) and "ok" in data:
+                        return bool(data.get("ok"))
+                except ValueError:
+                    pass
+            return True
         except Exception:
             return False
 
@@ -193,20 +202,23 @@ class ProcessorStreamMixin:
                                 self._max_camera_wait_attempts,
                                 self.camera_source,
                             )
-                        time.sleep(3.0)
+                        time.sleep(10.0)
                         open_fail_count = 0
                         continue
-                    if open_fail_count == 1 or open_fail_count == self._max_camera_wait_attempts:
+                    if not self._camera_gave_up and open_fail_count == 1:
                         logger.warning(
                             "Could not open camera source: %s (attempt=%d/%d), retrying...",
                             self.camera_source,
                             open_fail_count,
                             self._max_camera_wait_attempts,
                         )
-                    time.sleep(1.0)
+                    elif self._camera_gave_up and open_fail_count == 1:
+                        logger.debug("Camera source still unavailable: %s", self.camera_source)
+                    time.sleep(2.0 if self._camera_gave_up else 1.0)
                     continue
 
                 open_fail_count = 0
+                self._camera_gave_up = False
                 logger.info("Camera source connected: %s", self.camera_source)
 
             ok, frame = cap.read()
