@@ -9,16 +9,26 @@ from pathlib import Path
 from typing import Any
 
 
-ROOT = Path.cwd()
-ROOT_STR = str(ROOT)
-if ROOT_STR not in sys.path:
-    sys.path.insert(0, ROOT_STR)
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-OUT_MD = ROOT / "PI_RUNTIME_STUB_LEGACY_CALLER_AUDIT.md"
-OUT_JSON = ROOT / "pi_runtime_stub_legacy_caller_audit.json"
+from tools._audit_common import (  # noqa: E402
+    ast_symbol_context,
+    iter_repo_files,
+    line_snippets as snippets,
+    parse_output_dir_arg,
+    read_text,
+    rel as _common_rel,
+    resolve_output_paths,
+    table,
+    write_audit_reports,
+)
+
+MD_NAME = "PI_RUNTIME_STUB_LEGACY_CALLER_AUDIT.md"
+JSON_NAME = "pi_runtime_stub_legacy_caller_audit.json"
 
 SCAN_ROOTS = ["modules", "apps", "services", "config"]
-EXCLUDE_PARTS = {".git", ".venv", "__pycache__", ".pytest_cache", ".sentrybot_state", "node_modules", "dist", "build"}
 
 TERMS = [
     "stub",
@@ -55,31 +65,16 @@ RUNTIME_CRITICAL_HINTS = [
 ]
 
 KNOWN_REVIEW_FILES = [
-    "modules/oled_faces/services/legacy_map.py",
-    "modules/vlm_bridge/services/stub.py",
+    "modules/visual_output/oled_faces/services/legacy_map.py",
 ]
 
 
-def should_skip(path: Path) -> bool:
-    return any(part in EXCLUDE_PARTS for part in path.parts)
-
-
 def rel(path: Path) -> str:
-    return str(path.relative_to(ROOT)).replace("\\", "/")
-
-
-def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    return _common_rel(path, ROOT)
 
 
 def iter_files() -> list[Path]:
-    suffixes = {".py", ".json", ".yml", ".yaml", ".md", ".toml", ".ini", ".service", ".sh"}
-    out = []
-    for root_name in SCAN_ROOTS:
-        root = ROOT / root_name
-        if root.exists():
-            out.extend(p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in suffixes and not should_skip(p))
-    return sorted(set(out))
+    return iter_repo_files(ROOT, SCAN_ROOTS)
 
 
 def iter_py_runtime_files() -> list[Path]:
@@ -109,30 +104,6 @@ def line_kind(line: str) -> str:
     return "code_or_text"
 
 
-def ast_context(path: Path) -> dict[int, str]:
-    if path.suffix.lower() != ".py":
-        return {}
-    try:
-        tree = ast.parse(read_text(path))
-    except Exception:
-        return {}
-    contexts: dict[int, str] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            start = getattr(node, "lineno", None)
-            end = getattr(node, "end_lineno", None)
-            if start and end:
-                for n in range(start, end + 1):
-                    contexts[n] = f"{type(node).__name__}:{node.name}"
-    return contexts
-
-
-def snippets(lines: list[str], hit_line: int, radius: int = 2) -> str:
-    start = max(1, hit_line - radius)
-    end = min(len(lines), hit_line + radius)
-    return "\n".join(f"{n:04d}: {lines[n-1]}" for n in range(start, end + 1))
-
-
 def classify(path_s: str, term: str, line: str, kind: str, context: str) -> str:
     lower = f"{path_s} {line} {context}".lower()
 
@@ -158,9 +129,9 @@ def classify(path_s: str, term: str, line: str, kind: str, context: str) -> str:
             return "expected_test_or_preview"
         if path_s == "modules/autonomy/services/companion_goal_executor.py" and term in {"noop", "no-op"}:
             return "expected_degraded_path"
-        if path_s in {"modules/interactions/services/adapters/neopixel_client.py", "modules/neopixel/services/driver.py"}:
+        if path_s in {"modules/interactions/services/adapters/neopixel_client.py", "modules/hardware/neopixel/services/driver.py"}:
             return "expected_degraded_path"
-        if path_s == "modules/speak/services/tts.py" and term in {"dummy", "placeholder"}:
+        if path_s == "modules/voice/speak/services/tts.py" and term in {"dummy", "placeholder"}:
             return "expected_test_or_preview"
         if any(x in lower for x in ["test", "example", "simulation", "dry_run", "dry-run", "preview", "test-tone", "safe degraded", "safe semantic"]):
             return "expected_test_or_preview"
@@ -169,9 +140,9 @@ def classify(path_s: str, term: str, line: str, kind: str, context: str) -> str:
     if term in {"legacy", "deprecated"}:
         if path_s in {"modules/autonomy/services/brain_parts/responses.py", "modules/camera/api/router.py", "modules/gateway/services/bootstrap.py"}:
             return "compatibility_review"
-        if path_s == "modules/speak/config_loader.py":
+        if path_s == "modules/voice/speak/config_loader.py":
             return "compatibility_review"
-        if path_s.startswith("modules/oled_faces/"):
+        if path_s.startswith("modules/visual_output/oled_faces/"):
             return "compatibility_review"
         if path_s in {"modules/vlm_bridge/services/llm_client.py", "modules/vlm_bridge/services/people_memory.py", "modules/vlm_bridge/services/person_identity.py", "modules/vlm_bridge/services/processor.py"}:
             return "compatibility_review"
@@ -187,7 +158,7 @@ def file_record(path: Path) -> dict[str, Any] | None:
     text = read_text(path)
     lines = text.splitlines()
     low_path = path_s.lower()
-    ctx = ast_context(path)
+    ctx = ast_symbol_context(path)
     hits = []
 
     for term in TERMS:
@@ -326,176 +297,177 @@ def direct_import_callers(records: list[dict[str, Any]], edges: list[dict[str, A
     return out
 
 
-def table(headers: list[str], rows: list[list[Any]]) -> str:
-    out = ["| " + " | ".join(headers) + " |", "| " + " | ".join(["---"] * len(headers)) + " |"]
-    for row in rows:
-        out.append("| " + " | ".join(str(x).replace("\n", "<br>")[:900] for x in row) + " |")
-    return "\n".join(out)
+def main(argv: list[str] | None = None) -> int:
+    output_dir = parse_output_dir_arg(argv, description="Pi runtime stub/legacy caller audit")
+    out_md, out_json = resolve_output_paths(ROOT, output_dir, MD_NAME, JSON_NAME)
 
+    files = iter_files()
+    records = [r for p in files if (r := file_record(p))]
+    edges = import_edges()
+    callers = direct_import_callers(records, edges)
+    refs = text_references(records)
 
-files = iter_files()
-records = [r for p in files if (r := file_record(p))]
-edges = import_edges()
-callers = direct_import_callers(records, edges)
-refs = text_references(records)
+    for rec in records:
+        rec["direct_import_callers"] = callers.get(rec["path"], [])
+        rec["text_references"] = refs.get(rec["path"], [])[:30]
+        rec["caller_count"] = len(rec["direct_import_callers"]) + len(rec["text_references"])
 
-for rec in records:
-    rec["direct_import_callers"] = callers.get(rec["path"], [])
-    rec["text_references"] = refs.get(rec["path"], [])[:30]
-    rec["caller_count"] = len(rec["direct_import_callers"]) + len(rec["text_references"])
+    replacement_candidates = [
+        r for r in records
+        if r["suffix"] == ".py"
+        and r["runtime_critical_hint"]
+        and r["severities"].get("runtime_replacement_candidate", 0) > 0
+    ]
+    compatibility_reviews = [
+        r for r in records
+        if r["suffix"] == ".py"
+        and (
+            r["severities"].get("compatibility_review", 0) > 0
+            or r["severities"].get("expected_degraded_path", 0) > 0
+        )
+    ]
+    docs = [r for r in records if r["severities"].get("documentation", 0) > 0]
+    configs = [r for r in records if r["severities"].get("config_review", 0) > 0]
 
-replacement_candidates = [
-    r for r in records
-    if r["suffix"] == ".py"
-    and r["runtime_critical_hint"]
-    and r["severities"].get("runtime_replacement_candidate", 0) > 0
-]
-compatibility_reviews = [
-    r for r in records
-    if r["suffix"] == ".py"
-    and (
-        r["severities"].get("compatibility_review", 0) > 0
-        or r["severities"].get("expected_degraded_path", 0) > 0
-    )
-]
-docs = [r for r in records if r["severities"].get("documentation", 0) > 0]
-configs = [r for r in records if r["severities"].get("config_review", 0) > 0]
+    severity_counts = Counter()
+    term_counts = Counter()
+    for rec in records:
+        severity_counts.update(rec["severities"])
+        term_counts.update(rec["terms"])
 
-severity_counts = Counter()
-term_counts = Counter()
-for rec in records:
-    severity_counts.update(rec["severities"])
-    term_counts.update(rec["terms"])
+    summary = {
+        "target": "Pi/Linux robot runtime",
+        "pc_is_dev_host_only": True,
+        "files_scanned": len(files),
+        "records_with_terms": len(records),
+        "runtime_replacement_candidate_files": len(replacement_candidates),
+        "compatibility_review_files": len(compatibility_reviews),
+        "documentation_files": len(docs),
+        "config_review_files": len(configs),
+        "severity_counts": dict(severity_counts),
+        "term_counts": dict(term_counts),
+    }
 
-summary = {
-    "target": "Pi/Linux robot runtime",
-    "pc_is_dev_host_only": True,
-    "files_scanned": len(files),
-    "records_with_terms": len(records),
-    "runtime_replacement_candidate_files": len(replacement_candidates),
-    "compatibility_review_files": len(compatibility_reviews),
-    "documentation_files": len(docs),
-    "config_review_files": len(configs),
-    "severity_counts": dict(severity_counts),
-    "term_counts": dict(term_counts),
-}
+    data = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "report_type": "pi_runtime_stub_legacy_caller_audit",
+        "summary": summary,
+        "replacement_candidates": replacement_candidates,
+        "compatibility_reviews": compatibility_reviews,
+        "documentation_records": docs,
+        "config_records": configs,
+        "all_records": records,
+        "recommended_next": [
+            "Do not delete stub/legacy files without caller analysis.",
+            "If a candidate has callers, replace through an adapter or update callers first.",
+            "If a candidate has zero callers and no dynamic gateway usage, mark for cleanup after CI guard.",
+            "Keep degraded/fallback paths when they represent safe robot behavior with missing optional hardware.",
+            "Next patch should target only one confirmed candidate at a time.",
+        ],
+    }
 
-data = {
-    "generated_at": datetime.now().isoformat(timespec="seconds"),
-    "report_type": "pi_runtime_stub_legacy_caller_audit",
-    "summary": summary,
-    "replacement_candidates": replacement_candidates,
-    "compatibility_reviews": compatibility_reviews,
-    "documentation_records": docs,
-    "config_records": configs,
-    "all_records": records,
-    "recommended_next": [
-        "Do not delete stub/legacy files without caller analysis.",
-        "If a candidate has callers, replace through an adapter or update callers first.",
-        "If a candidate has zero callers and no dynamic gateway usage, mark for cleanup after CI guard.",
-        "Keep degraded/fallback paths when they represent safe robot behavior with missing optional hardware.",
-        "Next patch should target only one confirmed candidate at a time.",
-    ],
-}
-
-md = [
-    "# SentryBOT Pi Runtime Stub/Legacy Caller Audit",
-    "",
-    f"Generated: `{data['generated_at']}`",
-    "",
-    "Target: Pi/Linux robot runtime. PC remains only the development/test host.",
-    "",
-    "Report-only. No code changed and no hardware/camera/VLM/motion was started.",
-    "",
-    "Purpose: identify stub/dummy/fake/legacy/deprecated/fallback surfaces and their callers before cleanup.",
-    "",
-    "## Summary",
-    "",
-    table(["metric", "value"], [[k, json.dumps(v, ensure_ascii=False) if isinstance(v, dict) else v] for k, v in summary.items()]),
-    "",
-    "## Runtime Replacement Candidates",
-    "",
-]
-if replacement_candidates:
-    md.append(table(["path", "terms", "severities", "callers", "known_review"], [
-        [
-            r["path"],
-            ", ".join(r["terms"]),
-            json.dumps(r["severities"], ensure_ascii=False),
-            r["caller_count"],
-            r["known_review_file"],
-        ]
-        for r in replacement_candidates
-    ]))
-    for r in replacement_candidates[:50]:
-        md += ["", f"### `{r['path']}`", ""]
-        md.append(table(["line", "term", "severity", "kind", "context", "text"], [
-            [h["line"], h["term"], h["severity"], h["kind"], h["context"], h["text"]]
-            for h in r["hits"][:16]
+    md = [
+        "# SentryBOT Pi Runtime Stub/Legacy Caller Audit",
+        "",
+        f"Generated: `{data['generated_at']}`",
+        "",
+        "Target: Pi/Linux robot runtime. PC remains only the development/test host.",
+        "",
+        "Report-only. No code changed and no hardware/camera/VLM/motion was started.",
+        "",
+        "Purpose: identify stub/dummy/fake/legacy/deprecated/fallback surfaces and their callers before cleanup.",
+        "",
+        "## Summary",
+        "",
+        table(["metric", "value"], [[k, json.dumps(v, ensure_ascii=False) if isinstance(v, dict) else v] for k, v in summary.items()]),
+        "",
+        "## Runtime Replacement Candidates",
+        "",
+    ]
+    if replacement_candidates:
+        md.append(table(["path", "terms", "severities", "callers", "known_review"], [
+            [
+                r["path"],
+                ", ".join(r["terms"]),
+                json.dumps(r["severities"], ensure_ascii=False),
+                r["caller_count"],
+                r["known_review_file"],
+            ]
+            for r in replacement_candidates
         ]))
-        if r["direct_import_callers"]:
-            md += ["", "Direct import callers:", ""]
-            md.append(table(["from_path", "import_module", "import_name", "line"], [
-                [c["from_path"], c["import_module"], c["import_name"], c["line"]]
-                for c in r["direct_import_callers"][:20]
+        for r in replacement_candidates[:50]:
+            md += ["", f"### `{r['path']}`", ""]
+            md.append(table(["line", "term", "severity", "kind", "context", "text"], [
+                [h["line"], h["term"], h["severity"], h["kind"], h["context"], h["text"]]
+                for h in r["hits"][:16]
             ]))
-        if r["text_references"]:
-            md += ["", "Text references:", ""]
-            md.append(table(["from_path", "line", "key", "snippet"], [
-                [c["from_path"], c["line"], c["key"], c["snippet"]]
-                for c in r["text_references"][:20]
-            ]))
-else:
-    md.append("No runtime replacement candidates found.")
-md += [
-    "",
-    "## Compatibility / Degraded Path Reviews",
-    "",
-]
-if compatibility_reviews:
-    md.append(table(["path", "terms", "severities", "callers"], [
-        [r["path"], ", ".join(r["terms"]), json.dumps(r["severities"], ensure_ascii=False), r["caller_count"]]
-        for r in compatibility_reviews[:160]
-    ]))
-else:
-    md.append("No compatibility/degraded review files found.")
-md += [
-    "",
-    "## Config Records",
-    "",
-]
-if configs:
-    md.append(table(["path", "terms", "severities"], [
-        [r["path"], ", ".join(r["terms"]), json.dumps(r["severities"], ensure_ascii=False)]
-        for r in configs[:120]
-    ]))
-else:
-    md.append("No config records found.")
-md += [
-    "",
-    "## Documentation Records",
-    "",
-]
-if docs:
-    md.append(table(["path", "terms", "severities"], [
-        [r["path"], ", ".join(r["terms"]), json.dumps(r["severities"], ensure_ascii=False)]
-        for r in docs[:120]
-    ]))
-else:
-    md.append("No documentation records found.")
-md += ["", "## Recommended Next", ""]
-for step in data["recommended_next"]:
-    md.append(f"- {step}")
-md.append("")
-
-OUT_JSON.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-OUT_MD.write_text("\n".join(md), encoding="utf-8")
-
-print("[WRITE] PI_RUNTIME_STUB_LEGACY_CALLER_AUDIT.md")
-print("[WRITE] pi_runtime_stub_legacy_caller_audit.json")
-for k, v in summary.items():
-    if isinstance(v, dict):
-        print(f"[SUMMARY] {k}={json.dumps(v, ensure_ascii=False)}")
+            if r["direct_import_callers"]:
+                md += ["", "Direct import callers:", ""]
+                md.append(table(["from_path", "import_module", "import_name", "line"], [
+                    [c["from_path"], c["import_module"], c["import_name"], c["line"]]
+                    for c in r["direct_import_callers"][:20]
+                ]))
+            if r["text_references"]:
+                md += ["", "Text references:", ""]
+                md.append(table(["from_path", "line", "key", "snippet"], [
+                    [c["from_path"], c["line"], c["key"], c["snippet"]]
+                    for c in r["text_references"][:20]
+                ]))
     else:
-        print(f"[SUMMARY] {k}={v}")
-print("[DONE] Pi runtime stub/legacy caller audit complete")
+        md.append("No runtime replacement candidates found.")
+    md += [
+        "",
+        "## Compatibility / Degraded Path Reviews",
+        "",
+    ]
+    if compatibility_reviews:
+        md.append(table(["path", "terms", "severities", "callers"], [
+            [r["path"], ", ".join(r["terms"]), json.dumps(r["severities"], ensure_ascii=False), r["caller_count"]]
+            for r in compatibility_reviews[:160]
+        ]))
+    else:
+        md.append("No compatibility/degraded review files found.")
+    md += [
+        "",
+        "## Config Records",
+        "",
+    ]
+    if configs:
+        md.append(table(["path", "terms", "severities"], [
+            [r["path"], ", ".join(r["terms"]), json.dumps(r["severities"], ensure_ascii=False)]
+            for r in configs[:120]
+        ]))
+    else:
+        md.append("No config records found.")
+    md += [
+        "",
+        "## Documentation Records",
+        "",
+    ]
+    if docs:
+        md.append(table(["path", "terms", "severities"], [
+            [r["path"], ", ".join(r["terms"]), json.dumps(r["severities"], ensure_ascii=False)]
+            for r in docs[:120]
+        ]))
+    else:
+        md.append("No documentation records found.")
+    md += ["", "## Recommended Next", ""]
+    for step in data["recommended_next"]:
+        md.append(f"- {step}")
+    md.append("")
+
+    write_audit_reports(out_md, out_json, md, data)
+
+    print(f"[WRITE] {rel(out_md) if out_md.is_relative_to(ROOT) else out_md}")
+    print(f"[WRITE] {rel(out_json) if out_json.is_relative_to(ROOT) else out_json}")
+    for k, v in summary.items():
+        if isinstance(v, dict):
+            print(f"[SUMMARY] {k}={json.dumps(v, ensure_ascii=False)}")
+        else:
+            print(f"[SUMMARY] {k}={v}")
+    print("[DONE] Pi runtime stub/legacy caller audit complete")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
