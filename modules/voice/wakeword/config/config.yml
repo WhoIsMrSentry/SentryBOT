@@ -30,8 +30,8 @@ openwakeword:
   log_every_n_chunks: 100
   # Runner input channel count. If omitted, xWakewordService injects audio.channels.
   input_channels: 2
-  # Light RMS/VAD energy gate before feeding ONNX model (reduces RPi idle CPU load)
-  vad_gate_enabled: true
+  # Light RMS/VAD energy gate before feeding ONNX model (disabled by default to keep sliding window continuous)
+  vad_gate_enabled: false
   vad_min_rms: 35.0
   vad_hangover_sec: 0.6
   auto_calibration:

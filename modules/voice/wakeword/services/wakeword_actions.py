@@ -124,12 +124,15 @@ class WakewordActions:
         _post_json(self.speech_start_url)
 
     def stop_speech(self) -> None:
-        if self._speech_service is not None and hasattr(self._speech_service, "stop"):
-            try:
-                self._speech_service.stop()
+        if self._speech_service is not None:
+            if bool(getattr(self._speech_service, "always_listening", False)):
                 return
-            except Exception as exc:
-                logger.debug("direct speech_service stop failed: %s", exc)
+            if hasattr(self._speech_service, "stop"):
+                try:
+                    self._speech_service.stop()
+                    return
+                except Exception as exc:
+                    logger.debug("direct speech_service stop failed: %s", exc)
         _post_json(self.speech_stop_url)
 
     def emit_event(self, event_type: str, wakeword: str) -> None:

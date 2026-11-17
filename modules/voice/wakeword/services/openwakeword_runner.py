@@ -202,7 +202,11 @@ class OpenWakewordRunner(OpenWakewordCalibrationMixin):
         best_label, best_score = self._smooth_scores(scores)
         logger.debug("openwakeword smoothed best=%s score=%s threshold=%s", best_label, best_score, self._threshold)
 
-        if not self._run_auto_calibration(best_score):
+        calibrated_ready = self._run_auto_calibration(best_score)
+        if not calibrated_ready:
+            if best_label and best_score >= max(self._threshold, 0.35) and self._verify_label(best_label):
+                logger.info("openwakeword accepted during calibration: %s (score=%.4f)", best_label, best_score)
+                return best_label
             return None
 
         self._log_periodic_probe(best_label, best_score)

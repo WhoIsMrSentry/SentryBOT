@@ -196,6 +196,7 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
         gwcfg = _gw_cfg.load_config(None)
         speech_cfg = _merge_with_agent_section(gwcfg.get("speech", {}), "speech")
         if bool(speech_cfg.get("listening", False)) or bool(speech_cfg.get("auto_start", False)):
+            svc.always_listening = True
             if _should_autostart_services():
                 try:
                     svc.start_background()

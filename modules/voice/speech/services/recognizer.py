@@ -32,6 +32,7 @@ class RecognizerConfig:
     vad_hangover_ms: int = 400
     min_utterance_sec: float = 0.5
     max_utterance_sec: float = 15.0
+    silence_threshold: float = 45.0
     dual_decode_languages: tuple[str, ...] = ("tr", "en")
 
 
@@ -61,6 +62,7 @@ class Recognizer:
             vad_hangover_ms=int(vad_cfg.get("hangover_ms", 400)),
             min_utterance_sec=float(cfg.get("min_utterance_sec", 0.5)),
             max_utterance_sec=float(cfg.get("max_utterance_sec", 15.0)),
+            silence_threshold=float(cfg.get("silence_threshold", 45.0)),
             dual_decode_languages=lang_tuple,
         )
         self._sr_recognizer = sr.Recognizer() if sr is not None else None
@@ -117,7 +119,7 @@ class Recognizer:
         min_bytes = int(self.cfg.min_utterance_sec * bytes_per_sec)
         max_bytes = int(self.cfg.max_utterance_sec * bytes_per_sec)
         preroll_bytes = int(0.35 * bytes_per_sec)  # 350ms rolling pre-roll buffer
-        silence_threshold = 120.0
+        silence_threshold = float(getattr(self.cfg, "silence_threshold", 45.0) or 45.0)
         has_spoken = False
         audio_clock = 0.0
         self._turn_engine.start_listening(current_time_s=audio_clock)

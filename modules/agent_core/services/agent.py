@@ -100,10 +100,12 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                 logger.debug("System 1 warmup skipped: %s", exc)
             try:
                 from modules.common.model_roles import DEFAULT_CHAT_MODEL
+                from .ollama_compat import call_ollama_chat
 
                 client = getattr(self, "ollama_client", None)
                 if client is not None and self._is_real_ollama_client(client):
-                    client.chat(
+                    call_ollama_chat(
+                        client,
                         model=getattr(self, "model", None) or DEFAULT_CHAT_MODEL,
                         messages=[{"role": "user", "content": "hazır"}],
                         options={

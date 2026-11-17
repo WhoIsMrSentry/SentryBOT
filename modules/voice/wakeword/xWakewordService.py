@@ -69,7 +69,7 @@ class WakewordService:
         self.detector = WakewordDetector(wake_cfg)
         self._openwakeword: Optional[OpenWakewordRunner] = None
         ow_cfg = dict(self.cfg.get("openwakeword", {}) or {})
-        self._vad_gate_enabled = bool(ow_cfg.get("vad_gate_enabled", True))
+        self._vad_gate_enabled = bool(ow_cfg.get("vad_gate_enabled", False))
         self._vad_min_rms = float(ow_cfg.get("vad_min_rms", 35.0))
         self._vad_hangover_sec = max(0.0, float(ow_cfg.get("vad_hangover_sec", 0.6)))
         self._vad_hangover_until = 0.0
@@ -210,13 +210,13 @@ class WakewordService:
             self._active_window = False
             thr = self._thread
             self._thread = None
-        if hasattr(it, "close"):
+        if thr is not None and thr is not threading.current_thread() and thr.is_alive():
+            thr.join(timeout=1.5)
+        if (thr is None or not thr.is_alive()) and hasattr(it, "close"):
             try:
                 it.close()  # type: ignore[misc]
             except Exception:
                 pass
-        if thr is not None and thr is not threading.current_thread() and thr.is_alive():
-            thr.join(timeout=1.5)
 
     def _on_wakeword(self, wakeword: str) -> None:
         now = _now()
