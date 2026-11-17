@@ -6,14 +6,15 @@ After=network-online.target sound.target
 [Service]
 Type=simple
 WorkingDirectory=__PROJECT_ROOT__
+Environment=SENTRYBOT_ROOT=__PROJECT_ROOT__
 EnvironmentFile=-/etc/sentrybot/sentrybot.env
-ExecStartPre=/bin/bash -lc 'cd "$SENTRYBOT_ROOT" && ${SENTRYBOT_ROOT}/.venv/bin/python tools/pi_runtime_readiness.py --fail-on-required'
-ExecStart=/bin/bash -lc 'cd "$SENTRYBOT_ROOT" && exec ${SENTRYBOT_ROOT}/.venv/bin/python -m uvicorn modules.gateway.xGatewayService:create_app --factory --host ${SENTRYBOT_HOST:-0.0.0.0} --port ${SENTRYBOT_PORT:-8080}'
+ExecStartPre=/bin/bash -lc 'export SENTRYBOT_ROOT="${SENTRYBOT_ROOT:-__PROJECT_ROOT__}" && cd "$SENTRYBOT_ROOT" && "${SENTRYBOT_ROOT}/.venv/bin/python" tools/pi_runtime_readiness.py --fail-on-required'
+ExecStart=/bin/bash -lc 'export SENTRYBOT_ROOT="${SENTRYBOT_ROOT:-__PROJECT_ROOT__}" && cd "$SENTRYBOT_ROOT" && exec "${SENTRYBOT_ROOT}/.venv/bin/python" scripts/run_robot.py'
 Restart=on-failure
 RestartSec=5
 TimeoutStartSec=180
-User=pi
-Group=pi
+User=sentrybot
+Group=sentrybot
 SupplementaryGroups=audio video gpio i2c spi dialout
 NoNewPrivileges=true
 
