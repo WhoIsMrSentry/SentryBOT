@@ -25,7 +25,7 @@ from typing import Any, List, Optional
 
 # Make the project root importable when run as a script.
 _THIS = Path(__file__).resolve()
-_ROOT = _THIS.parents[1]
+_ROOT = _THIS.parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
@@ -197,6 +197,33 @@ def migrate_faces(db: SocialDB, *, dry_run: bool, keep: bool) -> int:
     return imported
 
 
+def _merge_chat_episodes(db: SocialDB, pid: str, entries: List[Any]) -> int:
+    """Append chat episodes idempotently without wiping prior sources for the same person."""
+    existing = db.chat_episodes.recent_for_person(pid, limit=5000)
+    seen = {
+        (
+            str(row.get("role") or "user"),
+            str(row.get("text") or ""),
+            round(float(row.get("ts") or 0.0), 3),
+        )
+        for row in existing
+    }
+    added = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        role = str(entry.get("role", "user"))
+        text = str(entry.get("text", ""))
+        ts = float(entry.get("ts", time.time()) or time.time())
+        sig = (role, text, round(ts, 3))
+        if sig in seen:
+            continue
+        db.chat_episodes.append(person_id=pid, role=role, text=text, ts=ts)
+        seen.add(sig)
+        added += 1
+    return added
+
+
 def migrate_people_memory(db: SocialDB, *, dry_run: bool, keep: bool) -> int:
     """Import ``data/people_memory.json`` chat history."""
     path = _ROOT / "data" / "people_memory.json"
@@ -220,16 +247,7 @@ def migrate_people_memory(db: SocialDB, *, dry_run: bool, keep: bool) -> int:
         pid = _ensure_person(db, name)
         if not pid:
             continue
-        db.chat_episodes.prune_for_person(pid, keep_last=0)
-        for chat in chats:
-            if not isinstance(chat, dict):
-                continue
-            db.chat_episodes.append(
-                person_id=pid,
-                role=str(chat.get("role", "user")),
-                text=str(chat.get("text", "")),
-                ts=float(chat.get("ts", time.time()) or time.time()),
-            )
+        _merge_chat_episodes(db, pid, chats)
         summary = payload.get("last_summary")
         if isinstance(summary, dict) and summary.get("text"):
             db.moments.add_or_boost(
@@ -288,16 +306,7 @@ def migrate_relationship_memory(db: SocialDB, *, dry_run: bool, keep: bool) -> i
 
         chat_history = payload.get("chat_history", [])
         if isinstance(chat_history, list):
-            db.chat_episodes.prune_for_person(pid, keep_last=0)
-            for entry in chat_history:
-                if not isinstance(entry, dict):
-                    continue
-                db.chat_episodes.append(
-                    person_id=pid,
-                    role=str(entry.get("role", "user")),
-                    text=str(entry.get("text", "")),
-                    ts=float(entry.get("ts", time.time()) or time.time()),
-                )
+            _merge_chat_episodes(db, pid, chat_history)
 
         preferences = payload.get("preferences", {})
         if isinstance(preferences, dict):

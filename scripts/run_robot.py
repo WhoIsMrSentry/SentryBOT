@@ -17,6 +17,7 @@ if ROOT not in sys.path:
 
 logger = logging.getLogger("run_robot")
 _FORCE_EXIT_SECONDS = 4.0
+_SHUTDOWN_LOCK = threading.Lock()
 _STOPPED_SERVICE_IDS: set[int] = set()
 
 
@@ -36,26 +37,27 @@ def _run_coroutine_sync(name: str, method_name: str, coro) -> None:
 
 
 def _stop_started_services(app) -> None:
-    started = getattr(getattr(app, "state", None), "started", None) or {}
-    for name, service in list(started.items()):
-        if name in {"notifier_bot", "notifier_polling_enabled"}:
-            continue
-        key = id(service)
-        if key in _STOPPED_SERVICE_IDS:
-            continue
-        for method_name in ("stop_stream_processing", "stop", "shutdown", "close"):
-            method = getattr(service, method_name, None)
-            if not callable(method):
+    with _SHUTDOWN_LOCK:
+        started = getattr(getattr(app, "state", None), "started", None) or {}
+        for name, service in list(started.items()):
+            if name in {"notifier_bot", "notifier_polling_enabled"}:
                 continue
-            try:
-                result = method()
-                if inspect.isawaitable(result):
-                    _run_coroutine_sync(name, method_name, result)
-            except Exception as exc:
-                logger.debug("shutdown failed for %s.%s: %s", name, method_name, exc)
-            finally:
-                _STOPPED_SERVICE_IDS.add(key)
-            break
+            key = id(service)
+            if key in _STOPPED_SERVICE_IDS:
+                continue
+            for method_name in ("stop_stream_processing", "stop", "shutdown", "close"):
+                method = getattr(service, method_name, None)
+                if not callable(method):
+                    continue
+                try:
+                    result = method()
+                    if inspect.isawaitable(result):
+                        _run_coroutine_sync(name, method_name, result)
+                except Exception as exc:
+                    logger.debug("shutdown failed for %s.%s: %s", name, method_name, exc)
+                finally:
+                    _STOPPED_SERVICE_IDS.add(key)
+                break
 
 
 def main() -> None:
@@ -82,8 +84,8 @@ def main() -> None:
 
     cfg = load_config()
     app = create_app()
-    host = str(cfg["server"]["host"])
-    port = int(cfg["server"]["port"])
+    host = os.environ.get("SENTRYBOT_HOST") or str(cfg["server"]["host"])
+    port = int(os.environ.get("SENTRYBOT_PORT") or cfg["server"]["port"])
 
     logger.info("SentryBOT starting on %s", target.model)
     server = uvicorn.Server(
@@ -103,25 +105,25 @@ def main() -> None:
 
     def force_exit() -> None:
         _stop_started_services(app)
+        logging.shutdown()
         os._exit(0)
 
     def request_shutdown(signum: int, _frame) -> None:
         nonlocal shutdown_count, force_timer
-        shutdown_count += 1
-        if shutdown_count >= 2:
+        with _SHUTDOWN_LOCK:
+            shutdown_count += 1
+            count_now = shutdown_count
+            if count_now == 1:
+                if force_timer is not None:
+                    force_timer.cancel()
+                force_timer = threading.Timer(_FORCE_EXIT_SECONDS, force_exit)
+                force_timer.daemon = True
+                force_timer.start()
+        if count_now >= 2:
             force_exit()
             return
         logger.info("shutdown signal received: %s", signum)
         server.should_exit = True
-        # NOTE: do not manually stop services here; uvicorn's graceful
-        # shutdown runs the app lifespan (which awaits async stops) right
-        # after should_exit takes effect. The timer below only guards the
-        # case where graceful shutdown hangs.
-        if force_timer is not None:
-            force_timer.cancel()
-        force_timer = threading.Timer(_FORCE_EXIT_SECONDS, force_exit)
-        force_timer.daemon = True
-        force_timer.start()
 
     signal.signal(signal.SIGINT, request_shutdown)
     signal.signal(signal.SIGTERM, request_shutdown)
@@ -129,9 +131,12 @@ def main() -> None:
     try:
         server.run()
     finally:
-        if force_timer is not None:
-            force_timer.cancel()
+        with _SHUTDOWN_LOCK:
+            if force_timer is not None:
+                force_timer.cancel()
+                force_timer = None
         _stop_started_services(app)
+        logging.shutdown()
 
 
 if __name__ == "__main__":
