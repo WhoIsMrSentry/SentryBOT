@@ -236,9 +236,14 @@ def _enforce_ollama_policy(
         ).strip()
         or _REQUIRED_OLLAMA_MODEL
     )
+    vlm_ollama_cfg = vlm_root.get("ollama", {}) if isinstance(vlm_root.get("ollama"), dict) else {}
     ov_model = str(ov_llm.get("model") or ov_llm.get("primary_model") or "").strip()
     vlm_model = str(vlm_llm.get("model") or vlm_llm.get("primary_model") or "").strip()
-    model = ov_model or vlm_model or _pick_model(root_agent, root_llm, root_ollama) or required_model
+    if single_model_mode:
+        model = ov_model or vlm_model or _pick_model(root_agent, root_llm, root_ollama) or required_model
+    else:
+        vlm_ollama_model = str(vlm_ollama_cfg.get("model") or "").strip()
+        model = ov_model or vlm_model or vlm_ollama_model or required_model
     if single_model_mode and model != required_model:
         raise ValueError(
             f"Ollama profile requires model '{required_model}', got '{model}'"
@@ -269,14 +274,24 @@ def _enforce_ollama_policy(
     llm_cfg["fallback_on_missing_model"] = False
     llm_cfg["fallback_on_error"] = False
 
+    from modules.common.model_roles import DEFAULT_CHAT_MODEL
+
     vlm_ollama = vlm_root.get("ollama", {}) if isinstance(vlm_root.get("ollama"), dict) else {}
     explicit_endpoint = str(vlm_ollama.get("endpoint", "")).strip()
     ollama_cfg["endpoint"] = _to_vlm_chat_endpoint(explicit_endpoint or base_url)
     ollama_cfg["model"] = active_model
+    if not single_model_mode:
+        ollama_cfg["followup_model"] = (
+            str(vlm_ollama.get("followup_model") or ollama_cfg.get("followup_model") or "").strip()
+            or DEFAULT_CHAT_MODEL
+        )
     ollama_cfg["timeout"] = _to_float(
         ollama_cfg.get("timeout", root_ollama.get("request_timeout", 12.0)),
         12.0,
     )
+
+    if isinstance(root_cfg.get("models"), dict) and "models" not in cfg:
+        cfg["models"] = dict(root_cfg.get("models", {}))
 
     vision_cfg["provider"] = str(vision_cfg.get("provider", "ollama")).strip().lower() or "ollama"
     if vision_cfg.get("base_url") in (None, ""):

@@ -244,13 +244,20 @@ def generate_text(
             chat_url = endpoint or _default_chat_endpoint()
             if _is_in_cooldown(chat_url):
                 return None
+            chat_params: Dict[str, Any] = {
+                "query": text,
+                "apply_actions": "false",
+                "response_lang": response_lang,
+            }
+            explicit_model = str((ollama_cfg or {}).get("model") or "").strip()
+            if explicit_model:
+                chat_params["model"] = explicit_model
+            explicit_role = str((ollama_cfg or {}).get("role") or "").strip()
+            if explicit_role:
+                chat_params["role"] = explicit_role
             resp = client.post(
                 chat_url,
-                params={
-                    "query": text,
-                    "apply_actions": "false",
-                    "response_lang": response_lang,
-                },
+                params=chat_params,
                 **post_kwargs,
             )
             if resp.status_code != 200:

@@ -72,7 +72,9 @@ def get_persona_router(
         if "FROM " in raw_content and "SYSTEM " in raw_content:
             modelfile = raw_content
         else:
-            base_model = str(cfg.get("ollama", {}).get("model", "qwen3.5:9b"))
+            from modules.common.model_roles import DEFAULT_CHAT_MODEL
+
+            base_model = str(cfg.get("ollama", {}).get("model", DEFAULT_CHAT_MODEL))
             modelfile = f'FROM {base_model}\nSYSTEM """\n{raw_content}\n"""'
 
         success = False

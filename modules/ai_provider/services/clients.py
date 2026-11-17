@@ -379,8 +379,10 @@ def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
         return GoogleAIStudioClient(api_key=api_key, model=model, base_url=base_url, request_timeout=timeout), "google_ai_studio"
 
     ocfg = cfg.get("ollama", {}) or {}
+    from modules.common.model_roles import resolve_role_model
+
     base_url = str(ocfg.get("base_url", "http:"))
-    model = str(ocfg.get("model", "llama3.2:3b"))
+    model = resolve_role_model(cfg, "chat", fallback=ocfg.get("model"))
     timeout = float(ocfg.get("request_timeout", 60.0))
     cb_thresh = int(ocfg.get("cb_failure_threshold", 3))
     cb_recovery = float(ocfg.get("cb_recovery_timeout_s", 15.0))

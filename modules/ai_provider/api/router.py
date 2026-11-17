@@ -81,6 +81,7 @@ def get_router(cfg: dict) -> APIRouter:
                     pass
 
     runtime = {
+        "cfg": cfg,
         "_lock": threading.RLock(),
         "client": client,
         "model": model,

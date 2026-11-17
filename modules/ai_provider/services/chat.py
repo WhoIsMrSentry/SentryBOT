@@ -92,10 +92,12 @@ class OllamaChatService:
         query: str,
         extra_history: Optional[List[Dict[str, str]]] = None,
         response_format: Optional[Any] = None,
+        model: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Chat with the active model (thread-safe memory & options snapshot)."""
         messages, model_name, options = self._build_request(query, extra_history)
-        res = self.client.chat(messages, format=response_format, model=model_name, options=options)
+        selected_model = (str(model).strip() or None) if model is not None else model_name
+        res = self.client.chat(messages, format=response_format, model=selected_model, options=options)
         raw_text = self._extract_raw_text(res)
         payload = self._parse_response(raw_text, response_format)
 
@@ -109,18 +111,25 @@ class OllamaChatService:
         query: str,
         extra_history: Optional[List[Dict[str, str]]] = None,
         response_format: Optional[Any] = None,
+        model: Optional[str] = None,
     ) -> Iterator[Dict[str, Any]]:
         """Yield incremental delta events and commit finalized response to memory."""
         messages, model_name, options = self._build_request(query, extra_history)
+        selected_model = (str(model).strip() or None) if model is not None else model_name
         stream_fn = getattr(self.client, "chat_stream", None)
         if not callable(stream_fn):
-            payload = self.chat(query, extra_history=extra_history, response_format=response_format)
+            payload = self.chat(
+                query,
+                extra_history=extra_history,
+                response_format=response_format,
+                model=model,
+            )
             yield {"type": "delta", "delta": str(payload.get("text", "")), "done": True}
             yield {"type": "done", "result": payload}
             return
 
         collected: List[str] = []
-        for chunk in stream_fn(messages, format=response_format, model=model_name, options=options):
+        for chunk in stream_fn(messages, format=response_format, model=selected_model, options=options):
             delta = str(chunk.get("delta", "")) if isinstance(chunk, dict) else str(chunk)
             if delta:
                 collected.append(delta)
