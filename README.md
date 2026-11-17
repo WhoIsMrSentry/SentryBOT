@@ -65,11 +65,11 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- Veri akışı: Pi5 ↔ Arduino NDJSON satır tabanlı mesajlar; arkaplanda non-blocking okuyucu, heartbeat.
 		- Örnek: POST `/arduino/request` body `{ "cmd": "set_pose", "pose":[...], "duration_ms":1200 }`
 		- Sınırlar: Seri port stabilitesi; AUTO port bulma başarısızsa `ARDUINO_PORT` ile zorlayın.
-	- PiServo “Kulaklar” (modules/piservo)
+	- PiServo “Kulaklar” (modules/expression/piservo)
 		- Kapsam: sol/sağ servo ile duygu jestleri ve basit jestler (wakeword/sound).
-		- API: `/piservo/set?left=90&right=90`, `/piservo/emotion?name=joy`
+		- API: `POST /piservo/set?left=90&right=90`, `POST /piservo/emotion?name=joy`
 		- Sınırlar: Donanım yoksa simülatör modunda çalışır; PWM/angle sınırları config ile belirlenir.
-	- Teşhis & Zamanlama (modules/diagnostics, modules/scheduler)
+	- Teşhis & Zamanlama (modules/system_control/diagnostics, modules/system_control/scheduler)
 		- Diagnostics API: `/diagnostics/run`, `/diagnostics/report` — modül sağlıklarını zincir hâlinde kontrol eder; gecikme ve tekrar eden hataları da değerlendirir.
 		- Scheduler API: `/scheduler/jobs` — basit async periyodik görevler, HTTP ping işleri; runtime görev ekleme/silme de desteklenir.
 
@@ -83,21 +83,21 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		- API: `POST /vlm/track { head_tilt, head_pan, drive? }` → Arduino “track” komutuna köprü.
 		- Not: `POST /vlm/mode` ile objects/people/ocr/depth gibi yetenekler tek tek açılıp kapatılabilir.
 		- Sınırlar: Ağ gecikmesi; kontrol döngüsünde stabilite için sınırlamalar (slew/ölü bant) önerilir.
-	- Konuşma Tanıma (modules/speech)
+	- Konuşma Tanıma (modules/voice/speech)
 		- Kapsam: SpeechRecognition ile çok dilli Google STT; I2S mikrofon; stereo’da DoA hesaplar.
 		- API: `/speech/start`, `/speech/stop`, `/speech/last`, `/speech/direction`, `/speech/track/*`
 		- Veri akışı: ALSA → çerçeveler → SpeechRecognition / Google STT → metin; stereo ise GCC-PHAT → açı.
 		- Sınırlar: DoA için stereo şart.
-	- Telemetri & Durum (modules/telemetry, modules/state_manager)
+	- Telemetri & Durum (modules/system_control/telemetry, modules/system_control/state_manager)
 		- Telemetry: `/telemetry/metrics` Prometheus; `/telemetry/events` ham olay yayımı.
 		- State Manager: `/state/get`, `/state/set/emotions`, `/state/set/<key>` — global durum ve duygular için kalıcı anahtar/değer desteği.
 
 - İfade/Arayüz
-	- Speak (TTS) (modules/speak)
+	- Speak (TTS) (modules/voice/speak)
 		- Kapsam: pyttsx3 veya Piper ile offline TTS; base64 WAV oynatma; ALSA çıkış cihazı seçimi.
 		- API: `/speak/say { text, engine? }`, `/speak/play { data: base64-wav }`
 		- Sınırlar: Piper için model/binary gerekir; ses cihazı eşleşmesi (ALSA) şarttır.
-	- NeoPixel (modules/neopixel)
+	- NeoPixel (modules/visual_output/neopixel)
 		- Kapsam: Donanım/simülatör otomatik; ileri seviye animasyonlar ve duygusal renk paletleri.
 		- API: `/neopixel/fill`, `/neopixel/effect`, `/neopixel/emote`, `/neopixel/animate`
 		- Sınırlar: LED sayısı ve hız config’den alınır; ağır animasyonlarda CPU yükü artabilir.
@@ -109,32 +109,32 @@ Algılama, karar ve ifade zinciriyle çalışan SentryBOT’un yetenekleri modü
 		  Example body: `{ "name": "WAVE", "color": "0,255,255", "iterations": 2 }`
 		- `POST /neopixel/emote` — convenience endpoint. Accepts `emotion` (single name), `emotions` (list) or `text`. If an `emotion` is provided, the server will randomly select one of the palette variants for that emotion and display it (no palette codes are returned in the API response for UI simplicity).
 		- Behavior: The driver will attempt to play animations using the native Pi driver when available (hardware-accelerated). If the native driver does not support an animation name the server will fall back to Python implementations.
-	- Interactions (modules/interactions)
+	- Interactions (modules/expression/interactions)
 		- Kapsam: Kurallara göre NeoPixel efektleri tetikleme; CPU sıcaklık/yük, ağ burst, olaylar.
 		- API: `/interactions/event`, `/interactions/effect`, `/interactions/base`, `/interactions/state`
 		- Sınırlar: NeoPixel servisi yoksa no-op; gelişmiş segment/mask için API genişlemesi önerilir.
-	- Animasyon (modules/animate)
+	- Animasyon (modules/expression/animate)
 		- Kapsam: YAML tanımlı servo poz sekansları; `xAnimateService.run('name')` ile tetikleme.
 		- Şema örneği: `name`, `loop`, `steps[{ pose[], duration_ms|hold_ms }]`.
-	- Bildirimler (modules/notifier)
+	- Bildirimler (modules/system_control/notifier)
 		- Kapsam: Telegram/Discord köprüleri; test ucu ve basit metin gönderimi.
 		- API: `/notify/telegram`, `/notify/discord`, `/notify/test`
 
 - Zeka
-	- LLM (Ollama) (modules/ollama)
+	- AI Sağlayıcı / LLM (modules/ai_provider)
 		- Kapsam: Kişilik (persona) yönetimi ile LLM sohbet; modül içi persona klasör yapısı.
 		- API: `/ollama/chat`, `/ollama/persona`, `/ollama/personas`, `/ollama/persona/select`
-		- Veri akışı: Speech → Ollama.chat → Speak; Interactions/NeoPixel opsiyonel duygusal tepki verebilir.
+		- Veri akışı: Speech → AI Provider (`OllamaClient.chat`) → Speak; Interactions/NeoPixel opsiyonel duygusal tepki verebilir.
 
 
 ## Hızlı Başlangıç
 
 1) Bağımlılıkları yükle (opsiyonel kolay kurulum scriptleri):
-	 - Windows PowerShell veya Linux’ta kök dizinden çalıştırın: `install_all_requirements.py` ya da `install_all_requirements.sh`
+	 - Windows PowerShell veya Linux’ta kök dizinden çalıştırın: `python scripts/install_all_requirements.py` ya da `bash scripts/install_all_requirements.sh`
 	 - Donanım/harici yazılımlar (piper, ffmpeg, avrdude vb.) için ilgili modül README’lerine bakın
 
 2) Gateway’i başlat (önerilen üretim modu):
-	 - `python run_robot.py`
+	 - `python scripts/run_robot.py` (veya TUI ile `python sentrybot.py`)
 	 - Varsayılan adres: `http://localhost:8080`
 	 - Örnek sağlık kontrolleri: `/neopixel/healthz`, `/speech/healthz`, `/arduino/healthz`
 
@@ -266,36 +266,32 @@ Gateway çalışıyorsa tüm uçlar tek porttadır. Aşağıdaki istekler örnek
 - Konuşma
 	- ASR başlat/durdur: `/speech/start`, `/speech/stop`
 	- TTS: `/speak/say` body: `{ "text": "Merhaba!" }`
-	## Modüller (Tek Tek)
 
-	- **agent_core**: 3-katmanlı LLM tabanlı otonom zekâ (Router, Sub-agents, Persona) ve epizodik bellek yönetimi.
-	- **ai_provider**: (eski adıyla ollama) LLM sohbet ve persona yönetimi; LLM endpointleri.
-	- **arduino_serial**: Arduino Mega ile NDJSON seri köprü. Servo, stepper, imu, telemetry ve lazer kontrolü (esp_link'i içerir).
-	- **autonomy**: Live Mode. Duygu durum yönetimi (MoodManager), davranış döngüsü, VLM algı birleştirme ve otonom tepki/sahne yöneticisi.
-	- **calibration**: Servo, Kamera ve Ses kalibrasyon yardımcıları.
-	- **camera**: PiCamera2/OpenCV backend ile görüntü yakalama ve yayın.
-	- **cognitive_memory**: (eski adıyla social_db) Kişiler, ilişkiler, görülme kayıtları, sohbet geçmişi ve anıları tek merkezde toplayan birleşik SQLite bellek.
-	- **common**: Ortak yardımcılar, paylaşılan duygu/ifade (emotion) sözlüğü (`emotion_vocab.py`).
-	- **expression**: Semantik ifade motoru. Sistem olaylarını senkronize animasyon, renk ve oled yüz ifadelerine dönüştürür (interactions'ı içerir).
-	- **gateway**: Ana giriş noktası. Tüm modül router'larını tek bir FastAPI uygulamasında toplar.
-	- **hardware**: RPi5 sağlık/sistem, I2C tarama, GPIO özet uyarıları.
-	- **motion**: (eski animate ve piservo) YAML tabanlı servo sekansları ve kulak jestleri (I2C ve PWM).
-	- **mutagen**: Mutagen CLI üzerinden dosya senkron yönetimi (cihaz ↔ robot).
-	- **ota**: Over-the-air güncelleme altyapısı (örn: uzaktan Arduino firmware dağıtımı).
-	- **runtime_console**: Logosuz, panel tabanlı sade terminal arayüzü / TUI görünümü (logwrapper'ı içerir).
-	- **scheduler**: Dinamik zamanlanmış periyodik görevler ve HTTP ping işleri.
-	- **system_control**: (eski state_manager, diagnostics, telemetry, config_center, notifier) Global sistem durumu, donanım/yazılım sağlık kontrolü, telemetri verileri ve yapılandırma yönetimi.
-	- **visual_output**: (eski neopixel ve oled_faces) WS2812 LED animasyonları, renk paletleri ve SSD1306 prosedürel göz ifadeleri.
-	- **vlm_bridge**: Yüz algılama/tanıma (OpenCV) ve Vision Language Model isteklerini işleyip donanım komutlarına dönüştürme.
-	- **voice**: (eski speech, speak, wakeword) SpeechRecognition ASR, ses yönü, TTS ve OpenWakeWord dinleyicisi.
+## Modüller (Tek Tek)
+
+- **agent_core** (`modules/agent_core`): 3-katmanlı LLM tabanlı otonom zekâ (Router, Sub-agents, Persona) ve epizodik bellek yönetimi.
+- **ai_provider** (`modules/ai_provider`): LLM sohbet, akış ve persona yönetimi uçları.
+- **arduino_serial** (`modules/arduino_serial`): Arduino Mega ile NDJSON seri köprü; servo, stepper, IMU, telemetri, watchdog ve lazer kontrolü (`esp_http` dahil).
+- **autonomy** (`modules/autonomy`): Live Mode; duygu durum yönetimi (`MoodManager`), davranış döngüsü, yoldaş hedef planlama ve VLM algı birleştirme.
+- **camera** (`modules/camera`): PiCamera2/OpenCV arka ucu, MJPEG/snapshot yayını ve IMX500 on-sensor yayın akışı.
+- **cognitive_memory** (`modules/cognitive_memory`): Kişiler, ilişkiler, görülme kayıtları, sohbet geçmişi ve dünya belleği (SQLite + FTS5 RAG).
+- **common** (`modules/common`): Ortak yardımcılar, YAML/konfig yükleyici, HTTP/CB, termal/RAM ve duygu sözlüğü (`emotion_vocab.py`).
+- **expression** (`modules/expression/semantic`, `piservo`, `animate`, `interactions`): Semantik ifade motoru, kulak servoları, zaman-kodlu poz sekansları ve etkileşim kuralları.
+- **gateway** (`modules/gateway`): Ana FastAPI giriş noktası; tüm modül router'larını, `/healthz` ve `/readyz` kontrollerini toplar.
+- **mcp_client** & **mcp_server** (`modules/mcp_client`, `modules/mcp_server`): Dış MCP araç köprüleri ve JSON-RPC/HTTP sunucu arayüzü.
+- **runtime_console** (`modules/runtime_console`, `logwrapper`): Textual TUI kontrol merkezi ve merkezi dosya/halka tampon loglama katmanı.
+- **system_control** (`modules/system_control/state_manager`, `diagnostics`, `telemetry`, `scheduler`, `config_center`, `notifier`): Global durum, tanı, telemetri, zamanlayıcı, konfigürasyon ve bildirim servisleri.
+- **visual_output** (`modules/visual_output/neopixel`, `oled_faces`): WS2812 NeoPixel LED efektleri ve SSD1306 prosedürel OLED göz ifadeleri.
+- **vlm_bridge** (`modules/vlm_bridge`): Yüz algılama/tanıma (OpenCV), kafa takibi ve uzak GPU multimodal köprüsü.
+- **voice** (`modules/voice/speech`, `speak`, `wakeword`, `speaker_id`): SpeechRecognition ASR/DoA, Piper/pyttsx3 TTS, OpenWakeWord dinleyici ve konuşmacı kimliklendirme.
 
 
-	## Tipik Senaryolar
+## Tipik Senaryolar
 
-	- Hedefe Bak (Görüntü → Servo): Dış istemci görüntüyü işler → `/vlm/track` ile açı gönderir → Arduino (PCA9685) pan/tilt yapar.
-	- Konuş ve Yanıtla: `/speech/start` ile dinle → metni `/ollama/chat`’e gönder → yanıtı `/speak/say` ile seslendir → Interactions NeoPixel efekt tetikler.
-	- Duruma Göre Işıklar: Interactions CPU ısısı/yük, ağ burst ve olay akışını izler → NeoPixel’de base/transient animasyonlar oynatır.
-	- Lazer/LCD/Ultrasonik: `/arduino/laser/*` ile lazerleri tekli/ikili; ultrasonik ölçümleri LCD’de 16×1 uyumlu göster.
+- Hedefe Bak (Görüntü → Servo): Dış istemci görüntüyü işler → `/vlm/track` ile açı gönderir → Arduino (PCA9685) pan/tilt yapar.
+- Konuş ve Yanıtla: `/speech/start` ile dinle → metni `/ollama/chat`’e gönder → yanıtı `/speak/say` ile seslendir → Interactions NeoPixel efekt tetikler.
+- Duruma Göre Işıklar: Interactions CPU ısısı/yük, ağ burst ve olay akışını izler → NeoPixel’de base/transient animasyonlar oynatır.
+- Lazer/LCD/Ultrasonik: `/arduino/laser/*` ile lazerleri tekli/ikili; ultrasonik ölçümleri LCD’de 16×1 uyumlu göster.
 
 
 ## Geliştirici Otomasyonları (GitHub Actions)
@@ -328,27 +324,32 @@ Repo, modül merkezli çalışma akışını destekleyen etiketleme ve yardımc�
 
 ## Modüller ve Belgeler
 
-- Gateway: modules/gateway/README.md
-- Arduino Serial: modules/arduino_serial/README.md
-- Hardware: modules/hardware/README.md
-- Camera: modules/camera/README.md
-- VLM Bridge: modules/vlm_bridge/README.md
-- NeoPixel: modules/neopixel/README.md
-- Interactions: modules/interactions/README.md
-- Speak (TTS): modules/speak/README.md
-- Speech (ASR/DoA): modules/speech/README.md
-- PiServo: modules/piservo/README.md
-- Animate: modules/animate/README.md
-- State Manager: modules/state_manager/README.md
-- Telemetry: modules/telemetry/README.md
-- Scheduler: modules/scheduler/README.md
-- Diagnostics: modules/diagnostics/README.md
-- Notifier: modules/notifier/README.md
-- OTA: modules/ota/README.md
-- Mutagen: modules/mutagen/README.md
-- Config Center: modules/config_center/README.md
-- Log Wrapper: modules/logwrapper/README.md
-- LLM (Ollama): modules/ollama/README.md
+- Gateway: [modules/gateway/README.md](modules/gateway/README.md)
+- Agent Core: [modules/agent_core/README.md](modules/agent_core/README.md)
+- Autonomy: [modules/autonomy/README.md](modules/autonomy/README.md)
+- AI Provider: [modules/ai_provider/README.md](modules/ai_provider/README.md)
+- Arduino Serial: [modules/arduino_serial/README.md](modules/arduino_serial/README.md)
+- Cognitive Memory: [modules/cognitive_memory/README.md](modules/cognitive_memory/README.md)
+- Common: [modules/common/README.md](modules/common/README.md)
+- Camera: [modules/camera/README.md](modules/camera/README.md)
+- VLM Bridge: [modules/vlm_bridge/README.md](modules/vlm_bridge/README.md)
+- NeoPixel: [modules/visual_output/neopixel/README.md](modules/visual_output/neopixel/README.md)
+- OLED Faces: [modules/visual_output/oled_faces/README.md](modules/visual_output/oled_faces/README.md)
+- Interactions: [modules/expression/interactions/README.md](modules/expression/interactions/README.md)
+- PiServo: [modules/expression/piservo/README.md](modules/expression/piservo/README.md)
+- Animate: [modules/expression/animate/README.md](modules/expression/animate/README.md)
+- Speak (TTS): [modules/voice/speak/README.md](modules/voice/speak/README.md)
+- Speech (ASR/DoA): [modules/voice/speech/README.md](modules/voice/speech/README.md)
+- Wakeword: [modules/voice/wakeword/README.md](modules/voice/wakeword/README.md)
+- State Manager: [modules/system_control/state_manager/README.md](modules/system_control/state_manager/README.md)
+- Telemetry: [modules/system_control/telemetry/README.md](modules/system_control/telemetry/README.md)
+- Scheduler: [modules/system_control/scheduler/README.md](modules/system_control/scheduler/README.md)
+- Diagnostics: [modules/system_control/diagnostics/README.md](modules/system_control/diagnostics/README.md)
+- Notifier: [modules/system_control/notifier/README.md](modules/system_control/notifier/README.md)
+- Config Center: [modules/system_control/config_center/README.md](modules/system_control/config_center/README.md)
+- Runtime Console & Logwrapper: [modules/runtime_console/README.md](modules/runtime_console/README.md), [modules/runtime_console/logwrapper/README.md](modules/runtime_console/logwrapper/README.md)
+- MCP Client & Server: [modules/mcp_client/README.md](modules/mcp_client/README.md), [modules/mcp_server/README.md](modules/mcp_server/README.md)
+- Operasyonlar (Apps / Scripts / Tools): [apps/README.md](apps/README.md), [scripts/README.md](scripts/README.md), [tools/README.md](tools/README.md)
 
 
 ## Katkıda Bulunma
