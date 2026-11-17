@@ -36,7 +36,9 @@ logger = logging.getLogger("common.config_loader")
 # Constants
 # =============================================================================
 
-_REQUIRED_MODEL = "qwen3.5:9b"
+from modules.common.model_roles import DEFAULT_CHAT_MODEL
+
+_REQUIRED_MODEL = DEFAULT_CHAT_MODEL
 _GOOGLE_PROVIDERS = frozenset({"google", "google_ai_studio", "gemini"})
 
 # Default Gemini model for Google AI Studio (from gemini_model.py)

@@ -16,7 +16,9 @@ from modules.common.ollama_url import (
     unwrap_url,
 )
 
-LOCAL_MODEL = "qwen3.5:9b"
+from modules.common.model_roles import DEFAULT_CHAT_MODEL, resolve_role_model
+
+LOCAL_MODEL = DEFAULT_CHAT_MODEL
 LOCAL_PROVIDER = "ollama"
 LOCAL_OLLAMA_URL = DEFAULT_REMOTE_OLLAMA_URL
 
@@ -147,9 +149,12 @@ class ModelPolicy:
         self._strict_single_model = bool(enabled)
 
     def _effective_model(self, config: Dict[str, Any]) -> str:
+        llm_cfg = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
+        explicit_single = llm_cfg.get("single_model_mode") if "single_model_mode" in llm_cfg else None
+        if explicit_single is False:
+            return resolve_role_model(config, "chat")
         if self._strict_single_model:
             return self._required_model or LOCAL_MODEL
-        llm_cfg = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
         agent_cfg = config.get("agent", {}) if isinstance(config.get("agent"), dict) else {}
         for candidate in (llm_cfg.get("model"), agent_cfg.get("model"), self._required_model):
             name = str(candidate or "").strip()
@@ -159,11 +164,16 @@ class ModelPolicy:
 
     def resolve_model(self, config: Dict[str, Any]) -> Dict[str, Any]:
         llm_cfg = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
+        enforced = (
+            bool(llm_cfg.get("single_model_mode"))
+            if "single_model_mode" in llm_cfg and llm_cfg.get("single_model_mode") is not None
+            else self._strict_single_model
+        )
         return {
             "provider": LOCAL_PROVIDER,
             "model": self._effective_model(config),
             "temperature": llm_cfg.get("temperature", 0.3),
-            "enforced": self._strict_single_model,
+            "enforced": enforced,
         }
 
     def get_provider_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
