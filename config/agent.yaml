@@ -1,6 +1,6 @@
 agent:
   auth_token: ""
-  model: qwen3.5:9b
+  model: sentry:latest
   temperature: 0.15
   num_ctx: 4096
   cooldown_s: 0.1
@@ -14,18 +14,40 @@ agent:
   max_steps: 4
 llm:
   provider: ollama
-  single_model_mode: true
-  model: qwen3.5:9b
-  primary_model: qwen3.5:9b
+  single_model_mode: false
+  model: sentry:latest
+  primary_model: sentry:latest
+  allowed_models:
+    - sentry:latest
+    - qwen3.5:9b
+    - nemotron-3.5-bolt:e4b
+    - qwen2.5-coder:7b
   clm_fallback_enabled: false
-  clm_fallback_model: ''
+  clm_fallback_model: nemotron-3.5-bolt:e4b
   fallback_on_missing_model: false
   fallback_on_error: false
   think: false
   keep_alive: -1
+models:
+  roles:
+    chat: sentry:latest
+    companion: sentry:latest
+    persona: sentry:latest
+    followup: sentry:latest
+    vision: qwen3.5:9b
+    vlm: qwen3.5:9b
+    scene_description: qwen3.5:9b
+    coder: qwen2.5-coder:7b
+    developer: qwen2.5-coder:7b
+    utility: nemotron-3.5-bolt:e4b
+    planner: nemotron-3.5-bolt:e4b
+    reflection: nemotron-3.5-bolt:e4b
+    memory: nemotron-3.5-bolt:e4b
+    translator: nemotron-3.5-bolt:e4b
+    subagent: nemotron-3.5-bolt:e4b
 ollama:
   base_url: http://whoismrsentry.local:11434
-  model: qwen3.5:9b
+  model: sentry:latest
   request_timeout: 60
 runtime_profile:
   active: remote_ollama
@@ -45,16 +67,21 @@ runtime_profile:
     remote_ollama:
       llm:
         provider: ollama
-        single_model_mode: true
-        model: qwen3.5:9b
-        primary_model: qwen3.5:9b
+        single_model_mode: false
+        model: sentry:latest
+        primary_model: sentry:latest
+        allowed_models:
+          - sentry:latest
+          - qwen3.5:9b
+          - nemotron-3.5-bolt:e4b
+          - qwen2.5-coder:7b
       agent:
-        model: qwen3.5:9b
+        model: sentry:latest
         ollama_base_url: http://whoismrsentry.local:11434
         request_timeout: 60
       ollama:
         base_url: http://whoismrsentry.local:11434
-        model: qwen3.5:9b
+        model: sentry:latest
         request_timeout: 60
       vlm_bridge:
         vision_llm:
@@ -66,6 +93,7 @@ runtime_profile:
         ollama:
           endpoint: '@gateway/ollama/chat'
           model: qwen3.5:9b
+          followup_model: sentry:latest
           timeout: 12.0
 ollama_service:
   server:
@@ -82,18 +110,23 @@ ollama_service:
   translation:
     enabled: false
     default_source_lang: tr
-    model: qwen3.5:9b
+    model: nemotron-3.5-bolt:e4b
     cache_size: 128
   llm:
     provider: ollama
-    single_model_mode: true
-    model: qwen3.5:9b
-    primary_model: qwen3.5:9b
+    single_model_mode: false
+    model: sentry:latest
+    primary_model: sentry:latest
+    allowed_models:
+      - sentry:latest
+      - qwen3.5:9b
+      - nemotron-3.5-bolt:e4b
+      - qwen2.5-coder:7b
     fallback_on_missing_model: false
     fallback_on_error: false
   ollama:
     base_url: http://whoismrsentry.local:11434
-    model: qwen3.5:9b
+    model: sentry:latest
     request_timeout: 60
 vlm_bridge:
   server:
@@ -171,12 +204,18 @@ vlm_bridge:
   ollama:
     endpoint: '@gateway/ollama/chat'
     model: qwen3.5:9b
+    followup_model: sentry:latest
     timeout: 12.0
     num_predict: 160
   llm:
     provider: ollama
-    single_model_mode: true
+    single_model_mode: false
     primary_model: qwen3.5:9b
+    allowed_models:
+      - qwen3.5:9b
+      - sentry:latest
+      - nemotron-3.5-bolt:e4b
+      - qwen2.5-coder:7b
     clm_fallback_enabled: false
     clm_fallback_model: ''
     fallback_on_missing_model: false
@@ -185,7 +224,7 @@ vlm_bridge:
 
 google_ai_studio:
   api_key: ''
-  model: qwen3.5:9b
+  model: gemma-4-31b-it
   base_url: http://whoismrsentry.local:11434
   request_timeout: 30.0
   speak:
@@ -552,10 +591,12 @@ provider_truth:
   active_provider: ollama
   runtime_profile: remote_ollama
   reason: raspberry_pi_runtime_with_configured_ollama_provider
-  llm_model: qwen3.5:9b
+  llm_model: sentry:latest
+  vlm_model: qwen3.5:9b
+  coder_model: qwen2.5-coder:7b
+  utility_model: nemotron-3.5-bolt:e4b
   ollama_base_url: http://whoismrsentry.local:11434
   vlm_provider: ollama
-  vlm_model: qwen3.5:9b
   remote_multimodal_url: ''
   updated_by: 37_ssh_tunnel_ollama_profile.ps1
 environment:

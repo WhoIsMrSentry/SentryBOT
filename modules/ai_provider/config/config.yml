@@ -4,16 +4,21 @@ server:
   port: 8099
 llm:
   provider: ollama   # ollama | google_ai_studio
-  single_model_mode: true      # Keep one base model; do not create persona-derived models
+  single_model_mode: false     # Role-based local multi-model routing
   use_persona_models: false    # Disable legacy persona model injection
+  allowed_models:
+    - sentry:latest
+    - qwen3.5:9b
+    - nemotron-3.5-bolt:e4b
+    - qwen2.5-coder:7b
 ollama:
   base_url: http://whoismrsentry.local:11434
-  model: qwen3.5:9b
+  model: sentry:latest
   request_timeout: 45
-  num_predict: 60          # Fast mode default — kısa cevaplar
+  num_predict: 4096        # Uzun yanıtları kesmeden üretmek için üst sınır
 google_ai_studio:
   api_key: ''
-  model: qwen3.5:9b
+  model: gemini-2.5-flash
   base_url: http://whoismrsentry.local:11434
   request_timeout: 20
 persona:
@@ -26,5 +31,5 @@ actions:
 translation:
   enabled: false
   default_source_lang: tr
-  model: qwen3.5:9b
+  model: nemotron-3.5-bolt:e4b
   cache_size: 128
