@@ -399,15 +399,19 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     except Exception:
                         pass
 
-            self.progress_manager.emit_ack(progress_token, custom_text=custom_ack, speak=not use_fast_path)
-            survival_override, world_context, active_model = self._prepare_turn_context(
-                prompt, session_language, trace_id
-            )
-
             provider_error = self._check_provider_availability()
             if provider_error:
                 latency_trace.finish(trace_id, "provider_unavailable")
                 return {**provider_error, "trace_id": trace_id}
+
+            self.progress_manager.emit_ack(
+                progress_token,
+                custom_text=custom_ack,
+                speak=bool(not event_type and not use_fast_path),
+            )
+            survival_override, world_context, active_model = self._prepare_turn_context(
+                prompt, session_language, trace_id
+            )
 
             final_text = ""
             total_steps = 0

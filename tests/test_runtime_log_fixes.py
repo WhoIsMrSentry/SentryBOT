@@ -272,3 +272,68 @@ def test_idempotent_shutdown_and_camera_handle_release(caplog):
     app = SimpleNamespace(state=SimpleNamespace(started=started))
     run_robot._stop_started_services(app)
     assert len(calls) == 1
+
+
+def test_interactions_arduino_monitor_disabled_when_arduino_unmounted(monkeypatch):
+    from fastapi import FastAPI
+    from modules.gateway.services import bootstrap_ai
+
+    monkeypatch.setattr(bootstrap_ai, "_should_autostart_services", lambda: False)
+    app = FastAPI()
+    started = {"gateway_base_url": "http://127.0.0.1:8080"}
+    bootstrap_ai._include_interactions(app, started, {})
+    eng = started["interactions"]
+    assert eng.monitor_cfg.get("arduino") is None
+    assert eng.get_state()["ctx"]["arduino_connected"] is False
+
+
+def test_agent_turn_core_skips_ack_on_unavailable_provider_or_event(monkeypatch):
+    from modules.agent_core.services.agent import AgentOrchestrator
+
+    ag = AgentOrchestrator.__new__(AgentOrchestrator)
+    ag.config = {}
+    ag.world_state = SimpleNamespace(update_laya_state=lambda _d: None)
+    ag.tool_registry = SimpleNamespace(status_hook=None)
+    ack_calls = []
+    ag.progress_manager = SimpleNamespace(
+        new_request=lambda language="tr": "tok1",
+        emit_ack=lambda token, custom_text="", speak=True: ack_calls.append((token, custom_text, speak)),
+        emit_final=lambda token: None,
+    )
+    ag._try_enter_turn = lambda prompt, bypass_cooldown=False: True
+    ag._bind_speaker = lambda spk: None
+    ag._exit_turn = lambda: None
+    ag._should_fast_path = lambda prompt, native_tools=False: False
+    ag._record_laya_latency = lambda _tid: None
+    ag._build_progress_callback = lambda tok, cb: (lambda _evt: None)
+    ag._prepare_turn_context = lambda prompt, lang, tid: (None, "", "qwen3.5:9b")
+    ag._normalize_session_language = lambda lang: lang or "tr"
+    ag.speech_arbiter = SimpleNamespace(_speak_fn=None)
+    ag.last_routed_subagents = []
+
+    # 1. Unavailable provider must return error WITHOUT emitting spoken ack
+    ag._check_provider_availability = lambda: {"text": "down", "error": "ollama_down"}
+    res = ag._run_turn_core("merhaba", bypass_cooldown=False, language="tr", speaker=None, native_tools=False, trace_id="t1")
+    assert res["error"] == "ollama_down"
+    assert ack_calls == []
+
+    # 2. Background event_type ("sound_detected") must never speak ack
+    ag._check_provider_availability = lambda: None
+    ag.tri_layer_enabled = False
+    ag.fast_path_num_predict = None
+    ag.max_steps = 1
+    ag._make_sentence_callback = lambda *_a, **_k: None
+    ag._native_loop_messages = lambda *_a, **_k: []
+    ag._run_native_history_loop = lambda *_a, **_k: ("", 0)
+    ag._finalize_turn_memory = lambda *_a, **_k: None
+    ag.autonomy_client = None
+    ag._run_turn_core(
+        "arka plan sesi",
+        bypass_cooldown=True,
+        language="tr",
+        speaker=None,
+        native_tools=False,
+        trace_id="t2",
+        event_type="sound_detected",
+    )
+    assert ack_calls and ack_calls[-1][2] is False

@@ -91,21 +91,20 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
     from modules.gateway.url import gateway_url, rewrite_loopback_urls  # type: ignore
 
     base = str(started.get("gateway_base_url", "http://127.0.0.1:8080"))
-    icfg = rewrite_loopback_urls(
-        load_inter_cfg(None, overrides=_agent_section("interactions") or None),
-        base,
-    )
-    icfg.setdefault("adapter", {})["http_base_url"] = gateway_url(base, "/neopixel")
+    raw_inter_cfg = load_inter_cfg(None, overrides=_agent_section("interactions") or None)
     arduino_mounted = started.get("arduino") is not None and not (
         isinstance(started.get("arduino"), dict) and started["arduino"].get("kind") == "stub"
     )
     if not arduino_mounted:
-        mon = icfg.get("monitor")
+        mon = raw_inter_cfg.get("monitor")
         if isinstance(mon, dict) and mon.get("arduino") is not None:
             ard_mon = mon.get("arduino")
             raw_url = str(ard_mon.get("url", "") if isinstance(ard_mon, dict) else "").strip()
-            if not raw_url or raw_url.startswith("@gateway"):
+            norm_base = base.rstrip("/")
+            if not raw_url or raw_url.startswith("@gateway") or (norm_base and raw_url.startswith(norm_base)):
                 mon["arduino"] = None
+    icfg = rewrite_loopback_urls(raw_inter_cfg, base)
+    icfg.setdefault("adapter", {})["http_base_url"] = gateway_url(base, "/neopixel")
     eng = InteractionEngine(
         icfg,
         neo_client=started.get("neopixel"),
