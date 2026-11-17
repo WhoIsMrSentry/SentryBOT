@@ -11,6 +11,12 @@ from .agent_context import AgentContextMixin
 from .agent_turn import AgentTurnMixin
 from modules.common.latency_trace import latency_trace
 from modules.common.model_policy import get_model_policy  # type: ignore
+from modules.common.model_roles import (
+    ROLE_CHAT,
+    explicit_single_model_mode,
+    infer_prompt_role,
+    resolve_role_model,
+)
 from .laya_action_contract import bind_laya_action_proposal
 
 logger = logging.getLogger("agent.orchestrator")
@@ -212,8 +218,13 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             if getattr(self, "provider_client", None) is not None and hasattr(self.provider_client, "generate_text"):
                 return self.provider_client.generate_text(prompt)
             if getattr(self, "ollama_client", None) is not None:
+                reflection_model = resolve_role_model(
+                    getattr(self, "config", None),
+                    "reflection",
+                    fallback=self.model,
+                )
                 resp = self.ollama_client.chat(
-                    model=self.model,
+                    model=reflection_model,
                     messages=[{"role": "user", "content": prompt}],
                     options={"temperature": 0.4},
                 )
@@ -226,11 +237,18 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             logger.debug("generate_reflection failed: %s", exc)
         return None
 
-    def _get_active_persona_model(self) -> str:
-        """Resolve the model for the native tool loop using centralized model policy."""
+    def _get_active_persona_model(self, prompt: str = "") -> str:
+        """Resolve the model for the native tool loop using role-aware model policy."""
+        cfg = getattr(self, "config", None)
         policy = get_model_policy()
-        resolved = policy.resolve_model(self.config)
-        return str(resolved.get("model", self.model))
+        resolved = policy.resolve_model(cfg)
+        default_model = str(resolved.get("model", self.model))
+        if explicit_single_model_mode(cfg) is True:
+            return default_model
+        role = infer_prompt_role(prompt) if prompt else ROLE_CHAT
+        if role != ROLE_CHAT:
+            return resolve_role_model(cfg, role, prompt=prompt, fallback=default_model)
+        return resolve_role_model(cfg, ROLE_CHAT, fallback=default_model)
 
     def _resolve_turn_laya_decision(self, user_prompt: str, laya_eng: Any) -> Any:
         """Reuse an existing System 1 decision for the current prompt when available."""
@@ -273,7 +291,10 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         if memory_context:
             world_context = f"{world_context}\n\n[World Memory]\n{memory_context}"
         self._append_history("user", prompt)
-        active_model = self._get_active_persona_model()
+        try:
+            active_model = self._get_active_persona_model(prompt)
+        except TypeError:
+            active_model = self._get_active_persona_model()
         latency_trace.mark(trace_id, "agent.context_done", {"model": active_model})
         return survival_override, world_context, active_model
 
@@ -504,6 +525,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                 "thoughts": thoughts,
                 "actions": executed_actions,
                 "plan": [],
+                "model": active_model,
                 "route": self.last_routed_subagents,
                 "subagents": subagent_reports,
                 "speech_handled": stream_state["spoken"] > 0,

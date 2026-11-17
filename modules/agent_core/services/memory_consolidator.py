@@ -108,10 +108,12 @@ class MemoryConsolidator:
             prompt = _FACT_EXTRACTION_PROMPT.replace("{conversation}", str(conversation))
             # Use the LLM client directly (assumes ollama-compatible interface)
             if hasattr(self.llm_client, "chat"):
+                from modules.common.model_roles import DEFAULT_UTILITY_MODEL
+
                 model_name = (
                     getattr(self, "llm_model", None)
                     or getattr(self.llm_client, "model", None)
-                    or "qwen3.5:9b"
+                    or DEFAULT_UTILITY_MODEL
                 )
                 resp = self.llm_client.chat(
                     model=model_name,

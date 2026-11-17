@@ -135,8 +135,14 @@ class AgentContextMixin(AgentMemorySyncMixin):
         self._action_http_timeout_s = float(actions_cfg.get("http_timeout_s", 2.5))
 
     def _init_llm_settings(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        from modules.common.model_roles import DEFAULT_CHAT_MODEL, resolve_role_model
+
         agent_cfg = config.get("agent", {})
-        self.model = agent_cfg.get("model", "llama3.2:3b-q4_K_M")
+        self.model = resolve_role_model(
+            config,
+            "chat",
+            fallback=agent_cfg.get("model") or DEFAULT_CHAT_MODEL,
+        )
         self.temperature = agent_cfg.get("temperature", 0.15)
         self.num_ctx = agent_cfg.get("num_ctx", 4096)
         self.cooldown = agent_cfg.get("cooldown_s", 1.0)

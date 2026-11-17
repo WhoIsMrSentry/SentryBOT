@@ -35,6 +35,8 @@ class AgentMemorySyncMixin(AgentFastPathMixin):
             except Exception:
                 social_db = None
 
+            from modules.common.model_roles import resolve_role_model
+
             consolidator = MemoryConsolidator(
                 memory=getattr(self, "memory", None),
                 social_db=social_db,
@@ -42,8 +44,11 @@ class AgentMemorySyncMixin(AgentFastPathMixin):
                 world_memory=world_memory,
                 llm_client=getattr(self, "ollama_client", None) or getattr(self, "provider_client", None),
             )
-            if getattr(self, "model", None):
-                consolidator.llm_model = self.model
+            consolidator.llm_model = resolve_role_model(
+                getattr(self, "config", None),
+                "memory",
+                fallback=getattr(self, "model", None),
+            )
             return consolidator
         except Exception as exc:
             logger.warning("MemoryConsolidator not available: %s", exc)

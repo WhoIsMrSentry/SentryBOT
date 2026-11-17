@@ -3,11 +3,13 @@ from __future__ import annotations
 import os as _sentrybot_agent_turn_os
 
 def _sentrybot_agent_turn_target_model() -> str:
+    from modules.common.model_roles import DEFAULT_CHAT_MODEL
+
     return (
         _sentrybot_agent_turn_os.environ.get("SENTRYBOT_OLLAMA_MODEL")
         or _sentrybot_agent_turn_os.environ.get("SENTRYBOT_MODEL")
         or _sentrybot_agent_turn_os.environ.get("SENTRYBOT_LLM_MODEL")
-        or "qwen3.5:9b"
+        or DEFAULT_CHAT_MODEL
     ).strip()
 
 def _sentrybot_normalize_agent_turn_model(model) -> str:
@@ -20,7 +22,6 @@ def _sentrybot_normalize_agent_turn_model(model) -> str:
         or value == "qwen2.5"
         or value == "qwen2.5:latest"
         or value.startswith("qwen2.5:")
-        or value.startswith("qwen2.5-coder:")
     ):
         return target
 

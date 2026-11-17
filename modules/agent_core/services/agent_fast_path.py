@@ -129,4 +129,18 @@ class AgentFastPathMixin:
                 f"{system_prompt}\n\n"
                 f"[SYSTEM1 SEMANTIC HINT] Implied parameters for this indirect request: {action_hint}"
             )
+        from modules.common.model_roles import ROLE_CODER, explicit_single_model_mode, infer_prompt_role
+
+        if explicit_single_model_mode(getattr(self, "config", None)) is False:
+            last_user = ""
+            for item in reversed(history):
+                if isinstance(item, dict) and item.get("role") == "user":
+                    last_user = str(item.get("content") or "")
+                    break
+            if infer_prompt_role(last_user) == ROLE_CODER:
+                system_prompt = (
+                    f"{system_prompt}\n\n"
+                    "[CODING TASK] Focus on clean, accurate code and concise technical explanation. "
+                    "Only invoke robot hardware/motion/light tools if explicitly asked."
+                )
         return [{"role": "system", "content": system_prompt}] + history
