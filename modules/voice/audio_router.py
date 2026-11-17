@@ -19,6 +19,42 @@ import numpy as np
 logger = logging.getLogger("voice.audio_router")
 
 
+def _ensure_wsl_host_microphone_unmuted() -> None:
+    """In WSLg, unmute the Windows default capture endpoint if muted at the OS level."""
+    import os
+    import shutil
+    import subprocess
+
+    if os.environ.get("PYTEST_CURRENT_TEST") or not os.path.exists("/mnt/wslg"):
+        return
+    ps_exe = shutil.which("powershell.exe") or "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+    if not os.path.exists(ps_exe):
+        return
+    ps_script = (
+        "Add-Type -TypeDefinition '"
+        "using System; using System.Runtime.InteropServices;"
+        "[Guid(\"5CDF2C82-841E-4546-9722-0CF74078229A\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]"
+        "interface IAudioEndpointVolume { int a(); int b(); int c(); int d(); int SetMasterVolumeLevelScalar(float l, Guid g); int e(); int GetMasterVolumeLevelScalar(out float l); int f(); int g(); int h(); int i(); int SetMute([MarshalAs(UnmanagedType.Bool)] bool m, Guid g); int GetMute(out bool m); }"
+        "[Guid(\"D666063F-1587-4E43-81F1-B948E807363F\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]"
+        "interface IMMDevice { int Activate(ref Guid iid, int cls, IntPtr p, [MarshalAs(UnmanagedType.IUnknown)] out object o); }"
+        "[Guid(\"A95664D2-9614-4F35-A746-DE8DB63617E6\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]"
+        "interface IMMDeviceEnumerator { int a(); int GetDefaultAudioEndpoint(int d, int r, out IMMDevice ep); }"
+        "[ComImport, Guid(\"BCDE0395-E52F-467C-8E3D-C4579291692E\")] class E {}"
+        "public class U { public static void Fix() { var en=(IMMDeviceEnumerator)(new E()); IMMDevice d; en.GetDefaultAudioEndpoint(1,0,out d); Guid g=typeof(IAudioEndpointVolume).GUID; object o; d.Activate(ref g,23,IntPtr.Zero,out o); var v=(IAudioEndpointVolume)o; bool m; float l; v.GetMute(out m); v.GetMasterVolumeLevelScalar(out l); if(m){v.SetMute(false,Guid.Empty);} if(l<0.5f){v.SetMasterVolumeLevelScalar(0.9f,Guid.Empty);} } }"
+        "'; [U]::Fix()"
+    )
+    try:
+        subprocess.run(
+            [ps_exe, "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=4.0,
+            check=False,
+        )
+    except Exception as exc:
+        logger.debug("WSL host mic unmute check skipped: %s", exc)
+
+
 def _is_alsa_device_name(device: Any) -> bool:
     if device is None:
         return False
@@ -385,6 +421,7 @@ class AudioCapture:
                 return False
 
             self._stop_event.clear()
+            threading.Thread(target=_ensure_wsl_host_microphone_unmuted, daemon=True).start()
             while not self._raw_queue.empty():
                 try:
                     self._raw_queue.get_nowait()
