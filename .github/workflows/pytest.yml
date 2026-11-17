@@ -11,10 +11,13 @@ on:
       - dev
     paths:
       - '**/*.py'
-      - 'pytest.ini'
       - 'pyproject.toml'
+      - 'requirements.txt'
+      - '.env.example'
+      - 'deploy/systemd/**'
       - 'scripts/install_all_requirements.py'
       - 'modules/**/requirements.txt'
+      - 'services/**/requirements.txt'
       - '.github/workflows/**'
   pull_request:
     branches:
@@ -24,7 +27,7 @@ on:
 
 jobs:
   ruff:
-    name: Ruff
+    name: Ruff & Safety Guards
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -42,10 +45,17 @@ jobs:
       - name: Ruff check
         run: python -m ruff check .
 
+      - name: Robot safety & env consistency guard
+        run: python tools/ci/robot_safety_ci_guard.py --skip-tests
+
   pytest:
-    name: Run pytest
+    name: Run pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.13']
     env:
       PYTHONUNBUFFERED: "1"
       PYTHONFAULTHANDLER: "1"
@@ -54,17 +64,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: ${{ matrix.python-version }}
           cache: 'pip'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Skip remote tool requirements that are not part of module test matrix
-          python scripts/install_all_requirements.py --fail-fast --skip remote_tts_server
+          python scripts/install_all_requirements.py --profile ci --fail-fast
+          python -m pip install -r services/remote_multimodal_server/requirements.txt
           python -m pip install pytest httpx
           # Intentional: CI proves speech/wakeword with mocks, not native audio.
           # webrtcvad/sounddevice can abort the interpreter on GitHub runners.
@@ -78,14 +88,14 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          timeout 420s python -m pytest --collect-only -vv tests 2>&1 | tee pytest_collect_output.txt
+          timeout 420s python -m pytest --collect-only -vv tests services/remote_multimodal_server/tests services/remote_tts_server/tests 2>&1 | tee pytest_collect_output.txt
           code=${PIPESTATUS[0]}
           set -e
           if [ "$code" = "124" ]; then
             echo "Pytest collection timed out after 420s." | tee -a pytest_collect_output.txt
           fi
           if [ "$code" = "0" ] && ! grep -Eq "collected [1-9][0-9]* items" pytest_collect_output.txt; then
-            echo "Pytest collected zero tests from tests/." | tee -a pytest_collect_output.txt
+            echo "Pytest collected zero tests." | tee -a pytest_collect_output.txt
             code=1
           fi
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -98,7 +108,7 @@ jobs:
         run: |
           set -o pipefail
           set +e
-          timeout 1800s python -m pytest -q tests \
+          timeout 1800s python -m pytest -q tests services/remote_multimodal_server/tests services/remote_tts_server/tests \
             --maxfail=1 \
             --durations=20 \
             2>&1 | tee pytest_output.txt
@@ -158,7 +168,11 @@ jobs:
           import subprocess
           import sys
 
-          dirs = sorted(path for path in glob.glob("modules/*/tests") if os.path.isdir(path))
+          dirs = sorted(
+              path
+              for path in (glob.glob("tests/modules/*") + glob.glob("services/*/tests"))
+              if os.path.isdir(path)
+          )
           print(f"[ci-diag] test_dir_count={len(dirs)}", flush=True)
 
           abort_hit = ""
