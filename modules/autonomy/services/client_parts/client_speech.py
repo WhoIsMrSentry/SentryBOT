@@ -43,13 +43,21 @@ class ClientSpeechMixin:
             return start_m <= now < end_m
         return now >= start_m or now < end_m
 
-    def speak(self, text: str, tone=None, engine=None, language=None, trace_id=None) -> Any:
+    def speak(self, text: str, tone=None, engine=None, language=None, trace_id=None, voice=None) -> Any:
         payload = self._build_speak_payload(
-            text, tone=tone, engine=engine, language=language, trace_id=trace_id,
+            text, tone=tone, engine=engine, language=language, trace_id=trace_id, voice=voice,
         )
         return self._post("speak", "/say", payload)
 
-    def _build_speak_payload(self, text: str, tone=None, engine=None, language=None, trace_id=None) -> Dict[str, Any]:
+    def _build_speak_payload(
+        self,
+        text: str,
+        tone=None,
+        engine=None,
+        language=None,
+        trace_id=None,
+        voice=None,
+    ) -> Dict[str, Any]:
         text_value = str(text or "")
         if self._quiet_hours_active():
             max_chars = int(self.speech_quiet_cfg.get("max_chars", 120))
@@ -69,11 +77,22 @@ class ClientSpeechMixin:
             payload["language"] = str(language)
         if trace_id:
             payload["trace_id"] = str(trace_id)
+        if voice:
+            payload["voice"] = str(voice).strip()
         return payload
 
-    def speak_stream(self, text: str, tone=None, engine=None, language=None, max_chunk_chars=None, trace_id=None) -> Any:
+    def speak_stream(
+        self,
+        text: str,
+        tone=None,
+        engine=None,
+        language=None,
+        max_chunk_chars=None,
+        trace_id=None,
+        voice=None,
+    ) -> Any:
         payload = self._build_speak_payload(
-            text, tone=tone, engine=engine, language=language, trace_id=trace_id,
+            text, tone=tone, engine=engine, language=language, trace_id=trace_id, voice=voice,
         )
         if not str(payload.get("text", "")).strip():
             return {"ok": False, "error": "text is empty"}
@@ -85,7 +104,9 @@ class ClientSpeechMixin:
         start_timeout = float(self.request_timeouts.get("speak_stream_start_s", 4.0))
         resp = self._post("speak", "/say_stream", payload, timeout_s=start_timeout)
         if not resp or not resp.get("ok"):
-            return self.speak(text, tone=tone, engine=engine, language=language, trace_id=trace_id)
+            return self.speak(
+                text, tone=tone, engine=engine, language=language, trace_id=trace_id, voice=voice,
+            )
 
         job_id = str(resp.get("job_id") or "").strip()
         if not job_id:
@@ -111,12 +132,12 @@ class ClientSpeechMixin:
             time.sleep(poll_s)
         return {"ok": False, "error": "stream_timeout", "job_id": job_id}
 
-    def speak_preferred(self, text: str, tone=None, engine=None, language=None, trace_id=None) -> Any:
+    def speak_preferred(self, text: str, tone=None, engine=None, language=None, trace_id=None, voice=None) -> Any:
         if bool(self.speech_stream_cfg.get("use_stream_tts", False)):
             return self.speak_stream(
-                text, tone=tone, engine=engine, language=language, trace_id=trace_id,
+                text, tone=tone, engine=engine, language=language, trace_id=trace_id, voice=voice,
             )
-        return self.speak(text, tone=tone, engine=engine, language=language, trace_id=trace_id)
+        return self.speak(text, tone=tone, engine=engine, language=language, trace_id=trace_id, voice=voice)
 
     def chat(self, query: str, apply_actions: bool | None = None, source_lang: str | None = None, response_lang: str | None = None) -> Any:
         params = {"query": query}
