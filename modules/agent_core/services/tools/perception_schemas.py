@@ -215,7 +215,7 @@ def get_perception_tool_definitions() -> List[Dict[str, Any]]:
                     "properties": {
                         "question": {
                             "type": "string",
-                            "description": "Question about the scene in Turkish",
+                            "description": "Clear, concise question about what is visible in the scene",
                         }
                     },
                     "required": ["question"],
@@ -253,6 +253,31 @@ def get_perception_tool_definitions() -> List[Dict[str, Any]]:
                 "name": "stop_follow",
                 "description": "Stop any active follow mode (regular or owner).",
                 "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "read_text_ocr",
+                "description": "Read printed or handwritten text visible in the camera view using OCR.",
+                "parameters": {"type": "object", "properties": {}, "required": []},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "register_face",
+                "description": "Register the face currently visible in front of the camera under a person's name.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "Person's name to associate with the visible face.",
+                        }
+                    },
+                    "required": ["name"],
+                },
             },
         },
     ]

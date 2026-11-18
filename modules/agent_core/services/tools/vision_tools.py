@@ -179,3 +179,35 @@ class VisionToolsMixin:
             return f"Stop follow failed: HTTP {resp.status_code}"
         except Exception as exc:
             return f"Stop follow failed: {exc}"
+
+    def read_text_ocr(self) -> str:
+        """Run OCR on the current camera frame through gateway vlm/ocr."""
+        try:
+            resp = self._http.post("vlm/ocr", json_data={}, timeout=8.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                text = str(data.get("text") or data.get("full_text") or "").strip()
+                if text:
+                    return f"OCR text: {text}"
+                lines = data.get("lines") or data.get("results") or []
+                if lines:
+                    return f"OCR lines: {lines}"
+                return "No text detected in the camera frame."
+            return f"OCR request failed: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"OCR failed: {exc}"
+
+    def register_face(self, name: str) -> str:
+        """Register the currently visible face via vlm/faces/register."""
+        cleaned = str(name or "").strip()
+        if not cleaned:
+            return "Error: person name is required."
+        try:
+            resp = self._http.post("vlm/faces/register", params={"name": cleaned}, timeout=6.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                msg = data.get("message") or data.get("status") or "Face registration attempted."
+                return f"Register face '{cleaned}': {msg}"
+            return f"Face registration failed: HTTP {resp.status_code}"
+        except Exception as exc:
+            return f"Face registration failed: {exc}"
