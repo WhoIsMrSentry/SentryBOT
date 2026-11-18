@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _DDL: tuple[str, ...] = (
     """
@@ -63,6 +63,7 @@ _DDL: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS chat_episodes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         person_id TEXT NOT NULL,
+        persona_id TEXT NOT NULL DEFAULT 'sentry',
         ts REAL NOT NULL,
         role TEXT NOT NULL DEFAULT 'user',
         text TEXT NOT NULL,
@@ -75,10 +76,11 @@ _DDL: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS relationships (
         person_id TEXT NOT NULL,
+        persona_id TEXT NOT NULL DEFAULT 'sentry',
         key TEXT NOT NULL,
         value TEXT NOT NULL,
         updated_at REAL NOT NULL,
-        PRIMARY KEY (person_id, key),
+        PRIMARY KEY (person_id, persona_id, key),
         FOREIGN KEY (person_id) REFERENCES persons(id) ON DELETE CASCADE
     )
     """,
@@ -86,6 +88,7 @@ _DDL: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS moments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         person_id TEXT NOT NULL,
+        persona_id TEXT NOT NULL DEFAULT 'sentry',
         ts REAL NOT NULL,
         kind TEXT NOT NULL DEFAULT 'note',
         text TEXT NOT NULL,
@@ -139,6 +142,7 @@ _DDL: tuple[str, ...] = (
     """
     CREATE TABLE IF NOT EXISTS world_memories (
         id TEXT PRIMARY KEY,
+        persona_id TEXT NOT NULL DEFAULT 'sentry',
         kind TEXT NOT NULL,
         name TEXT NOT NULL,
         summary TEXT NOT NULL,
@@ -162,6 +166,7 @@ _DDL: tuple[str, ...] = (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts REAL NOT NULL,
         memory_id TEXT NOT NULL,
+        persona_id TEXT NOT NULL DEFAULT 'sentry',
         source TEXT NOT NULL,
         text TEXT NOT NULL,
         details_json TEXT NOT NULL DEFAULT '{}',
