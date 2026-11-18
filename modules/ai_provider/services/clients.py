@@ -157,12 +157,17 @@ class OllamaClient:
         return self._breaker.state()
 
     def create_model(self, name: str, modelfile: str) -> bool:
+        from modules.common.ollama_modelfile import build_ollama_create_payload
+
         url = f"{self.base_url}/api/create"
-        payload = {"name": name, "modelfile": modelfile, "stream": False}
+        modern_payload = build_ollama_create_payload(name, modelfile)
         try:
-            resp = self._http_post(url, json=payload, timeout=float(self.timeout * 2))
+            resp = self._http_post(url, json=modern_payload, timeout=float(self.timeout * 2))
+            if resp.status_code in {400, 422}:
+                legacy_payload = {"name": name, "modelfile": modelfile, "stream": False}
+                resp = self._http_post(url, json=legacy_payload, timeout=float(self.timeout * 2))
             resp.raise_for_status()
-            logger.info("Ollama model '%s' created/updated successfully.", name)
+            logger.info("Ollama model '%s' created/updated successfully from '%s'.", name, modern_payload.get("from"))
             return True
         except Exception as exc:
             logger.error("Failed to create Ollama model '%s': %s", name, exc)
