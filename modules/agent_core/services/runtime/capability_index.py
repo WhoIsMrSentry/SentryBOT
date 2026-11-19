@@ -38,6 +38,18 @@ DEFAULT_TOOL_CAPABILITIES: Dict[str, List[str]] = {
     "cancel_action": ["action.cancel"],
     "print_to_lcd": ["expression.lcd"],
     "get_last_rfid": ["sensors.rfid"],
+    "robot_posture": ["motion.posture", "hardware.legs"],
+    "move_body": ["motion.drive", "hardware.legs"],
+    "control_laser": ["hardware.laser"],
+    "move_ears": ["expression.ears", "hardware.ears"],
+    "play_buzzer": ["expression.audio", "hardware.buzzer"],
+    "read_text_ocr": ["vision.ocr", "perception.vision"],
+    "register_face": ["vision.faces", "memory.social.write"],
+    "web_search": ["knowledge.web_search"],
+    "fetch_webpage": ["knowledge.web_fetch"],
+    "set_persona": ["persona.switch"],
+    "list_personas": ["persona.list"],
+    "search_persona_knowledge": ["persona.rag", "knowledge.recall"],
 }
 
 

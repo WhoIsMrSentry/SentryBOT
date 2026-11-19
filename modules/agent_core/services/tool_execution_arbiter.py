@@ -29,10 +29,20 @@ _TOOL_GROUPS: Dict[str, str] = {
     "ask_vlm_about_scene": "vlm",
     "describe_scene": "vlm",
     "get_vision": "vlm",
+    "read_text_ocr": "vlm",
+    "register_face": "vlm",
     "move_head": "head",
     "focus_person": "head",
     "set_lights": "lights",
     "set_neopixel": "lights",
+    "robot_posture": "legs",
+    "move_body": "legs",
+    "control_laser": "laser",
+    "move_ears": "ears",
+    "play_buzzer": "audio_hw",
+    "web_search": "web",
+    "fetch_webpage": "web",
+    "set_persona": "persona",
 }
 
 
