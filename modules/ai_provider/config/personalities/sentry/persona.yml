@@ -1,0 +1,17 @@
+id: sentry
+display_name: SentryBOT
+model: sentry:latest
+base_model: nemotron-3.5-bolt:e4b
+response_language: follow_user
+tts_language: auto
+tts_voice: null
+tts_voice_en: null
+default_emotion: neutral
+aliases:
+  - sentry
+  - sentrybot
+  - sentry bot
+  - kendin
+  - normal
+greeting_tr: "Tamam, tekrar SentryBOT modundayım."
+greeting_en: "SentryBOT online. Back to normal."
