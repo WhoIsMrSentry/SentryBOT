@@ -25,6 +25,8 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from modules.common.persona_scope import DEFAULT_PERSONA_ID, get_active_persona, persona_context
+
 logger = logging.getLogger("agent.memory_consolidator")
 
 
@@ -104,18 +106,21 @@ class MemoryConsolidator:
         if not self.llm_client:
             return []
         try:
-            prompt = _FACT_EXTRACTION_PROMPT.format(conversation=conversation)
+            # Use replace rather than str.format() so JSON braces in prompt/text never trigger KeyError.
+            prompt = _FACT_EXTRACTION_PROMPT.replace("{conversation}", str(conversation))
             # Use the LLM client directly (assumes ollama-compatible interface)
             if hasattr(self.llm_client, "chat"):
+                from modules.common.model_roles import DEFAULT_UTILITY_MODEL
+
                 model_name = (
                     getattr(self, "llm_model", None)
                     or getattr(self.llm_client, "model", None)
-                    or "qwen3.5:9b"
+                    or DEFAULT_UTILITY_MODEL
                 )
                 resp = self.llm_client.chat(
                     model=model_name,
                     messages=[{"role": "user", "content": prompt}],
-                    options={"temperature": 0.1, "num_predict": 512},
+                    options={"temperature": 0.1, "num_predict": 512, "num_ctx": 8192},
                 )
                 content = resp.get("message", {}).get("content", "").strip()
             else:
@@ -169,11 +174,13 @@ class MemoryConsolidator:
             return []
 
         # Fast path: regex-based facts for immediate storage
+        active_persona = get_active_persona()
         facts = self.extract_facts(text, speaker)
-        for fact in facts:
-            self._store_episodic(fact)
-            if speaker:
-                self._store_social(speaker, fact)
+        with persona_context(active_persona):
+            for fact in facts:
+                self._store_episodic(fact)
+                if speaker:
+                    self._store_social(speaker, fact)
 
         # Queue for async LLM extraction + WorldMemory write
         if self.llm_client or self.world_memory or self.autonomy_client:
@@ -181,6 +188,7 @@ class MemoryConsolidator:
                 self._pending_queue.append({
                     "text": text,
                     "speaker": speaker,
+                    "persona_id": active_persona,
                     "timestamp": time.time(),
                 })
             self._ensure_worker()
@@ -212,6 +220,7 @@ class MemoryConsolidator:
         """Async LLM extraction + WorldMemory write."""
         text = item.get("text", "")
         speaker = item.get("speaker")
+        item_persona = str(item.get("persona_id") or DEFAULT_PERSONA_ID)
 
         # Build context from recent dialogue if needed
         context = text
@@ -221,46 +230,48 @@ class MemoryConsolidator:
         if not structured_facts:
             return
 
-        # Write to WorldMemory (autonomy's JSON store)
-        if self.world_memory:
-            for fact in structured_facts:
-                try:
-                    self.world_memory.observe({
-                        "kind": fact["kind"],
-                        "name": fact["name"],
-                        "summary": fact["summary"],
-                        "properties": fact.get("properties", {}),
-                        "confidence": fact["confidence"],
-                        "salience": fact["salience"],
-                        "source": "dialogue_consolidator",
-                        "speaker": speaker,
-                    }, source="memory_consolidator")
-                except Exception as e:
-                    logger.debug(f"WorldMemory write failed: {e}")
-
-        # Also push via autonomy client (hits RAG SQLite store)
-        if self.autonomy_client:
-            observe_fn = getattr(self.autonomy_client, "world_memory_observe", None) or getattr(
-                self.autonomy_client, "observe_world_memory", None
-            )
-            if callable(observe_fn):
+        with persona_context(item_persona):
+            # Write to WorldMemory (autonomy's JSON store)
+            if self.world_memory:
                 for fact in structured_facts:
                     try:
-                        payload = {
+                        self.world_memory.observe({
                             "kind": fact["kind"],
                             "name": fact["name"],
                             "summary": fact["summary"],
                             "properties": fact.get("properties", {}),
                             "confidence": fact["confidence"],
                             "salience": fact["salience"],
-                            "tags": fact.get("tags", []),
-                        }
-                        try:
-                            observe_fn(payload, source="memory_consolidator")
-                        except TypeError:
-                            observe_fn(payload)
+                            "source": "dialogue_consolidator",
+                            "speaker": speaker,
+                        }, source="memory_consolidator", persona_id=item_persona)
                     except Exception as e:
-                        logger.debug(f"Autonomy client WorldMemory write failed: {e}")
+                        logger.debug(f"WorldMemory write failed: {e}")
+
+            # Also push via autonomy client (hits RAG SQLite store)
+            if self.autonomy_client:
+                observe_fn = getattr(self.autonomy_client, "world_memory_observe", None) or getattr(
+                    self.autonomy_client, "observe_world_memory", None
+                )
+                if callable(observe_fn):
+                    for fact in structured_facts:
+                        try:
+                            payload = {
+                                "kind": fact["kind"],
+                                "name": fact["name"],
+                                "summary": fact["summary"],
+                                "properties": fact.get("properties", {}),
+                                "confidence": fact["confidence"],
+                                "salience": fact["salience"],
+                                "tags": fact.get("tags", []),
+                                "persona_id": item_persona,
+                            }
+                            try:
+                                observe_fn(payload, source="memory_consolidator")
+                            except TypeError:
+                                observe_fn(payload)
+                        except Exception as e:
+                            logger.debug(f"Autonomy client WorldMemory write failed: {e}")
 
     def _store_episodic(self, fact: str) -> None:
         if self.memory is None:

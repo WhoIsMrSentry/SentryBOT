@@ -206,10 +206,12 @@ def generate_text(
         def _run_with_client(client: Any, *, timeout_kw: Optional[float] = None) -> Optional[str]:
             post_kwargs: Dict[str, Any] = {"timeout": timeout_kw} if timeout_kw is not None else {}
             if _is_legacy_generate_endpoint(endpoint):
-                model = str((ollama_cfg or {}).get("model", "qwen3.5:9b")).strip() or "qwen3.5:9b"
+                from modules.common.model_roles import DEFAULT_VISION_MODEL
+
+                model = str((ollama_cfg or {}).get("model", DEFAULT_VISION_MODEL)).strip() or DEFAULT_VISION_MODEL
                 resp = client.post(
                     endpoint,
-                    json={"model": model, "prompt": text, "stream": False, "think": False},
+                    json={"model": model, "prompt": text, "stream": False, "think": False, "keep_alive": -1},
                     **post_kwargs,
                 )
                 if resp.status_code != 200:
@@ -219,8 +221,11 @@ def generate_text(
                 return out or None
 
             if _is_direct_ollama_chat_endpoint(endpoint):
-                model = str((ollama_cfg or {}).get("model", "qwen3.5:9b")).strip() or "qwen3.5:9b"
+                from modules.common.model_roles import DEFAULT_VISION_MODEL
+
+                model = str((ollama_cfg or {}).get("model", DEFAULT_VISION_MODEL)).strip() or DEFAULT_VISION_MODEL
                 num_predict = int((ollama_cfg or {}).get("num_predict", 100) or 100)
+                num_ctx = int((ollama_cfg or {}).get("num_ctx", 8192) or 8192)
                 resp = client.post(
                     endpoint,
                     json={
@@ -228,7 +233,8 @@ def generate_text(
                         "messages": [{"role": "user", "content": text}],
                         "stream": False,
                         "think": False,
-                        "options": {"temperature": 0.4, "num_predict": num_predict},
+                        "keep_alive": -1,
+                        "options": {"temperature": 0.4, "num_predict": num_predict, "num_ctx": num_ctx},
                     },
                     **post_kwargs,
                 )
@@ -244,13 +250,20 @@ def generate_text(
             chat_url = endpoint or _default_chat_endpoint()
             if _is_in_cooldown(chat_url):
                 return None
+            chat_params: Dict[str, Any] = {
+                "query": text,
+                "apply_actions": "false",
+                "response_lang": response_lang,
+            }
+            explicit_model = str((ollama_cfg or {}).get("model") or "").strip()
+            if explicit_model:
+                chat_params["model"] = explicit_model
+            explicit_role = str((ollama_cfg or {}).get("role") or "").strip()
+            if explicit_role:
+                chat_params["role"] = explicit_role
             resp = client.post(
                 chat_url,
-                params={
-                    "query": text,
-                    "apply_actions": "false",
-                    "response_lang": response_lang,
-                },
+                params=chat_params,
                 **post_kwargs,
             )
             if resp.status_code != 200:

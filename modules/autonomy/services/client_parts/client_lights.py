@@ -111,6 +111,29 @@ class ClientLightsMixin:
             params["emotions"] = [str(e) for e in emotions if str(e).strip()]
         return self._post("neopixel", "/emote", params=params)
 
+    def update_emotions(self, emotions: list[str] | tuple[str, ...] | str, duration: float = 0.25) -> Any:
+        """Publish dominant/active emotion labels to NeoPixel or interaction fallback."""
+        if isinstance(emotions, str):
+            raw_items = [emotions]
+        elif isinstance(emotions, (list, tuple, set)):
+            raw_items = list(emotions)
+        else:
+            raw_items = [str(emotions)] if emotions is not None else []
+        seq = [str(e).strip().lower() for e in raw_items if str(e or "").strip()] or ["neutral"]
+        if self.urls.get("neopixel"):
+            res = self.emote_neopixel(seq, duration=duration)
+            if res is not None:
+                return res
+        if self.urls.get("interactions"):
+            return self.set_interaction_effect(
+                "EMOTIONAL_PULSE",
+                duration_ms=max(250, int(float(duration) * 1000)),
+                force=False,
+                emotions=seq,
+                lease_source="autonomy",
+            )
+        return {"ok": False, "skipped": True, "reason": "no_emotion_sink"}
+
     def set_neopixel_segment_effect(self, segment: str, effect: str, color=None, emotions=None, iterations=None, lease_source: str = "autonomy") -> Any:
         name = str(effect or "PULSE").strip().upper() or "PULSE"
         rgb = self._parse_rgb(color)

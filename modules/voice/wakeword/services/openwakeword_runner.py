@@ -7,6 +7,7 @@ import logging
 from pathlib import Path
 import time
 from typing import Dict, Iterable, Optional
+import warnings
 
 try:
     import numpy as np  # type: ignore
@@ -92,7 +93,13 @@ class OpenWakewordRunner(OpenWakewordCalibrationMixin):
         def _try_ctor(kwargs=None, args=None):
             kwargs = kwargs or {}
             args = args or []
-            return model_ctor(*args, **kwargs)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r".*CUDAExecutionProvider.*",
+                    category=UserWarning,
+                )
+                return model_ctor(*args, **kwargs)
 
         tried = []
         last_exc = None
@@ -195,12 +202,16 @@ class OpenWakewordRunner(OpenWakewordCalibrationMixin):
         best_label, best_score = self._smooth_scores(scores)
         logger.debug("openwakeword smoothed best=%s score=%s threshold=%s", best_label, best_score, self._threshold)
 
-        if not self._run_auto_calibration(best_score):
+        calibrated_ready = self._run_auto_calibration(best_score)
+        if not calibrated_ready:
+            if best_label and best_score >= max(self._threshold, 0.35) and self._verify_label(best_label):
+                logger.info("openwakeword accepted during calibration: %s (score=%.4f)", best_label, best_score)
+                return best_label
             return None
 
         self._log_periodic_probe(best_label, best_score)
 
         if best_label and best_score >= self._threshold and self._verify_label(best_label):
-            logger.info("openwakeword accepted: %s (score=%s)", best_label, best_score)
+            logger.debug("openwakeword accepted: %s (score=%s)", best_label, best_score)
             return best_label
         return None

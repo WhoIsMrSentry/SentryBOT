@@ -13,6 +13,7 @@ from .pcm import PCM
 _ACTIVE_PLAYERS: "weakref.WeakSet[AudioPlayer]" = weakref.WeakSet()
 _ACTIVE_LOCK = threading.Lock()
 _play_stop = threading.Event()
+_global_stop_epoch: int = 0
 
 try:
     import sounddevice as sd
@@ -56,8 +57,11 @@ class AudioPlayer:
 
     def _stop_instance(self) -> None:
         """Stop playback immediately without blocking on _play_lock."""
-        self._play_stop.set()
-        _play_stop.set()
+        global _global_stop_epoch
+        with _ACTIVE_LOCK:
+            _global_stop_epoch += 1
+            self._play_stop.set()
+            _play_stop.set()
         if sd is not None:
             try:
                 sd.stop()
@@ -66,8 +70,10 @@ class AudioPlayer:
 
     @classmethod
     def _stop_all(cls) -> None:
-        _play_stop.set()
+        global _global_stop_epoch
         with _ACTIVE_LOCK:
+            _global_stop_epoch += 1
+            _play_stop.set()
             players = list(_ACTIVE_PLAYERS)
         for p in players:
             p._play_stop.set()
@@ -78,6 +84,17 @@ class AudioPlayer:
                 logger.debug("stop_playback: %s", exc)
 
     stop_playback = _StopPlaybackDescriptor()
+
+    @property
+    def stop_epoch(self) -> int:
+        with _ACTIVE_LOCK:
+            return _global_stop_epoch
+
+    def clear_stop(self) -> None:
+        """Clear both instance and module-global stop flags for a fresh utterance."""
+        with _ACTIVE_LOCK:
+            self._play_stop.clear()
+            _play_stop.clear()
 
     @property
     def is_stopped(self) -> bool:
@@ -119,14 +136,13 @@ class AudioPlayer:
             else:
                 data = np.stack([data[:, 0]] * self.cfg.channels, axis=1).astype(np.float32)
 
-        self._play_stop.clear()
-        _play_stop.clear()
-        started = time.monotonic()
+        self.clear_stop()
         dur_sec = len(data) / max(1, play_sr)
-        end_time = started + dur_sec
 
         with self._play_lock:
             sd.play(data, samplerate=play_sr, device=self.cfg.device, blocking=False)
+            started = time.monotonic()
+            end_time = started + dur_sec
             while True:
                 remaining = end_time - time.monotonic()
                 if remaining <= 0:

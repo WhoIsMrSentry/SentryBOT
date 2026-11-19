@@ -152,14 +152,58 @@ def get_chat_router(
         query_en = translator.to_bridge(query, source)
         return source, target, query_en, auto_detected
 
+    def _resolve_requested_model(
+        role: Optional[str],
+        model: Optional[str],
+        cur_model: str,
+    ) -> Optional[str]:
+        requested_model = str(model or "").strip()
+        requested_role = str(role or "").strip().lower()
+        if not requested_model and not requested_role:
+            return None
+        rt_cfg = runtime.get("cfg") if isinstance(runtime, dict) and isinstance(runtime.get("cfg"), dict) else {}
+        if not requested_model and requested_role:
+            from modules.common.model_roles import resolve_role_model
+
+            requested_model = resolve_role_model(rt_cfg, requested_role, fallback=cur_model)
+        if not requested_model or requested_model == cur_model:
+            return None
+        llm_section = rt_cfg.get("llm", {}) if isinstance(rt_cfg.get("llm"), dict) else {}
+        if llm_section.get("single_model_mode") is True:
+            return None
+        raw_allowed = llm_section.get("allowed_models")
+        if isinstance(raw_allowed, (list, tuple, set)):
+            allowed = {str(x).strip() for x in raw_allowed if str(x).strip()}
+            try:
+                from modules.ai_provider.api._helpers import persona_base_dir
+
+                pbase = persona_base_dir(rt_cfg)
+                if pbase.is_dir():
+                    for p in pbase.iterdir():
+                        if p.is_dir():
+                            allowed.add(p.name)
+                            allowed.add(f"{p.name}:latest")
+            except Exception:
+                pass
+            if allowed and requested_model not in allowed:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Requested model '{requested_model}' is not in allowed_models",
+                )
+        return requested_model
+
     def _chat_stream_response(
         query: str,
         apply_actions: Optional[bool],
         structured: bool,
         source_lang: Optional[str],
         response_lang: Optional[str],
+        role: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> StreamingResponse:
         active_chat, cur_model, cur_persona = _active_context()
+        override_model = _resolve_requested_model(role, model, cur_model)
+        effective_model = override_model or cur_model
         source, target, query_en, auto_detected = _prepare_translation(query, source_lang, response_lang)
         response_format = SentryResponse.model_json_schema() if structured else None
         flag = default_apply if apply_actions is None else apply_actions
@@ -167,10 +211,18 @@ def get_chat_router(
         def _event_gen() -> Iterator[str]:
             stream_fn = getattr(active_chat, "chat_stream", None)
             try:
+                stream_kwargs: Dict[str, Any] = {"response_format": response_format}
+                if override_model:
+                    stream_kwargs["model"] = override_model
                 if callable(stream_fn):
-                    iterator = stream_fn(query_en, response_format=response_format)
+                    iterator = stream_fn(query_en, **stream_kwargs)
                 else:
-                    res = active_chat.chat(query_en, response_format=response_format) if response_format is not None else active_chat.chat(query_en)
+                    chat_kwargs: Dict[str, Any] = {}
+                    if response_format is not None:
+                        chat_kwargs["response_format"] = response_format
+                    if override_model:
+                        chat_kwargs["model"] = override_model
+                    res = active_chat.chat(query_en, **chat_kwargs)
                     iterator = iter([{"type": "done", "result": res}])
 
                 for evt in iterator:
@@ -192,13 +244,13 @@ def get_chat_router(
                             "answer_bridge": answer_en,
                             "auto_detected": auto_detected,
                         }
-                        final_payload = _format_chat_payload(result, cur_model, cur_persona, translation=translation_meta)
+                        final_payload = _format_chat_payload(result, effective_model, cur_persona, translation=translation_meta)
                         final_payload["done"] = True
                         yield f"data: {json.dumps(final_payload, ensure_ascii=False)}\n\n"
             except CircuitOpenError as exc:
                 err = _llm_unavailable_payload(
                     provider_name=provider_name,
-                    model=cur_model,
+                    model=effective_model,
                     active_persona=cur_persona,
                     detail=_safe_llm_exc_text(exc),
                     reason="circuit_breaker_open",
@@ -207,7 +259,7 @@ def get_chat_router(
             except Exception as exc:
                 err = _llm_unavailable_payload(
                     provider_name=provider_name,
-                    model=cur_model,
+                    model=effective_model,
                     active_persona=cur_persona,
                     detail=_safe_llm_exc_text(exc),
                     reason="llm_stream_failed",
@@ -222,16 +274,22 @@ def get_chat_router(
         source_lang: Optional[str],
         response_lang: Optional[str],
         structured: bool = False,
+        role: Optional[str] = None,
+        model: Optional[str] = None,
     ) -> Dict[str, Any]:
         active_chat, cur_model, cur_persona = _active_context()
+        override_model = _resolve_requested_model(role, model, cur_model)
+        effective_model = override_model or cur_model
         source, target, query_en, auto_detected = _prepare_translation(query, source_lang, response_lang)
         response_format = SentryResponse.model_json_schema() if structured else None
 
         try:
+            chat_kwargs: Dict[str, Any] = {}
             if response_format is not None:
-                result = active_chat.chat(query_en, response_format=response_format)
-            else:
-                result = active_chat.chat(query_en)
+                chat_kwargs["response_format"] = response_format
+            if override_model:
+                chat_kwargs["model"] = override_model
+            result = active_chat.chat(query_en, **chat_kwargs)
         except ProviderDisabledError as exc:
             return _llm_unavailable_payload(
                 provider_name=provider_name,
@@ -289,7 +347,7 @@ def get_chat_router(
             "answer_bridge": answer_en,
             "auto_detected": auto_detected,
         }
-        return _format_chat_payload(result, cur_model, cur_persona, translation=translation_meta)
+        return _format_chat_payload(result, effective_model, cur_persona, translation=translation_meta)
 
     @r.get("/chat")
     def chat_get(
@@ -299,10 +357,28 @@ def get_chat_router(
         stream: bool = False,
         source_lang: Optional[str] = None,
         response_lang: Optional[str] = None,
+        role: Optional[str] = None,
+        model: Optional[str] = None,
     ):
         if stream:
-            return _chat_stream_response(query, apply_actions, structured, source_lang, response_lang)
-        return _chat_response(query, apply_actions, source_lang, response_lang, structured=structured)
+            return _chat_stream_response(
+                query,
+                apply_actions,
+                structured,
+                source_lang,
+                response_lang,
+                role=role,
+                model=model,
+            )
+        return _chat_response(
+            query,
+            apply_actions,
+            source_lang,
+            response_lang,
+            structured=structured,
+            role=role,
+            model=model,
+        )
 
     @r.post("/chat")
     def chat_post(
@@ -312,18 +388,49 @@ def get_chat_router(
         stream: bool = False,
         source_lang: Optional[str] = None,
         response_lang: Optional[str] = None,
+        role: Optional[str] = None,
+        model: Optional[str] = None,
     ):
         if stream:
-            return _chat_stream_response(query, apply_actions, structured, source_lang, response_lang)
-        return _chat_response(query, apply_actions, source_lang, response_lang, structured=structured)
+            return _chat_stream_response(
+                query,
+                apply_actions,
+                structured,
+                source_lang,
+                response_lang,
+                role=role,
+                model=model,
+            )
+        return _chat_response(
+            query,
+            apply_actions,
+            source_lang,
+            response_lang,
+            structured=structured,
+            role=role,
+            model=model,
+        )
 
     @r.post("/translate")
     def translate(text: str, source_lang: str = "auto", target_lang: str = "en"):
-        source = translator.normalize_lang(source_lang, fallback=translator.cfg.default_source_lang)
-        target = translator.normalize_lang(target_lang, fallback=translator.BRIDGE_LANG)
-        if source_lang == "auto":
-            source = translator.detect_language(text)
-        out = translator.translate(text, source, target)
+        active_tr = translator
+        if not bool(getattr(getattr(translator, "cfg", None), "enabled", False)):
+            from modules.common.translator import get_shared_translator
+
+            active_tr = get_shared_translator(
+                {
+                    "enabled": True,
+                    "mode": "online_first",
+                    "default_source_lang": getattr(translator.cfg, "default_source_lang", "tr"),
+                    "bridge_lang": getattr(translator, "BRIDGE_LANG", "en"),
+                    "fallback_to_ollama": False,
+                }
+            )
+        source = active_tr.normalize_lang(source_lang, fallback=active_tr.cfg.default_source_lang)
+        target = active_tr.normalize_lang(target_lang, fallback=active_tr.BRIDGE_LANG)
+        if source == "auto":
+            source = active_tr.detect_language(text)
+        out = active_tr.translate(text, source, target)
         return {"ok": True, "text": out, "source_lang": source, "target_lang": target}
 
     @r.post("/runtime/num_predict")

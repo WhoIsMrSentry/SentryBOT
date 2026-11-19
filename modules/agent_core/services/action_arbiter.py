@@ -261,12 +261,18 @@ class ActionArbiter:
                             "group": group,
                             "locked_by": locked_source,
                         }
-                    # Higher priority request overrides
-                    logger.info(
-                        "Action %s overrides %s lock on '%s' (pri %d > %d)",
-                        req.action_id, locked_source, group,
-                        req.priority, locked_priority,
-                    )
+                    if req.priority > locked_priority:
+                        logger.info(
+                            "Action %s overrides %s lock on '%s' (pri %d > %d)",
+                            req.action_id, locked_source, group,
+                            req.priority, locked_priority,
+                        )
+                    else:
+                        logger.debug(
+                            "Action %s refreshes %s lock on '%s' (pri %d)",
+                            req.action_id, locked_source, group,
+                            req.priority,
+                        )
             # Acquire lock with actual request priority
             self._exclusive_locks[group] = (req.source, req.expires_at, int(req.priority))
 

@@ -76,6 +76,7 @@ class SensorFeedbackLoop:
             return
         if self.running:
             return
+        self._stopped_once = False
         self.running = True
         self.thread = threading.Thread(target=self._poll_loop, daemon=True)
         self.thread.start()
@@ -89,9 +90,13 @@ class SensorFeedbackLoop:
         )
 
     def stop(self):
+        if getattr(self, "_stopped_once", False) and not getattr(self, "running", False):
+            return
         self.running = False
         if self.thread:
             self.thread.join(timeout=2.0)
+            self.thread = None
+        self._stopped_once = True
         logger.info("Sensor feedback loop stopped.")
 
     def _due(self, key: str, interval_s: float, now: float) -> bool:

@@ -8,8 +8,8 @@ runtime:
 
 defaults:
   loop_interval_ms: 500
-  boredom_threshold_s: 20
-  alone_threshold_s: 120
+  boredom_threshold_s: 120
+  alone_threshold_s: 180
   mood:
     decay_rate: 0.5
     anger_threshold: 38
@@ -100,6 +100,7 @@ endpoints:
   speech: '@gateway/speech'
   interactions: '@gateway/interactions'
   expression: '@gateway/expression'
+  piservo: '@gateway/piservo'
   oled_faces: '@gateway/oled_faces'
   state_manager: '@gateway/state'
   animate: '@gateway/animate'
@@ -109,6 +110,7 @@ endpoints:
   notifier: '@gateway/notify'
   autonomy: '@gateway/autonomy'
   agent_core: '@gateway/agent'
+  wakeword: '@gateway/wakeword'
 behaviors:
   idle:
     enabled: true
@@ -121,12 +123,13 @@ behaviors:
   idle_tree:
     enabled: true
     interval_s: 6
-    fallback_to_llm: true
+    fallback_to_llm: false
     path: modules/autonomy/config/idle_behaviors.yml
   curiosity:
     enabled: true
     face_tracking: true
     sound_reaction: true
+    sound_llm_enabled: false
   sleep:
     enabled: true
     start_hour: 3
@@ -134,7 +137,7 @@ behaviors:
     wake_up_action: stretch
 llm:
   enabled: true
-  model: qwen3.5:9b
+  model: nemotron-3.5-bolt:e4b
   auto_select_persona: false
   warmup_on_start: true
   prompt_template: 'Sen duyguları olan bir robotsun.
@@ -217,11 +220,11 @@ request_timeouts:
   default_get_s: 0.8
   ollama_chat_s: 45.0
   ollama_warmup_s: 3.5
-  speech_min_interval_s: 0.35
+  speech_min_interval_s: 2.0
 agentic:
-  enabled: true
-  min_interval_s: 45
-  fallback_random_chance: 0.12
+  enabled: false
+  min_interval_s: 180
+  fallback_random_chance: 0.0
   triggers:
     social_need: 72
     stimulation_need: 68
@@ -306,7 +309,7 @@ companion:
     llm_cooldown_s: 35
     default_language: tr
   voice_ai_tools: true
-  emotion_command_shortcut: false
+  emotion_command_shortcut: true
   owner_sessions:
     enabled: true
     source: vision

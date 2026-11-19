@@ -21,14 +21,26 @@ if TYPE_CHECKING:
 
 
 def _get_remote_ollama_url(root: Path) -> str:
+    from modules.common.ollama_url import resolve_env_ollama_base_url
+
+    env_url = resolve_env_ollama_base_url()
+    if env_url:
+        return env_url
     cfg_file = root / "config" / "agent.yaml"
     if cfg_file.exists():
         try:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
-            vlm = data.get("vlm_bridge", {})
-            remote = vlm.get("remote", {}) if isinstance(vlm, dict) else {}
-            url = remote.get("base_url") or remote.get("ollama_base_url")
+            ollama_cfg = data.get("ollama", {}) if isinstance(data.get("ollama"), dict) else {}
+            agent_cfg = data.get("agent", {}) if isinstance(data.get("agent"), dict) else {}
+            vlm = data.get("vlm_bridge", {}) if isinstance(data.get("vlm_bridge"), dict) else {}
+            remote = vlm.get("remote", {}) if isinstance(vlm.get("remote"), dict) else {}
+            url = (
+                remote.get("base_url")
+                or remote.get("ollama_base_url")
+                or agent_cfg.get("ollama_base_url")
+                or ollama_cfg.get("base_url")
+            )
             if url:
                 return str(url).rstrip("/")
         except Exception:

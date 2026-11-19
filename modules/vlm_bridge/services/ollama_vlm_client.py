@@ -21,12 +21,13 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
+from modules.common.model_roles import DEFAULT_VISION_MODEL
 from modules.common.ollama_url import default_ollama_base_url, normalize_ollama_url
 
 logger = logging.getLogger("vlm_bridge.ollama_vlm")
 
 _DEFAULT_BASE_URL = default_ollama_base_url()
-_DEFAULT_MODEL = "qwen3.5:9b"
+_DEFAULT_MODEL = DEFAULT_VISION_MODEL
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_MAX_WIDTH = 640
 _DEFAULT_JPEG_QUALITY = 70
@@ -162,7 +163,9 @@ class OllamaVLMClient:
         self.jpeg_quality = int(cfg.get("jpeg_quality", _DEFAULT_JPEG_QUALITY))
         self.min_interval_s = float(cfg.get("min_interval_s", _DEFAULT_MIN_INTERVAL))
         self.num_predict = int(cfg.get("num_predict", 256))
-        self.num_ctx = int(cfg.get("num_ctx", 2048))
+        self.num_ctx = int(cfg.get("num_ctx", 8192))
+        raw_ka = cfg.get("keep_alive", -1)
+        self.keep_alive: Any = raw_ka if raw_ka is not None else -1
 
         self._lock = threading.Lock()
         self._in_flight = False
@@ -291,6 +294,7 @@ class OllamaVLMClient:
             ],
             "stream": False,
             "think": False,
+            "keep_alive": self.keep_alive,
             "options": {
                 "temperature": 0.3,
                 "num_predict": self.num_predict,

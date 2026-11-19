@@ -55,7 +55,14 @@ def test_system_prompts_pipeline():
     prompt = get_default_persona_prompt()
     assert "express_emotion" in prompt
     assert "joy" in prompt
-    assert resolve_persona_prompt("Custom persona") == "Custom persona"
+    custom_resolved = resolve_persona_prompt("Custom persona")
+    assert custom_resolved.startswith("Custom persona")
+    assert "EMBODIED ROBOT HARDWARE" in custom_resolved
+    assert "express_emotion" in custom_resolved
+    no_tools_resolved = resolve_persona_prompt("Custom persona", include_tools=False)
+    assert no_tools_resolved.startswith("Custom persona")
+    assert "EMBODIED ROBOT HARDWARE" in no_tools_resolved
+    assert "TOOLS ARE ACTIONS" not in no_tools_resolved
     assert "[ Dil: Turkce ]" in persona_prompt_with_language(None, "[ Dil: Turkce ]")
 
 

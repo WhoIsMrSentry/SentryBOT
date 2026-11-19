@@ -6,6 +6,8 @@ import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from modules.common.ollama_compat import call_ollama_chat, chat_accepts_kwarg
+
 from .agent_provider_parser import (
     build_provider_tool_instruction,
     parse_provider_tool_call,
@@ -82,6 +84,7 @@ class AgentStreamingMixin:
         buffer: str,
         *,
         is_first_chunk: bool = False,
+        allow_first_clause_split: bool = True,
     ) -> Tuple[List[str], str]:
         if not buffer:
             return [], ""
@@ -90,8 +93,8 @@ class AgentStreamingMixin:
         if AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE is None:
             AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE = re.compile(r"([,;:—–\n]+|[.!?…]+)")
 
-        # Ultra low-latency first clause break (sub-350ms first speech audio)
-        if is_first_chunk:
+        # Ultra low-latency first clause break (disabled during bridge translation to avoid literal fragments)
+        if is_first_chunk and allow_first_clause_split:
             words = buffer.split()
             if len(words) >= 2 or len(buffer) >= 12:
                 parts = AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE.split(buffer)
@@ -119,16 +122,7 @@ class AgentStreamingMixin:
 
     @staticmethod
     def _chat_accepts_priority(client: Any) -> bool:
-        chat_fn = getattr(client, "chat", None)
-        if chat_fn is None:
-            return False
-        try:
-            sig = inspect.signature(chat_fn)
-        except (TypeError, ValueError):
-            return hasattr(client, "supports_priority")
-        if "priority" in sig.parameters:
-            return True
-        return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        return chat_accepts_kwarg(client, "priority")
 
     def _chat_maybe_stream(
         self,
@@ -205,7 +199,7 @@ class AgentStreamingMixin:
             if self._chat_accepts_priority(self.ollama_client):
                 stream_kwargs["priority"] = 0
 
-            stream = self.ollama_client.chat(**stream_kwargs)
+            stream = call_ollama_chat(self.ollama_client, **stream_kwargs)
             for chunk in stream:
                 if first_token_ts is None:
                     first_token_ts = time.time()
@@ -225,7 +219,12 @@ class AgentStreamingMixin:
                 full_text.append(content)
                 if not collected_tool_calls:
                     buffer += content
-                    sentences, buffer = self._extract_ready_sentences(buffer, is_first_chunk=is_first_chunk)
+                    allow_clause = not bool(getattr(self, "_active_bridge_translation", False))
+                    sentences, buffer = self._extract_ready_sentences(
+                        buffer,
+                        is_first_chunk=is_first_chunk,
+                        allow_first_clause_split=allow_clause,
+                    )
                     for sentence in sentences:
                         _emit(sentence)
 
@@ -249,5 +248,8 @@ class AgentStreamingMixin:
                 },
             }
         except Exception as exc:
+            is_transport = getattr(self, "_is_provider_transport_error", None)
+            if first_token_ts is None and callable(is_transport) and is_transport(exc):
+                raise
             logger.warning("Streaming chat failed, falling back to sync: %s", exc)
             return self._chat_turn(model, messages, tools, options)

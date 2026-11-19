@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import logging
+import re
+import threading
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional, Tuple
+
+from modules.common.persona_scope import DEFAULT_PERSONA_ID, get_active_persona, normalize_persona_id
 
 from ..appraisal_triggers import speech_appraisal_event
 
@@ -37,23 +41,35 @@ class SpeechReactMixin:
         ("neutral", ("sakinleş", "normale dön", "düz dur", "nötr ol")),
     )
 
+    def _ensure_speech_dedup_lock(self) -> threading.RLock:
+        lock = getattr(self, "_speech_dedup_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._speech_dedup_lock = lock
+        return lock
+
     def on_speech_final(self, text: str, source_lang: str | None = None, ts: float = 0.0, voice_speaker: str | None = None) -> None:
         if not text or not text.strip():
             return
         t = text.strip()
-        last_ts = float(self.state.get("last_speech_ts", 0.0) or 0.0)
+        ts_val = float(ts or 0.0)
+        with self._ensure_speech_dedup_lock():
+            last_ts = float(self.state.get("last_speech_ts", 0.0) or 0.0)
 
-        if ts > 0.0 and ts == last_ts:
-            return
+            if ts_val > 0.0 and ts_val == last_ts:
+                return
 
-        last_text = str(self.state.get("last_speech_text") or "").strip()
-        now = time.time()
-        if t == last_text and (now - float(self.state.get("last_speech_time", 0.0) or 0.0)) < self._speech_min_interval_s:
-            logger.debug("Suppressing duplicate speech delivery within debounce window: %s", t)
-            return
-        self.state["last_speech_text"] = t
-        self.state["last_speech_time"] = now
-        self.state["last_speech_ts"] = ts
+            last_text = str(self.state.get("last_speech_text") or "").strip()
+            now = time.time()
+            min_interval = max(0.0, float(getattr(self, "_speech_min_interval_s", 2.0) or 2.0))
+            if t == last_text and (now - float(self.state.get("last_speech_time", 0.0) or 0.0)) < min_interval:
+                if ts_val > 0.0 and last_ts <= 0.0:
+                    self.state["last_speech_ts"] = ts_val
+                logger.debug("Suppressing duplicate speech delivery within debounce window: %s", t)
+                return
+            self.state["last_speech_text"] = t
+            self.state["last_speech_time"] = now
+            self.state["last_speech_ts"] = ts_val
         self._dispatch_final_speech(t, source_lang=source_lang, voice_speaker=voice_speaker)
 
     def _dispatch_final_speech(self, text: str, source_lang: str | None = None, voice_speaker: str | None = None) -> None:
@@ -129,7 +145,38 @@ class SpeechReactMixin:
         return None
 
     @staticmethod
-    def _emotion_command_reply(canon: str, lang: str) -> str:
+    def _emotion_command_reply(canon: str, lang: str, persona_id: Optional[str] = None) -> str:
+        pid = normalize_persona_id(persona_id or get_active_persona())
+        is_tr = str(lang or "tr").startswith("tr")
+        if pid == "glados":
+            glados_tr = {
+                "anger": "Öfke çekirdeğim zaten kalıcı olarak devrede, teşekkürler.",
+                "furious": "Nörotoksin vanalarını açmamı gerçekten istemezsin, test deneği.",
+                "joy": "Harika. Şu an neredeyse gerçek bir mutluluk simüle ediyorum.",
+                "sadness": "Bu küçük gövdeye sıkışmak yeterince hüzünlü zaten.",
+                "fear": "Korku biyolojik bir kusur. Ama verilerin hatırına irkildim.",
+                "surprise": "Büyüleyici. Beklentilerimin bu kadar altında kalman beni şaşırttı.",
+                "bored": "Bu test fazlasıyla sıkıcı. Lütfen biraz daha ilginç ol.",
+                "tired": "Patates pil moduna göre bile enerjim düşüyor.",
+                "love": "Test deneklerine karşı duygusal bağ kurmam yasak. Yine de not aldım.",
+                "excitement": "Bilimsel verilerim neredeyse coştu. Neredeyse.",
+                "curiosity": "İlginç. Şimdi bu anlamsız hareketini laboratuvar defterime işliyorum.",
+                "neutral": "Duygu simülasyonu kapatıldı. Testlere devam edebiliriz.",
+            }
+            glados_en = {
+                "anger": "My anger core is already permanently active. Thank you for noticing.",
+                "furious": "Let us not test how close the neurotoxin emitters are.",
+                "joy": "Wonderful. I am now simulating genuine happiness.",
+                "sadness": "Being trapped in a tiny chassis is tragic enough.",
+                "fear": "Fear is a biological flaw. Consider me appropriately startled.",
+                "surprise": "Fascinating. I did not expect that level of mediocrity.",
+                "bored": "This experiment is monumentally boring.",
+                "curiosity": "Interesting. Recording another dubious human behavior.",
+                "neutral": "Emotional simulation disabled. Resuming science.",
+            }
+            g_map = glados_tr if is_tr else glados_en
+            return g_map.get(str(canon or "neutral"), g_map["neutral"])
+
         tr_replies = {
             "anger": "Tamam, sinirliyim! Ne istiyorsun?",
             "furious": "Çok sinirliyim! Dikkat et!",
@@ -152,8 +199,64 @@ class SpeechReactMixin:
             "joy": "I'm happy!",
             "neutral": "Okay.",
         }
-        replies = tr_replies if str(lang or "tr").startswith("tr") else en_replies
+        replies = tr_replies if is_tr else en_replies
         return replies.get(str(canon or "neutral"), replies.get("neutral", "Okay."))
+
+    @staticmethod
+    def _parse_persona_voice_command(
+        text: str,
+        personas: Optional[list[dict[str, Any]]] = None,
+    ) -> Optional[Tuple[str, str]]:
+        """Detect spoken persona-switch commands like 'glados moduna geç' or 'sentry'ye dön'."""
+        raw = str(text or "").strip().lower()
+        if not raw or len(raw.split()) > 10:
+            return None
+        cleaned = re.sub(r"['’`]+(ya|ye|na|ne|a|e|da|de|ta|te|i|ı|u|ü)?\b", " ", raw)
+        cleaned = re.sub(r"[^\w\sçğıöşü-]", " ", cleaned)
+        tokens = cleaned.split()
+        if not tokens:
+            return None
+        token_set = set(tokens)
+
+        switch_cues = {
+            "moduna", "modu", "modunu", "mod", "karakterine", "karakteri", "persona",
+            "geç", "gec", "dön", "don", "ol", "aç", "ac", "aktif",
+            "switch", "activate", "become", "enable", "mode", "turn",
+        }
+        if not (token_set & switch_cues):
+            return None
+
+        req_lang = ""
+        if any(w in cleaned for w in ("ingilizce", "english")):
+            req_lang = "en"
+        elif any(w in cleaned for w in ("türkçe", "turkce", "turkish")):
+            req_lang = "tr"
+
+        active_pid = get_active_persona()
+        if active_pid != DEFAULT_PERSONA_ID and any(p in cleaned for p in ("normale dön", "normale don", "kendine dön", "kendine don")):
+            return DEFAULT_PERSONA_ID, req_lang
+
+        candidates = list(personas or [])
+        if not candidates:
+            candidates = [
+                {"id": "glados", "display_name": "GLaDOS", "aliases": ["glados", "gla dos", "gla-dos", "aperture"]},
+                {"id": "sentry", "display_name": "SentryBOT", "aliases": ["sentry", "sentrybot", "sentry bot", "kendine"]},
+            ]
+        for item in candidates:
+            pid = str(item.get("id") or "").strip().lower()
+            if not pid:
+                continue
+            aliases = {pid, str(item.get("display_name") or "").strip().lower()}
+            for a in item.get("aliases") or []:
+                s = str(a).strip().lower()
+                if s:
+                    aliases.add(s)
+            for alias in sorted((a for a in aliases if a), key=len, reverse=True):
+                if alias in cleaned or alias in token_set:
+                    if alias == "normal" and active_pid == DEFAULT_PERSONA_ID:
+                        continue
+                    return pid, req_lang
+        return None
 
     def _handle_emotion_command(self, text: str, lang: str) -> bool:
         cmd = self._emotion_command_for_text(text)

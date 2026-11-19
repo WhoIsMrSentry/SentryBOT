@@ -10,6 +10,8 @@ try:
 except ImportError:
     detect_text_language = None
 
+from modules.common.persona_scope import get_active_persona_meta
+
 logger = logging.getLogger("autonomy.vocal_prosody")
 
 
@@ -50,7 +52,13 @@ class VocalProsodyMixin:
         "neutral": {"rate": 170, "volume": 0.85},
     }
 
-    def _speak_with_mood(self, text: str, emotion: str | None = None, language: str | None = None) -> None:
+    def _speak_with_mood(
+        self,
+        text: str,
+        emotion: str | None = None,
+        language: str | None = None,
+        voice: str | None = None,
+    ) -> None:
         if not text:
             return
         state_lang = str((getattr(self, "state", None) or {}).get("last_speech_language") or "tr")
@@ -58,13 +66,26 @@ class VocalProsodyMixin:
             language = detect_text_language(text, default=state_lang)
         elif not language:
             language = state_lang
+        if not voice:
+            meta = get_active_persona_meta()
+            if isinstance(meta, dict):
+                v = str(meta.get("tts_voice") or "").strip()
+                if v and v.lower() not in {"auto", "none", "null"}:
+                    voice = v
+                elif str(language).lower() == "en":
+                    ve = str(meta.get("tts_voice_en") or "").strip()
+                    if ve and ve.lower() not in {"auto", "none", "null"}:
+                        voice = ve
         tone = self._tone_profile(emotion)
+        payload: Dict[str, Any] = {
+            "text": text,
+            "tone": tone,
+            "language": language,
+        }
+        if voice:
+            payload["voice"] = str(voice).strip()
         try:
-            self.client.queue_action("speak", priority=50, ttl_ms=10000, payload={
-                "text": text,
-                "tone": tone,
-                "language": language
-            })
+            self.client.queue_action("speak", priority=50, ttl_ms=10000, payload=payload)
         except Exception as exc:
             logger.debug("Failed to queue speech action: %s", exc)
 
@@ -81,6 +102,32 @@ class VocalProsodyMixin:
             return dict(self._TONE_NAME_PROFILES.get(tone_name, self._TONE_NAME_PROFILES["neutral"]))
         except Exception:
             return dict(self._EMOTION_TONES.get(str(emotion).lower(), self._EMOTION_TONES["neutral"]))
+
+    def _should_skip_sound_llm(self, now: float) -> bool:
+        """Avoid letting sound_detected background turns starve active user speech."""
+        behaviors_cfg = self.config.get("behaviors") if isinstance(getattr(self, "config", None), dict) else None
+        curiosity_cfg = behaviors_cfg.get("curiosity") if isinstance(behaviors_cfg, dict) else None
+        if (
+            isinstance(curiosity_cfg, dict)
+            and "sound_llm_enabled" in curiosity_cfg
+            and not bool(curiosity_cfg.get("sound_llm_enabled"))
+        ):
+            return True
+        if bool(getattr(self, "_speech_busy", False)) or self._robot_is_speaking():
+            return True
+        if bool(getattr(getattr(self, "agent", None), "is_busy", False)):
+            return True
+        last_speech_ts = float(self.state.get("last_speech_time", 0.0) or 0.0)
+        if last_speech_ts > 0.0 and (now - last_speech_ts) < 6.0:
+            return True
+        checker = getattr(getattr(self, "client", None), "is_wakeword_window_active", None)
+        if callable(checker):
+            try:
+                if bool(checker(recent_s=6.0)):
+                    return True
+            except Exception:
+                pass
+        return False
 
     def _react_to_sound(self, angle: float) -> None:
         now = time.time()
@@ -111,7 +158,18 @@ class VocalProsodyMixin:
         self.mood.modify("energy", 2)
         self.memory.add_event(f"Heard sound at angle {angle}")
 
-        if getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
+        if self._should_skip_sound_llm(now):
+            logger.debug("Skipping sound_detected LLM step during active speech/agent turn")
+            return
+
+        ollama_ready = True
+        if getattr(self, "client", None) and hasattr(self.client, "is_service_available"):
+            try:
+                ollama_ready = bool(self.client.is_service_available("ollama"))
+            except Exception:
+                ollama_ready = True
+
+        if ollama_ready and getattr(self, "agent", None) and self.config.get("llm", {}).get("enabled", False):
             prompt = (
                 f"You just heard a sudden sound from angle {int(angle)} degrees. "
                 f"Your head turned toward it (pan={int(target_pan)}). "

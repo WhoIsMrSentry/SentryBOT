@@ -29,6 +29,19 @@ class ResponseTagMixin:
 		"forest_green": (60, 200, 90),
 		"ember_orange": (255, 110, 40),
 		"polar_blue": (90, 150, 255),
+		"red": (255, 45, 45),
+		"green": (60, 200, 90),
+		"blue": (90, 150, 255),
+		"yellow": (255, 190, 40),
+		"purple": (120, 80, 255),
+		"violet": (120, 80, 255),
+		"orange": (255, 110, 40),
+		"cyan": (30, 180, 255),
+		"teal": (30, 180, 255),
+		"white": (255, 255, 255),
+		"pink": (255, 90, 180),
+		"gold": (255, 170, 60),
+		"off": (0, 0, 0),
 	}
 
 	def _handle_llm_actions(
@@ -94,6 +107,18 @@ class ResponseTagMixin:
 
 		cleaned = re.sub(r"\[\[([^\]]+)\]\]", " ", cleaned)
 		cleaned = re.sub(r"\[cmd:([^\]]+)\]", " ", cleaned, flags=re.IGNORECASE)
+		try:
+			from modules.ai_provider.services.tags import extract_llm_tags
+
+			extra_clean, extra_actions = extract_llm_tags(cleaned)
+			cleaned = extra_clean
+			for c in extra_actions.get("commands") or []:
+				if c not in commands:
+					commands.append(c)
+			for b in extra_actions.get("blocks") or []:
+				blocks.append(b)
+		except Exception:
+			pass
 		cleaned = re.sub(r"\s+", " ", cleaned).strip()
 		return cleaned, commands, blocks
 
@@ -170,8 +195,9 @@ class ResponseTagMixin:
 			elif kind == "stepper":
 				self.client.set_stepper(id=attrs.get("id", 0), mode=attrs.get("mode", "pos"), value=attrs.get("value", 0), drive=attrs.get("drive", 200))
 			elif kind == "oled":
-				action = str(attrs.get("action", "show")).strip().lower()
-				name = attrs.get("name")
+				anim_name = attrs.get("anim") or attrs.get("animation")
+				name = attrs.get("name") or attrs.get("face") or attrs.get("expression") or anim_name
+				action = str(attrs.get("action") or ("anim" if anim_name else "show")).strip().lower()
 				if action == "logo":
 					self.client.oled_logo()
 				elif action == "stop":
@@ -226,7 +252,7 @@ class ResponseTagMixin:
 
 	# --- Yapılandırılmış etiketler ------------------------------------
 	def _handle_lights_block(self, attrs: Dict[str, Any]) -> None:
-		palette_key = str(attrs.get("palette", "")).lower() or None
+		palette_key = str(attrs.get("palette") or attrs.get("color") or "").lower() or None
 		rgb = self._resolve_palette_rgb(palette_key)
 		intensity = float(attrs.get("intensity", 1.0) or 1.0)
 		

@@ -24,6 +24,12 @@ def _include_vlm_bridge(app: FastAPI, started: Dict[str, object], cfg: Dict[str,
     vcfg = load_vlm_cfg(None)
     processor = VisionProcessor(vcfg)
     cam_hw = _camera_hardware_available(cfg)
+    cam_svc = started.get("camera")
+    if cam_hw and cam_svc is not None:
+        if isinstance(cam_svc, dict) and cam_svc.get("kind") == "stub":
+            cam_hw = False
+        elif _should_autostart_services() and hasattr(cam_svc, "running") and not getattr(cam_svc, "running", False):
+            cam_hw = False
     if hasattr(processor, "set_camera_hardware_available"):
         processor.set_camera_hardware_available(cam_hw)
     ardu = started.get("arduino")
@@ -85,16 +91,27 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
     from modules.gateway.url import gateway_url, rewrite_loopback_urls  # type: ignore
 
     base = str(started.get("gateway_base_url", "http://127.0.0.1:8080"))
-    icfg = rewrite_loopback_urls(
-        load_inter_cfg(None, overrides=_agent_section("interactions") or None),
-        base,
+    raw_inter_cfg = load_inter_cfg(None, overrides=_agent_section("interactions") or None)
+    arduino_mounted = started.get("arduino") is not None and not (
+        isinstance(started.get("arduino"), dict) and started["arduino"].get("kind") == "stub"
     )
+    if not arduino_mounted:
+        mon = raw_inter_cfg.get("monitor")
+        if isinstance(mon, dict) and mon.get("arduino") is not None:
+            ard_mon = mon.get("arduino")
+            raw_url = str(ard_mon.get("url", "") if isinstance(ard_mon, dict) else "").strip()
+            norm_base = base.rstrip("/")
+            if not raw_url or raw_url.startswith("@gateway") or (norm_base and raw_url.startswith(norm_base)):
+                mon["arduino"] = None
+    icfg = rewrite_loopback_urls(raw_inter_cfg, base)
     icfg.setdefault("adapter", {})["http_base_url"] = gateway_url(base, "/neopixel")
     eng = InteractionEngine(
         icfg,
         neo_client=started.get("neopixel"),
         expression_arbiter=started.get("expression_arbiter"),
     )
+    if not arduino_mounted:
+        eng.set_state(arduino_connected=False)
     if _should_autostart_services():
         eng.start()
     else:
@@ -179,6 +196,7 @@ def _include_speech(app: FastAPI, started: Dict[str, object]) -> None:
         gwcfg = _gw_cfg.load_config(None)
         speech_cfg = _merge_with_agent_section(gwcfg.get("speech", {}), "speech")
         if bool(speech_cfg.get("listening", False)) or bool(speech_cfg.get("auto_start", False)):
+            svc.always_listening = True
             if _should_autostart_services():
                 try:
                     svc.start_background()
@@ -277,7 +295,7 @@ def _include_animate(app: FastAPI, started: Dict[str, object]) -> None:
     ardu = started.get("arduino")
     anim_overrides = _agent_section("animate") or None
     if ardu is None:
-        logger.warning("animate skipped: arduino module not mounted (no duplicate serial)")
+        logger.info("animate skipped: arduino module not mounted (no duplicate serial)")
         return
     anim = xAnimateService(serial=ardu, config_overrides=anim_overrides)
     if _should_autostart_services() and hasattr(anim, "start"):
@@ -568,3 +586,26 @@ def _wire_multimodal_identity(started: Dict[str, object]) -> None:
         elif hasattr(arduino, "_event_handlers") and isinstance(arduino._event_handlers, list):
             arduino._event_handlers.append(_on_arduino_rfid)
         logger.info("arduino rfid events wired to ActiveSpeakerResolver")
+
+
+def _wire_persona_sync(started: Dict[str, object]) -> None:
+    """Keep active persona scope synchronized across Agent Core and AutonomyBrain."""
+    autonomy = started.get("autonomy")
+    brain = getattr(autonomy, "brain", None) if autonomy is not None else None
+    agent = started.get("agent_core") or (getattr(brain, "agent", None) if brain is not None else None)
+    if brain is None and agent is None:
+        return
+    try:
+        from modules.common.persona_scope import get_active_persona, register_persona_listener
+
+        def _on_persona_change(persona_id: str, meta: Dict[str, Any]) -> None:
+            if brain is not None and isinstance(getattr(brain, "state", None), dict):
+                brain.state["active_persona"] = persona_id
+                brain.state["persona_meta"] = dict(meta or {})
+
+        if brain is not None and isinstance(getattr(brain, "state", None), dict):
+            brain.state.setdefault("active_persona", getattr(agent, "active_persona", None) or get_active_persona())
+        register_persona_listener(_on_persona_change)
+        logger.info("persona_scope listener wired across agent_core and autonomy")
+    except Exception as exc:
+        logger.debug("persona_sync wiring skipped: %s", exc)

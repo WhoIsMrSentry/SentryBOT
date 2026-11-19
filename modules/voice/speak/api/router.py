@@ -20,6 +20,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger("speak.api")
 
 
+def _player_stop_epoch(player: Any) -> int | None:
+    epoch = getattr(player, "stop_epoch", None)
+    return epoch if isinstance(epoch, int) and not isinstance(epoch, bool) else None
+
+
+def _clear_player_stop(player: Any) -> None:
+    clear_fn = getattr(player, "clear_stop", None)
+    if callable(clear_fn):
+        clear_fn()
+        return
+    stop_evt = getattr(player, "_play_stop", None)
+    if stop_evt is not None and hasattr(stop_evt, "clear"):
+        stop_evt.clear()
+
+
 def _split_text_chunks(text: str, max_chars: int = 180) -> list[str]:
     raw = str(text or "").strip()
     if not raw:
@@ -65,14 +80,26 @@ def get_router(service: SpeakService) -> APIRouter:
         trace_id = str(req_opts["trace_id"])
         chunks = list(req_opts["chunks"])
         payload = dict(req_opts["payload"])
+        submit_epoch = req_opts.get("submit_stop_epoch")
+        stop_state = req_opts.get("stop_state")
+        if isinstance(stop_state, dict):
+            ready = stop_state.get("ready")
+            if ready is not None and hasattr(ready, "wait"):
+                ready.wait(timeout=0.5)
+            submit_epoch = stop_state.get("epoch", submit_epoch)
         job = stream_jobs.get(job_id)
         if job is None:
             return
         try:
             job["status"] = "running"
-            stop_evt = getattr(getattr(service, "player", None), "_play_stop", None)
-            if stop_evt is not None and hasattr(stop_evt, "clear"):
-                stop_evt.clear()
+            player = getattr(service, "player", None)
+            current_epoch = _player_stop_epoch(player)
+            if submit_epoch is not None and current_epoch is not None and current_epoch != submit_epoch:
+                logger.info("Stream job %s interrupted before playback", job_id)
+                job["status"] = "interrupted"
+                latency_trace.finish(trace_id, "interrupted", {"done_chunks": 0})
+                return
+            _clear_player_stop(player)
             logger.info(
                 "Speaking stream (%s, %d chunks): %s",
                 payload.get("language") or "auto",
@@ -81,6 +108,7 @@ def get_router(service: SpeakService) -> APIRouter:
             )
             for index, chunk in enumerate(chunks, start=1):
                 if getattr(getattr(service, "player", None), "is_stopped", False):
+                    logger.info("Stream job %s interrupted at chunk %d/%d", job_id, index, len(chunks))
                     job["status"] = "interrupted"
                     latency_trace.finish(trace_id, "interrupted", {"done_chunks": index - 1})
                     return
@@ -92,6 +120,7 @@ def get_router(service: SpeakService) -> APIRouter:
                     speaker_wav=payload.get("speaker_wav"),
                     language=payload.get("language"),
                     trace_id=f"{trace_id}-c{index}",
+                    voice=payload.get("voice"),
                 )
                 if not result.get("ok"):
                     raise RuntimeError(str(result.get("detail") or result.get("error") or "TTS failed"))
@@ -99,6 +128,7 @@ def get_router(service: SpeakService) -> APIRouter:
             job["status"] = "done"
             latency_trace.finish(trace_id, "done", {"chunks": len(chunks)})
         except Exception as exc:
+            logger.warning("Stream job %s failed: %s", job_id, exc)
             job["status"] = "failed"
             job["error"] = repr(exc)
             latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
@@ -160,6 +190,7 @@ def get_router(service: SpeakService) -> APIRouter:
                 speaker_wav=payload.get("speaker_wav"),
                 language=payload.get("language"),
                 trace_id=trace_id,
+                voice=payload.get("voice"),
             )
         except Exception as exc:
             logger.exception("/speak/say failed")
@@ -192,6 +223,7 @@ def get_router(service: SpeakService) -> APIRouter:
             "trace_id": trace_id,
             "error": "",
         }
+        stop_state: Dict[str, Any] = {"epoch": None, "ready": threading.Event()}
         queue_obj.submit(
             text,
             priority=priority,
@@ -201,8 +233,11 @@ def get_router(service: SpeakService) -> APIRouter:
                 "chunks": chunks,
                 "payload": dict(payload),
                 "text": text,
+                "stop_state": stop_state,
             },
         )
+        stop_state["epoch"] = _player_stop_epoch(getattr(service, "player", None))
+        stop_state["ready"].set()
         _ensure_worker_started()
         return {"ok": True, "job_id": job_id, "trace_id": trace_id, "chunks": len(chunks)}
 

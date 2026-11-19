@@ -59,6 +59,7 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         self.cfg = load_config(config_path)
         self._stop_event = Event()
         self._listening = False
+        self.always_listening = bool(self.cfg.get("listening", False) or self.cfg.get("auto_start", False))
         self._listen_lock = Lock()
         self._result_lock = Lock()
         self._on_result_cb: Optional[Callable[[RecognitionResult], None]] = None
@@ -105,6 +106,7 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         else:
             self._direction = None
         self._last_angle = None
+        self._last_angle_ts = 0.0
 
         pt_cfg = self.cfg.get("pan_tilt", {})
         self._pan = PanTiltController(pt_cfg, sender=self._send_pan)
@@ -342,13 +344,13 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
             self._listening = False
             thr = self._thread
             self._thread = None
-        if hasattr(it, "close"):
+        if thr is not None and thr is not threading.current_thread() and thr.is_alive():
+            thr.join(timeout=1.5)
+        if (thr is None or not thr.is_alive()) and hasattr(it, "close"):
             try:
                 it.close()  # type: ignore[misc]
             except Exception:
                 pass
-        if thr is not None and thr is not threading.current_thread() and thr.is_alive():
-            thr.join(timeout=1.5)
 
     def listen_once(self, timeout_sec: float = 5.0) -> Optional[RecognitionResult]:
         res: Optional[RecognitionResult] = None
@@ -364,6 +366,10 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
     @property
     def last_angle(self) -> float | None:
         return self._last_angle
+
+    @property
+    def last_angle_ts(self) -> float:
+        return float(getattr(self, "_last_angle_ts", 0.0) or 0.0)
 
     @property
     def listening(self) -> bool:

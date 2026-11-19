@@ -7,11 +7,14 @@ from typing import Any, Dict, List, Sequence
 
 
 def _default_subagent_model() -> str:
+    from modules.common.model_roles import DEFAULT_UTILITY_MODEL
+
     return (
-        os.environ.get("SENTRYBOT_OLLAMA_MODEL")
+        os.environ.get("SENTRYBOT_SUBAGENT_MODEL")
+        or os.environ.get("SENTRYBOT_OLLAMA_MODEL")
         or os.environ.get("SENTRYBOT_MODEL")
         or os.environ.get("SENTRYBOT_LLM_MODEL")
-        or "qwen3.5:9b"
+        or DEFAULT_UTILITY_MODEL
     ).strip()
 
 
@@ -268,6 +271,17 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
             goal="Handle wake triggers and handoff behavior.",
             allowed_tools=("interaction_event",),
             keywords=("wakeword", "hey", "trigger", "activation"),
+        ),
+        "coder": SubAgentProfile(
+            module="coder",
+            role="Code and scripting specialist",
+            goal="Write, debug, and explain clean code, scripts, queries, and technical fixes.",
+            allowed_tools=(),
+            keywords=(
+                "python", "javascript", "typescript", "cpp", "c++", "bash", "powershell",
+                "sql", "regex", "debug", "traceback", "algoritma", "fonksiyon",
+                "kod", "kodla", "script", "refactor", "pytest",
+            ),
         ),
     }
 

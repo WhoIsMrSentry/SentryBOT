@@ -20,6 +20,7 @@ from modules.ai_provider.api.persona_routes import get_persona_router
 from ..services.chat import OllamaChatService
 from ..services.clients import create_llm_client
 from ..services.translator import OllamaTranslator
+from modules.common.persona_scope import register_persona_listener, set_active_persona
 
 logger = logging.getLogger("ollama.api")
 
@@ -81,6 +82,7 @@ def get_router(cfg: dict) -> APIRouter:
                     pass
 
     runtime = {
+        "cfg": cfg,
         "_lock": threading.RLock(),
         "client": client,
         "model": model,
@@ -89,6 +91,21 @@ def get_router(cfg: dict) -> APIRouter:
         "chat": chat,
         "_persona_cache": _persona_cache,
     }
+    set_active_persona(active_persona, notify=False)
+
+    def _sync_runtime_persona(new_pid: str, _meta: dict) -> None:
+        pdir = os.path.join(base_persona_dir, new_pid)
+        if not os.path.isdir(pdir):
+            return
+        use_flag = _should_use_persona_model(provider_name, single_model_mode, use_persona_models)
+        with runtime["_lock"]:
+            runtime["active_persona"] = new_pid
+            runtime["persona_text"] = _persona_cache.get(new_pid) or load_persona_text(cfg, new_pid)
+            existing_chat = runtime.get("chat")
+            if existing_chat is not None and hasattr(existing_chat, "update_persona"):
+                existing_chat.update_persona(new_pid, use_flag)
+
+    register_persona_listener(_sync_runtime_persona)
 
     r = APIRouter(prefix="/ollama", tags=["ollama"])
 

@@ -162,9 +162,18 @@ class SpeakService:
         raw = str(text or "").strip()
         if not raw:
             return ""
+        try:
+            from modules.ai_provider.services.tags import strip_speech_control_artifacts
+
+            raw = strip_speech_control_artifacts(raw)
+        except Exception:
+            pass
+        if not raw:
+            return ""
         raw = re.sub(r"```.*?```", " ", raw, flags=re.DOTALL)
         raw = re.sub(r"`([^`]*)`", r"\1", raw)
         raw = re.sub(r"\[(düşünce|thinking|iç ses|reasoning|gerekçe).*?\]", " ", raw, flags=re.IGNORECASE)
+        raw = re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27BF]+", " ", raw)
         clean: list[str] = []
         thought_re = re.compile(
             r"^(analysis|reasoning|thinking|internal state|tool_call|düşünce|dusunce|iç ses|ic ses|düşünüyorum|gerekçe|gerekce|analiz|iç durum|ic durum|plan|araç çağrısı|arac cagrisi)\s*:",
@@ -215,8 +224,8 @@ class SpeakService:
                     sess.post(url, json=payload, timeout=timeout_s)
                 else:
                     requests.post(url, json=payload, timeout=timeout_s)
-            except Exception:
-                logger.debug("expression event failed: %s", event_type, exc_info=True)
+            except Exception as exc:
+                logger.debug("expression event failed (%s): %s", event_type, exc)
 
         threading.Thread(target=_send, daemon=True).start()
 
@@ -236,6 +245,7 @@ class SpeakService:
         speaker_wav: Optional[str] = None,
         language: Optional[str] = None,
         trace_id: Optional[str] = None,
+        voice: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not str(text or "").strip():
             raise ValueError("text is empty")
@@ -255,6 +265,8 @@ class SpeakService:
             overrides["speaker_wav"] = speaker_wav
         if language:
             overrides["language"] = language
+        if voice:
+            overrides["voice"] = str(voice).strip()
 
         active_engine = str(engine or self.cfg.get("tts", {}).get("engine", "piper")).strip().lower()
         if active_engine == "piper":

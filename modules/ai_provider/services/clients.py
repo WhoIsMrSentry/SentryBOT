@@ -157,12 +157,17 @@ class OllamaClient:
         return self._breaker.state()
 
     def create_model(self, name: str, modelfile: str) -> bool:
+        from modules.common.ollama_modelfile import build_ollama_create_payload
+
         url = f"{self.base_url}/api/create"
-        payload = {"name": name, "modelfile": modelfile, "stream": False}
+        modern_payload = build_ollama_create_payload(name, modelfile)
         try:
-            resp = self._http_post(url, json=payload, timeout=float(self.timeout * 2))
+            resp = self._http_post(url, json=modern_payload, timeout=float(self.timeout * 2))
+            if resp.status_code in {400, 422}:
+                legacy_payload = {"name": name, "modelfile": modelfile, "stream": False}
+                resp = self._http_post(url, json=legacy_payload, timeout=float(self.timeout * 2))
             resp.raise_for_status()
-            logger.info("Ollama model '%s' created/updated successfully.", name)
+            logger.info("Ollama model '%s' created/updated successfully from '%s'.", name, modern_payload.get("from"))
             return True
         except Exception as exc:
             logger.error("Failed to create Ollama model '%s': %s", name, exc)
@@ -242,7 +247,7 @@ class OllamaClient:
             raise CircuitOpenError("Ollama circuit breaker is open")
 
         selected_model = model or self.model
-        merged_options: Dict[str, Any] = {"temperature": 0.6}
+        merged_options: Dict[str, Any] = {"temperature": 0.6, "num_ctx": 8192}
         if isinstance(options, dict):
             merged_options.update(options)
 
@@ -252,6 +257,7 @@ class OllamaClient:
             "messages": messages,
             "stream": False,
             "think": False,
+            "keep_alive": getattr(self, "keep_alive", -1),
             "format": format,
             "options": merged_options,
         }
@@ -295,7 +301,7 @@ class OllamaClient:
             raise CircuitOpenError("Ollama circuit breaker is open")
 
         selected_model = model or self.model
-        merged_options: Dict[str, Any] = {"temperature": 0.6}
+        merged_options: Dict[str, Any] = {"temperature": 0.6, "num_ctx": 8192}
         if isinstance(options, dict):
             merged_options.update(options)
 
@@ -305,6 +311,7 @@ class OllamaClient:
             "messages": messages,
             "stream": True,
             "think": False,
+            "keep_alive": getattr(self, "keep_alive", -1),
             "format": format,
             "options": merged_options,
         }
@@ -379,8 +386,10 @@ def create_llm_client(cfg: Dict[str, Any]) -> Tuple[LLMClientProtocol, str]:
         return GoogleAIStudioClient(api_key=api_key, model=model, base_url=base_url, request_timeout=timeout), "google_ai_studio"
 
     ocfg = cfg.get("ollama", {}) or {}
+    from modules.common.model_roles import resolve_role_model
+
     base_url = str(ocfg.get("base_url", "http:"))
-    model = str(ocfg.get("model", "llama3.2:3b"))
+    model = resolve_role_model(cfg, "chat", fallback=ocfg.get("model"))
     timeout = float(ocfg.get("request_timeout", 60.0))
     cb_thresh = int(ocfg.get("cb_failure_threshold", 3))
     cb_recovery = float(ocfg.get("cb_recovery_timeout_s", 15.0))

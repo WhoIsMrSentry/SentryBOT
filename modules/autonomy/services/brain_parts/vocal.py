@@ -54,17 +54,85 @@ class VocalMixin(VocalProsodyMixin):
             return True
         return False
 
+    def _handle_persona_command(self, text: str, lang: str, request_id: str) -> bool:
+        try:
+            from modules.common.persona_scope import set_active_persona
+            from modules.ai_provider.services.persona_rag import PersonaManager
+        except Exception:
+            return False
+
+        agent = getattr(self, "agent", None)
+        mgr = getattr(agent, "persona_manager", None) if agent is not None else None
+        if mgr is None:
+            try:
+                mgr = PersonaManager()
+                personas = mgr.list_personas()
+            except Exception:
+                personas = []
+            finally:
+                try:
+                    mgr.close()  # type: ignore[union-attr]
+                except Exception:
+                    pass
+        else:
+            personas = mgr.list_personas()
+
+        parsed = self._parse_persona_voice_command(text, personas=personas)
+        if parsed is None:
+            return False
+        target_pid, req_lang = parsed
+
+        meta: dict = {}
+        try:
+            if agent is not None and hasattr(agent, "apply_persona"):
+                state = agent.apply_persona(target_pid, response_language=req_lang, trigger_emotion=True)
+                meta = dict(state.get("meta") or {})
+            else:
+                local_mgr = PersonaManager()
+                try:
+                    loaded = local_mgr.load_persona(target_pid)
+                    meta = dict(loaded.get("manifest") or {})
+                    if req_lang:
+                        meta["response_language"] = req_lang
+                    set_active_persona(target_pid, meta=meta)
+                finally:
+                    local_mgr.close()
+        except Exception as exc:
+            logger.debug("Persona voice switch failed for '%s': %s", target_pid, exc)
+            return False
+
+        eff_lang = req_lang or str(meta.get("response_language") or "")
+        speak_lang = eff_lang if eff_lang in {"tr", "en"} else str(lang or "tr")
+        greeting = str(meta.get("greeting_en" if speak_lang == "en" else "greeting_tr") or "").strip()
+        if not greeting:
+            greeting = f"{meta.get('display_name', target_pid)} mode active." if speak_lang == "en" else f"{meta.get('display_name', target_pid)} modu aktif."
+        voice_hint = str(meta.get("tts_voice_en") if speak_lang == "en" else meta.get("tts_voice") or "").strip() or None
+        default_em = str(meta.get("default_emotion") or "neutral").strip().lower()
+        self.state["active_persona"] = target_pid
+        self.state["last_interaction"] = time.time()
+        try:
+            self.client.push_interaction_event("persona.switched", {"persona": target_pid, "language": speak_lang})
+        except Exception:
+            pass
+        self._speak_with_mood(greeting, emotion=default_em, language=speak_lang, voice=voice_hint)
+        logger.info("Persona switched via voice command -> %s (lang=%s, voice=%s)", target_pid, speak_lang, voice_hint)
+        return True
+
     def _handle_speech_command_shortcuts(self, text: str, lang: str, request_id: str) -> bool:
-        companion_cfg = self.config.get("companion", {}) if isinstance(self.config.get("companion"), dict) else {}
-        if companion_cfg.get("voice_ai_tools", True) and getattr(self, "agent", None):
-            return False
-        if not companion_cfg.get("emotion_command_shortcut", False):
-            return False
-        if self._handle_emotion_command(text, lang):
+        if self._handle_persona_command(text, lang, request_id):
             with self._speech_req_lock:
                 if self._active_speech_req_id == request_id:
                     self._speech_busy = False
             return True
+        companion_cfg = self.config.get("companion", {}) if isinstance(self.config.get("companion"), dict) else {}
+        if companion_cfg.get("emotion_command_shortcut", True):
+            if self._handle_emotion_command(text, lang):
+                with self._speech_req_lock:
+                    if self._active_speech_req_id == request_id:
+                        self._speech_busy = False
+                return True
+        if companion_cfg.get("voice_ai_tools", True) and getattr(self, "agent", None):
+            return False
         return False
 
     def _process_speech_social_context(self, text: str, voice_speaker: str | None = None) -> str | None:
@@ -120,11 +188,16 @@ class VocalMixin(VocalProsodyMixin):
         try:
             if not self.agent.speech_arbiter._speak_fn:
                 self.agent.speech_arbiter.set_speak_fn(
-                    lambda text, tone=None, language=None, trace_id=None: self.client.speak_preferred(
+                    lambda text, tone=None, language=None, trace_id=None, voice=None: self.client.speak_preferred(
                         text,
                         tone=tone,
                         language=language or lang,
                         trace_id=trace_id,
+                        voice=voice or (
+                            self.agent.effective_tts_voice(language or lang)
+                            if hasattr(self.agent, "effective_tts_voice")
+                            else None
+                        ),
                     )
                 )
             enriched_text = self._enrich_user_text_with_companion_context(text=text, speaker=speaker)
@@ -139,14 +212,20 @@ class VocalMixin(VocalProsodyMixin):
             elapsed_ms = round((time.monotonic() - t0) * 1000.0, 2)
             if isinstance(getattr(self, "state", None), dict):
                 self.state["agent_last_latency_ms"] = elapsed_ms
-            if isinstance(agent_result, dict) and (
+            if isinstance(agent_result, dict) and agent_result.get("ok", True) is not False and (
                 agent_result.get("text")
                 or agent_result.get("speech_handled")
                 or agent_result.get("actions")
             ):
                 if not self._is_active_request(request_id):
                     return True
+                self.state["last_interaction"] = time.time()
                 reply_text = str(agent_result.get("text") or "").strip()
+                if reply_text and hasattr(self, "apply_llm_response"):
+                    try:
+                        reply_text = str(self.apply_llm_response(reply_text, None, reply_text, speak=False) or "").strip()
+                    except Exception:
+                        pass
                 if reply_text:
                     final_lang = lang
                     if detect_text_language:
@@ -157,11 +236,15 @@ class VocalMixin(VocalProsodyMixin):
                     self._remember_person_chat(speaker, reply_text, role="assistant")
                     if not agent_result.get("speech_handled"):
                         tone = self._tone_profile(self.state.get("last_emotion") or self.mood.get_dominant_emotion())
+                        voice_fn = getattr(self.agent, "effective_tts_voice", None)
+                        voice_hint = voice_fn(final_lang) if callable(voice_fn) else None
+                        extra_kw = {"voice": voice_hint} if voice_hint else {}
                         self.agent.speech_arbiter.enqueue_final(
                             reply_text,
                             language=final_lang,
                             tone=tone,
                             trace_id=request_id,
+                            **extra_kw,
                         )
                 return True
         except Exception as exc:
@@ -193,6 +276,7 @@ class VocalMixin(VocalProsodyMixin):
             return
         if not self._is_active_request(request_id):
             return
+        self.state["last_interaction"] = time.time()
         self._remember_person_chat(speaker, clean_text, role="assistant")
         final_lang = lang
         if detect_text_language:

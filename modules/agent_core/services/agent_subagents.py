@@ -60,7 +60,23 @@ class AgentSubagentsMixin:
             else None
         )
         actions: List[Dict[str, Any]] = []
-        sub_model = getattr(self, "model", None) or profile.model
+        from modules.common.model_roles import explicit_single_model_mode, resolve_role_model
+
+        sub_cfg = getattr(self, "config", None)
+        override = str(getattr(profile, "model_override", "") or "").strip()
+        if override:
+            sub_model = override
+        elif explicit_single_model_mode(sub_cfg) is False or (isinstance(sub_cfg, dict) and "models" in sub_cfg):
+            role_key = str(getattr(profile, "role_key", "") or "").strip() or (
+                "coder" if getattr(profile, "module", "") in {"coder", "developer"} else "subagent"
+            )
+            sub_model = resolve_role_model(
+                sub_cfg,
+                role_key,
+                fallback=getattr(self, "model", None) or profile.model,
+            )
+        else:
+            sub_model = getattr(self, "model", None) or profile.model
         res = self._chat_turn(sub_model, messages, tools=sub_tools or None, options=options)
         msg = res.get("message", {}) if isinstance(res, dict) else {}
         tool_calls = msg.get("tool_calls") or []
@@ -143,7 +159,16 @@ class AgentSubagentsMixin:
             "num_ctx": self.num_ctx,
         }
 
-        default_model = getattr(self, "model", None) or getattr(self, "default_model", "qwen3.5:9b")
+        from modules.common.model_roles import DEFAULT_CHAT_MODEL, resolve_role_model
+
+        default_model = resolve_role_model(
+            getattr(self, "config", None),
+            "persona",
+            fallback=getattr(self, "model", None) or getattr(self, "default_model", DEFAULT_CHAT_MODEL),
+        )
+        resolver = getattr(self, "_resolve_non_sentry_model", None)
+        if callable(resolver):
+            default_model = resolver(default_model)
         if self.persona_stream_enabled and on_sentence:
             return self._stream_turn_sentence_by_sentence(
                 default_model, messages, tools=None, options=options, on_sentence=on_sentence

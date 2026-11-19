@@ -3,13 +3,17 @@ from __future__ import annotations
 from contextlib import nullcontext
 import logging
 import threading
+import time
 from typing import Any, Dict, List, Optional
+
+import requests
 
 from modules.common.ollama_url import normalize_ollama_url
 
 from .action_arbiter import ActionArbiter
 from .agent_handlers import register_default_action_handlers
 from .agent_memory_sync import AgentMemorySyncMixin
+from .agent_persona import AgentPersonaMixin
 from .expression_arbiter import ExpressionArbiter
 from .idle_behavior import IdleBehaviorSystem
 from .memory import EpisodicMemory
@@ -62,7 +66,7 @@ class _PriorityOllamaAdapter:
         return getattr(self._inner, item)
 
 
-class AgentContextMixin(AgentMemorySyncMixin):
+class AgentContextMixin(AgentMemorySyncMixin, AgentPersonaMixin):
     """Initialization and context management methods for AgentOrchestrator."""
 
     config: Dict[str, Any]
@@ -132,10 +136,16 @@ class AgentContextMixin(AgentMemorySyncMixin):
         self._action_http_timeout_s = float(actions_cfg.get("http_timeout_s", 2.5))
 
     def _init_llm_settings(self, config: Dict[str, Any]) -> Dict[str, Any]:
+        from modules.common.model_roles import DEFAULT_CHAT_MODEL, resolve_role_model
+
         agent_cfg = config.get("agent", {})
-        self.model = agent_cfg.get("model", "llama3.2:3b-q4_K_M")
+        self.model = resolve_role_model(
+            config,
+            "chat",
+            fallback=agent_cfg.get("model") or DEFAULT_CHAT_MODEL,
+        )
         self.temperature = agent_cfg.get("temperature", 0.15)
-        self.num_ctx = agent_cfg.get("num_ctx", 4096)
+        self.num_ctx = agent_cfg.get("num_ctx", 8192)
         self.cooldown = agent_cfg.get("cooldown_s", 1.0)
         llm_cfg = config.get("llm", {}) if isinstance(config.get("llm", {}), dict) else {}
         self.llm_provider = str(llm_cfg.get("provider", "ollama")).strip().lower() or "ollama"
@@ -163,6 +173,9 @@ class AgentContextMixin(AgentMemorySyncMixin):
         self.provider_name = self.llm_provider
         self._cached_model_names = []
         self._cached_model_names_ts = 0.0
+        self._ollama_unavailable_until = 0.0
+        self._ollama_unavailable_reason = ""
+        self._ollama_probe_ok_until = 0.0
         if ollama:
             try:
                 self.ollama_base_url = normalize_ollama_url(getattr(self, "ollama_base_url", None))
@@ -181,6 +194,8 @@ class AgentContextMixin(AgentMemorySyncMixin):
                 logger.info("LLM provider client ready: %s (model=%s)", self.provider_name, getattr(self.provider_client, "model", ""))
             except Exception as exc:
                 logger.error("Provider client init failed for %s: %s", self.llm_provider, exc)
+        if hasattr(self, "_init_translator"):
+            self._init_translator(self.config)
 
     def _init_subsystems(self, config: Dict[str, Any]) -> None:
         self.world_state = WorldState()
@@ -227,6 +242,7 @@ class AgentContextMixin(AgentMemorySyncMixin):
             action_arbiter=self.action_arbiter,
             expression_arbiter=self.expression_arbiter,
             mcp_client=getattr(self, "mcp_client", None),
+            localize_speech_fn=getattr(self, "_localize_tool_speech", None),
         )
         runtime_cfg = config.get("agent_runtime", {}) if isinstance(config.get("agent_runtime"), dict) else {}
         from .runtime import CapabilityIndex, DecisionTraceStore, FailureClassifier, GoalStore, ProgressTracker, RecoveryManager
@@ -288,16 +304,21 @@ class AgentContextMixin(AgentMemorySyncMixin):
             self.speech_arbiter.set_stop_playback_fn(self.autonomy_client.stop_speaking)
         if self.autonomy_client and hasattr(self.autonomy_client, "speak_preferred"):
             self.speech_arbiter.set_speak_fn(
-                lambda text, tone=None, language=None, trace_id=None: self.autonomy_client.speak_preferred(
+                lambda text, tone=None, language=None, trace_id=None, voice=None: self.autonomy_client.speak_preferred(
                     text,
                     tone=tone,
                     language=language or "tr",
                     trace_id=trace_id,
+                    voice=voice or (
+                        self.effective_tts_voice(language or "tr")
+                        if hasattr(self, "effective_tts_voice")
+                        else None
+                    ),
                 )
             )
         else:
             self.speech_arbiter.set_speak_fn(
-                lambda text, tone=None, language=None, trace_id=None: self._handle_speak_fallback(
+                lambda text, tone=None, language=None, trace_id=None, voice=None: self._handle_speak_fallback(
                     text,
                     tone=tone,
                     language=language or "tr",
@@ -343,15 +364,16 @@ class AgentContextMixin(AgentMemorySyncMixin):
         self.fast_path_max_steps = self._safe_int(fast_cfg.get("max_steps", 2), fallback=2, minimum=1)
         self.subagent_max_steps = self._safe_int(subagent_cfg.get("max_steps", 4), fallback=4, minimum=1)
         self.subagent_workers = self._safe_int(subagent_cfg.get("max_parallel_workers", 3), fallback=3, minimum=1)
-        self.persona_system_prompt = str(
-            persona_cfg.get(
-                "system_prompt",
-                "You are SentryBOT Companion persona. Speak directly to the user in a friendly, concise tone.",
-            )
-        )
+        self.persona_system_prompt = str(persona_cfg.get("system_prompt") or "").strip()
         self.persona_num_predict = self._safe_int(persona_cfg.get("num_predict", 160), fallback=160, minimum=10)
         self.persona_stream_enabled = bool(persona_cfg.get("stream_enabled", persona_cfg.get("stream", False)))
         self.chat_num_predict = self._safe_int(agent_cfg.get("chat_num_predict", 120), fallback=120, minimum=10)
+        if hasattr(self, "_init_persona_runtime"):
+            self._init_persona_runtime(config, configured_prompt=self.persona_system_prompt)
+            reg = getattr(self, "tool_registry", None)
+            if reg is not None:
+                reg.persona_manager = getattr(self, "persona_manager", None)
+                reg.apply_persona_fn = lambda name, lang="": self.apply_persona(name, response_language=lang)
 
     def _vision_input_available(self) -> bool:
         if self.autonomy_client and hasattr(self.autonomy_client, "is_vision_input_available"):
@@ -463,16 +485,131 @@ class AgentContextMixin(AgentMemorySyncMixin):
             pass
         return None
 
+    @staticmethod
+    def _is_real_ollama_client(client: Any) -> bool:
+        if client is None or ollama is None:
+            return False
+        ollama_cls = getattr(ollama, "Client", None)
+        if not isinstance(ollama_cls, type):
+            return False
+        inner = getattr(client, "_inner", client)
+        return isinstance(inner, ollama_cls)
+
+    @staticmethod
+    def _is_provider_transport_error(exc: BaseException) -> bool:
+        if isinstance(exc, (ConnectionError, TimeoutError, OSError, requests.exceptions.RequestException)):
+            return True
+        if type(exc).__name__ in {
+            "CircuitOpenError",
+            "ConnectError",
+            "ConnectTimeout",
+            "ReadTimeout",
+            "WriteTimeout",
+            "PoolTimeout",
+            "NetworkError",
+            "RemoteProtocolError",
+        }:
+            return True
+        try:
+            import httpx
+
+            if isinstance(exc, httpx.TransportError):
+                return True
+        except Exception:
+            pass
+        try:
+            import httpcore
+
+            if isinstance(exc, (httpcore.NetworkError, httpcore.TimeoutException)):
+                return True
+        except Exception:
+            pass
+        return False
+
+    def _mark_ollama_unavailable(self, reason: Any, ttl_s: float = 5.0) -> None:
+        self._ollama_probe_ok_until = 0.0
+        self._ollama_unavailable_until = time.monotonic() + max(0.5, float(ttl_s))
+        self._ollama_unavailable_reason = str(reason or "ollama_unavailable")
+
+    def _probe_ollama_connectivity(self) -> Optional[str]:
+        now = time.monotonic()
+        unavail_until = float(getattr(self, "_ollama_unavailable_until", 0.0) or 0.0)
+        if unavail_until > now:
+            return str(getattr(self, "_ollama_unavailable_reason", "") or "ollama_unavailable")
+
+        client = getattr(self, "ollama_client", None)
+        if client is None:
+            return "ollama_client_missing"
+        if not self._is_real_ollama_client(client):
+            return None
+
+        ok_until = float(getattr(self, "_ollama_probe_ok_until", 0.0) or 0.0)
+        if ok_until > now:
+            return None
+
+        base_url = str(getattr(self, "ollama_base_url", "") or "").strip().rstrip("/")
+        if not base_url:
+            return "ollama_base_url_missing"
+
+        try:
+            resp = requests.get(f"{base_url}/api/tags", timeout=0.6)
+            status = int(getattr(resp, "status_code", 0) or 0)
+            if status >= 500 or status == 0:
+                reason = f"http_{status}"
+                self._mark_ollama_unavailable(reason)
+                return reason
+            self._ollama_probe_ok_until = time.monotonic() + 60.0
+            self._ollama_unavailable_until = 0.0
+            self._ollama_unavailable_reason = ""
+            return None
+        except Exception as exc:
+            self._mark_ollama_unavailable(exc)
+            return str(exc)
+
+    def _provider_unavailable_payload(
+        self,
+        *,
+        session_language: str = "tr",
+        event_type: Optional[str] = None,
+        reason: str = "",
+        trace_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        lang = str(session_language or "tr").strip().lower()
+        if event_type:
+            text = ""
+        elif lang.startswith("en"):
+            text = "LLM provider is currently unreachable."
+        else:
+            text = "LLM servisine su anda ulasilamiyor."
+        payload: Dict[str, Any] = {
+            "ok": False,
+            "error": "ollama_unavailable",
+            "text": text,
+            "thoughts": f"LLM unavailable: {reason}" if reason else "LLM unavailable.",
+            "actions": [],
+            "plan": [],
+        }
+        if reason:
+            payload["detail"] = reason
+        if trace_id is not None:
+            payload["trace_id"] = trace_id
+        return payload
+
     def _check_provider_availability(self) -> Optional[Dict[str, Any]]:
-        if self.llm_provider != "ollama" and self.provider_client is None:
-            return {
-                "ok": False,
-                "error": "provider_unavailable",
-                "text": f"Provider {self.llm_provider} is not available",
-                "thoughts": f"Provider {self.llm_provider} is not available.",
-                "actions": [],
-                "plan": [],
-            }
+        if self.llm_provider != "ollama":
+            if self.provider_client is None:
+                return {
+                    "ok": False,
+                    "error": "provider_unavailable",
+                    "text": f"Provider {self.llm_provider} is not available",
+                    "thoughts": f"Provider {self.llm_provider} is not available.",
+                    "actions": [],
+                    "plan": [],
+                }
+            return None
+        reason = self._probe_ollama_connectivity()
+        if reason:
+            return self._provider_unavailable_payload(reason=reason)
         return None
 
     def create_agent_runtime(self, **budget_overrides: Any):

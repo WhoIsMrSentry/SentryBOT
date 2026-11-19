@@ -44,6 +44,8 @@ def _read_declared_models_from_file(path_value: Any) -> list[tuple[str, str]]:
             provider = str(llm_cfg.get("provider")).strip().lower()
         if provider and provider != "ollama":
             return []
+        if isinstance(llm_cfg, dict) and llm_cfg.get("single_model_mode") is False:
+            return []
 
         found: list[tuple[str, str]] = []
         if isinstance(agent_cfg, dict) and agent_cfg.get("model"):
@@ -71,6 +73,20 @@ def _enforce_strict_models(cfg: Dict[str, Any]) -> None:
     if isinstance(llm_cfg, dict) and llm_cfg.get("provider"):
         provider = str(llm_cfg.get("provider")).strip().lower()
     if provider not in {"", "ollama"}:
+        return
+    if isinstance(llm_cfg, dict) and llm_cfg.get("single_model_mode") is False:
+        allowed_raw = llm_cfg.get("allowed_models")
+        if isinstance(allowed_raw, (list, tuple, set)):
+            allowed = {str(x).strip() for x in allowed_raw if str(x).strip()}
+            if allowed:
+                agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
+                for src, val in (
+                    ("agent.model", (agent_cfg or {}).get("model")),
+                    ("llm.model", llm_cfg.get("model")),
+                ):
+                    m = str(val or "").strip()
+                    if m and m not in allowed:
+                        raise ValueError(f"{src} '{m}' not in llm.allowed_models: {sorted(allowed)}")
         return
     agent_cfg = cfg.get("agent") if isinstance(cfg.get("agent"), dict) else {}
     if isinstance(agent_cfg, dict):
@@ -137,11 +153,13 @@ def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
     llm_cfg.setdefault("fallback_on_error", False)
     cfg["llm"] = llm_cfg
 
+    from modules.common.model_roles import DEFAULT_CHAT_MODEL
+
     # Ensure agent section has model and request_timeout
     agent_cfg = cfg.get("agent", {})
     if not isinstance(agent_cfg, dict):
         agent_cfg = {}
-    agent_cfg.setdefault("model", provider_config.get("model", "qwen3.5:9b"))
+    agent_cfg.setdefault("model", provider_config.get("model", DEFAULT_CHAT_MODEL))
     agent_cfg.setdefault("request_timeout", provider_config.get("request_timeout", 60.0))
     cfg["agent"] = agent_cfg
 
@@ -150,7 +168,7 @@ def load_config(path: str | os.PathLike | None = None) -> Dict[str, Any]:
     if not isinstance(ollama_cfg, dict):
         ollama_cfg = {}
     ollama_cfg.setdefault("base_url", provider_config.get("ollama", {}).get("base_url", "http:"))
-    ollama_cfg.setdefault("model", provider_config.get("model", "qwen3.5:9b"))
+    ollama_cfg.setdefault("model", provider_config.get("model", DEFAULT_CHAT_MODEL))
     ollama_cfg.setdefault("request_timeout", provider_config.get("request_timeout", 60.0))
     cfg["ollama"] = ollama_cfg
 

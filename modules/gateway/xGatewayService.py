@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from modules.common.config_loader import load_dotenv
 from modules.common.http_client import close_all_clients
 
 from .config_loader import load_config
@@ -192,6 +193,9 @@ def _mount_bootstrap(app: FastAPI, cfg: dict) -> None:
 
 
 async def _shutdown_started_services(started: dict) -> None:
+    if isinstance(started, dict) and started.get("_services_stopped"):
+        return
+
     for hook in list(started.get("_cleanup_hooks", []) if isinstance(started, dict) else []):
         try:
             res = hook()
@@ -207,8 +211,12 @@ async def _shutdown_started_services(started: dict) -> None:
         except Exception as exc:
             logger.warning("notifier bot stop failed during shutdown: %s", exc)
 
+    seen_ids: set[int] = set(started.get("_stopped_service_ids", []) if isinstance(started, dict) else [])
     for name, svc in list((started or {}).items()):
         if str(name).startswith("_") or name in ("notifier_bot", "notifier_polling_enabled"):
+            continue
+        svc_id = id(svc)
+        if svc_id in seen_ids:
             continue
         for method_name in ("stop", "shutdown", "close"):
             fn = getattr(svc, method_name, None)
@@ -219,7 +227,13 @@ async def _shutdown_started_services(started: dict) -> None:
                         await res
                 except Exception as exc:
                     logger.debug("service %s.%s failed during shutdown: %s", name, method_name, exc)
+                finally:
+                    seen_ids.add(svc_id)
                 break
+
+    if isinstance(started, dict):
+        started["_stopped_service_ids"] = list(seen_ids)
+        started["_services_stopped"] = True
 
     try:
         await close_all_clients()
@@ -265,6 +279,7 @@ def _register_security_middleware(app: FastAPI, security: dict) -> None:
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
+    load_dotenv()
     cfg = load_config(config_path)
     security = _build_security_policy(cfg)
 

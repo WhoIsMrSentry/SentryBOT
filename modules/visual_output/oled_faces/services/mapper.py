@@ -47,6 +47,8 @@ class FaceMapper:
         mapped = self.event_map.get(f"emotion:{key}")
         if isinstance(mapped, dict):
             return OledAction(mode=str(mapped.get("mode", "bitmap")), name=str(mapped.get("name", self.fallback_unknown)))
+        if key in self.state_map and not (_get_emotion_vocab is not None and _get_emotion_vocab().is_known(key)):
+            return self.from_operational(key)
         if _get_emotion_vocab is not None:
             try:
                 render = _get_emotion_vocab().render(key)

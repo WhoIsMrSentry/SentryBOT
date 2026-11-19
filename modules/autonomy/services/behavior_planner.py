@@ -7,6 +7,8 @@ try:
 except ImportError:
     ollama = None
 
+from modules.common.model_roles import DEFAULT_UTILITY_MODEL, resolve_role_model
+from modules.common.ollama_compat import call_ollama_chat
 from modules.common.ollama_url import default_ollama_base_url, normalize_ollama_url
 
 logger = logging.getLogger("autonomy.planner")
@@ -17,7 +19,8 @@ def resolve_planner_llm_settings(config: Dict[str, Any]) -> Tuple[str, str, bool
     cfg = config if isinstance(config, dict) else {}
     llm_cfg = cfg.get("llm", {}) if isinstance(cfg.get("llm"), dict) else {}
     agent_cfg = cfg.get("agent", {}) if isinstance(cfg.get("agent"), dict) else {}
-    model = str(llm_cfg.get("model") or cfg.get("planner_model") or "llama3.2")
+    fallback = str(cfg.get("planner_model") or llm_cfg.get("model") or DEFAULT_UTILITY_MODEL)
+    model = resolve_role_model(cfg, "planner", fallback=fallback)
     raw_url = agent_cfg.get("ollama_base_url") or llm_cfg.get("ollama_base_url") or default_ollama_base_url()
     ollama_host = normalize_ollama_url(raw_url)
     enabled = bool(cfg.get("llm_planning_enabled", True))
@@ -110,7 +113,8 @@ class BehaviorPlanner:
                     {"role": "user", "content": user_prompt}
                 ],
                 "think": False,
-                "options": {"temperature": 0.15, "num_predict": 160, "num_ctx": 4096}
+                "keep_alive": -1,
+                "options": {"temperature": 0.15, "num_predict": 160, "num_ctx": 8192}
             }
             if tool_schemas:
                 kwargs["tools"] = tool_schemas
@@ -119,7 +123,7 @@ class BehaviorPlanner:
                 kwargs["format"] = "json"
 
             client = ollama.Client(host=self.ollama_host)
-            response = client.chat(**kwargs)
+            response = call_ollama_chat(client, **kwargs)
             
             self._last_plan_time = time.time()
             message = response.get("message", {})

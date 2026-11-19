@@ -3,11 +3,13 @@ from __future__ import annotations
 import os as _sentrybot_agent_turn_os
 
 def _sentrybot_agent_turn_target_model() -> str:
+    from modules.common.model_roles import DEFAULT_CHAT_MODEL
+
     return (
         _sentrybot_agent_turn_os.environ.get("SENTRYBOT_OLLAMA_MODEL")
         or _sentrybot_agent_turn_os.environ.get("SENTRYBOT_MODEL")
         or _sentrybot_agent_turn_os.environ.get("SENTRYBOT_LLM_MODEL")
-        or "qwen3.5:9b"
+        or DEFAULT_CHAT_MODEL
     ).strip()
 
 def _sentrybot_normalize_agent_turn_model(model) -> str:
@@ -20,7 +22,6 @@ def _sentrybot_normalize_agent_turn_model(model) -> str:
         or value == "qwen2.5"
         or value == "qwen2.5:latest"
         or value.startswith("qwen2.5:")
-        or value.startswith("qwen2.5-coder:")
     ):
         return target
 
@@ -36,6 +37,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from .agent_streaming import AgentStreamingMixin
 from .agent_subagents import AgentSubagentsMixin
 from modules.common.latency_trace import latency_trace
+from modules.common.ollama_compat import call_ollama_chat
 
 logger = logging.getLogger("agent.orchestrator")
 
@@ -174,13 +176,7 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
         if self._chat_accepts_priority(self.ollama_client):
             kwargs["priority"] = 0  # Interactive user turn preempts background tasks
         try:
-            try:
-                return self.ollama_client.chat(**kwargs)
-            except TypeError as exc:
-                if "priority" in str(exc) and "priority" in kwargs:
-                    kwargs.pop("priority", None)
-                    return self.ollama_client.chat(**kwargs)
-                raise
+            return call_ollama_chat(self.ollama_client, **kwargs)
         except Exception as exc:
             fallback = str(self.clm_fallback_model or "").strip()
             if (
@@ -191,7 +187,7 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
             ):
                 logger.warning("Ollama call failed with '%s' (%s). Retrying with fallback '%s'.", runtime_model, exc, fallback)
                 kwargs["model"] = fallback
-                return self.ollama_client.chat(**kwargs)
+                return call_ollama_chat(self.ollama_client, **kwargs)
             raise
 
     def _run_native_history_loop(

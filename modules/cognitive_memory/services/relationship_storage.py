@@ -62,14 +62,20 @@ class RelationshipStorageMixin:
             self._learner = None
         return self._learner
 
-    def _extract_preferences_db(self, person_id: str, text: str) -> None:
+    def _extract_preferences_db(
+        self,
+        person_id: str,
+        text: str,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> None:
         if not person_id or self._social_db is None:
             return
         learner = self._get_learner()
         if learner is None:
             return
         prefs = learner.extract_preferences(text)
-        existing = self._social_db.relationships.list_grouped(person_id)
+        existing = self._social_db.relationships.list_grouped(person_id, persona_id=persona_id)
         likes = existing.get("likes", [])
         dislikes = existing.get("dislikes", [])
         topics = existing.get("topics", [])
@@ -80,7 +86,7 @@ class RelationshipStorageMixin:
                 likes.append(val)
                 changed["likes"] = True
                 self._social_db.moments.add_or_boost(
-                    person_id=person_id, text=f"likes:{val}", salience=0.6
+                    person_id=person_id, text=f"likes:{val}", salience=0.6, persona_id=persona_id
                 )
 
         for val in prefs.get("dislikes", []):
@@ -88,7 +94,7 @@ class RelationshipStorageMixin:
                 dislikes.append(val)
                 changed["dislikes"] = True
                 self._social_db.moments.add_or_boost(
-                    person_id=person_id, text=f"dislikes:{val}", salience=0.65
+                    person_id=person_id, text=f"dislikes:{val}", salience=0.65, persona_id=persona_id
                 )
 
         for token in prefs.get("topics", []):
@@ -96,15 +102,15 @@ class RelationshipStorageMixin:
                 topics.append(token)
                 changed["topics"] = True
                 self._social_db.moments.add_or_boost(
-                    person_id=person_id, text=f"topic:{token}", salience=0.45
+                    person_id=person_id, text=f"topic:{token}", salience=0.45, persona_id=persona_id
                 )
 
         if changed["likes"]:
-            self._social_db.relationships.set(person_id, "likes", ",".join(likes[-12:]))
+            self._social_db.relationships.set(person_id, "likes", ",".join(likes[-12:]), persona_id=persona_id)
         if changed["dislikes"]:
-            self._social_db.relationships.set(person_id, "dislikes", ",".join(dislikes[-12:]))
+            self._social_db.relationships.set(person_id, "dislikes", ",".join(dislikes[-12:]), persona_id=persona_id)
         if changed["topics"]:
-            self._social_db.relationships.set(person_id, "topics", ",".join(topics[-16:]))
+            self._social_db.relationships.set(person_id, "topics", ",".join(topics[-16:]), persona_id=persona_id)
 
     def _extract_preferences(self, rec: Dict[str, Any], text: str) -> None:
         prefs = rec.setdefault("preferences", {})

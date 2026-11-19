@@ -82,7 +82,8 @@ class OpenWakewordCalibrationMixin:
     def _run_auto_calibration(self, best_score: float) -> bool:
         if not self._auto_calibration_enabled or self._calibration_done:
             return True
-        self._calibration_scores.append(float(best_score))
+        if float(best_score) < 0.15 or not self._calibration_scores:
+            self._calibration_scores.append(float(best_score))
         elapsed = time.time() - self._calibration_started_ts
         enough_time = elapsed >= self._calibration_duration_sec
         enough_samples = len(self._calibration_scores) >= self._calibration_min_samples
@@ -111,7 +112,7 @@ class OpenWakewordCalibrationMixin:
                 "openwakeword probe(calibrating): best=%s score=%.4f threshold=%.4f samples=%d",
                 best_label, best_score, self._threshold, len(self._calibration_scores),
             )
-        else:
+        elif best_score >= 0.05:
             logger.debug("openwakeword probe: best=%s score=%.4f threshold=%.4f", best_label, best_score, self._threshold)
 
     def _verify_label(self, label: str) -> bool:

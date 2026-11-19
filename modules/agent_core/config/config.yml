@@ -2,10 +2,10 @@ server:
   host: 0.0.0.0
   port: 8120
 agent:
-  model: qwen3.5:9b
+  model: sentry:latest
   temperature: 0.15
-  num_ctx: 4096
-  num_predict: 100
+  num_ctx: 8192
+  num_predict: 4096
   cooldown_s: 0.1
   request_timeout: 30
   status_interval_s: 1.0
@@ -16,21 +16,56 @@ agent:
   ollama_base_url: http://whoismrsentry.local:11434
   max_steps: 4
   max_tool_loops: 3
+translation:
+  enabled: true
+  mode: online_first
+  default_source_lang: tr
+  bridge_lang: en
+  local_models_dir: models/translate
+  online_timeout_s: 2.5
+  online_cooldown_s: 15.0
+  local_threads: 2
+  fallback_to_ollama: false
+  cache_size: 256
 llm:
   provider: ollama
+  single_model_mode: false
+  model: sentry:latest
+  primary_model: sentry:latest
+  allowed_models:
+  - sentry:latest
+  - glados:latest
+  - nemotron-3.5-bolt:e4b
   clm_fallback_enabled: false
-  clm_fallback_model: ''
+  clm_fallback_model: nemotron-3.5-bolt:e4b
   fallback_on_missing_model: false
   fallback_on_error: false
   think: false
   keep_alive: -1
+models:
+  roles:
+    chat: sentry:latest
+    companion: sentry:latest
+    persona: sentry:latest
+    followup: sentry:latest
+    vision: nemotron-3.5-bolt:e4b
+    vlm: nemotron-3.5-bolt:e4b
+    scene_description: nemotron-3.5-bolt:e4b
+    coder: nemotron-3.5-bolt:e4b
+    developer: nemotron-3.5-bolt:e4b
+    utility: nemotron-3.5-bolt:e4b
+    planner: nemotron-3.5-bolt:e4b
+    reflection: nemotron-3.5-bolt:e4b
+    memory: nemotron-3.5-bolt:e4b
+    translator: nemotron-3.5-bolt:e4b
+    subagent: nemotron-3.5-bolt:e4b
 tri_layer:
   enabled: false
   api_native_tools: true
   fast_path:
     enabled: true
     max_chars: 180
-    num_predict: 96
+    num_predict: 2048
     max_steps: 2
   router:
     max_subagents: 2
@@ -40,15 +75,9 @@ tri_layer:
   subagent:
     max_steps: 2
   persona:
-    num_predict: 180
+    num_predict: 4096
     stream: false
-    system_prompt: >
-      Sen SentryBOT companion robotusun. Kullanıcı duygu veya yüz/ışık ifadesi istediğinde
-      (ör. sinirlen, mutlu ol, kızgın konuş, yüzünü değiştir, kırmızı yan) uygun aracı kullan:
-      set_emotion (tam duygu), oled_face (yüz), set_lights (LED efekt+renk).
-      "Şunu söyle X" dendiğinde speak aracıyla X'i aynen seslendir.
-      Fiziksel eylem istendiğinde önce aracı çağır, sonra tek cümleyle teyit et.
-      Duygusal cevap verirken tonunu duyguya uydur.
+    system_prompt: ""
 safety:
   max_servo_angle: 180
   min_servo_angle: 0
@@ -112,11 +141,11 @@ slam:
 realtime_profile:
   active: fast
   fast:
-    num_predict_chat: 100
-    num_predict_persona: 120
-    num_predict_vlm: 256
-    num_predict_vlm_bridge: 100
-    num_ctx: 3072
+    num_predict_chat: 2048
+    num_predict_persona: 2048
+    num_predict_vlm: 512
+    num_predict_vlm_bridge: 256
+    num_ctx: 8192
     temperature: 0.1
     request_timeout_s: 15
     ollama_chat_timeout_s: 12
@@ -125,11 +154,11 @@ realtime_profile:
     subagent_workers: 1
     subagent_max_steps: 2
   normal:
-    num_predict_chat: 180
-    num_predict_persona: 180
-    num_predict_vlm: 384
-    num_predict_vlm_bridge: 160
-    num_ctx: 4096
+    num_predict_chat: 4096
+    num_predict_persona: 4096
+    num_predict_vlm: 512
+    num_predict_vlm_bridge: 256
+    num_ctx: 8192
     temperature: 0.15
     request_timeout_s: 25
     ollama_chat_timeout_s: 20
@@ -138,11 +167,11 @@ realtime_profile:
     subagent_workers: 2
     subagent_max_steps: 3
   rich:
-    num_predict_chat: 240
-    num_predict_persona: 260
+    num_predict_chat: 4096
+    num_predict_persona: 4096
     num_predict_vlm: 512
     num_predict_vlm_bridge: 220
-    num_ctx: 6144
+    num_ctx: 8192
     temperature: 0.2
     request_timeout_s: 35
     ollama_chat_timeout_s: 28

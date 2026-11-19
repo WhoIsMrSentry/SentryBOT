@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import Request
 
 from modules.common.http_client import get_http_client
+from modules.common.model_roles import DEFAULT_CHAT_MODEL
 from modules.common.ollama_url import (  # noqa: F401
     ensure_ollama_host_env as _ensure_ollama_host_env,
     ensure_sentrybot_ollama_host_env as _sentrybot_ensure_ollama_host_env,
@@ -23,7 +24,7 @@ from .agent_core_binding import (
     ensure_agent_core_bound,
 )
 
-DEFAULT_MODEL = "qwen3.5:9b"
+DEFAULT_MODEL = DEFAULT_CHAT_MODEL
 DEFAULT_OLLAMA_BASE_URL = "http://whoismrsentry.local:11434"
 
 _TOOL_ACTION_PATTERNS = (

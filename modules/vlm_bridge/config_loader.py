@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -46,7 +45,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "llm": {
         "provider": "ollama",
         "single_model_mode": True,
-        "primary_model": "qwen3.5:9b",
+        "primary_model": "nemotron-3.5-bolt:e4b",
         "clm_fallback_enabled": False,
         "clm_fallback_model": "",
         "fallback_on_missing_model": False,
@@ -54,7 +53,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "ollama": {
         "endpoint": "http://localhost:8080/ollama/chat",
-        "model": "qwen3.5:9b",
+        "model": "nemotron-3.5-bolt:e4b",
         "timeout": 12.0,
         "num_predict": 160,
     },
@@ -78,7 +77,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
 }
 
-_REQUIRED_OLLAMA_MODEL = "qwen3.5:9b"
+_REQUIRED_OLLAMA_MODEL = "nemotron-3.5-bolt:e4b"
+_ALLOWED_SINGLE_MODELS = frozenset({"nemotron-3.5-bolt:e4b", "sentry:latest", "qwen3.5:9b"})
 _GOOGLE_PROVIDERS = frozenset({"google", "google_ai_studio", "gemini"})
 
 
@@ -228,30 +228,39 @@ def _enforce_ollama_policy(
             vlm_llm.get("single_model_mode", root_llm.get("single_model_mode", True)),
         )
     )
-    required_model = (
-        str(
-            ov_llm.get("required_model")
-            or vlm_llm.get("required_model")
-            or root_llm.get("required_model")
-            or _REQUIRED_OLLAMA_MODEL
-        ).strip()
-        or _REQUIRED_OLLAMA_MODEL
-    )
+    explicit_required = str(
+        ov_llm.get("required_model")
+        or vlm_llm.get("required_model")
+        or root_llm.get("required_model")
+        or ""
+    ).strip()
+    required_model = explicit_required or _REQUIRED_OLLAMA_MODEL
+    vlm_ollama_cfg = vlm_root.get("ollama", {}) if isinstance(vlm_root.get("ollama"), dict) else {}
     ov_model = str(ov_llm.get("model") or ov_llm.get("primary_model") or "").strip()
     vlm_model = str(vlm_llm.get("model") or vlm_llm.get("primary_model") or "").strip()
-    model = ov_model or vlm_model or _pick_model(root_agent, root_llm, root_ollama) or required_model
-    if single_model_mode and model != required_model:
-        raise ValueError(
-            f"Ollama profile requires model '{required_model}', got '{model}'"
-        )
-    active_model = required_model if single_model_mode else (model or required_model)
+    if single_model_mode:
+        model = ov_model or vlm_model or _pick_model(root_agent, root_llm, root_ollama) or required_model
+    else:
+        vlm_ollama_model = str(vlm_ollama_cfg.get("model") or "").strip()
+        model = ov_model or vlm_model or vlm_ollama_model or required_model
+    if single_model_mode:
+        if explicit_required and model != explicit_required:
+            raise ValueError(
+                f"Ollama profile requires model '{explicit_required}', got '{model}'"
+            )
+        if not explicit_required and model not in _ALLOWED_SINGLE_MODELS:
+            raise ValueError(
+                f"Ollama profile requires model in {sorted(_ALLOWED_SINGLE_MODELS)}, got '{model}'"
+            )
+    active_model = (explicit_required or model or required_model) if single_model_mode else (model or required_model)
+
+    from modules.common.ollama_url import resolve_env_ollama_base_url
 
     raw_base = (
-        root_agent.get("ollama_base_url")
+        resolve_env_ollama_base_url()
+        or root_agent.get("ollama_base_url")
         or root_llm.get("base_url")
         or root_ollama.get("base_url")
-        or os.getenv("AGENT_OLLAMA_BASE_URL")
-        or os.getenv("OLLAMA_BASE_URL")
         or ""
     )
     base_url = _normalize_ollama_base_url(raw_base) if str(raw_base or "").strip() else default_ollama_base_url()
@@ -269,14 +278,24 @@ def _enforce_ollama_policy(
     llm_cfg["fallback_on_missing_model"] = False
     llm_cfg["fallback_on_error"] = False
 
+    from modules.common.model_roles import DEFAULT_CHAT_MODEL
+
     vlm_ollama = vlm_root.get("ollama", {}) if isinstance(vlm_root.get("ollama"), dict) else {}
     explicit_endpoint = str(vlm_ollama.get("endpoint", "")).strip()
     ollama_cfg["endpoint"] = _to_vlm_chat_endpoint(explicit_endpoint or base_url)
     ollama_cfg["model"] = active_model
+    if not single_model_mode:
+        ollama_cfg["followup_model"] = (
+            str(vlm_ollama.get("followup_model") or ollama_cfg.get("followup_model") or "").strip()
+            or DEFAULT_CHAT_MODEL
+        )
     ollama_cfg["timeout"] = _to_float(
         ollama_cfg.get("timeout", root_ollama.get("request_timeout", 12.0)),
         12.0,
     )
+
+    if isinstance(root_cfg.get("models"), dict) and "models" not in cfg:
+        cfg["models"] = dict(root_cfg.get("models", {}))
 
     vision_cfg["provider"] = str(vision_cfg.get("provider", "ollama")).strip().lower() or "ollama"
     if vision_cfg.get("base_url") in (None, ""):

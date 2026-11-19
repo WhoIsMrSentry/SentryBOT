@@ -13,13 +13,13 @@ def test_agent_core_load_config_enforces_strict_single_model_policy(tmp_path: Pa
     cfg_file.write_text(
         """
 agent:
-  model: qwen3.5:9b
+  model: sentry:latest
   cooldown_s: 1.0
   request_timeout: 75
   ollama_base_url: http://127.0.0.1:11434
 llm:
   provider: ollama
-  model: qwen3.5:9b
+  model: sentry:latest
 gateway:
   host: 127.0.0.1
   port: 11434
@@ -29,15 +29,15 @@ gateway:
 
     cfg = load_config(str(cfg_file))
 
-    assert cfg["agent"]["model"] == "qwen3.5:9b"
+    assert cfg["agent"]["model"] == "sentry:latest"
     assert float(cfg["agent"]["cooldown_s"]) == 1.0
     assert float(cfg["agent"]["request_timeout"]) == 75.0
     assert cfg["llm"]["provider"] == "ollama"
-    assert cfg["llm"]["model"] == "qwen3.5:9b"
+    assert cfg["llm"]["model"] == "sentry:latest"
     assert cfg["llm"]["single_model_mode"] is True
     assert cfg["llm"]["clm_fallback_enabled"] is False
     assert cfg["ollama"]["base_url"] == "http://127.0.0.1:11434"
-    assert cfg["ollama"]["model"] == "qwen3.5:9b"
+    assert cfg["ollama"]["model"] == "sentry:latest"
 
 
 def test_agent_core_load_config_accepts_google_provider(tmp_path: Path, monkeypatch):

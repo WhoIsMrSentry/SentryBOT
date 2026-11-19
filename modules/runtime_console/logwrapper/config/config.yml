@@ -56,6 +56,8 @@ capture_warnings: true
 module_levels:
   uvicorn.access: WARNING
   httpx: WARNING
+  httpcore: WARNING
+  urllib3.connectionpool: WARNING
   comtypes.client._code_cache: WARNING
 
 separate_files:

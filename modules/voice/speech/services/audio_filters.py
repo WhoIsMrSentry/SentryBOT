@@ -144,6 +144,7 @@ class SpeechAudioFilterMixin:
     capture: Any
     _direction: Any
     _last_angle: Optional[float]
+    _last_angle_ts: float
     _last_audio_level: float
     _tracking: bool
     _pan: Any
@@ -253,6 +254,7 @@ class SpeechAudioFilterMixin:
                             if abs(angle - last_out) > max_step:
                                 angle = last_out + (max_step if angle > last_out else -max_step)
                         self._last_angle = angle
+                        self._last_angle_ts = now
                         if getattr(self, "_tracking", False) and getattr(self, "_pan", None) is not None:
                             center = float((self.cfg.get("pan_tilt", {}) or {}).get("center_deg", 90.0))
                             self._pan.set_target(center + angle)

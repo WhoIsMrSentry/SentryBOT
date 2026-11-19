@@ -4,6 +4,8 @@ from typing import Any, Dict, List
 
 from .hardware_schemas import get_hardware_tool_definitions
 from .perception_schemas import get_perception_tool_definitions
+from .persona_schemas import get_persona_tool_definitions
+from .web_schemas import get_web_tool_definitions
 
 
 
@@ -21,8 +23,15 @@ def get_all_tool_definitions() -> List[Dict[str, Any]]:
     """
     hw = get_hardware_tool_definitions()
     perception = get_perception_tool_definitions()
+    web = get_web_tool_definitions()
+    persona = get_persona_tool_definitions()
     ordered_names = [
         "move_head",
+        "robot_posture",
+        "move_body",
+        "control_laser",
+        "move_ears",
+        "play_buzzer",
         "play_sound",
         "set_lights",
         "oled_face",
@@ -46,6 +55,8 @@ def get_all_tool_definitions() -> List[Dict[str, Any]]:
         "focus_person",
         "start_owner_follow",
         "stop_follow",
+        "read_text_ocr",
+        "register_face",
         "speak",
         "queue_action",
         "get_action_status",
@@ -53,9 +64,14 @@ def get_all_tool_definitions() -> List[Dict[str, Any]]:
         "express_emotion",
         "print_to_lcd",
         "get_last_rfid",
+        "web_search",
+        "fetch_webpage",
+        "set_persona",
+        "list_personas",
+        "search_persona_knowledge",
     ]
     lookup: Dict[str, Dict[str, Any]] = {}
-    for item in hw + perception:
+    for item in hw + perception + web + persona:
         name = item.get("function", {}).get("name")
         if name:
             lookup[name] = item

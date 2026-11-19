@@ -191,6 +191,34 @@ class ProcessorIdentityEventsMixin:
             "Turkce sicak ve dogal bir karsilama yap. 2 cumle kur; "
             "ilk cumle samimi selamlama, ikinci cumle baglama uygun kisa bir takip sorusu olsun."
         )
-        llm_cfg = self.config.get("ollama", {}) if isinstance(self.config.get("ollama", {}), dict) else {}
+        from modules.common.model_roles import (
+            DEFAULT_CHAT_MODEL,
+            explicit_single_model_mode,
+            resolve_role_model,
+        )
+
+        ollama_section = self.config.get("ollama", {}) if isinstance(self.config.get("ollama", {}), dict) else {}
+        llm_cfg = dict(ollama_section)
+        # Companion greeting followups use the companion chat model, NOT the vision model.
+        followup_cfg = self.config.get("followup_llm", {}) if isinstance(self.config.get("followup_llm", {}), dict) else {}
+        if followup_cfg:
+            llm_cfg.update(followup_cfg)
+        if explicit_single_model_mode(self.config) is True:
+            llm_cfg["model"] = str(llm_cfg.get("model") or DEFAULT_CHAT_MODEL).strip() or DEFAULT_CHAT_MODEL
+        else:
+            roles_map = (
+                (self.config.get("models") or {}).get("roles", {})
+                if isinstance(self.config.get("models"), dict)
+                else {}
+            )
+            llm_cfg["model"] = (
+                str(
+                    llm_cfg.get("followup_model")
+                    or (roles_map.get("followup") if isinstance(roles_map, dict) else "")
+                    or (roles_map.get("chat") if isinstance(roles_map, dict) else "")
+                    or resolve_role_model({"agent": self.config.get("agent", {}), "models": self.config.get("models", {})}, "followup", fallback=DEFAULT_CHAT_MODEL)
+                ).strip()
+                or DEFAULT_CHAT_MODEL
+            )
         timeout = float(llm_cfg.get("timeout", 4.0))
         return generate_text(prompt, llm_cfg, timeout=timeout, response_lang="tr")

@@ -3,10 +3,12 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
+from .agent_translation import AgentTranslationMixin
+
 logger = logging.getLogger("agent.orchestrator")
 
 
-class AgentFastPathMixin:
+class AgentFastPathMixin(AgentTranslationMixin):
     """Fast-path dispatching, language directives, and prompt assembly for AgentOrchestrator."""
 
     config: Dict[str, Any]
@@ -55,9 +57,10 @@ class AgentFastPathMixin:
         if not getattr(self, "fast_path_enabled", False):
             return False
 
-        # System 1 Laya fast-path check
+        # System 1 Laya fast-path check (skip for background/autonomous ack-suppressed turns)
+        ack_suppressed = bool(hasattr(self, "_is_ack_suppressed") and self._is_ack_suppressed())
         laya_engine = getattr(self, "laya_engine", None)
-        if laya_engine is not None and getattr(laya_engine, "enabled", True):
+        if not ack_suppressed and laya_engine is not None and getattr(laya_engine, "enabled", True):
             try:
                 world_state = (
                     self.world_state.get_state()
@@ -99,9 +102,39 @@ class AgentFastPathMixin:
             from modules.common.system_prompts import persona_prompt_with_language
         except Exception:
             persona_prompt_with_language = None
-        lang_rule = self._language_directive(session_language)
+        event_type = getattr(self, "_active_event_type", None)
+        bridge_active = (
+            hasattr(self, "_bridge_translation_active")
+            and self._bridge_translation_active(session_language, event_type=event_type)
+        )
+        llm_lang = "en" if bridge_active else session_language
+        lang_rule = self._language_directive(llm_lang)
+        if bridge_active:
+            lang_rule = (
+                f"{lang_rule} Input has been translated to English for stronger reasoning; "
+                "always formulate tool calls and replies in natural English."
+            )
+        get_snap = getattr(self, "_get_history_snapshot", None)
+        history = get_snap() if callable(get_snap) else list(getattr(self, "chat_history", []))
+        if bridge_active and hasattr(self, "_translate_history_for_llm"):
+            history = self._translate_history_for_llm(history, session_language, event_type=event_type)
+
+        last_user = ""
+        for item in reversed(history):
+            if isinstance(item, dict) and item.get("role") == "user":
+                last_user = str(item.get("content") or "")
+                break
+        lore_context = ""
+        get_lore = getattr(self, "_get_persona_lore_context", None)
+        if callable(get_lore) and last_user:
+            lore_context = str(get_lore(last_user) or "")
+
         if persona_prompt_with_language is not None:
-            system_prompt = persona_prompt_with_language(self.persona_system_prompt, lang_rule)
+            system_prompt = persona_prompt_with_language(
+                self.persona_system_prompt,
+                lang_rule,
+                lore_context=lore_context,
+            )
         else:
             persona = getattr(self, "persona_system_prompt", "") or (
                 "You are the robot's single response layer. Answer the user directly."
@@ -115,12 +148,12 @@ class AgentFastPathMixin:
                 "call the matching tool instead of only describing it, then confirm "
                 "briefly in one sentence in the user's language."
             )
+            if lore_context:
+                system_prompt = f"{system_prompt}\n\n{lore_context}"
         if survival_override:
             system_prompt = f"{system_prompt}\n\n{survival_override}"
         if world_context:
             system_prompt = f"{system_prompt}\n\n[World State]\n{world_context}"
-        get_snap = getattr(self, "_get_history_snapshot", None)
-        history = get_snap() if callable(get_snap) else list(getattr(self, "chat_history", []))
         dec = getattr(self, "_last_laya_fast_path_decision", None)
         raw_ans = getattr(dec, "raw_answers", None) if dec is not None else None
         action_hint = raw_ans.get("action_hint") if isinstance(raw_ans, dict) else None
@@ -129,4 +162,13 @@ class AgentFastPathMixin:
                 f"{system_prompt}\n\n"
                 f"[SYSTEM1 SEMANTIC HINT] Implied parameters for this indirect request: {action_hint}"
             )
+        from modules.common.model_roles import ROLE_CODER, explicit_single_model_mode, infer_prompt_role
+
+        if explicit_single_model_mode(getattr(self, "config", None)) is False:
+            if infer_prompt_role(last_user) == ROLE_CODER:
+                system_prompt = (
+                    f"{system_prompt}\n\n"
+                    "[CODING TASK] Focus on clean, accurate code and concise technical explanation. "
+                    "Only invoke robot hardware/motion/light tools if explicitly asked."
+                )
         return [{"role": "system", "content": system_prompt}] + history

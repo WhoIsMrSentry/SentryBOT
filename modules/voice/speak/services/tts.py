@@ -231,6 +231,14 @@ class TextToSpeech:
 
     def _resolve_piper_voice(self, text: str, cfg: Dict[str, Any], overrides: Optional[Dict[str, Any]]) -> Optional[str]:
         piper_cfg = cfg.get("piper", {}) if isinstance(cfg.get("piper"), dict) else {}
+        voices = piper_cfg.get("voices", {}) if isinstance(piper_cfg.get("voices"), dict) else {}
+        explicit_voice = str((overrides or {}).get("voice") or "").strip() if isinstance(overrides, dict) else ""
+        if explicit_voice and voices:
+            if explicit_voice in voices:
+                return explicit_voice
+            for k in voices:
+                if str(k).strip().lower() == explicit_voice.lower():
+                    return str(k)
         if not bool(piper_cfg.get("auto_language", True)):
             return None
         explicit = overrides.get("language") if isinstance(overrides, dict) else None

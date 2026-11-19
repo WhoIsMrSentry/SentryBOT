@@ -14,6 +14,7 @@ import copy
 import logging
 import os
 import re
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
@@ -35,7 +36,9 @@ logger = logging.getLogger("common.config_loader")
 # Constants
 # =============================================================================
 
-_REQUIRED_MODEL = "qwen3.5:9b"
+from modules.common.model_roles import DEFAULT_CHAT_MODEL
+
+_REQUIRED_MODEL = DEFAULT_CHAT_MODEL
 _GOOGLE_PROVIDERS = frozenset({"google", "google_ai_studio", "gemini"})
 
 # Default Gemini model for Google AI Studio (from gemini_model.py)
@@ -204,6 +207,8 @@ def apply_runtime_profile(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 def load_dotenv(path: Path | None = None) -> None:
     """Load .env file into os.environ (if not already set)."""
+    if path is None and (os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules):
+        return
     target = path or (_repo_root() / ".env")
     if not target.exists():
         return
@@ -229,7 +234,9 @@ def _ensure_path(cfg: Dict[str, Any], keys: Tuple[str, ...]) -> Dict[str, Any]:
 
 
 def inject_runtime_secrets(cfg: Dict[str, Any], env: Mapping[str, str] | None = None) -> Dict[str, Any]:
-    """Overlay runtime auth tokens from environment onto config."""
+    """Overlay runtime auth tokens and explicit URL overrides from env onto config."""
+    from .ollama_url import resolve_env_ollama_base_url
+
     source = env if env is not None else os.environ
     for env_name, keys in _ENV_PATHS:
         value = str(source.get(env_name, "") or "").strip()
@@ -237,6 +244,17 @@ def inject_runtime_secrets(cfg: Dict[str, Any], env: Mapping[str, str] | None = 
             continue
         parent = _ensure_path(cfg, keys)
         parent[keys[-1]] = value
+
+    env_ollama_url = resolve_env_ollama_base_url(source)
+    if env_ollama_url:
+        for keys in (
+            ("ollama", "base_url"),
+            ("agent", "ollama_base_url"),
+            ("vlm_bridge", "vision_llm", "base_url"),
+            ("google_ai_studio", "vision_llm", "base_url"),
+        ):
+            parent = _ensure_path(cfg, keys)
+            parent[keys[-1]] = env_ollama_url
     return cfg
 
 
@@ -378,6 +396,9 @@ def load_ai_provider_config(config_path: str | None = None) -> Dict[str, Any]:
         60.0,
     )
 
+    from .ollama_url import resolve_env_ollama_base_url
+
+    env_ollama_url = resolve_env_ollama_base_url()
     if provider in _GOOGLE_PROVIDERS:
         model = (
             str(google_global.get("model", "")).strip()
@@ -399,11 +420,9 @@ def load_ai_provider_config(config_path: str | None = None) -> Dict[str, Any]:
             },
             "ollama": {
                 "base_url": _normalize_base_url(
-                    agent_cfg.get("ollama_base_url")
+                    env_ollama_url
+                    or agent_cfg.get("ollama_base_url")
                     or ollama_global.get("base_url")
-                    or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
-                    or os.getenv("OLLAMA_BASE_URL")
-                    or os.getenv("AGENT_OLLAMA_BASE_URL")
                     or ""
                 ),
                 "model": _REQUIRED_MODEL,
@@ -436,12 +455,10 @@ def load_ai_provider_config(config_path: str | None = None) -> Dict[str, Any]:
             active_model = model or required_model
 
         base_url = _normalize_base_url(
-            agent_cfg.get("ollama_base_url")
+            env_ollama_url
+            or agent_cfg.get("ollama_base_url")
             or llm_cfg.get("base_url")
             or ollama_global.get("base_url")
-            or os.getenv("SENTRYBOT_OLLAMA_BASE_URL")
-            or os.getenv("OLLAMA_BASE_URL")
-            or os.getenv("AGENT_OLLAMA_BASE_URL")
             or ""
         )
         if not base_url:

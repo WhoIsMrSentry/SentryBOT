@@ -16,10 +16,18 @@ Behavior is byte-equivalent to the deleted per-file copies.
 from __future__ import annotations
 
 import os
+from typing import Mapping, Optional
 
 
 DEFAULT_LOCAL_OLLAMA_URL = "http://127.0.0.1:11434"
 DEFAULT_REMOTE_OLLAMA_URL = "http://whoismrsentry.local:11434"
+
+_ENV_OLLAMA_URL_KEYS: tuple[str, ...] = (
+    "SENTRYBOT_OLLAMA_BASE_URL",
+    "SENTRYBOT_REMOTE_OLLAMA_URL",
+    "AGENT_OLLAMA_BASE_URL",
+    "OLLAMA_BASE_URL",
+)
 
 
 def default_ollama_base_url() -> str:
@@ -75,6 +83,16 @@ def normalize_ollama_url(value):
     return value.rstrip("/")
 
 
+def resolve_env_ollama_base_url(env: Optional[Mapping[str, str]] = None) -> str:
+    """Return the highest-priority valid HTTP(S) Ollama URL from env vars, if any."""
+    source = env if env is not None else os.environ
+    for key in _ENV_OLLAMA_URL_KEYS:
+        url = unwrap_url(source.get(key, ""))
+        if url and url.startswith(("http://", "https://")) and not is_bad_ollama_url(url):
+            return url.rstrip("/")
+    return ""
+
+
 def _seed_ollama_host_env(base_url: str, *, set_sentrybot_url: bool) -> None:
     normalized = unwrap_url(base_url)
     if not normalized:
@@ -122,6 +140,7 @@ __all__ = [
     "unwrap_url",
     "is_bad_ollama_url",
     "normalize_ollama_url",
+    "resolve_env_ollama_base_url",
     "ensure_ollama_host_env",
     "ensure_sentrybot_ollama_host_env",
 ]

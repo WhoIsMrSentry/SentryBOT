@@ -11,14 +11,14 @@ def test_load_config_reads_strict_agent_yaml_sections(tmp_path: Path):
     agent_cfg.write_text(
         """
 agent:
-  model: qwen3.5:9b
+  model: sentry:latest
   ollama_base_url: "http://10.33.250.169:11434"
 llm:
   provider: ollama
-  model: qwen3.5:9b
+  model: sentry:latest
 ollama:
   base_url: "http://10.33.250.169:11434"
-  model: qwen3.5:9b
+  model: sentry:latest
   request_timeout: 72
 ollama_service:
   server:
@@ -41,7 +41,7 @@ ollama_service:
     cfg = load_config(str(agent_cfg))
 
     assert cfg["ollama"]["base_url"] == "http://10.33.250.169:11434"
-    assert cfg["ollama"]["model"] == "qwen3.5:9b"
+    assert cfg["ollama"]["model"] == "sentry:latest"
     assert float(cfg["ollama"]["request_timeout"]) == 72.0
     assert cfg["llm"]["provider"] == "ollama"
     assert cfg["llm"]["single_model_mode"] is True

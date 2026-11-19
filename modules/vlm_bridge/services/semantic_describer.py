@@ -49,7 +49,11 @@ class SemanticDescriber:
             return None
         self.last_llm_call = now
         prompt = self.build_prompt(objects)
-        llm_cfg = self.config.get("ollama", {}) if isinstance(self.config.get("ollama", {}), dict) else {}
+        from modules.common.model_roles import DEFAULT_VISION_MODEL, resolve_role_model
+
+        ollama_section = self.config.get("ollama", {}) if isinstance(self.config.get("ollama", {}), dict) else {}
+        llm_cfg = dict(ollama_section)
+        llm_cfg.setdefault("model", resolve_role_model(self.config, "vision", fallback=DEFAULT_VISION_MODEL))
         timeout = float(llm_cfg.get("timeout", 5.0))
         return generate_text(prompt, llm_cfg, timeout=timeout, response_lang="tr")
 

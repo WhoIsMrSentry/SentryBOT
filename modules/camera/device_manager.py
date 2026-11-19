@@ -92,6 +92,7 @@ class CameraDeviceManager:
         self._close_count = 0
         self._mode_changes = 0
         self._errors = 0
+        self._shut_down = False
         
         self._initialized = True
         logger.info("CameraDeviceManager initialized")
@@ -140,6 +141,7 @@ class CameraDeviceManager:
             RuntimeError: If device cannot be acquired
         """
         with self._refs_lock:
+            self._shut_down = False
             mode = mode or self._config.mode
             
             if owner in self._refs:
@@ -175,7 +177,10 @@ class CameraDeviceManager:
         """
         with self._refs_lock:
             if owner not in self._refs:
-                logger.warning("Owner %s tried to release non-existent reference", owner)
+                if getattr(self, "_shut_down", False) or self._state == DeviceState.CLOSED:
+                    logger.debug("Ignoring release for %s after CameraDeviceManager shutdown", owner)
+                else:
+                    logger.warning("Owner %s tried to release non-existent reference", owner)
                 return False
             
             ref = self._refs[owner]
@@ -498,9 +503,11 @@ class CameraDeviceManager:
 
     def shutdown(self) -> None:
         """Shutdown device manager completely."""
-        logger.info("Shutting down CameraDeviceManager")
-        
         with self._op_lock:
+            if getattr(self, "_shut_down", False) and not self._refs and self._bound_capture is None:
+                return
+            logger.info("Shutting down CameraDeviceManager")
+            self._shut_down = True
             capture = self._bound_capture
             self._bound_capture = None
             for owner in list(self._refs.keys()):
