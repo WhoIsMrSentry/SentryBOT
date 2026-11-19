@@ -586,3 +586,26 @@ def _wire_multimodal_identity(started: Dict[str, object]) -> None:
         elif hasattr(arduino, "_event_handlers") and isinstance(arduino._event_handlers, list):
             arduino._event_handlers.append(_on_arduino_rfid)
         logger.info("arduino rfid events wired to ActiveSpeakerResolver")
+
+
+def _wire_persona_sync(started: Dict[str, object]) -> None:
+    """Keep active persona scope synchronized across Agent Core and AutonomyBrain."""
+    autonomy = started.get("autonomy")
+    brain = getattr(autonomy, "brain", None) if autonomy is not None else None
+    agent = started.get("agent_core") or (getattr(brain, "agent", None) if brain is not None else None)
+    if brain is None and agent is None:
+        return
+    try:
+        from modules.common.persona_scope import get_active_persona, register_persona_listener
+
+        def _on_persona_change(persona_id: str, meta: Dict[str, Any]) -> None:
+            if brain is not None and isinstance(getattr(brain, "state", None), dict):
+                brain.state["active_persona"] = persona_id
+                brain.state["persona_meta"] = dict(meta or {})
+
+        if brain is not None and isinstance(getattr(brain, "state", None), dict):
+            brain.state.setdefault("active_persona", getattr(agent, "active_persona", None) or get_active_persona())
+        register_persona_listener(_on_persona_change)
+        logger.info("persona_scope listener wired across agent_core and autonomy")
+    except Exception as exc:
+        logger.debug("persona_sync wiring skipped: %s", exc)

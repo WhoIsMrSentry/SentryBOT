@@ -51,6 +51,7 @@ from .bootstrap_ai import (
     _wire_vlm_autonomy,
     _wire_wakeword_interactions,
     _wire_multimodal_identity,
+    _wire_persona_sync,
 )
 from .bootstrap_ops import (
     _CRITICAL_MODULES,
@@ -218,6 +219,7 @@ def bootstrap(app: FastAPI, cfg: Dict[str, Any] | None = None) -> Dict[str, obje
     _wire_wakeword_interactions(started)
     _wire_speech_interactions(started, cfg)
     _wire_multimodal_identity(started)
+    _wire_persona_sync(started)
 
     if include.get("calibration", True):
         _try(lambda: _mount_calibration_stub(app, started), "calibration")
