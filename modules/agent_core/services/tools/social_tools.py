@@ -41,15 +41,24 @@ def _format_expression_summary(
 class SocialToolsMixin:
     """Social and Interaction tools for ToolRegistry."""
 
-    def speak(self, text: str, tone: str = "", language: str = "") -> str:
+    def speak(self, text: str, tone: str = "", language: str = "", voice: str = "") -> str:
         cleaned = str(text or "").strip()
         if not cleaned:
             return "Error: nothing to speak."
+        out_lang = str(language or "").strip().lower()
+        loc_fn = getattr(self, "localize_speech_fn", None)
+        if callable(loc_fn):
+            try:
+                cleaned, out_lang = loc_fn(cleaned, out_lang)
+            except Exception:
+                pass
         payload: Dict[str, Any] = {"text": cleaned}
         if tone:
             payload["tone"] = str(tone).strip().lower()
-        if language:
-            payload["language"] = str(language).strip().lower()
+        if out_lang:
+            payload["language"] = out_lang
+        if voice:
+            payload["voice"] = str(voice).strip()
         result = self.queue_action("speak", priority=60, ttl_ms=10000, payload=payload)
         if result.startswith("Action queued"):
             return f"Speaking: {cleaned[:80]}"
@@ -123,13 +132,22 @@ class SocialToolsMixin:
                 ):
                     return "Expression skipped: lights_locked"
 
+            spoken_text = text
+            out_lang = str(language or "tr")
+            loc_fn = getattr(self, "localize_speech_fn", None)
+            if spoken_text and callable(loc_fn):
+                try:
+                    spoken_text, out_lang = loc_fn(str(spoken_text), out_lang)
+                except Exception:
+                    pass
+
             payload = {
                 "emotion": canon,
                 "intensity": round(intensity_val, 3),
                 "duration_s": round(float(dur), 3),
                 "modalities": mods,
-                "text": text,
-                "language": str(language or "tr"),
+                "text": spoken_text,
+                "language": out_lang,
             }
             arbiter = getattr(self, "action_arbiter", None)
             if arbiter is not None:
