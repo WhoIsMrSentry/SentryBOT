@@ -192,6 +192,11 @@ class SocialDB:
         out["schema_version"] = SCHEMA_VERSION
         return out
 
+    @staticmethod
+    def _table_columns(cur: sqlite3.Cursor, table: str) -> set[str]:
+        rows = cur.execute(f"PRAGMA table_info({table})").fetchall()
+        return {str(r[1]) for r in rows}
+
     def _migrate(self) -> None:
         with self._lock:
             cur = self._conn.cursor()
@@ -202,6 +207,40 @@ class SocialDB:
                     cur.execute("ALTER TABLE world_memories ADD COLUMN expiry REAL NOT NULL DEFAULT 0.0")
                 except sqlite3.OperationalError:
                     pass
+                for tbl in ("chat_episodes", "moments", "world_memories", "world_observations"):
+                    if "persona_id" not in self._table_columns(cur, tbl):
+                        cur.execute(f"ALTER TABLE {tbl} ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'sentry'")
+                if "persona_id" not in self._table_columns(cur, "relationships"):
+                    cur.execute("ALTER TABLE relationships RENAME TO _relationships_v1")
+                    cur.execute(
+                        """
+                        CREATE TABLE relationships (
+                            person_id TEXT NOT NULL,
+                            persona_id TEXT NOT NULL DEFAULT 'sentry',
+                            key TEXT NOT NULL,
+                            value TEXT NOT NULL,
+                            updated_at REAL NOT NULL,
+                            PRIMARY KEY (person_id, persona_id, key),
+                            FOREIGN KEY (person_id) REFERENCES persons(id) ON DELETE CASCADE
+                        )
+                        """
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO relationships (person_id, persona_id, key, value, updated_at)
+                        SELECT person_id, 'sentry', key, value, updated_at FROM _relationships_v1
+                        """
+                    )
+                    cur.execute("DROP TABLE _relationships_v1")
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_chat_persona_person_ts ON chat_episodes(persona_id, person_id, ts)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_moments_persona_person_score ON moments(persona_id, person_id, score)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_world_memories_persona ON world_memories(persona_id, last_seen DESC)"
+                )
                 cur.execute(
                     "INSERT OR IGNORE INTO schema_version(version, applied_at) VALUES (?, ?)",
                     (SCHEMA_VERSION, time.time()),

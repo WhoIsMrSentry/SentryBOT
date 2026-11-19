@@ -227,4 +227,144 @@ def get_hardware_tool_definitions() -> List[Dict[str, Any]]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "robot_posture",
+                "description": "Change the robot's physical leg posture (stand up, sit down, home pose, or emergency stop).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "posture": {
+                            "type": "string",
+                            "enum": ["stand", "sit", "home", "estop"],
+                            "description": "Target physical posture command.",
+                        }
+                    },
+                    "required": ["posture"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "move_body",
+                "description": "Move the robot body/legs forward, backward, turn left/right, or stop immediately.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "direction": {
+                            "type": "string",
+                            "enum": ["forward", "backward", "left", "right", "stop"],
+                            "description": "Movement direction.",
+                        },
+                        "speed": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 100,
+                            "default": 60,
+                            "description": "Motion speed (clamped safely).",
+                        },
+                        "steps": {
+                            "type": "integer",
+                            "minimum": 20,
+                            "maximum": 2000,
+                            "default": 200,
+                            "description": "Step distance for left/right turns.",
+                        },
+                    },
+                    "required": ["direction"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "control_laser",
+                "description": "Safely control the robot's dual pointer lasers through SafetyFilter (auto-offs after max safe duration).",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "state": {
+                            "type": "string",
+                            "enum": ["on", "off"],
+                            "description": "Turn laser(s) on or off.",
+                        },
+                        "target": {
+                            "type": "string",
+                            "enum": ["both", "left", "right"],
+                            "default": "both",
+                            "description": "Which laser module to control.",
+                        },
+                        "duration_s": {
+                            "type": "number",
+                            "minimum": 0.2,
+                            "maximum": 5.0,
+                            "default": 2.0,
+                            "description": "Auto-off safety duration in seconds.",
+                        },
+                    },
+                    "required": ["state"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "move_ears",
+                "description": "Move the robot's left and right ear servos (0-180 deg) or run an ear gesture.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "left": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 180,
+                            "description": "Left ear angle (optional if gesture is set).",
+                        },
+                        "right": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 180,
+                            "description": "Right ear angle (optional if gesture is set).",
+                        },
+                        "gesture": {
+                            "type": "string",
+                            "enum": ["wakeword", "sound", "vigilance", "relax", "idle"],
+                            "description": "Predefined ear gesture preset.",
+                        },
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "play_buzzer",
+                "description": "Play an Arduino buzzer tone or named cute chime effect.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "frequency": {
+                            "type": "integer",
+                            "minimum": 100,
+                            "maximum": 10000,
+                            "default": 2200,
+                            "description": "Tone frequency in Hz.",
+                        },
+                        "duration_ms": {
+                            "type": "integer",
+                            "minimum": 10,
+                            "maximum": 2000,
+                            "default": 80,
+                            "description": "Beep duration in milliseconds.",
+                        },
+                        "cute_sound": {
+                            "type": "string",
+                            "description": "Optional named cute sound (e.g. happy, alert, wake, sad).",
+                        },
+                    },
+                },
+            },
+        },
     ]

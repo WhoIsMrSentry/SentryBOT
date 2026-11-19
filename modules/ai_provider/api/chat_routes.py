@@ -174,6 +174,17 @@ def get_chat_router(
         raw_allowed = llm_section.get("allowed_models")
         if isinstance(raw_allowed, (list, tuple, set)):
             allowed = {str(x).strip() for x in raw_allowed if str(x).strip()}
+            try:
+                from modules.ai_provider.api._helpers import persona_base_dir
+
+                pbase = persona_base_dir(rt_cfg)
+                if pbase.is_dir():
+                    for p in pbase.iterdir():
+                        if p.is_dir():
+                            allowed.add(p.name)
+                            allowed.add(f"{p.name}:latest")
+            except Exception:
+                pass
             if allowed and requested_model not in allowed:
                 raise HTTPException(
                     status_code=400,
@@ -402,11 +413,24 @@ def get_chat_router(
 
     @r.post("/translate")
     def translate(text: str, source_lang: str = "auto", target_lang: str = "en"):
-        source = translator.normalize_lang(source_lang, fallback=translator.cfg.default_source_lang)
-        target = translator.normalize_lang(target_lang, fallback=translator.BRIDGE_LANG)
-        if source_lang == "auto":
-            source = translator.detect_language(text)
-        out = translator.translate(text, source, target)
+        active_tr = translator
+        if not bool(getattr(getattr(translator, "cfg", None), "enabled", False)):
+            from modules.common.translator import get_shared_translator
+
+            active_tr = get_shared_translator(
+                {
+                    "enabled": True,
+                    "mode": "online_first",
+                    "default_source_lang": getattr(translator.cfg, "default_source_lang", "tr"),
+                    "bridge_lang": getattr(translator, "BRIDGE_LANG", "en"),
+                    "fallback_to_ollama": False,
+                }
+            )
+        source = active_tr.normalize_lang(source_lang, fallback=active_tr.cfg.default_source_lang)
+        target = active_tr.normalize_lang(target_lang, fallback=active_tr.BRIDGE_LANG)
+        if source == "auto":
+            source = active_tr.detect_language(text)
+        out = active_tr.translate(text, source, target)
         return {"ok": True, "text": out, "source_lang": source, "target_lang": target}
 
     @r.post("/runtime/num_predict")

@@ -120,6 +120,48 @@
       "risk": "none",
       "handler": "asset_status",
       "description": "Read Pi model/runtime asset truth."
+    },
+    "hardware.legs": {
+      "enabled": true,
+      "risk": "medium",
+      "handler": "legs_posture",
+      "description": "Control leg posture (stand/sit/home) and drive steppers safely."
+    },
+    "hardware.laser": {
+      "enabled": true,
+      "risk": "medium",
+      "handler": "laser",
+      "description": "Control dual pointer lasers with safety timer shutoff."
+    },
+    "hardware.ears": {
+      "enabled": true,
+      "risk": "low",
+      "handler": "ears",
+      "description": "Move Pi GPIO ear servos and perform ear gestures."
+    },
+    "hardware.buzzer": {
+      "enabled": true,
+      "risk": "low",
+      "handler": "audio_hw",
+      "description": "Play buzzer tones and cute chime sounds."
+    },
+    "knowledge.web_search": {
+      "enabled": true,
+      "risk": "none",
+      "handler": "web_search",
+      "description": "Headless web search for unknown or current facts."
+    },
+    "knowledge.web_fetch": {
+      "enabled": true,
+      "risk": "none",
+      "handler": "fetch_webpage",
+      "description": "SSRF-guarded HTTP page text extraction without a browser."
+    },
+    "persona.switch": {
+      "enabled": true,
+      "risk": "none",
+      "handler": "set_persona",
+      "description": "Switch active robot persona, lore RAG context, and memory scope."
     }
   }
 }

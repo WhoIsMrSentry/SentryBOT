@@ -17,6 +17,7 @@ from modules.common.model_roles import (
     infer_prompt_role,
     resolve_role_model,
 )
+from modules.common.persona_scope import get_active_persona
 from .laya_action_contract import bind_laya_action_proposal
 
 logger = logging.getLogger("agent.orchestrator")
@@ -149,6 +150,8 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                 goal_store.close()
             except Exception:
                 pass
+        if hasattr(self, "_close_persona_runtime"):
+            self._close_persona_runtime()
         logger.info("AgentOrchestrator subsystems stopped.")
 
 
@@ -287,7 +290,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         return None
 
     def _get_active_persona_model(self, prompt: str = "") -> str:
-        """Resolve the model for the native tool loop using role-aware model policy."""
+        """Resolve the model for the native tool loop using role-aware model policy and active persona."""
         cfg = getattr(self, "config", None)
         policy = get_model_policy()
         resolved = policy.resolve_model(cfg)
@@ -296,8 +299,11 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             return default_model
         role = infer_prompt_role(prompt) if prompt else ROLE_CHAT
         if role != ROLE_CHAT:
-            return resolve_role_model(cfg, role, prompt=prompt, fallback=default_model)
-        return resolve_role_model(cfg, ROLE_CHAT, fallback=default_model)
+            selected = resolve_role_model(cfg, role, prompt=prompt, fallback=default_model)
+        else:
+            selected = resolve_role_model(cfg, ROLE_CHAT, fallback=default_model)
+        resolver = getattr(self, "_resolve_non_sentry_model", None)
+        return resolver(selected) if callable(resolver) else selected
 
     def _resolve_turn_laya_decision(self, user_prompt: str, laya_eng: Any) -> Any:
         """Reuse an existing System 1 decision for the current prompt when available."""
@@ -372,12 +378,22 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         session_language: str,
         trace_id: str,
         stream_state: Dict[str, int],
+        event_type: Optional[str] = None,
     ) -> Optional[Callable[[str, int], None]]:
         arbiter = getattr(self, "speech_arbiter", None)
         if arbiter is None or getattr(arbiter, "_speak_fn", None) is None:
             return None
         speech_tone = self._current_speech_tone()
-        detected_lang: Dict[str, Optional[str]] = {"value": None}
+        bridge_active = (
+            hasattr(self, "_bridge_translation_active")
+            and self._bridge_translation_active(session_language, event_type=event_type)
+        )
+        target_lang = (
+            self._effective_response_language(session_language)
+            if hasattr(self, "_effective_response_language")
+            else session_language
+        )
+        detected_lang: Dict[str, Optional[str]] = {"value": target_lang if bridge_active else None}
 
         def speak_sentence(sentence: str, index: int) -> None:
             try:
@@ -386,24 +402,32 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                 sentence = strip_speech_control_artifacts(sentence)
             except Exception:
                 sentence = str(sentence or "").strip()
+            if bridge_active and sentence and hasattr(self, "_translate_output_from_llm"):
+                sentence = self._translate_output_from_llm(
+                    sentence, session_language, event_type=event_type
+                )
             if not sentence:
                 return
             if detected_lang["value"] is None:
-                lang = session_language
+                lang = target_lang
                 try:
                     from modules.voice.speak.services.lang_detect import detect_text_language
 
-                    lang = detect_text_language(sentence, default=session_language)
+                    lang = detect_text_language(sentence, default=target_lang)
                 except Exception:
                     pass
                 detected_lang["value"] = lang
-            chunk_lang = detected_lang["value"] or session_language
+            chunk_lang = detected_lang["value"] or target_lang
+            voice_fn = getattr(self, "effective_tts_voice", None)
+            voice_hint = voice_fn(chunk_lang) if callable(voice_fn) else None
+            extra_kw: Dict[str, Any] = {"voice": voice_hint} if voice_hint else {}
             item_id = arbiter.enqueue_final_chunk(
                 sentence,
                 index=index,
                 language=chunk_lang,
                 tone=speech_tone,
                 trace_id=trace_id,
+                **extra_kw,
             )
             if item_id:
                 stream_state["spoken"] += 1
@@ -448,7 +472,13 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             cmd = SpeechReactMixin._emotion_command_for_text(prompt)
             if not cmd:
                 return None
-            reply_text = SpeechReactMixin._emotion_command_reply(cmd, session_language)
+            eff_lang = (
+                self._effective_response_language(session_language)
+                if hasattr(self, "_effective_response_language")
+                else session_language
+            )
+            active_pid = getattr(self, "active_persona", None) or get_active_persona()
+            reply_text = SpeechReactMixin._emotion_command_reply(cmd, eff_lang, persona_id=active_pid)
             tool_reg = getattr(self, "tool_registry", None)
             if tool_reg is not None:
                 tool_args = {"emotion": cmd, "intensity": 0.85}
@@ -508,6 +538,16 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         self.tool_registry.status_hook = callback
 
         try:
+            self._active_event_type = event_type
+            self._active_response_language = (
+                self._effective_response_language(session_language)
+                if hasattr(self, "_effective_response_language")
+                else session_language
+            )
+            self._active_bridge_translation = (
+                hasattr(self, "_bridge_translation_active")
+                and self._bridge_translation_active(session_language, event_type=event_type)
+            )
             is_short_fast = self._should_fast_path(prompt, native_tools=False)
             use_fast_path = bool(native_tools) or is_short_fast
             self._record_laya_latency(trace_id)
@@ -538,7 +578,9 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                         pass
 
             stream_state = {"spoken": 0}
-            on_sentence = self._make_sentence_callback(session_language, trace_id, stream_state)
+            on_sentence = self._make_sentence_callback(
+                session_language, trace_id, stream_state, event_type=event_type
+            )
             executed_actions: List[Dict[str, Any]] = []
 
             short_emotion_reply = self._try_short_circuit_emotion_command(
@@ -631,6 +673,14 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     final_text = strip_speech_control_artifacts(final_text)
                 except Exception:
                     pass
+                if (
+                    final_text
+                    and getattr(self, "_active_bridge_translation", False)
+                    and hasattr(self, "_translate_output_from_llm")
+                ):
+                    final_text = self._translate_output_from_llm(
+                        final_text, session_language, event_type=event_type
+                    )
 
             dialogue_entry = (
                 f"Event({event_type}): {prompt} | Bot: {final_text}"
@@ -687,6 +737,9 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             self.tool_registry.status_hook = previous_hook
             self._active_progress_token = ""
             self._active_laya_request_id = ""
+            self._active_event_type = None
+            self._active_bridge_translation = False
+            self._active_response_language = ""
             self._exit_turn()
 
     def step(

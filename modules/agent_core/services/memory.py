@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import List, Dict, Any
 import os
 
+from modules.common.persona_scope import get_active_persona
+
 logger = logging.getLogger("agent.memory")
 
 class EpisodicMemory:
@@ -44,12 +46,19 @@ class EpisodicMemory:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS episodes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    persona_id TEXT NOT NULL DEFAULT 'sentry',
                     timestamp TEXT,
                     event_type TEXT,
                     content TEXT,
                     importance INTEGER
                 )
             ''')
+            cols = {str(r[1]) for r in cursor.execute("PRAGMA table_info(episodes)").fetchall()}
+            if "persona_id" not in cols:
+                cursor.execute("ALTER TABLE episodes ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'sentry'")
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS idx_episodes_persona_ts ON episodes(persona_id, timestamp DESC)"
+            )
             conn.commit()
         finally:
             if not self._conn:
@@ -61,40 +70,42 @@ class EpisodicMemory:
 
     def remember(self, event_type: str, content: str, importance: int = 1):
         """
-        Save an event to long-term memory.
+        Save an event to long-term memory scoped to the active persona.
         event_type: 'dialogue', 'action', 'observation', 'error'
         """
         now = datetime.now().isoformat()
+        pid = get_active_persona()
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
             cursor.execute(
-                'INSERT INTO episodes (timestamp, event_type, content, importance) VALUES (?, ?, ?, ?)',
-                (now, event_type, content, importance)
+                'INSERT INTO episodes (persona_id, timestamp, event_type, content, importance) VALUES (?, ?, ?, ?, ?)',
+                (pid, now, event_type, content, importance)
             )
             conn.commit()
         finally:
             if not self._conn:
                 conn.close()
-            
+
     def search_memory(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Retrieve matching memory logs.
+        """Retrieve matching memory logs scoped to the active persona.
 
         Fast path: SQL ``LIKE`` for exact substring hits. When that is sparse we
         fall back to TF-IDF cosine semantic ranking over recent episodes, which
         recalls relevant memories even without a literal keyword match.
         """
+        pid = get_active_persona()
         conn = self._get_conn()
         try:
             cursor = conn.cursor()
             cursor.execute(
                 '''
-                SELECT timestamp, event_type, content 
-                FROM episodes 
-                WHERE content LIKE ? 
+                SELECT timestamp, event_type, content
+                FROM episodes
+                WHERE persona_id = ? AND content LIKE ?
                 ORDER BY timestamp DESC LIMIT ?
                 ''',
-                (f"%{query}%", limit)
+                (pid, f"%{query}%", limit)
             )
             results = cursor.fetchall()
 
@@ -104,9 +115,11 @@ class EpisodicMemory:
                     '''
                     SELECT timestamp, event_type, content, importance
                     FROM episodes
+                    WHERE persona_id = ?
                     ORDER BY timestamp DESC
                     LIMIT 300
-                    '''
+                    ''',
+                    (pid,)
                 )
                 semantic_rows = cursor.fetchall()
             else:

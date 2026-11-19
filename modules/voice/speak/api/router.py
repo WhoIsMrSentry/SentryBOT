@@ -120,6 +120,7 @@ def get_router(service: SpeakService) -> APIRouter:
                     speaker_wav=payload.get("speaker_wav"),
                     language=payload.get("language"),
                     trace_id=f"{trace_id}-c{index}",
+                    voice=payload.get("voice"),
                 )
                 if not result.get("ok"):
                     raise RuntimeError(str(result.get("detail") or result.get("error") or "TTS failed"))
@@ -189,6 +190,7 @@ def get_router(service: SpeakService) -> APIRouter:
                 speaker_wav=payload.get("speaker_wav"),
                 language=payload.get("language"),
                 trace_id=trace_id,
+                voice=payload.get("voice"),
             )
         except Exception as exc:
             logger.exception("/speak/say failed")

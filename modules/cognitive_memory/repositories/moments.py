@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+from modules.common.persona_scope import get_active_persona, normalize_persona_id
 
 from ..utils import decay_salience
 
@@ -9,8 +11,14 @@ if TYPE_CHECKING:
     from ..db import SocialDB
 
 
+def _scope_persona(persona_id: Optional[str]) -> str:
+    if persona_id is not None and str(persona_id).strip():
+        return normalize_persona_id(persona_id)
+    return get_active_persona()
+
+
 class MomentsRepo:
-    """Salience-weighted memory snippets per person."""
+    """Salience-weighted memory snippets per person and persona."""
 
     def __init__(self, db: "SocialDB") -> None:
         self.db = db
@@ -22,16 +30,18 @@ class MomentsRepo:
         salience: float,
         *,
         kind: str = "note",
+        persona_id: Optional[str] = None,
     ) -> int:
         """Insert a moment or boost an existing exact-text match."""
         val = str(text or "").strip()[:220]
         if not val:
             return 0
         now = time.time()
+        pid_scope = _scope_persona(persona_id)
         with self.db.transaction() as conn:
             row = conn.execute(
-                "SELECT id, score FROM moments WHERE person_id = ? AND text = ?",
-                (str(person_id), val),
+                "SELECT id, score FROM moments WHERE person_id = ? AND persona_id = ? AND text = ?",
+                (str(person_id), pid_scope, val),
             ).fetchone()
             if row is not None:
                 new_score = min(1.0, float(row["score"] or 0.0) + float(salience))
@@ -43,34 +53,55 @@ class MomentsRepo:
             score = max(0.05, min(1.0, float(salience)))
             cur = conn.execute(
                 """
-                INSERT INTO moments (person_id, ts, kind, text, score, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO moments (person_id, persona_id, ts, kind, text, score, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (str(person_id), now, str(kind or "note"), val, score, now),
+                (str(person_id), pid_scope, now, str(kind or "note"), val, score, now),
             )
             return int(cur.lastrowid or 0)
 
-    def top_for_person(self, person_id: str, limit: int = 1) -> List[Dict[str, Any]]:
+    def top_for_person(
+        self,
+        person_id: str,
+        limit: int = 1,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        pid_scope = _scope_persona(persona_id)
         rows = self.db.fetchall(
-            "SELECT * FROM moments WHERE person_id = ? ORDER BY score DESC, updated_at DESC LIMIT ?",
-            (str(person_id), max(1, int(limit))),
+            "SELECT * FROM moments WHERE person_id = ? AND persona_id = ? ORDER BY score DESC, updated_at DESC LIMIT ?",
+            (str(person_id), pid_scope, max(1, int(limit))),
         )
         return [{k: r[k] for k in r.keys()} for r in rows]
 
-    def list_for_person(self, person_id: str, limit: int = 24) -> List[Dict[str, Any]]:
+    def list_for_person(
+        self,
+        person_id: str,
+        limit: int = 24,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        pid_scope = _scope_persona(persona_id)
         rows = self.db.fetchall(
-            "SELECT * FROM moments WHERE person_id = ? ORDER BY updated_at DESC LIMIT ?",
-            (str(person_id), max(1, int(limit))),
+            "SELECT * FROM moments WHERE person_id = ? AND persona_id = ? ORDER BY updated_at DESC LIMIT ?",
+            (str(person_id), pid_scope, max(1, int(limit))),
         )
         return [{k: r[k] for k in r.keys()} for r in rows]
 
-    def decay(self, person_id: str, half_life_s: float = 216000.0) -> int:
+    def decay(
+        self,
+        person_id: str,
+        half_life_s: float = 216000.0,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> int:
         """Apply exponential decay and drop low-score rows. Returns deleted count."""
         now = time.time()
+        pid_scope = _scope_persona(persona_id)
         with self.db.transaction() as conn:
             rows = conn.execute(
-                "SELECT id, score, updated_at FROM moments WHERE person_id = ?",
-                (str(person_id),),
+                "SELECT id, score, updated_at FROM moments WHERE person_id = ? AND persona_id = ?",
+                (str(person_id), pid_scope),
             ).fetchall()
             deleted = 0
             for r in rows:
@@ -86,10 +117,12 @@ class MomentsRepo:
                     )
             return deleted
 
-    def delete_for_person(self, person_id: str) -> int:
+    def delete_for_person(self, person_id: str, *, persona_id: Optional[str] = None) -> int:
+        pid_scope = _scope_persona(persona_id)
         with self.db.transaction() as conn:
             cur = conn.execute(
-                "DELETE FROM moments WHERE person_id = ?", (str(person_id),)
+                "DELETE FROM moments WHERE person_id = ? AND persona_id = ?",
+                (str(person_id), pid_scope),
             )
             return int(cur.rowcount or 0)
 
@@ -97,11 +130,17 @@ class MomentsRepo:
         self,
         person_id: str,
         items: List[Dict[str, Any]],
+        *,
+        persona_id: Optional[str] = None,
     ) -> int:
         """Bulk replace operation used by migration to seed initial data."""
         now = time.time()
+        pid_scope = _scope_persona(persona_id)
         with self.db.transaction() as conn:
-            conn.execute("DELETE FROM moments WHERE person_id = ?", (str(person_id),))
+            conn.execute(
+                "DELETE FROM moments WHERE person_id = ? AND persona_id = ?",
+                (str(person_id), pid_scope),
+            )
             inserted = 0
             for item in items:
                 text = str(item.get("text", "") or "").strip()
@@ -109,11 +148,12 @@ class MomentsRepo:
                     continue
                 conn.execute(
                     """
-                    INSERT INTO moments (person_id, ts, kind, text, score, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO moments (person_id, persona_id, ts, kind, text, score, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         str(person_id),
+                        pid_scope,
                         float(item.get("created_at", now) or now),
                         str(item.get("kind", "note") or "note"),
                         text,

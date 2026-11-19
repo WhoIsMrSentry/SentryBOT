@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Dict, Optional
+
+from modules.arduino_serial.contract import (
+    build_buzzer_cmd,
+    build_cute_cmd,
+    build_drive_cmd,
+    build_laser_cmd,
+    build_simple_cmd,
+    build_stepper_cmd,
+)
 
 logger = logging.getLogger("agent.handlers")
 
@@ -30,6 +40,7 @@ def register_default_action_handlers(orchestrator: Any) -> None:
             category="final" if req.priority >= 60 else "progress",
             language=str(req.payload.get("language", "") or ""),
             tone=tone,
+            voice=str(req.payload.get("voice", "") or ""),
         )
         return {"ok": True}
 
@@ -213,10 +224,126 @@ def register_default_action_handlers(orchestrator: Any) -> None:
                 return {"ok": False, "reason": "lights_locked"}
         return _http_post("/expression/express", payload)
 
+    def _arduino_exec(payload: Dict[str, Any], timeout_s: float = 1.2) -> Dict[str, Any]:
+        cli = getattr(orchestrator, "autonomy_client", None)
+        if cli is not None and hasattr(cli, "arduino_request"):
+            resp = cli.arduino_request(payload, timeout=timeout_s)
+            if isinstance(resp, dict):
+                return {"ok": bool(resp.get("ok", True)), "resp": resp}
+            return {"ok": bool(resp is not None), "resp": resp}
+        data = _http_post("/arduino/request", payload)
+        return data
+
+    _laser_off_timer_lock = threading.Lock()
+    _laser_off_timer: list[Optional[threading.Timer]] = [None]
+
+    def _cancel_laser_timer() -> None:
+        with _laser_off_timer_lock:
+            t = _laser_off_timer[0]
+            if t is not None:
+                t.cancel()
+                _laser_off_timer[0] = None
+
+    def _handle_legs_posture(req):
+        payload = req.payload if isinstance(req.payload, dict) else {}
+        posture = str(payload.get("posture") or "stand").strip().lower()
+        if posture not in {"stand", "sit", "home", "estop", "calibrate", "zero_now"}:
+            return {"ok": False, "reason": "invalid_posture"}
+        return _arduino_exec(build_simple_cmd(posture), timeout_s=1.5)
+
+    def _handle_legs_move(req):
+        payload = req.payload if isinstance(req.payload, dict) else {}
+        direction = str(payload.get("direction") or "stop").strip().lower()
+        if direction == "stop":
+            return _arduino_exec(build_simple_cmd("estop"), timeout_s=1.0)
+        raw_speed = int(payload.get("speed", 60) or 60)
+        safe_speed = abs(int(orchestrator.safety_filter.clamp_stepper(raw_speed)))
+        if safe_speed == 0:
+            return _arduino_exec(build_drive_cmd(0), timeout_s=1.0)
+        if direction == "forward":
+            return _arduino_exec(build_drive_cmd(safe_speed), timeout_s=1.2)
+        if direction == "backward":
+            return _arduino_exec(build_drive_cmd(-safe_speed), timeout_s=1.2)
+        if direction in {"left", "right"}:
+            sign = 1 if direction == "right" else -1
+            steps = max(20, min(2000, int(payload.get("steps", 200) or 200)))
+            r0 = _arduino_exec(build_stepper_cmd(0, "pos", sign * steps, drive=safe_speed), timeout_s=1.2)
+            r1 = _arduino_exec(build_stepper_cmd(1, "pos", -sign * steps, drive=safe_speed), timeout_s=1.2)
+            return {"ok": bool(r0.get("ok") and r1.get("ok")), "left": r0, "right": r1}
+        return {"ok": False, "reason": "invalid_direction"}
+
+    def _handle_laser(req):
+        payload = req.payload if isinstance(req.payload, dict) else {}
+        on = bool(payload.get("on", False))
+        target = str(payload.get("target") or "both").strip().lower()
+        _cancel_laser_timer()
+        if not on or target == "off":
+            return _arduino_exec(build_laser_cmd(on=False, both=True), timeout_s=1.0)
+        duration_s = float(orchestrator.safety_filter.clamp_laser_duration(float(payload.get("duration_s", 2.0) or 2.0)))
+        if target in {"1", "left"}:
+            cmd = build_laser_cmd(on=True, id_=1)
+        elif target in {"2", "right"}:
+            cmd = build_laser_cmd(on=True, id_=2)
+        else:
+            cmd = build_laser_cmd(on=True, both=True)
+        res = _arduino_exec(cmd, timeout_s=1.0)
+        if duration_s > 0.05:
+            def _auto_off() -> None:
+                try:
+                    _arduino_exec(build_laser_cmd(on=False, both=True), timeout_s=1.0)
+                except Exception:
+                    pass
+            timer = threading.Timer(duration_s, _auto_off)
+            timer.daemon = True
+            with _laser_off_timer_lock:
+                _laser_off_timer[0] = timer
+            timer.start()
+        return res
+
+    def _handle_ears(req):
+        payload = req.payload if isinstance(req.payload, dict) else {}
+        gesture = str(payload.get("gesture") or "").strip().lower()
+        cli = getattr(orchestrator, "autonomy_client", None)
+        if gesture:
+            if cli is not None and hasattr(cli, "ear_gesture"):
+                return cli.ear_gesture(gesture) or {"ok": False}
+            return _http_post(f"/piservo/gesture?name={gesture}", {})
+        left = payload.get("left")
+        right = payload.get("right")
+        l_deg = orchestrator.safety_filter.clamp_servo(int(left if left is not None else 90))
+        r_deg = orchestrator.safety_filter.clamp_servo(int(right if right is not None else 90))
+        if cli is not None and hasattr(cli, "set_ears"):
+            return cli.set_ears(l_deg, r_deg) or {"ok": False}
+        return _http_post(f"/piservo/set?left={l_deg}&right={r_deg}", {})
+
+    def _handle_piservo_reflex(req):
+        payload = req.payload if isinstance(req.payload, dict) else {}
+        angle = float(payload.get("angle", 0.0) or 0.0)
+        energy = float(payload.get("energy", 1.0) or 1.0)
+        cli = getattr(orchestrator, "autonomy_client", None)
+        if cli is not None and hasattr(cli, "ear_reflex"):
+            return cli.ear_reflex(angle, energy=energy) or {"ok": False}
+        return _http_post(f"/piservo/reflex?angle={angle}&energy={energy}", {})
+
+    def _handle_audio_hw(req):
+        payload = req.payload if isinstance(req.payload, dict) else {}
+        cute_name = str(payload.get("cute_sound") or "").strip()
+        if cute_name:
+            return _arduino_exec(build_cute_cmd(cute_name), timeout_s=1.2)
+        freq = max(100, min(10000, int(payload.get("frequency", 2200) or 2200)))
+        ms = max(10, min(2000, int(payload.get("duration_ms", 80) or 80)))
+        return _arduino_exec(build_buzzer_cmd(freq=freq, ms=ms), timeout_s=1.0)
+
     orchestrator.action_arbiter.register_handler("speak", _handle_speak)
     orchestrator.action_arbiter.register_handler("express", _handle_express)
     orchestrator.action_arbiter.register_handler("head_move", _handle_head)
     orchestrator.action_arbiter.register_handler("lights", _handle_lights)
+    orchestrator.action_arbiter.register_handler("legs_posture", _handle_legs_posture)
+    orchestrator.action_arbiter.register_handler("legs_move", _handle_legs_move)
+    orchestrator.action_arbiter.register_handler("laser", _handle_laser)
+    orchestrator.action_arbiter.register_handler("ears", _handle_ears)
+    orchestrator.action_arbiter.register_handler("piservo_reflex", _handle_piservo_reflex)
+    orchestrator.action_arbiter.register_handler("audio_hw", _handle_audio_hw)
     orchestrator.action_arbiter.register_handler("vision_query", _handle_vision_query)
     orchestrator.action_arbiter.register_handler("follow_owner", _handle_follow_owner)
     orchestrator.action_arbiter.register_handler("stop_follow", _handle_stop_follow)

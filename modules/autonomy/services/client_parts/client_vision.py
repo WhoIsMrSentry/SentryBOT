@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger("autonomy.client")
 
@@ -71,6 +71,16 @@ class ClientVisionMixin:
 
     def start_owner_follow(self) -> Any:
         return self._post("vlm", "/follow/owner/start")
+
+    def run_ocr(self, languages: Optional[List[str]] = None) -> Any:
+        body = {"languages": list(languages)} if languages else {}
+        return self._post("vlm", "/ocr", json=body, timeout_s=8.0)
+
+    def register_face(self, name: str) -> Any:
+        cleaned = str(name or "").strip()
+        if not cleaned:
+            return {"ok": False, "error": "name required"}
+        return self._post("vlm", "/faces/register", params={"name": cleaned}, timeout_s=6.0)
 
     async def async_focus_person(self, name: str) -> dict:
         if not name:

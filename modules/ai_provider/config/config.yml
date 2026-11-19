@@ -5,9 +5,10 @@ server:
 llm:
   provider: ollama   # ollama | google_ai_studio
   single_model_mode: false     # Role-based local multi-model routing
-  use_persona_models: false    # Disable legacy persona model injection
+  use_persona_models: true     # Each persona builds its own derived model FROM nemotron-3.5-bolt:e4b
   allowed_models:
     - sentry:latest
+    - glados:latest
     - nemotron-3.5-bolt:e4b
 ollama:
   base_url: http://whoismrsentry.local:11434

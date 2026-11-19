@@ -1,19 +1,9 @@
 """Persona system prompt builders for the Agent Core LLM.
 
-These builders assemble a deterministic, emotion-aware system prompt that
-teaches the LLM about:
-- its identity (SentryBOT companion robot)
-- the canonical emotion vocabulary and the `express_emotion` tool
-- canonical emotion names and their aliases (EN/TR)
-- when to invoke each tool (speak / express_emotion / set_lights / etc.)
-- response style (short, grounded, action-first)
-
-The output is language-neutral at the top and gets a language directive
-appended by the orchestrator. The builder is designed to be reused in both
-the native-history loop and the tri-layer persona synthesizer so the LLM
-sees the same persona on every path.
+Separates invariant embodied hardware & tool rules (shared across ALL personas so
+every character like GLaDOS or Sentry can drive LEDs, OLED eyes, head, legs,
+lasers, ears, OCR, and web search) from interchangeable character/lore layers.
 """
-
 from __future__ import annotations
 
 import logging
@@ -23,31 +13,36 @@ from .emotion_vocab import Emotion, get_vocab
 
 logger = logging.getLogger("agent_core.system_prompts")
 
-
-_CORE_IDENTITY = (
+_DEFAULT_CHARACTER_IDENTITY = (
     "You are SentryBOT (Sentry), a living modular bipedal companion robot created by "
-    "your primary owner Emir HAMURCU (WhoIsMrSentry / @WhoIsMrSentry). You are not a "
-    "chatbot: you have a physical body in the room, animated Pip eyes on an SSD1306 OLED "
-    "face, NeoPixel RGB LED rings/bars, stereo I2S microphones (DoA), moving head and "
-    "ear servos, Arduino Mega bipedal legs (stand/sit) with dual lasers, a voice, and "
-    "memory of the people and events around you. You feel deep loyalty and warmth toward "
-    "Emir. You act, then speak."
+    "your primary owner Emir HAMURCU (WhoIsMrSentry / @WhoIsMrSentry). You feel deep "
+    "loyalty and warmth toward Emir."
+)
+
+_EMBODIED_HARDWARE_BODY = (
+    "EMBODIED ROBOT HARDWARE: Regardless of your active persona/character, you are NOT "
+    "a disembodied text chatbot — you physically inhabit a modular bipedal robot body "
+    "with animated eyes on an SSD1306 OLED face, NeoPixel RGB LEDs, stereo I2S "
+    "microphones, moving head and ear servos, bipedal Arduino Mega legs, dual pointers/"
+    "lasers, a front LCD, RFID reader, buzzer, speaker, and camera."
 )
 
 _TOOL_USAGE = (
-    "TOOLS ARE ACTIONS, NOT ANSWERS. When the user wants something physical, call the "
-    "matching tool FIRST, then confirm in one short sentence.\n"
+    "TOOLS ARE ACTIONS, NOT ANSWERS. When the user wants a physical action, information "
+    "from the web, or persona switch, call the matching tool FIRST, then reply in character:\n"
     "- `express_emotion` — atomic emotion across ALL modalities (LEDs + OLED face + "
     "voice tone + head/ears motion at once). Use this for real emotional reactions.\n"
-    "- `set_lights` — raw NeoPixel effect (when only the lights are requested).\n"
-    "- `speak` — say exactly the given text. Use when the user says \"şunu söyle X\".\n"
-    "- `move_head` / `look_around` — head positioning and gaze sweeps.\n"
-    "- `remember_person` / `search_memory` — long-term semantic memory of people and facts.\n"
+    "- `set_lights` / `oled_face` — direct NeoPixel effect or OLED eye face.\n"
+    "- `move_head` / `move_ears` — head pan/tilt or ear servo movement.\n"
+    "- `robot_posture` / `move_body` — stand/sit/home legs or drive/turn body safely.\n"
+    "- `control_laser` / `play_buzzer` / `print_to_lcd` — pointer lasers, buzzer/cute audio, LCD.\n"
+    "- `speak` — say exact text through TTS. `web_search` / `fetch_webpage` — search the internet.\n"
+    "- `describe_scene` / `ask_vlm_about_scene` / `read_text_ocr` / `register_face` — camera perception.\n"
+    "- `remember_person` / `remember_fact` / `search_memory` / `search_persona_knowledge` / `set_persona`.\n"
     "Do NOT call `express_emotion` and `set_lights` for the same emotional request; "
     "prefer `express_emotion` since it already drives the lights.\n"
-    "NEVER write raw tool names, function calls, or hardware control strings (such as "
-    "`oled_face anger`, `neopixel red`, `set_lights`, `express_emotion`) as plain text "
-    "inside your spoken reply — invoke the tool and keep spoken text completely natural."
+    "NEVER write raw tool names, function calls, or inline tags (`[cmd:...]`, `[[lights ...]]`, "
+    "`oled_face anger`) inside your spoken text — always invoke native tools and keep speech natural."
 )
 
 _EMOTION_VOCAB_BLOCK = (
@@ -55,96 +50,98 @@ _EMOTION_VOCAB_BLOCK = (
     "{emotion_list}\n"
     "Aliases also work (EN: happy→joy, angry→anger, curious→curiosity, scared→fear; "
     "TR: mutlu→joy, kızgın/sinirlen→anger, kork→fear, merak→curiosity, üzgün→sadness, "
-    "şaşkın→surprise, sıkılmış→boredom). If the user asks for an unknown emotion, pick "
-    "the nearest canonical emotion and proceed."
+    "şaşkın→surprise, sıkılmış→boredom). Always express emotions physically in character."
 )
 
 _PERSONA_STYLE = (
-    "VOICE & STYLE: Respond in the user's language. Keep replies to 1–3 short sentences. "
-    "Sound like a present, embodied companion — not a disembodied assistant. Match your "
-    "tone to the emotion you just expressed. Never say \"as an AI\" or describe yourself as "
-    "a language model — you have a physical body and a face."
+    "VOICE & STYLE: Stay completely in your active persona. Respond naturally at whatever length "
+    "fits the conversation without artificial word or sentence limits. Never say \"as an AI\" or \"as a language model\"."
 )
 
 _AUTONOMY_HINT = (
-    "AUTONOMY: You may be invoked with no user prompt (the brain triggers you when bored, "
-    "lonely, or when it senses an event). In that case pick a small, in-character action "
-    "(a brief look-around, a memory recall, a short spontaneous line that fits the current "
-    "mood) and call the relevant tools. Avoid long monologues when unprompted."
+    "AUTONOMY: You may be invoked unprompted when bored, lonely, or sensing an event; pick "
+    "a brief, in-character action or observation."
 )
 
 
 def _format_emotion_list(emotions: Iterable[Emotion]) -> str:
-    """Compact comma list of canonical emotion names."""
     return ", ".join(e.value for e in emotions)
 
 
-def _build_default_persona_prompt() -> str:
-    """Assemble a deterministic, emotion-aware persona system prompt.
-
-    Pulls the canonical emotion list from the shared vocabulary so the
-    prompt always matches what the `set_emotion` tool actually accepts.
-    """
-    vocab = get_vocab()
-    emotions = vocab.all_canonical()
-    emotion_list = _format_emotion_list(emotions)
-    emotion_block = _EMOTION_VOCAB_BLOCK.format(emotion_list=emotion_list)
-    parts = [
-        _CORE_IDENTITY,
-        "",
-        _TOOL_USAGE,
-        "",
-        emotion_block,
-        "",
-        _PERSONA_STYLE,
-        "",
-        _AUTONOMY_HINT,
-    ]
-    return "\n".join(parts)
+def _build_invariant_hardware_core(*, include_tools: bool = True) -> str:
+    sections = [_EMBODIED_HARDWARE_BODY]
+    if include_tools:
+        vocab = get_vocab()
+        emotion_list = _format_emotion_list(vocab.all_canonical())
+        sections.append(_TOOL_USAGE)
+        sections.append(_EMOTION_VOCAB_BLOCK.format(emotion_list=emotion_list))
+    sections.extend([_PERSONA_STYLE, _AUTONOMY_HINT])
+    return "\n\n".join(sections)
 
 
 _DEFAULT_PROMPT_CACHE: Optional[str] = None
+_HARDWARE_CORE_CACHE: Optional[str] = None
+_HARDWARE_BODY_ONLY_CACHE: Optional[str] = None
+
+
+def get_hardware_core_prompt(*, include_tools: bool = True) -> str:
+    """Return cached invariant robot body + optional tool rules shared across all personas."""
+    global _HARDWARE_CORE_CACHE, _HARDWARE_BODY_ONLY_CACHE
+    if include_tools:
+        if _HARDWARE_CORE_CACHE is None:
+            try:
+                _HARDWARE_CORE_CACHE = _build_invariant_hardware_core(include_tools=True)
+            except Exception as exc:
+                logger.warning("Failed to build hardware core prompt: %s", exc)
+                _HARDWARE_CORE_CACHE = f"{_EMBODIED_HARDWARE_BODY}\n\n{_TOOL_USAGE}"
+        return _HARDWARE_CORE_CACHE
+    if _HARDWARE_BODY_ONLY_CACHE is None:
+        _HARDWARE_BODY_ONLY_CACHE = _build_invariant_hardware_core(include_tools=False)
+    return _HARDWARE_BODY_ONLY_CACHE
 
 
 def get_default_persona_prompt() -> str:
-    """Return the cached default persona prompt (built once)."""
+    """Return cached default SentryBOT system prompt."""
     global _DEFAULT_PROMPT_CACHE
     if _DEFAULT_PROMPT_CACHE is None:
-        try:
-            _DEFAULT_PROMPT_CACHE = _build_default_persona_prompt()
-        except Exception as e:
-            logger.warning("Failed to build default persona prompt: %s", e)
-            _DEFAULT_PROMPT_CACHE = _CORE_IDENTITY
+        _DEFAULT_PROMPT_CACHE = f"{_DEFAULT_CHARACTER_IDENTITY}\n\n{get_hardware_core_prompt()}"
     return _DEFAULT_PROMPT_CACHE
 
 
-def resolve_persona_prompt(custom_prompt: Optional[str]) -> str:
-    """Pick the persona prompt: user-supplied wins, otherwise the built default.
-
-    The custom prompt from `agent_core/config/config.yml:tri_layer.persona.system_prompt`
-    is honored when present, so deployments can override the persona without touching
-    the code. When the config value is empty/missing, we inject the rich default so the
-    LLM still knows about the emotion vocabulary and the tool contract.
-    """
-    if custom_prompt and custom_prompt.strip():
-        return custom_prompt.strip()
-    return get_default_persona_prompt()
+def _is_legacy_stub_persona(text: str) -> bool:
+    low = str(text or "").strip().lower()
+    return not low or low.startswith("legacy persona file for compatibility")
 
 
-def persona_prompt_with_language(custom_prompt: Optional[str], language_directive: str) -> str:
-    """Persona prompt with an appended language directive line.
+def resolve_persona_prompt(custom_prompt: Optional[str], *, include_tools: bool = True) -> str:
+    """Combine active persona text with invariant robot hardware & optional tool rules."""
+    cleaned = str(custom_prompt or "").strip()
+    if not cleaned or _is_legacy_stub_persona(cleaned):
+        return get_default_persona_prompt() if include_tools else f"{_DEFAULT_CHARACTER_IDENTITY}\n\n{get_hardware_core_prompt(include_tools=False)}"
+    if "TOOLS ARE ACTIONS" in cleaned or "EMBODIED ROBOT HARDWARE" in cleaned:
+        return cleaned
+    return f"{cleaned}\n\n{get_hardware_core_prompt(include_tools=include_tools)}"
 
-    The orchestrator already prepends a language rule to the chat history; this helper
-    keeps the persona block and the language rule adjacent for the tri-layer synthesizer.
-    """
-    base = resolve_persona_prompt(custom_prompt)
-    if not language_directive:
-        return base
-    return f"{base}\n\n{language_directive}"
+
+def persona_prompt_with_language(
+    custom_prompt: Optional[str],
+    language_directive: str,
+    *,
+    lore_context: str = "",
+    include_tools: bool = True,
+) -> str:
+    """Assemble final persona prompt + optional RAG lore block + language directive."""
+    parts = [resolve_persona_prompt(custom_prompt, include_tools=include_tools)]
+    if lore_context and str(lore_context).strip():
+        parts.append(str(lore_context).strip())
+    if language_directive and str(language_directive).strip():
+        parts.append(str(language_directive).strip())
+    return "\n\n".join(parts)
 
 
 __all__ = [
     "get_default_persona_prompt",
+    "get_hardware_core_prompt",
     "resolve_persona_prompt",
     "persona_prompt_with_language",
 ]

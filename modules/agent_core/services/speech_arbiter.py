@@ -61,6 +61,7 @@ class SpeechItem:
     language: str = ""
     tone: Optional[Dict[str, Any]] = None
     trace_id: str = ""
+    voice: str = ""
 
     @property
     def expired(self) -> bool:
@@ -133,6 +134,7 @@ class SpeechArbiter:
         tone: Optional[Dict[str, Any]] = None,
         max_age_s: float = 10.0,
         trace_id: str = "",
+        voice: str = "",
     ) -> Optional[str]:
         value = str(text or "").strip()
         if not value:
@@ -152,6 +154,7 @@ class SpeechArbiter:
                 tone=dict(tone) if isinstance(tone, dict) else None,
                 max_age_s=float(max_age_s),
                 trace_id=str(trace_id or ""),
+                voice=str(voice or ""),
             )
             if len(self._queue) >= self._max_queue:
                 lowest = min(self._queue, key=lambda queued: queued.priority)
@@ -185,6 +188,7 @@ class SpeechArbiter:
         language: str = "",
         tone: Optional[Dict[str, Any]] = None,
         trace_id: str = "",
+        voice: str = "",
     ) -> Optional[str]:
         self.cancel_progress()
         chunks = split_sentences(text)
@@ -196,6 +200,7 @@ class SpeechArbiter:
                 language=language,
                 tone=tone,
                 trace_id=trace_id,
+                voice=voice,
             )
             first_id = first_id or item_id
         return first_id
@@ -207,6 +212,7 @@ class SpeechArbiter:
         language: str = "",
         tone: Optional[Dict[str, Any]] = None,
         trace_id: str = "",
+        voice: str = "",
     ) -> Optional[str]:
         return self.enqueue(
             text,
@@ -217,6 +223,7 @@ class SpeechArbiter:
             tone=tone,
             max_age_s=45.0,
             trace_id=trace_id,
+            voice=voice,
         )
 
     def enqueue_safety(self, text: str, tone: Optional[Dict[str, Any]] = None, trace_id: str = "") -> Optional[str]:
@@ -350,6 +357,8 @@ class SpeechArbiter:
                 kwargs["language"] = item.language
             if item.trace_id:
                 kwargs["trace_id"] = item.trace_id
+            if item.voice:
+                kwargs["voice"] = item.voice
             self._speak_fn(**kwargs)
         except Exception:
             logger.warning("TTS dispatch failed", exc_info=True)

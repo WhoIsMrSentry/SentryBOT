@@ -5,7 +5,7 @@ agent:
   model: sentry:latest
   temperature: 0.15
   num_ctx: 8192
-  num_predict: 100
+  num_predict: 4096
   cooldown_s: 0.1
   request_timeout: 30
   status_interval_s: 1.0
@@ -16,6 +16,17 @@ agent:
   ollama_base_url: http://whoismrsentry.local:11434
   max_steps: 4
   max_tool_loops: 3
+translation:
+  enabled: true
+  mode: online_first
+  default_source_lang: tr
+  bridge_lang: en
+  local_models_dir: models/translate
+  online_timeout_s: 2.5
+  online_cooldown_s: 15.0
+  local_threads: 2
+  fallback_to_ollama: false
+  cache_size: 256
 llm:
   provider: ollama
   single_model_mode: false
@@ -23,6 +34,7 @@ llm:
   primary_model: sentry:latest
   allowed_models:
   - sentry:latest
+  - glados:latest
   - nemotron-3.5-bolt:e4b
   clm_fallback_enabled: false
   clm_fallback_model: nemotron-3.5-bolt:e4b
@@ -53,7 +65,7 @@ tri_layer:
   fast_path:
     enabled: true
     max_chars: 180
-    num_predict: 96
+    num_predict: 2048
     max_steps: 2
   router:
     max_subagents: 2
@@ -63,7 +75,7 @@ tri_layer:
   subagent:
     max_steps: 2
   persona:
-    num_predict: 180
+    num_predict: 4096
     stream: false
     system_prompt: ""
 safety:
@@ -129,10 +141,10 @@ slam:
 realtime_profile:
   active: fast
   fast:
-    num_predict_chat: 100
-    num_predict_persona: 120
-    num_predict_vlm: 256
-    num_predict_vlm_bridge: 100
+    num_predict_chat: 2048
+    num_predict_persona: 2048
+    num_predict_vlm: 512
+    num_predict_vlm_bridge: 256
     num_ctx: 8192
     temperature: 0.1
     request_timeout_s: 15
@@ -142,10 +154,10 @@ realtime_profile:
     subagent_workers: 1
     subagent_max_steps: 2
   normal:
-    num_predict_chat: 180
-    num_predict_persona: 180
-    num_predict_vlm: 384
-    num_predict_vlm_bridge: 160
+    num_predict_chat: 4096
+    num_predict_persona: 4096
+    num_predict_vlm: 512
+    num_predict_vlm_bridge: 256
     num_ctx: 8192
     temperature: 0.15
     request_timeout_s: 25
@@ -155,8 +167,8 @@ realtime_profile:
     subagent_workers: 2
     subagent_max_steps: 3
   rich:
-    num_predict_chat: 240
-    num_predict_persona: 260
+    num_predict_chat: 4096
+    num_predict_persona: 4096
     num_predict_vlm: 512
     num_predict_vlm_bridge: 220
     num_ctx: 8192

@@ -10,6 +10,8 @@ try:
 except ImportError:
     detect_text_language = None
 
+from modules.common.persona_scope import get_active_persona_meta
+
 logger = logging.getLogger("autonomy.vocal_prosody")
 
 
@@ -50,7 +52,13 @@ class VocalProsodyMixin:
         "neutral": {"rate": 170, "volume": 0.85},
     }
 
-    def _speak_with_mood(self, text: str, emotion: str | None = None, language: str | None = None) -> None:
+    def _speak_with_mood(
+        self,
+        text: str,
+        emotion: str | None = None,
+        language: str | None = None,
+        voice: str | None = None,
+    ) -> None:
         if not text:
             return
         state_lang = str((getattr(self, "state", None) or {}).get("last_speech_language") or "tr")
@@ -58,13 +66,26 @@ class VocalProsodyMixin:
             language = detect_text_language(text, default=state_lang)
         elif not language:
             language = state_lang
+        if not voice:
+            meta = get_active_persona_meta()
+            if isinstance(meta, dict):
+                v = str(meta.get("tts_voice") or "").strip()
+                if v and v.lower() not in {"auto", "none", "null"}:
+                    voice = v
+                elif str(language).lower() == "en":
+                    ve = str(meta.get("tts_voice_en") or "").strip()
+                    if ve and ve.lower() not in {"auto", "none", "null"}:
+                        voice = ve
         tone = self._tone_profile(emotion)
+        payload: Dict[str, Any] = {
+            "text": text,
+            "tone": tone,
+            "language": language,
+        }
+        if voice:
+            payload["voice"] = str(voice).strip()
         try:
-            self.client.queue_action("speak", priority=50, ttl_ms=10000, payload={
-                "text": text,
-                "tone": tone,
-                "language": language
-            })
+            self.client.queue_action("speak", priority=50, ttl_ms=10000, payload=payload)
         except Exception as exc:
             logger.debug("Failed to queue speech action: %s", exc)
 

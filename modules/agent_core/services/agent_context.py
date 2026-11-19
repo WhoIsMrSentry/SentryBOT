@@ -13,6 +13,7 @@ from modules.common.ollama_url import normalize_ollama_url
 from .action_arbiter import ActionArbiter
 from .agent_handlers import register_default_action_handlers
 from .agent_memory_sync import AgentMemorySyncMixin
+from .agent_persona import AgentPersonaMixin
 from .expression_arbiter import ExpressionArbiter
 from .idle_behavior import IdleBehaviorSystem
 from .memory import EpisodicMemory
@@ -65,7 +66,7 @@ class _PriorityOllamaAdapter:
         return getattr(self._inner, item)
 
 
-class AgentContextMixin(AgentMemorySyncMixin):
+class AgentContextMixin(AgentMemorySyncMixin, AgentPersonaMixin):
     """Initialization and context management methods for AgentOrchestrator."""
 
     config: Dict[str, Any]
@@ -193,6 +194,8 @@ class AgentContextMixin(AgentMemorySyncMixin):
                 logger.info("LLM provider client ready: %s (model=%s)", self.provider_name, getattr(self.provider_client, "model", ""))
             except Exception as exc:
                 logger.error("Provider client init failed for %s: %s", self.llm_provider, exc)
+        if hasattr(self, "_init_translator"):
+            self._init_translator(self.config)
 
     def _init_subsystems(self, config: Dict[str, Any]) -> None:
         self.world_state = WorldState()
@@ -239,6 +242,7 @@ class AgentContextMixin(AgentMemorySyncMixin):
             action_arbiter=self.action_arbiter,
             expression_arbiter=self.expression_arbiter,
             mcp_client=getattr(self, "mcp_client", None),
+            localize_speech_fn=getattr(self, "_localize_tool_speech", None),
         )
         runtime_cfg = config.get("agent_runtime", {}) if isinstance(config.get("agent_runtime"), dict) else {}
         from .runtime import CapabilityIndex, DecisionTraceStore, FailureClassifier, GoalStore, ProgressTracker, RecoveryManager
@@ -300,16 +304,21 @@ class AgentContextMixin(AgentMemorySyncMixin):
             self.speech_arbiter.set_stop_playback_fn(self.autonomy_client.stop_speaking)
         if self.autonomy_client and hasattr(self.autonomy_client, "speak_preferred"):
             self.speech_arbiter.set_speak_fn(
-                lambda text, tone=None, language=None, trace_id=None: self.autonomy_client.speak_preferred(
+                lambda text, tone=None, language=None, trace_id=None, voice=None: self.autonomy_client.speak_preferred(
                     text,
                     tone=tone,
                     language=language or "tr",
                     trace_id=trace_id,
+                    voice=voice or (
+                        self.effective_tts_voice(language or "tr")
+                        if hasattr(self, "effective_tts_voice")
+                        else None
+                    ),
                 )
             )
         else:
             self.speech_arbiter.set_speak_fn(
-                lambda text, tone=None, language=None, trace_id=None: self._handle_speak_fallback(
+                lambda text, tone=None, language=None, trace_id=None, voice=None: self._handle_speak_fallback(
                     text,
                     tone=tone,
                     language=language or "tr",
@@ -359,6 +368,12 @@ class AgentContextMixin(AgentMemorySyncMixin):
         self.persona_num_predict = self._safe_int(persona_cfg.get("num_predict", 160), fallback=160, minimum=10)
         self.persona_stream_enabled = bool(persona_cfg.get("stream_enabled", persona_cfg.get("stream", False)))
         self.chat_num_predict = self._safe_int(agent_cfg.get("chat_num_predict", 120), fallback=120, minimum=10)
+        if hasattr(self, "_init_persona_runtime"):
+            self._init_persona_runtime(config, configured_prompt=self.persona_system_prompt)
+            reg = getattr(self, "tool_registry", None)
+            if reg is not None:
+                reg.persona_manager = getattr(self, "persona_manager", None)
+                reg.apply_persona_fn = lambda name, lang="": self.apply_persona(name, response_language=lang)
 
     def _vision_input_available(self) -> bool:
         if self.autonomy_client and hasattr(self.autonomy_client, "is_vision_input_available"):

@@ -10,12 +10,26 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from modules.common.persona_scope import DEFAULT_PERSONA_ID, get_active_persona, normalize_persona_id
+
 from ..utils import backup_sqlite_connection, resolve_repo_path
 from .text_utils import _stem_tokens, _tokens
 
 logger = logging.getLogger("cognitive_memory.world_memory_rag")
 
 EmbedFn = Callable[[str], Any]
+
+
+def _scope_persona(persona_id: Optional[str]) -> str:
+    if persona_id is not None and str(persona_id).strip():
+        return normalize_persona_id(persona_id)
+    return get_active_persona()
+
+
+def _scoped_id(raw_id: str, pid: str) -> str:
+    if pid != DEFAULT_PERSONA_ID and "::" not in raw_id:
+        return f"{pid}::{raw_id}"[:180]
+    return raw_id[:180]
 
 
 def _json_dumps(value: Any) -> str:
@@ -103,6 +117,7 @@ class WorldMemoryRAG:
                 """
                 CREATE TABLE IF NOT EXISTS memories (
                     id TEXT PRIMARY KEY,
+                    persona_id TEXT NOT NULL DEFAULT 'sentry',
                     kind TEXT NOT NULL,
                     name TEXT NOT NULL,
                     summary TEXT NOT NULL,
@@ -123,6 +138,7 @@ class WorldMemoryRAG:
                 """
             )
             for col_ddl in (
+                "ALTER TABLE memories ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'sentry'",
                 "ALTER TABLE memories ADD COLUMN embedding BLOB",
                 "ALTER TABLE memories ADD COLUMN expiry REAL NOT NULL DEFAULT 0.0",
                 "ALTER TABLE memories ADD COLUMN supersedes TEXT NOT NULL DEFAULT ''",
@@ -135,18 +151,24 @@ class WorldMemoryRAG:
             con.execute("CREATE INDEX IF NOT EXISTS idx_memories_kind ON memories(kind)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_memories_last_seen ON memories(last_seen DESC)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_memories_name ON memories(name)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_memories_persona ON memories(persona_id, last_seen DESC)")
             con.execute(
                 """
                 CREATE TABLE IF NOT EXISTS observations (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ts REAL NOT NULL,
                     memory_id TEXT NOT NULL,
+                    persona_id TEXT NOT NULL DEFAULT 'sentry',
                     source TEXT NOT NULL,
                     text TEXT NOT NULL,
                     details_json TEXT NOT NULL DEFAULT '{}'
                 )
                 """
             )
+            try:
+                con.execute("ALTER TABLE observations ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'sentry'")
+            except sqlite3.OperationalError:
+                pass
             con.execute("CREATE INDEX IF NOT EXISTS idx_observations_ts ON observations(ts DESC)")
             try:
                 con.execute(
@@ -174,8 +196,10 @@ class WorldMemoryRAG:
             )
 
     @staticmethod
-    def memory_id(kind: str, name: str) -> str:
-        return f"{_clean_id_part(kind, 'fact')}:{_clean_id_part(name, 'unknown')}"[:180]
+    def memory_id(kind: str, name: str, *, persona_id: Optional[str] = None) -> str:
+        base = f"{_clean_id_part(kind, 'fact')}:{_clean_id_part(name, 'unknown')}"[:180]
+        pid = _scope_persona(persona_id)
+        return _scoped_id(base, pid)
 
     def _compute_embedding(self, text: str) -> tuple[Optional[bytes], int]:
         if self._embed_fn is None:
@@ -196,10 +220,12 @@ class WorldMemoryRAG:
         *,
         source: str = "api",
         now: Optional[float] = None,
+        persona_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "available": False, "reason": "world_memory_rag_disabled"}
         body = payload if isinstance(payload, dict) else {}
+        pid_scope = _scope_persona(persona_id or body.get("persona_id"))
         kind = str(body.get("kind") or body.get("type") or "observation").strip().lower() or "observation"
         name = str(body.get("name") or body.get("label") or body.get("title") or kind).strip() or kind
         summary = str(body.get("summary") or body.get("text") or body.get("description") or name).strip()
@@ -214,16 +240,20 @@ class WorldMemoryRAG:
         explicit_exp = _clamp(body.get("expiry") or body.get("expiry_ts"), 0.0, 0.0, ts_now + 86400.0 * 3650)
         ttl_s = _clamp(body.get("expiry_s"), 0.0, 0.0, 86400.0 * 3650)
         expiry = explicit_exp if explicit_exp > observed_at else (observed_at + ttl_s if ttl_s > 0.0 else 0.0)
-        supersedes = str(body.get("supersedes") or "").strip()
-        memory_id = str(body.get("id") or self.memory_id(kind, name))
+        raw_sup = str(body.get("supersedes") or "").strip()
+        supersedes = _scoped_id(raw_sup, pid_scope) if raw_sup else ""
+        if body.get("id"):
+            memory_id = _scoped_id(str(body["id"]), pid_scope)
+        else:
+            memory_id = self.memory_id(kind, name, persona_id=pid_scope)
 
         embedding, embed_state = self._compute_embedding(f"{kind} {name} {summary}")
 
         with self._lock:
             con = self._conn
             if supersedes and supersedes != memory_id:
-                con.execute("DELETE FROM memories WHERE id=?", (supersedes,))
-                con.execute("DELETE FROM observations WHERE memory_id=?", (supersedes,))
+                con.execute("DELETE FROM memories WHERE id=? AND persona_id=?", (supersedes, pid_scope))
+                con.execute("DELETE FROM observations WHERE memory_id=? AND persona_id=?", (supersedes, pid_scope))
                 if self._fts_available:
                     con.execute("DELETE FROM memories_fts WHERE id=?", (supersedes,))
 
@@ -232,13 +262,14 @@ class WorldMemoryRAG:
             if old is None:
                 con.execute(
                     """
-                    INSERT INTO memories(id, kind, name, summary, details_json, source, confidence, salience,
+                    INSERT INTO memories(id, persona_id, kind, name, summary, details_json, source, confidence, salience,
                                          observation_count, first_seen, last_seen, expiry, supersedes, location,
                                          tags_json, embedding, embed_state)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         memory_id,
+                        pid_scope,
                         kind,
                         name,
                         summary,
@@ -281,7 +312,8 @@ class WorldMemoryRAG:
                     UPDATE memories
                     SET summary=?, details_json=?, source=?, confidence=?, salience=?, observation_count=?,
                         last_seen=?, expiry=?, supersedes=CASE WHEN ? != '' THEN ? ELSE supersedes END,
-                        location=CASE WHEN ? != '' THEN ? ELSE location END, tags_json=?, embedding=?, embed_state=?
+                        location=CASE WHEN ? != '' THEN ? ELSE location END, tags_json=?, embedding=?,
+                        embed_state=?, persona_id=?
                     WHERE id=?
                     """,
                     (
@@ -300,12 +332,13 @@ class WorldMemoryRAG:
                         _json_dumps(merged_tags),
                         final_embedding,
                         final_embed_state,
+                        pid_scope,
                         memory_id,
                     ),
                 )
             con.execute(
-                "INSERT INTO observations(ts, memory_id, source, text, details_json) VALUES (?, ?, ?, ?, ?)",
-                (ts_now, memory_id, source, summary, _json_dumps(details)),
+                "INSERT INTO observations(ts, memory_id, persona_id, source, text, details_json) VALUES (?, ?, ?, ?, ?, ?)",
+                (ts_now, memory_id, pid_scope, source, summary, _json_dumps(details)),
             )
             if self._fts_available:
                 con.execute("DELETE FROM memories_fts WHERE id=?", (memory_id,))
@@ -317,30 +350,53 @@ class WorldMemoryRAG:
                         (row["id"], row["kind"], row["name"], row["summary"], tags_text),
                     )
             con.commit()
-        return {"ok": True, "available": True, "created": created, "id": memory_id, "timestamp": ts_now, "item": self.get(memory_id, now=ts_now)}
+        return {
+            "ok": True,
+            "available": True,
+            "created": created,
+            "id": memory_id,
+            "persona_id": pid_scope,
+            "timestamp": ts_now,
+            "item": self.get(memory_id, now=ts_now, persona_id=pid_scope),
+        }
 
-    def get(self, memory_id: str, *, now: Optional[float] = None) -> Dict[str, Any]:
+    def get(self, memory_id: str, *, now: Optional[float] = None, persona_id: Optional[str] = None) -> Dict[str, Any]:
         ts_now = float(now if now is not None else time.time())
+        pid_scope = _scope_persona(persona_id)
+        mid = str(memory_id)
         with self._lock:
             row = self._conn.execute(
-                "SELECT * FROM memories WHERE id=? AND (expiry = 0 OR expiry > ?)",
-                (str(memory_id), ts_now),
+                "SELECT * FROM memories WHERE id=? AND persona_id=? AND (expiry = 0 OR expiry > ?)",
+                (mid, pid_scope, ts_now),
             ).fetchone()
+            if row is None and pid_scope != DEFAULT_PERSONA_ID and "::" not in mid:
+                row = self._conn.execute(
+                    "SELECT * FROM memories WHERE id=? AND persona_id=? AND (expiry = 0 OR expiry > ?)",
+                    (_scoped_id(mid, pid_scope), pid_scope, ts_now),
+                ).fetchone()
         return self._row_to_item(row) if row is not None else {}
 
-    def recent(self, *, kind: Optional[str] = None, limit: int = 10, now: Optional[float] = None) -> Dict[str, Any]:
+    def recent(
+        self,
+        *,
+        kind: Optional[str] = None,
+        limit: int = 10,
+        now: Optional[float] = None,
+        persona_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         limit = max(1, min(100, int(limit or 10)))
         ts_now = float(now if now is not None else time.time())
+        pid_scope = _scope_persona(persona_id)
         with self._lock:
             if kind:
                 rows = self._conn.execute(
-                    "SELECT * FROM memories WHERE kind=? AND (expiry = 0 OR expiry > ?) ORDER BY last_seen DESC LIMIT ?",
-                    (str(kind), ts_now, limit),
+                    "SELECT * FROM memories WHERE persona_id=? AND kind=? AND (expiry = 0 OR expiry > ?) ORDER BY last_seen DESC LIMIT ?",
+                    (pid_scope, str(kind), ts_now, limit),
                 ).fetchall()
             else:
                 rows = self._conn.execute(
-                    "SELECT * FROM memories WHERE (expiry = 0 OR expiry > ?) ORDER BY last_seen DESC LIMIT ?",
-                    (ts_now, limit),
+                    "SELECT * FROM memories WHERE persona_id=? AND (expiry = 0 OR expiry > ?) ORDER BY last_seen DESC LIMIT ?",
+                    (pid_scope, ts_now, limit),
                 ).fetchall()
         return {"ok": True, "available": True, "items": [self._row_to_item(row) for row in rows]}
 
@@ -351,9 +407,11 @@ class WorldMemoryRAG:
         limit: int = 8,
         kinds: Optional[Sequence[str]] = None,
         now: Optional[float] = None,
+        persona_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not self.enabled:
             return {"ok": False, "available": False, "reason": "world_memory_rag_disabled", "items": []}
+        pid_scope = _scope_persona(persona_id)
         q = str(query or "").strip()
         limit = max(1, min(30, int(limit or self.cfg.get("max_context_items", 8))))
         q_tokens = set(_tokens(q))
@@ -375,21 +433,21 @@ class WorldMemoryRAG:
                     fts_query = " OR ".join(f'"{t.replace(chr(34), "")}"' for t in sorted(q_tokens))
                     sql = f"""
                         SELECT m.* FROM memories_fts f JOIN memories m ON m.id=f.id
-                        WHERE memories_fts MATCH ? AND (m.expiry = 0 OR m.expiry > ?){kind_clause}
+                        WHERE memories_fts MATCH ? AND m.persona_id=? AND (m.expiry = 0 OR m.expiry > ?){kind_clause}
                         ORDER BY bm25(memories_fts), m.salience DESC, m.last_seen DESC
                         LIMIT ?
                     """
-                    rows = con.execute(sql, (fts_query, ts_now, *kind_params, limit * 3)).fetchall()
+                    rows = con.execute(sql, (fts_query, pid_scope, ts_now, *kind_params, limit * 3)).fetchall()
                 except Exception:
                     rows = []
             if not rows or self._embed_fn is not None:
                 extra_kind_clause = f" AND LOWER(kind) IN ({','.join(['?'] * len(kind_list))})" if kind_list else ""
                 sql_extra = f"""
                     SELECT * FROM memories
-                    WHERE (expiry = 0 OR expiry > ?){extra_kind_clause}
+                    WHERE persona_id=? AND (expiry = 0 OR expiry > ?){extra_kind_clause}
                     ORDER BY salience DESC, last_seen DESC LIMIT ?
                 """
-                extra_rows = con.execute(sql_extra, (ts_now, *kind_params, limit * 8)).fetchall()
+                extra_rows = con.execute(sql_extra, (pid_scope, ts_now, *kind_params, limit * 8)).fetchall()
                 seen_ids = {str(r["id"]) for r in rows}
                 for r in extra_rows:
                     if str(r["id"]) not in seen_ids:
@@ -487,8 +545,8 @@ class WorldMemoryRAG:
         """Create a safe online SQLite snapshot via sqlite3.Connection.backup()."""
         return backup_sqlite_connection(self._conn, self._lock, dest_path)
 
-    def build_context(self, query: str, *, limit: int = 8) -> Dict[str, Any]:
-        recalled = self.recall(query, limit=limit)
+    def build_context(self, query: str, *, limit: int = 8, persona_id: Optional[str] = None) -> Dict[str, Any]:
+        recalled = self.recall(query, limit=limit, persona_id=persona_id)
         items = recalled.get("items", []) if isinstance(recalled, dict) else []
         lines = [
             f"- {item.get('kind')}:{item.get('name')} | {item.get('summary')} | "
@@ -497,41 +555,59 @@ class WorldMemoryRAG:
         ]
         return {"ok": True, "available": True, "query": str(query or ""), "context": "\n".join(lines), "items": items}
 
-    def forget(self, memory_id: str = "", *, kind: str = "") -> Dict[str, Any]:
+    def forget(self, memory_id: str = "", *, kind: str = "", persona_id: Optional[str] = None) -> Dict[str, Any]:
+        pid_scope = _scope_persona(persona_id)
         with self._lock:
             con = self._conn
             if memory_id:
-                count = con.execute("DELETE FROM memories WHERE id=?", (memory_id,)).rowcount
-                con.execute("DELETE FROM observations WHERE memory_id=?", (memory_id,))
+                mid = str(memory_id)
+                count = con.execute("DELETE FROM memories WHERE id=? AND persona_id=?", (mid, pid_scope)).rowcount
+                if not count and pid_scope != DEFAULT_PERSONA_ID and "::" not in mid:
+                    mid = _scoped_id(mid, pid_scope)
+                    count = con.execute("DELETE FROM memories WHERE id=? AND persona_id=?", (mid, pid_scope)).rowcount
+                con.execute("DELETE FROM observations WHERE memory_id=? AND persona_id=?", (mid, pid_scope))
                 if self._fts_available:
-                    con.execute("DELETE FROM memories_fts WHERE id=?", (memory_id,))
+                    con.execute("DELETE FROM memories_fts WHERE id=?", (mid,))
             elif kind:
-                ids = [row[0] for row in con.execute("SELECT id FROM memories WHERE kind=?", (kind,)).fetchall()]
+                ids = [
+                    row[0]
+                    for row in con.execute(
+                        "SELECT id FROM memories WHERE kind=? AND persona_id=?",
+                        (kind, pid_scope),
+                    ).fetchall()
+                ]
                 count = len(ids)
-                con.execute("DELETE FROM memories WHERE kind=?", (kind,))
+                con.execute("DELETE FROM memories WHERE kind=? AND persona_id=?", (kind, pid_scope))
                 for mid in ids:
-                    con.execute("DELETE FROM observations WHERE memory_id=?", (mid,))
+                    con.execute("DELETE FROM observations WHERE memory_id=? AND persona_id=?", (mid, pid_scope))
                     if self._fts_available:
                         con.execute("DELETE FROM memories_fts WHERE id=?", (mid,))
             else:
-                count = con.execute("DELETE FROM memories").rowcount
-                con.execute("DELETE FROM observations")
+                count = con.execute("DELETE FROM memories WHERE persona_id=?", (pid_scope,)).rowcount
+                con.execute("DELETE FROM observations WHERE persona_id=?", (pid_scope,))
                 if self._fts_available:
-                    con.execute("DELETE FROM memories_fts")
+                    con.execute("DELETE FROM memories_fts WHERE id NOT IN (SELECT id FROM memories)")
             con.commit()
         return {"ok": True, "available": True, "deleted": int(count or 0)}
 
-    def prune_unimportant_memories(self, age_threshold_s: float = 86400 * 7, min_salience: float = 0.5) -> Dict[str, Any]:
+    def prune_unimportant_memories(
+        self,
+        age_threshold_s: float = 86400 * 7,
+        min_salience: float = 0.5,
+        *,
+        persona_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """Deletes memories that are expired or old, low salience, and low confidence."""
         if not self.enabled:
             return {"ok": False, "deleted": 0}
+        pid_scope = _scope_persona(persona_id)
         now = time.time()
         cutoff_time = now - age_threshold_s
         with self._lock:
             con = self._conn
             rows = con.execute(
-                "SELECT id FROM memories WHERE (expiry > 0 AND expiry <= ?) OR (last_seen < ? AND salience < ? AND confidence < ?)",
-                (now, cutoff_time, min_salience, min_salience),
+                "SELECT id FROM memories WHERE persona_id=? AND ((expiry > 0 AND expiry <= ?) OR (last_seen < ? AND salience < ? AND confidence < ?))",
+                (pid_scope, now, cutoff_time, min_salience, min_salience),
             ).fetchall()
             ids_to_delete = [row[0] for row in rows]
             if not ids_to_delete:
@@ -544,13 +620,17 @@ class WorldMemoryRAG:
             con.commit()
         return {"ok": True, "deleted": len(ids_to_delete)}
 
-    def consolidate_memories(self) -> Dict[str, Any]:
+    def consolidate_memories(self, *, persona_id: Optional[str] = None) -> Dict[str, Any]:
         """Dream cycle: boost salience of repeatedly seen items and trim verbose observation history."""
         if not self.enabled:
             return {"ok": False, "consolidated": 0}
+        pid_scope = _scope_persona(persona_id)
         with self._lock:
             con = self._conn
-            rows = con.execute("SELECT id, observation_count, salience FROM memories WHERE observation_count > 5").fetchall()
+            rows = con.execute(
+                "SELECT id, observation_count, salience FROM memories WHERE persona_id=? AND observation_count > 5",
+                (pid_scope,),
+            ).fetchall()
             updated = 0
             for row in rows:
                 mid = row[0]
@@ -566,24 +646,38 @@ class WorldMemoryRAG:
             con.commit()
         return {"ok": True, "consolidated": updated}
 
-    def status(self, *, now: Optional[float] = None) -> Dict[str, Any]:
+    def status(self, *, now: Optional[float] = None, persona_id: Optional[str] = None) -> Dict[str, Any]:
         ts_now = float(now if now is not None else time.time())
+        pid_scope = _scope_persona(persona_id)
         with self._lock:
             con = self._conn
-            total = int(con.execute("SELECT COUNT(*) FROM memories WHERE expiry = 0 OR expiry > ?", (ts_now,)).fetchone()[0])
+            total = int(
+                con.execute(
+                    "SELECT COUNT(*) FROM memories WHERE persona_id=? AND (expiry = 0 OR expiry > ?)",
+                    (pid_scope, ts_now),
+                ).fetchone()[0]
+            )
             by_kind = {
                 str(row[0]): int(row[1])
                 for row in con.execute(
-                    "SELECT kind, COUNT(*) FROM memories WHERE expiry = 0 OR expiry > ? GROUP BY kind",
-                    (ts_now,),
+                    "SELECT kind, COUNT(*) FROM memories WHERE persona_id=? AND (expiry = 0 OR expiry > ?) GROUP BY kind",
+                    (pid_scope, ts_now),
                 ).fetchall()
             }
-            observations = int(con.execute("SELECT COUNT(*) FROM observations").fetchone()[0])
-            unembedded = int(con.execute("SELECT COUNT(*) FROM memories WHERE embed_state = 0").fetchone()[0])
+            observations = int(
+                con.execute("SELECT COUNT(*) FROM observations WHERE persona_id=?", (pid_scope,)).fetchone()[0]
+            )
+            unembedded = int(
+                con.execute(
+                    "SELECT COUNT(*) FROM memories WHERE persona_id=? AND embed_state = 0",
+                    (pid_scope,),
+                ).fetchone()[0]
+            )
         return {
             "ok": True,
             "available": True,
             "enabled": self.enabled,
+            "persona_id": pid_scope,
             "db_path": str(self.path),
             "fts": self._fts_available,
             "total": total,

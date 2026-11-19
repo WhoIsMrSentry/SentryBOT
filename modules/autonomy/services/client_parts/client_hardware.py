@@ -7,6 +7,9 @@ from modules.arduino_serial.contract import (
     SERVO_INDEX_PAN,
     SERVO_INDEX_TILT,
     build_buzzer_cmd,
+    build_cute_cmd,
+    build_drive_cmd,
+    build_laser_cmd,
     build_lcd_cmd,
     build_liveliness_cmd,
     build_set_servo_cmd,
@@ -80,6 +83,43 @@ class ClientHardwareMixin(ClientLightsMixin):
 
     def play_sound(self, name: str, out: str = "loud") -> Any:
         return self._arduino_request(build_sound_play_cmd(name=name, out=out))
+
+    def play_cute(self, name: str) -> Any:
+        return self._arduino_request(build_cute_cmd(str(name or "").strip()))
+
+    def set_laser(self, on: bool, target: str = "both") -> Any:
+        tgt = str(target or "both").strip().lower()
+        if not on:
+            return self._arduino_request(build_laser_cmd(on=False, both=True))
+        if tgt in {"1", "left"}:
+            return self._arduino_request(build_laser_cmd(on=True, id_=1))
+        if tgt in {"2", "right"}:
+            return self._arduino_request(build_laser_cmd(on=True, id_=2))
+        return self._arduino_request(build_laser_cmd(on=True, both=True))
+
+    def drive_robot(self, value: float) -> Any:
+        return self._arduino_request(build_drive_cmd(float(value)))
+
+    def _piservo_post(self, path: str, params: Dict[str, Any] | None = None) -> Any:
+        if "piservo" in self.urls:
+            return self._post("piservo", path, params=params)
+        gw = str(self.urls.get("gateway") or "").rstrip("/")
+        if not gw:
+            return None
+        try:
+            resp = self._get_session().post(f"{gw}/piservo{path}", params=params, timeout=1.0)
+            return resp.json() if resp.status_code == 200 else None
+        except Exception:
+            return None
+
+    def set_ears(self, left: float, right: float) -> Any:
+        return self._piservo_post("/set", params={"left": float(left), "right": float(right)})
+
+    def ear_gesture(self, name: str) -> Any:
+        return self._piservo_post("/gesture", params={"name": str(name or "wakeword").strip().lower()})
+
+    def ear_reflex(self, angle: float, energy: float = 1.0) -> Any:
+        return self._piservo_post("/reflex", params={"angle": float(angle), "energy": float(energy)})
 
     def set_lcd(self, msg: str = None, top: str = None, bottom: str = None, id: int = 0) -> Any:
         payload = build_lcd_cmd(id_=id, msg=msg, top=top, bottom=bottom)

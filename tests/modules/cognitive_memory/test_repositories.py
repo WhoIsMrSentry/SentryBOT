@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from modules.cognitive_memory.db import SocialDB
+from modules.cognitive_memory.schema import SCHEMA_VERSION
 
 
 @pytest.fixture()
@@ -95,7 +96,7 @@ def test_snapshot_stats_includes_schema_version(db: SocialDB) -> None:
     db.persons.upsert(name="Stat")
     stats = db.snapshot_stats()
     assert stats.get("persons", 0) >= 1
-    assert stats.get("schema_version") == 1
+    assert stats.get("schema_version") == SCHEMA_VERSION
     assert "world_memory" in stats
 
 

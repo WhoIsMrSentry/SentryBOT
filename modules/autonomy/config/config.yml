@@ -100,6 +100,7 @@ endpoints:
   speech: '@gateway/speech'
   interactions: '@gateway/interactions'
   expression: '@gateway/expression'
+  piservo: '@gateway/piservo'
   oled_faces: '@gateway/oled_faces'
   state_manager: '@gateway/state'
   animate: '@gateway/animate'

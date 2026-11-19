@@ -9,12 +9,20 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from modules.common.persona_scope import get_active_persona, normalize_persona_id
+
 from ..utils import backup_sqlite_connection, resolve_repo_path
 from .text_utils import _stem_tokens, _tokens
 
 logger = logging.getLogger("cognitive_memory.chat_rag")
 
 EmbedFn = Callable[[str], Any]
+
+
+def _scope_persona(persona_id: Optional[str]) -> str:
+    if persona_id is not None and str(persona_id).strip():
+        return normalize_persona_id(persona_id)
+    return get_active_persona()
 
 
 class ChatRAG:
@@ -63,6 +71,7 @@ class ChatRAG:
                 CREATE TABLE IF NOT EXISTS chat_chunks (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     episode_key TEXT UNIQUE,
+                    persona_id TEXT NOT NULL DEFAULT 'sentry',
                     person_id TEXT NOT NULL DEFAULT '',
                     ts REAL NOT NULL,
                     role TEXT NOT NULL,
@@ -73,14 +82,22 @@ class ChatRAG:
                 )
                 """
             )
+            chunk_cols = {str(r[1]) for r in con.execute("PRAGMA table_info(chat_chunks)").fetchall()}
+            if "persona_id" not in chunk_cols:
+                con.execute("ALTER TABLE chat_chunks ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'sentry'")
             con.execute(
                 "CREATE INDEX IF NOT EXISTS idx_chunks_person_ts "
                 "ON chat_chunks(person_id, ts DESC)"
             )
             con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_chunks_persona_person_ts "
+                "ON chat_chunks(persona_id, person_id, ts DESC)"
+            )
+            con.execute(
                 """
                 CREATE TABLE IF NOT EXISTS chat_summaries (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    persona_id TEXT NOT NULL DEFAULT 'sentry',
                     person_id TEXT NOT NULL DEFAULT '',
                     day TEXT NOT NULL,
                     text TEXT NOT NULL,
@@ -88,9 +105,13 @@ class ChatRAG:
                 )
                 """
             )
+            sum_cols = {str(r[1]) for r in con.execute("PRAGMA table_info(chat_summaries)").fetchall()}
+            if "persona_id" not in sum_cols:
+                con.execute("ALTER TABLE chat_summaries ADD COLUMN persona_id TEXT NOT NULL DEFAULT 'sentry'")
+            con.execute("DROP INDEX IF EXISTS idx_summaries_day")
             con.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_summaries_day "
-                "ON chat_summaries(person_id, day)"
+                "ON chat_summaries(persona_id, person_id, day)"
             )
             try:
                 con.execute(
@@ -106,8 +127,8 @@ class ChatRAG:
         self._embed_fn = fn
 
     @staticmethod
-    def _episode_key(person_id: str, role: str, text: str, ts: float) -> str:
-        raw = f"{person_id}|{role}|{text}|{ts:.3f}"
+    def _episode_key(persona_id: str, person_id: str, role: str, text: str, ts: float) -> str:
+        raw = f"{persona_id}|{person_id}|{role}|{text}|{ts:.3f}"
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
     def _compute_embedding(self, text: str) -> tuple[Optional[bytes], int]:
@@ -131,15 +152,17 @@ class ChatRAG:
         text: str,
         ts: Optional[float] = None,
         kind: str = "chat",
+        persona_id: Optional[str] = None,
     ) -> bool:
         if not self.enabled:
             return False
         cleaned = str(text or "").strip()
         if not cleaned:
             return False
+        pid_scope = _scope_persona(persona_id)
         pid = str(person_id or "")
         t = float(ts if ts is not None else time.time())
-        key = self._episode_key(pid, str(role or ""), cleaned[:400], t)
+        key = self._episode_key(pid_scope, pid, str(role or ""), cleaned[:400], t)
         embedding, embed_state = self._compute_embedding(cleaned)
         try:
             with self._lock:
@@ -147,10 +170,10 @@ class ChatRAG:
                 con.execute(
                     """
                     INSERT OR IGNORE INTO chat_chunks
-                        (episode_key, person_id, ts, role, text, kind, embedding, embed_state)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        (episode_key, persona_id, person_id, ts, role, text, kind, embedding, embed_state)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (key, pid, t, str(role or ""), cleaned[:600], kind, embedding, embed_state),
+                    (key, pid_scope, pid, t, str(role or ""), cleaned[:600], kind, embedding, embed_state),
                 )
                 if self._fts_available:
                     cur = con.execute(
@@ -170,19 +193,27 @@ class ChatRAG:
             logger.debug("chat_rag ingest failed: %s", exc)
             return False
 
-    def remember_day_summary(self, *, person_id: Any, day: str, text: str) -> bool:
+    def remember_day_summary(
+        self,
+        *,
+        person_id: Any,
+        day: str,
+        text: str,
+        persona_id: Optional[str] = None,
+    ) -> bool:
         if not self.enabled or not str(text or "").strip():
             return False
+        pid_scope = _scope_persona(persona_id)
         try:
             with self._lock:
                 con = self._conn
                 con.execute(
                     """
-                    INSERT INTO chat_summaries (person_id, day, text, ts)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(person_id, day) DO UPDATE SET text=excluded.text, ts=excluded.ts
+                    INSERT INTO chat_summaries (persona_id, person_id, day, text, ts)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(persona_id, person_id, day) DO UPDATE SET text=excluded.text, ts=excluded.ts
                     """,
-                    (str(person_id or ""), str(day), str(text)[:2000], time.time()),
+                    (pid_scope, str(person_id or ""), str(day), str(text)[:2000], time.time()),
                 )
                 con.commit()
             return True
@@ -190,11 +221,18 @@ class ChatRAG:
             logger.debug("chat_rag summary save failed: %s", exc)
             return False
 
-    def day_summaries(self, *, person_id: Any, limit: int = 7) -> List[Dict[str, Any]]:
+    def day_summaries(
+        self,
+        *,
+        person_id: Any,
+        limit: int = 7,
+        persona_id: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        pid_scope = _scope_persona(persona_id)
         with self._lock:
             rows = self._conn.execute(
-                "SELECT day, text, ts FROM chat_summaries WHERE person_id=? ORDER BY day DESC LIMIT ?",
-                (str(person_id or ""), max(1, min(60, int(limit)))),
+                "SELECT day, text, ts FROM chat_summaries WHERE persona_id=? AND person_id=? ORDER BY day DESC LIMIT ?",
+                (pid_scope, str(person_id or ""), max(1, min(60, int(limit)))),
             ).fetchall()
         return [{"day": str(row["day"]), "text": str(row["text"]), "ts": float(row["ts"])} for row in rows]
 
@@ -205,9 +243,11 @@ class ChatRAG:
         person_id: Any = "",
         limit: Optional[int] = None,
         kinds: Optional[Sequence[str]] = None,
+        persona_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         if not self.enabled:
             return []
+        pid_scope = _scope_persona(persona_id)
         q = str(query or "").strip()
         k = max(1, min(30, int(limit or self.cfg.get("recall_limit", 6))))
         pid_str = str(person_id or "")
@@ -220,8 +260,8 @@ class ChatRAG:
             if q and self._fts_available and q_tokens:
                 try:
                     fts_query = " OR ".join(f'"{t.replace(chr(34), "")}"' for t in sorted(q_tokens))
-                    clauses = ["chat_fts MATCH ?"]
-                    params: List[Any] = [fts_query]
+                    clauses = ["chat_fts MATCH ?", "c.persona_id = ?"]
+                    params: List[Any] = [fts_query, pid_scope]
                     if pid_str:
                         clauses.append("c.person_id = ?")
                         params.append(pid_str)
@@ -239,15 +279,15 @@ class ChatRAG:
                 except Exception:
                     rows = []
             if not rows or self._embed_fn is not None:
-                clauses2: List[str] = []
-                params2: List[Any] = []
+                clauses2: List[str] = ["persona_id = ?"]
+                params2: List[Any] = [pid_scope]
                 if pid_str:
                     clauses2.append("person_id = ?")
                     params2.append(pid_str)
                 if kind_list:
                     clauses2.append(f"LOWER(kind) IN ({','.join(['?'] * len(kind_list))})")
                     params2.extend(kind_list)
-                where_sql = f"WHERE {' AND '.join(clauses2)} " if clauses2 else ""
+                where_sql = f"WHERE {' AND '.join(clauses2)} "
                 sql_extra = f"SELECT * FROM chat_chunks {where_sql}ORDER BY ts DESC LIMIT ?"
                 params2.append(max(40, k * 8))
                 extra_rows = con.execute(sql_extra, params2).fetchall()
@@ -354,8 +394,15 @@ class ChatRAG:
         """Create a safe online SQLite snapshot via sqlite3.Connection.backup()."""
         return backup_sqlite_connection(self._conn, self._lock, dest_path)
 
-    def build_context(self, query: str, *, person_id: Any = "", limit: Optional[int] = None) -> Dict[str, Any]:
-        items = self.recall(query, person_id=person_id, limit=limit)
+    def build_context(
+        self,
+        query: str,
+        *,
+        person_id: Any = "",
+        limit: Optional[int] = None,
+        persona_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        items = self.recall(query, person_id=person_id, limit=limit, persona_id=persona_id)
         lines = [f"- [{item['role']}] {item['text']}" for item in items]
         return {
             "ok": True,
@@ -376,7 +423,7 @@ class ChatRAG:
                     WHERE id IN (
                         SELECT id FROM (
                             SELECT id, ROW_NUMBER() OVER (
-                                PARTITION BY person_id ORDER BY ts DESC, id DESC
+                                PARTITION BY persona_id, person_id ORDER BY ts DESC, id DESC
                             ) AS rn
                             FROM chat_chunks
                         ) WHERE rn > ?
@@ -391,18 +438,30 @@ class ChatRAG:
             logger.debug("chat_rag prune failed: %s", exc)
             return 0
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self, *, persona_id: Optional[str] = None) -> Dict[str, Any]:
+        pid_scope = _scope_persona(persona_id)
         with self._lock:
             con = self._conn
-            total = int(con.execute("SELECT COUNT(*) FROM chat_chunks").fetchone()[0])
+            total = int(con.execute("SELECT COUNT(*) FROM chat_chunks WHERE persona_id = ?", (pid_scope,)).fetchone()[0])
             by_person: Dict[str, int] = {}
-            for row in con.execute("SELECT person_id, COUNT(*) FROM chat_chunks GROUP BY person_id").fetchall():
+            for row in con.execute(
+                "SELECT person_id, COUNT(*) FROM chat_chunks WHERE persona_id = ? GROUP BY person_id",
+                (pid_scope,),
+            ).fetchall():
                 by_person[str(row[0] or "?")] = int(row[1])
-            embedded = int(con.execute("SELECT COUNT(*) FROM chat_chunks WHERE embed_state=1").fetchone()[0])
-            summaries = int(con.execute("SELECT COUNT(*) FROM chat_summaries").fetchone()[0])
+            embedded = int(
+                con.execute(
+                    "SELECT COUNT(*) FROM chat_chunks WHERE persona_id = ? AND embed_state=1",
+                    (pid_scope,),
+                ).fetchone()[0]
+            )
+            summaries = int(
+                con.execute("SELECT COUNT(*) FROM chat_summaries WHERE persona_id = ?", (pid_scope,)).fetchone()[0]
+            )
         return {
             "ok": True,
             "available": self.enabled,
+            "persona_id": pid_scope,
             "db_path": str(self.path),
             "fts": self._fts_available,
             "total_chunks": total,
@@ -412,12 +471,21 @@ class ChatRAG:
             "by_person": by_person,
         }
 
-    def reset(self) -> int:
+    def reset(self, *, persona_id: Optional[str] = None) -> int:
         try:
             with self._lock:
                 con = self._conn
-                deleted = int(con.execute("DELETE FROM chat_chunks").rowcount or 0)
-                con.execute("DELETE FROM chat_fts")
+                if persona_id is not None and str(persona_id).strip():
+                    pid_scope = normalize_persona_id(persona_id)
+                    deleted = int(con.execute("DELETE FROM chat_chunks WHERE persona_id = ?", (pid_scope,)).rowcount or 0)
+                    con.execute("DELETE FROM chat_summaries WHERE persona_id = ?", (pid_scope,))
+                    if self._fts_available:
+                        con.execute("DELETE FROM chat_fts WHERE id NOT IN (SELECT id FROM chat_chunks)")
+                else:
+                    deleted = int(con.execute("DELETE FROM chat_chunks").rowcount or 0)
+                    con.execute("DELETE FROM chat_summaries")
+                    if self._fts_available:
+                        con.execute("DELETE FROM chat_fts")
                 con.commit()
                 return deleted
         except Exception as exc:

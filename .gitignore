@@ -25,6 +25,8 @@ tmp/
 /frontend_knowledge.md
 /backend_knowledge.md
 *.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 data/piper_models/**/*.onnx
 data/piper_models/**/*.onnx.json
 modules/speech/models/vosk-en/
@@ -86,3 +88,8 @@ data/voiceprints.*
 data/speaker_id.json
 
 *.txt
+!modules/ai_provider/config/personalities/**/persona.txt
+!modules/ai_provider/config/personalities/**/urls.txt
+
+#Rag Index
+knowledge/

@@ -16,9 +16,11 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 from .hardware_tools import HardwareToolsMixin
 from .http_client import HttpClient
 from .motion_tools import MotionToolsMixin
+from .persona_tools import PersonaToolsMixin
 from .social_tools import SocialToolsMixin
 from .tool_schemas import get_all_tool_definitions
 from .vision_tools import VisionToolsMixin
+from .web_tools import WebToolsMixin
 
 logger = logging.getLogger("agent.tools")
 
@@ -39,7 +41,7 @@ def _validate_param_type(val: Any, expected: str, arg_name: str) -> None:
         raise ValueError(f"argument '{arg_name}' must be array")
 
 
-class ToolRegistry(MotionToolsMixin, VisionToolsMixin, SocialToolsMixin, HardwareToolsMixin):
+class ToolRegistry(MotionToolsMixin, VisionToolsMixin, SocialToolsMixin, HardwareToolsMixin, WebToolsMixin, PersonaToolsMixin):
     """
     Registers Python functions as native tools for the LLM.
     Provides JSON schemas for Ollama, validates tool arguments, and bridges connected MCP tools.
@@ -52,6 +54,8 @@ class ToolRegistry(MotionToolsMixin, VisionToolsMixin, SocialToolsMixin, Hardwar
             "describe_scene",
             "ask_vlm_about_scene",
             "focus_person",
+            "read_text_ocr",
+            "register_face",
         }
     )
 
@@ -69,6 +73,9 @@ class ToolRegistry(MotionToolsMixin, VisionToolsMixin, SocialToolsMixin, Hardwar
         action_arbiter=None,
         expression_arbiter=None,
         mcp_client=None,
+        localize_speech_fn: Optional[Callable[[str, str], Tuple[str, str]]] = None,
+        persona_manager: Any = None,
+        apply_persona_fn: Optional[Callable[[str, str], Dict[str, Any]]] = None,
     ):
         self.client = client
         self.memory = memory
@@ -80,6 +87,9 @@ class ToolRegistry(MotionToolsMixin, VisionToolsMixin, SocialToolsMixin, Hardwar
         self.action_arbiter = action_arbiter
         self.expression_arbiter = expression_arbiter
         self.mcp_client = mcp_client
+        self.localize_speech_fn = localize_speech_fn
+        self.persona_manager = persona_manager
+        self.apply_persona_fn = apply_persona_fn
         self.vlm_ask_timeout_s = float(vlm_ask_timeout_s)
         if gateway_base_url:
             gw = str(gateway_base_url).rstrip("/")
