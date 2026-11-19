@@ -19,6 +19,7 @@ llm:
   primary_model: sentry:latest
   allowed_models:
     - sentry:latest
+    - glados:latest
     - nemotron-3.5-bolt:e4b
   clm_fallback_enabled: false
   clm_fallback_model: nemotron-3.5-bolt:e4b
@@ -47,6 +48,17 @@ ollama:
   base_url: http://whoismrsentry.local:11434
   model: sentry:latest
   request_timeout: 60
+translation:
+  enabled: true
+  mode: online_first
+  default_source_lang: tr
+  bridge_lang: en
+  local_models_dir: models/translate
+  online_timeout_s: 2.5
+  online_cooldown_s: 15.0
+  local_threads: 2
+  fallback_to_ollama: false
+  cache_size: 256
 runtime_profile:
   active: remote_ollama
   profiles:
@@ -66,10 +78,12 @@ runtime_profile:
       llm:
         provider: ollama
         single_model_mode: false
+        use_persona_models: true
         model: sentry:latest
         primary_model: sentry:latest
         allowed_models:
           - sentry:latest
+          - glados:latest
           - nemotron-3.5-bolt:e4b
       agent:
         model: sentry:latest
@@ -105,16 +119,19 @@ ollama_service:
     timeout: 1.5
   translation:
     enabled: false
+    mode: ollama
     default_source_lang: tr
     model: nemotron-3.5-bolt:e4b
     cache_size: 128
   llm:
     provider: ollama
     single_model_mode: false
+    use_persona_models: true
     model: sentry:latest
     primary_model: sentry:latest
     allowed_models:
       - sentry:latest
+      - glados:latest
       - nemotron-3.5-bolt:e4b
     fallback_on_missing_model: false
     fallback_on_error: false
@@ -478,7 +495,7 @@ tri_layer:
   fast_path:
     enabled: true
     max_chars: 180
-    num_predict: 96
+    num_predict: 2048
     max_steps: 2
   router:
     max_subagents: 3
@@ -488,44 +505,44 @@ tri_layer:
   subagent:
     max_steps: 4
   persona:
-    num_predict: 384
+    num_predict: 4096
     stream: false
 realtime_profile:
   active: fast
   profiles:
     ultra_fast:
-      num_predict_chat: 96
-      num_predict_persona: 96
+      num_predict_chat: 1024
+      num_predict_persona: 1024
       max_subagents: 2
       subagent_max_steps: 2
       request_timeout_s: 28
-      ollama_num_predict: 112
+      ollama_num_predict: 1024
       speak_max_chunk_chars: 220
       vlm_ask_timeout_s: 10
       ollama_chat_timeout_s: 25
     fast:
-      num_predict_chat: 192
-      num_predict_persona: 192
+      num_predict_chat: 2048
+      num_predict_persona: 2048
       max_subagents: 2
       subagent_max_steps: 3
       request_timeout_s: 36
-      ollama_num_predict: 176
+      ollama_num_predict: 2048
       speak_max_chunk_chars: 260
       vlm_ask_timeout_s: 12
       ollama_chat_timeout_s: 25
     normal:
-      num_predict_chat: 384
-      num_predict_persona: 384
+      num_predict_chat: 4096
+      num_predict_persona: 4096
       max_subagents: 3
       subagent_max_steps: 4
       request_timeout_s: 48
-      ollama_num_predict: 256
+      ollama_num_predict: 4096
       speak_max_chunk_chars: 320
       vlm_ask_timeout_s: 16
       ollama_chat_timeout_s: 45
     thorough:
-      num_predict_chat: 768
-      num_predict_persona: 768
+      num_predict_chat: 4096
+      num_predict_persona: 4096
       max_subagents: 4
       subagent_max_steps: 6
       request_timeout_s: 70
