@@ -84,6 +84,7 @@ class AgentStreamingMixin:
         buffer: str,
         *,
         is_first_chunk: bool = False,
+        allow_first_clause_split: bool = True,
     ) -> Tuple[List[str], str]:
         if not buffer:
             return [], ""
@@ -92,8 +93,8 @@ class AgentStreamingMixin:
         if AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE is None:
             AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE = re.compile(r"([,;:—–\n]+|[.!?…]+)")
 
-        # Ultra low-latency first clause break (sub-350ms first speech audio)
-        if is_first_chunk:
+        # Ultra low-latency first clause break (disabled during bridge translation to avoid literal fragments)
+        if is_first_chunk and allow_first_clause_split:
             words = buffer.split()
             if len(words) >= 2 or len(buffer) >= 12:
                 parts = AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE.split(buffer)
@@ -218,7 +219,12 @@ class AgentStreamingMixin:
                 full_text.append(content)
                 if not collected_tool_calls:
                     buffer += content
-                    sentences, buffer = self._extract_ready_sentences(buffer, is_first_chunk=is_first_chunk)
+                    allow_clause = not bool(getattr(self, "_active_bridge_translation", False))
+                    sentences, buffer = self._extract_ready_sentences(
+                        buffer,
+                        is_first_chunk=is_first_chunk,
+                        allow_first_clause_split=allow_clause,
+                    )
                     for sentence in sentences:
                         _emit(sentence)
 

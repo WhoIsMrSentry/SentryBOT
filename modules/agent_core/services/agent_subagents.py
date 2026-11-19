@@ -166,6 +166,9 @@ class AgentSubagentsMixin:
             "persona",
             fallback=getattr(self, "model", None) or getattr(self, "default_model", DEFAULT_CHAT_MODEL),
         )
+        resolver = getattr(self, "_resolve_non_sentry_model", None)
+        if callable(resolver):
+            default_model = resolver(default_model)
         if self.persona_stream_enabled and on_sentence:
             return self._stream_turn_sentence_by_sentence(
                 default_model, messages, tools=None, options=options, on_sentence=on_sentence
