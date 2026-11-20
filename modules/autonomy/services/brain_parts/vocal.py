@@ -19,7 +19,10 @@ class VocalMixin(VocalProsodyMixin):
     """Adds speaking helpers, social context recall, and speech reaction handling."""
 
     def _handle_barge_in_and_wakeword(self, text: str, low: str, has_wake: bool, request_id: str) -> bool:
-        from modules.voice.speech.services.wake_phrase import contains_wakeword, strip_wakewords
+        from modules.voice.speech.services.wake_phrase import (
+            contains_wakeword,
+            is_wakeword_echo_transcript,
+        )
 
         robot_speaking = self._robot_is_speaking()
         urgent = False
@@ -41,7 +44,7 @@ class VocalMixin(VocalProsodyMixin):
         elif has_wake:
             self._barge_in_stop_speaking()
 
-        if contains_wakeword(low) and len(strip_wakewords(low).split()) < 1:
+        if contains_wakeword(low) and is_wakeword_echo_transcript(text, recent_wakeword=False):
             self._run_scene("wakeword_reaction", context={"text": text})
             logger.info("Wakeword-only utterance; listening for command.")
             try:
@@ -287,7 +290,7 @@ class VocalMixin(VocalProsodyMixin):
         self.memory.add_event(f"I replied: {clean_text}")
 
     def _react_to_speech(self, text: str, source_lang: str | None = None, voice_speaker: str | None = None) -> None:
-        from modules.voice.speech.services.wake_phrase import contains_wakeword
+        from modules.voice.speech.services.wake_phrase import contains_wakeword, strip_wakeword_prefix
 
         low = str(text or "").lower()
         has_wake = contains_wakeword(low)
@@ -303,6 +306,13 @@ class VocalMixin(VocalProsodyMixin):
 
         if self._handle_barge_in_and_wakeword(text, low, has_wake, request_id):
             return
+
+        if has_wake:
+            stripped_cmd = strip_wakeword_prefix(text, include_phonetic=False)
+            if stripped_cmd and stripped_cmd != text:
+                text = stripped_cmd
+                if detect_text_language:
+                    lang = detect_text_language(text, default=lang or "tr") or lang
 
         if self._handle_speech_command_shortcuts(text, lang, request_id):
             return
