@@ -157,7 +157,7 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
 
         endpoint = "/status" if svc in ("speak", "speech") else "/healthz"
         try:
-            resp = self._get_session().get(f"{url}{endpoint}", timeout=0.6)
+            resp = self._get_session().get(f"{url}{endpoint}", timeout=1.5)
             ok = resp.status_code == 200
             if ok and svc == "ollama":
                 try:
