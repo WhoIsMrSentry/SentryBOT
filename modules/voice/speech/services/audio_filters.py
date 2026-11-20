@@ -7,11 +7,6 @@ import time
 from typing import Any, Dict, Optional
 
 try:
-    import audioop
-except Exception:
-    audioop = None
-
-try:
     import numpy as np
 except Exception:
     np = None
@@ -100,7 +95,7 @@ class SoftwareEchoGate:
         self,
         suppression_gain: float = 0.12,
         barge_in_ratio: float = 2.2,
-        hold_time_s: float = 0.25,
+        hold_time_s: float = 0.45,
     ) -> None:
         self.suppression_gain = float(suppression_gain)
         self.barge_in_ratio = float(barge_in_ratio)
@@ -206,12 +201,18 @@ class SpeechAudioFilterMixin:
         return math.sqrt(acc / n) if n else 0.0
 
     def _condition_mono_chunk(self, mono: bytes, rms: float) -> bytes:
-        mono = apply_gain_pcm16(mono, getattr(self, "_stt_input_gain", 1.0))
         echo_gate = getattr(self, "_echo_gate", None)
+        echo_suppressed = False
         if echo_gate is not None:
+            echo_active = echo_gate.is_echo_active()
             mono, barge_in = echo_gate.process_chunk(mono, rms)
             if barge_in:
                 self._on_barge_in_breakthrough()
+            elif echo_active:
+                echo_suppressed = True
+        self._last_frame_echo_suppressed = echo_suppressed
+        if not echo_suppressed:
+            mono = apply_gain_pcm16(mono, getattr(self, "_stt_input_gain", 1.0))
         self._append_utterance_pcm(mono)
         return mono
 
@@ -268,13 +269,7 @@ class SpeechAudioFilterMixin:
 
             if self._get_capture_channels() >= 2:
                 dtype = self._get_capture_dtype()
-                try:
-                    if audioop is not None:
-                        mono = audioop.tomono(chunk, 2, 1.0, 0.0)
-                    else:
-                        mono = downmix_stereo_pcm(chunk, dtype)
-                except Exception:
-                    mono = downmix_stereo_pcm(chunk, dtype)
+                mono = downmix_stereo_pcm(chunk, dtype)
             else:
                 mono = chunk
 

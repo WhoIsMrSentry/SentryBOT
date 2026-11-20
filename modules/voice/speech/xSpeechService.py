@@ -74,7 +74,14 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
         
         rec_cfg = dict(self.cfg.get("recognition", {}) or {})
         rec_cfg["channels"] = 1  # _direction_wrapper outputs mono PCM
-        self.recognizer = Recognizer(rec_cfg, on_turn_cue=self._on_turn_cue)
+        self._last_frame_echo_suppressed = False
+        self._last_wakeword_ts = 0.0
+        self._last_wakeword_label = ""
+        self.recognizer = Recognizer(
+            rec_cfg,
+            on_turn_cue=self._on_turn_cue,
+            should_suppress_speech_fn=lambda: bool(getattr(self, "_last_frame_echo_suppressed", False)),
+        )
         self.source_language = str(rec_cfg.get("source_language") or rec_cfg.get("language") or "tr")
         self._default_language = str(rec_cfg.get("default_language") or self.source_language or "tr")
         self._auto_language = bool(rec_cfg.get("auto_language", True))
@@ -147,6 +154,57 @@ class SpeechService(SpeechAudioFilterMixin, SpeechSoundTrackingMixin):
                 self._stt_suppressed_until = 0.0
                 return False
             return True
+
+    def on_wakeword_triggered(self, wakeword: str = "") -> None:
+        """Flush buffered wakeword audio and arm short phonetic wakeword-echo suppression."""
+        self._last_wakeword_ts = time.monotonic()
+        if wakeword:
+            self._last_wakeword_label = str(wakeword).strip()
+        self.clear_utterance_buffer()
+        rec = getattr(self, "recognizer", None)
+        if rec is not None and hasattr(rec, "request_reset"):
+            try:
+                rec.request_reset(drop_sec=0.18)
+            except Exception:
+                pass
+
+    def was_wakeword_triggered_recently(self, window_s: float = 3.5) -> bool:
+        ts = float(getattr(self, "_last_wakeword_ts", 0.0) or 0.0)
+        return ts > 0.0 and (time.monotonic() - ts) <= max(0.0, float(window_s))
+
+    def filter_wakeword_transcript(self, text: str, language: str = "") -> tuple[str, str]:
+        """Drop pure wakeword/phonetic echoes and strip leading wakeword prefixes."""
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return "", str(language or self.source_language or self._default_language or "tr")
+        from modules.voice.speech.services.wake_phrase import (
+            is_wakeword_echo_transcript,
+            strip_wakeword_prefix,
+        )
+
+        recent = self.was_wakeword_triggered_recently(window_s=3.5)
+        wake_label = str(getattr(self, "_last_wakeword_label", "") or "")
+        if is_wakeword_echo_transcript(cleaned, wakeword=wake_label, recent_wakeword=recent):
+            self.clear_utterance_buffer()
+            return "", str(language or self.source_language or self._default_language or "tr")
+
+        stripped = strip_wakeword_prefix(cleaned, include_phonetic=recent)
+        if not stripped:
+            self.clear_utterance_buffer()
+            return "", str(language or self.source_language or self._default_language or "tr")
+
+        out_lang = str(language or self.source_language or self._default_language or "tr")
+        if stripped != cleaned:
+            try:
+                from modules.voice.speak.services.lang_detect import detect_text_language
+
+                out_lang = detect_text_language(
+                    stripped,
+                    default=self._default_language or out_lang or "tr",
+                )
+            except Exception:
+                pass
+        return stripped, out_lang
 
     def _on_turn_cue(self, cue_info: dict[str, Any]) -> None:
         logger.debug("Turn-taking cue emitted: %s", cue_info)

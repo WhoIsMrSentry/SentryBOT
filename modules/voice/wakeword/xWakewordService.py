@@ -236,7 +236,10 @@ class WakewordService:
         try:
             self.actions.emit_event("wakeword.detected", wakeword)
             window_started_ts = _now()
-            self.actions.start_speech()
+            try:
+                self.actions.start_speech(wakeword=wakeword)
+            except TypeError:
+                self.actions.start_speech()
             if self.actions.listen_window_sec <= 0:
                 return
             deadline = _now() + self.actions.listen_window_sec

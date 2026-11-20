@@ -175,6 +175,13 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
             if fin_lang:
                 language = fin_lang
 
+        if hasattr(service, "filter_wakeword_transcript"):
+            text, language = service.filter_wakeword_transcript(text, language)
+            if not text:
+                logger.info("Ignoring wakeword-only/echo transcript")
+                last_partial_text = ""
+                return
+
         if not language or language == "tr":
             try:
                 from modules.voice.speak.services.lang_detect import detect_text_language
@@ -260,7 +267,7 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
         service.set_default_callback(_cb)
 
     @router.post("/speech/start")
-    async def start():
+    async def start(body: dict | None = None):
         was_listening = service.listening
         logger.info("speech start requested (was_listening=%s)", was_listening)
         stt = service.stt_status() if hasattr(service, "stt_status") else {}
@@ -271,7 +278,10 @@ def get_router(service: SpeechService, gateway_base_url: str = "") -> APIRouter:
                 stt.get("reason"),
             )
             return {"ok": False, "listening": False, "reason": "stt_unavailable", "stt": stt}
-        if hasattr(service, "clear_utterance_buffer"):
+        wakeword = str((body or {}).get("wakeword") or "") if isinstance(body, dict) else ""
+        if hasattr(service, "on_wakeword_triggered"):
+            service.on_wakeword_triggered(wakeword)
+        elif hasattr(service, "clear_utterance_buffer"):
             service.clear_utterance_buffer()
         service.start_background(on_result=_cb)
         logger.info("speech start handled (listening=%s)", service.listening)

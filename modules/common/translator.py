@@ -24,6 +24,11 @@ try:
 except Exception:
     _detect_lang = None  # type: ignore
 
+try:
+    from modules.voice.speak.services.lang_detect import detect_text_language as _heuristic_detect_lang
+except Exception:
+    _heuristic_detect_lang = None  # type: ignore
+
 _TR_CHARS = set("çğıöşüÇĞİÖŞÜ")
 _TR_HINT_WORDS = frozenset({
     "merhaba", "naber", "evet", "hayir", "hayır", "tamam", "günaydın", "gunaydin",
@@ -403,23 +408,30 @@ class HybridTranslator:
         value = str(text or "").strip()
         if not value:
             return fallback
-        cached = self._detect_cache_get(value)
+        cache_key = f"{fallback}\x00{value}"
+        cached = self._detect_cache_get(cache_key)
         if cached:
             return cached
 
-        lang = fallback
         words = {w.strip(".,!?;:\"'()").lower() for w in value.split() if w.strip()}
-        if any(ch in _TR_CHARS for ch in value) or (words & _TR_HINT_WORDS):
+        lang: Optional[str] = None
+        if _heuristic_detect_lang is not None:
+            guessed = _heuristic_detect_lang(value, default="__unknown__", prefer_online=False)
+            if guessed in {"tr", "en"}:
+                lang = guessed
+        if lang is None and (any(ch in _TR_CHARS for ch in value) or (words & _TR_HINT_WORDS)):
             lang = "tr"
-        elif _detect_lang is not None:
+        if lang is None and _detect_lang is not None:
             try:
-                detected = self.normalize_lang(str(_detect_lang(value)), fallback=lang)
+                detected = self.normalize_lang(str(_detect_lang(value)), fallback="")
                 if detected and detected != "auto":
                     lang = detected
             except Exception as exc:
                 logger.debug("langdetect failed, using default source language: %s", exc)
+        if not lang:
+            lang = fallback
 
-        self._detect_cache_put(value, lang)
+        self._detect_cache_put(cache_key, lang)
         return lang
 
     def _cache_get(self, key: Tuple[str, str, str]) -> Optional[Tuple[str, str]]:

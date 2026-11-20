@@ -552,7 +552,7 @@ class AgentContextMixin(AgentMemorySyncMixin, AgentPersonaMixin):
             return "ollama_base_url_missing"
 
         try:
-            resp = requests.get(f"{base_url}/api/tags", timeout=0.6)
+            resp = requests.get(f"{base_url}/api/tags", timeout=2.0)
             status = int(getattr(resp, "status_code", 0) or 0)
             if status >= 500 or status == 0:
                 reason = f"http_{status}"
