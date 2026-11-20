@@ -156,6 +156,74 @@ def test_agent_core_bridges_tr_to_en_and_back(monkeypatch):
     assert seen_messages[0][1]["content"].startswith("Turn the lights blue")
     assert "[CompanionContext speaker=Emir]" in seen_messages[0][1]["content"]
     assert spoken_tool_calls == [("Mavi olarak ayarlandı.", "tr")]
+    assert res["speech_handled"] is True
     # Chat history preserves original Turkish text
     assert agent.chat_history[0]["content"].startswith("Işıkları mavi yap")
     assert agent.chat_history[1]["content"] == "Işıklar artık mavi."
+
+
+def test_detect_language_english_without_langdetect(monkeypatch):
+    import modules.common.translator as tr_mod
+
+    monkeypatch.setattr(tr_mod, "_detect_lang", None)
+    tr = HybridTranslator({"enabled": True, "mode": "local_only", "default_source_lang": "tr", "cache_size": 16})
+    en_sample = "Hello! I am Sentry, a living companion robot created by Emir HAMURCU."
+    assert tr.detect_language(en_sample) == "en"
+    assert tr.detect_language("Lütfen kendini tanıt") == "tr"
+    # Ambiguous string honors caller-supplied default without cache collision
+    assert tr.detect_language("xyzzy", default="en") == "en"
+    assert tr.detect_language("xyzzy", default="tr") == "tr"
+
+
+def test_localize_tool_speech_handles_en_untagged_and_mislabeled_tr(monkeypatch):
+    import modules.common.translator as tr_mod
+
+    monkeypatch.setattr(tr_mod, "_detect_lang", None)
+    tr = HybridTranslator({"enabled": True, "mode": "local_only", "default_source_lang": "tr", "cache_size": 16})
+    calls = []
+    monkeypatch.setattr(
+        tr,
+        "translate_with_meta",
+        lambda text, src, tgt: (calls.append((text, src, tgt)) or f"TR:{text}", "local_ctranslate2"),
+    )
+
+    agent = AgentOrchestrator.__new__(AgentOrchestrator)
+    agent.translator = tr
+    agent._active_response_language = "tr"
+    agent._active_bridge_translation = True
+
+    assert agent._localize_tool_speech("Hello! I am Sentry.", "en-US") == ("TR:Hello! I am Sentry.", "tr")
+    assert agent._localize_tool_speech("Hello! I am Sentry.", "") == ("TR:Hello! I am Sentry.", "tr")
+    # Even if the LLM hallucinates language='tr' on English text, English content is still localized
+    assert agent._localize_tool_speech("Hello! I am Sentry.", "tr") == ("TR:Hello! I am Sentry.", "tr")
+    assert len(calls) == 3
+    # Authentic Turkish text stays untouched without pointless bridge translation
+    assert agent._localize_tool_speech("Merhaba, bugün nasılsın?", "tr") == ("Merhaba, bugün nasılsın?", "tr")
+    assert len(calls) == 3
+
+
+def test_express_emotion_speech_respects_empty_language():
+    captured = []
+    loc_calls = []
+
+    def _loc(txt, lang):
+        loc_calls.append((txt, lang))
+        return f"TR:{txt}", "tr"
+
+    registry = ToolRegistry(
+        MagicMock(),
+        EpisodicMemory(":memory:"),
+        TopologicalMap.__new__(TopologicalMap),
+        WorldState(),
+        ActionSafetyFilter(),
+        localize_speech_fn=_loc,
+    )
+    arbiter = ActionArbiter(safety_filter=ActionSafetyFilter())
+    arbiter.register_handler("express", lambda req: captured.append(dict(req.payload)) or {"ok": True})
+    registry.action_arbiter = arbiter
+
+    res = registry.express_emotion("joy", text="Hello! I feel happy!")
+    assert "Expressed joy" in res
+    assert loc_calls == [("Hello! I feel happy!", "")]
+    assert captured and captured[0]["text"] == "TR:Hello! I feel happy!"
+    assert captured[0]["language"] == "tr"
