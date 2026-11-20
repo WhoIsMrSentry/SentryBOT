@@ -115,7 +115,7 @@ def transcribe_google_multilang(
     best_score = -999.0
 
     for lang, text in candidates.items():
-        score = _transcript_score(text, lang)
+        score = _transcript_score(text, lang, default_lang=default_lang)
         logger.info("Google STT candidate: [%s] %r (score=%.2f)", lang, text, score)
         if score > best_score:
             best_score = score
@@ -127,5 +127,10 @@ def transcribe_google_multilang(
         return first_text, first_lang
 
     detected_lang = _detect_language(best_text, default=best_lang)
+    # Keep decoder's language when the primary/default decoder won cleanly and text has no strong opposite signal
+    if best_lang == default_lang and detected_lang != best_lang:
+        alt_score = _transcript_score(best_text, detected_lang, default_lang=default_lang)
+        if best_score >= alt_score:
+            detected_lang = best_lang
     logger.info("Google STT winner: [%s] %r (detected=%s score=%.2f)", best_lang, best_text, detected_lang, best_score)
     return best_text, detected_lang
