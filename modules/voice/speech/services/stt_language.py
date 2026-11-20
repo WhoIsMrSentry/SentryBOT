@@ -4,33 +4,16 @@ import logging
 import re
 from typing import Dict, Optional, Tuple
 
+from modules.voice.speak.services.lang_detect import (
+    _EN_STOPWORDS,
+    _TR_CHARS,
+    _TR_STOPWORDS,
+    _WEAK_EN_TOKENS,
+    count_turkish_morph_hits,
+)
 from modules.voice.speech.services.recognizer import Recognizer
 
 logger = logging.getLogger("speech.stt_language")
-
-_TR_CHARS = set("çğıöşüÇĞİÖŞÜ")
-_TR_STOPWORDS = frozenset({
-    "ben", "sen", "o", "biz", "siz", "onlar", "bana", "sana", "ona", "bize", "size", "onlara",
-    "benim", "senin", "onun", "bizim", "sizin", "onlarin",
-    "ve", "veya", "ile", "de", "da", "ki", "mi", "mu", "mü", "mı", "ama", "fakat", "lakin",
-    "bu", "şu", "o", "bunlar", "şunlar", "onlar", "burada", "şurada", "orada", "buraya", "oraya",
-    "ne", "nasıl", "neden", "niçin", "kim", "hangi", "nerede", "nereye", "nereden", "kaç", "zaman",
-    "merhaba", "selam", "günaydın", "iyi", "akşamlar", "geceler", "lütfen", "teşekkür", "sağol",
-    "kendini", "tanıt", "anlat", "söyle", "yap", "et", "gel", "git", "bak", "dur", "başla",
-    "robot", "sentrybot", "sentry", "emir", "evet", "hayır", "tamam", "olur", "olmaz",
-    "bir", "iki", "üç", "dört", "beş", "altı", "yedi", "sekiz", "dokuz", "on",
-    "var", "yok", "oldu", "oldu mu", "şimdi", "sonra", "önce", "güzel", "kötü", "nasılsın",
-})
-_EN_STOPWORDS = frozenset({
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "must", "shall", "can", "need",
-    "to", "of", "in", "for", "on", "with", "at", "by", "from",
-    "what", "which", "who", "how", "all", "some", "not", "and", "but", "if", "or",
-    "i", "you", "he", "she", "it", "we", "they", "my", "your", "me",
-    "please", "hello", "hi", "thanks", "thank", "sorry", "about", "tell",
-    "introduce", "yourself", "help", "yes", "no",
-})
 
 
 def _detect_language(text: str, *, default: str, prefer_online: bool = True) -> str:
@@ -39,8 +22,8 @@ def _detect_language(text: str, *, default: str, prefer_online: bool = True) -> 
     return detect_text_language(text, default=default, prefer_online=prefer_online)
 
 
-def _transcript_score(text: str, target_lang: str) -> float:
-    """Score how well a transcript matches the target language."""
+def _transcript_score(text: str, target_lang: str, *, default_lang: str = "tr") -> float:
+    """Score how well a transcript matches the target language without biasing toward short EN noise."""
     value = str(text or "").strip()
     if not value:
         return 0.0
@@ -48,33 +31,52 @@ def _transcript_score(text: str, target_lang: str) -> float:
     if not words:
         return 0.0
 
+    tgt = str(target_lang or "tr").split("-", 1)[0].strip().lower()
+    def_lang = str(default_lang or "tr").split("-", 1)[0].strip().lower()
+
     tr_chars = sum(1 for ch in value if ch in _TR_CHARS)
     tr_hits = sum(1 for w in words if w in _TR_STOPWORDS)
-    en_hits = sum(1 for w in words if w in _EN_STOPWORDS)
-    detected = _detect_language(value, default="tr", prefer_online=True)
+    tr_morph = count_turkish_morph_hits(words)
+    tr_evidence = tr_hits + tr_morph
+    strong_en_hits = sum(1 for w in words if w in _EN_STOPWORDS and w not in _WEAK_EN_TOKENS)
+    weak_en_hits = sum(1 for w in words if w in _WEAK_EN_TOKENS)
 
-    if target_lang.startswith("tr"):
+    # Pass target language as fallback default so EN/TR neutral short phrases aren't misscored
+    detected = _detect_language(value, default=tgt or "tr", prefer_online=True)
+    default_prior = 1.2 if (def_lang and tgt == def_lang) else 0.0
+
+    if tgt == "tr":
         score = 2.0 if detected == "tr" else 1.0
         score += tr_hits * 1.5
+        score += tr_morph * 1.5
         score += tr_chars * 1.0
-        if len(words) >= 2 and tr_hits >= 1:
+        if len(words) >= 2 and tr_evidence >= 1:
             score += 2.0
-        if detected == "en" and tr_chars == 0 and tr_hits == 0 and en_hits >= 2:
+        if detected == "en" and tr_chars == 0 and tr_evidence == 0 and strong_en_hits >= 2:
             score -= 2.0
+        score += default_prior
         return score
 
-    if target_lang == "en":
+    if tgt == "en":
+        if strong_en_hits == 0 and weak_en_hits > 0 and len(words) <= 3:
+            # Weak single-letter / interjection shards like "a Microsoft" should not overpower valid primary TR
+            return 1.2 + weak_en_hits * 0.3
         score = 2.0 if detected == "en" else 0.5
-        score += en_hits * 1.5
-        if len(words) >= 2 and en_hits >= 1:
+        score += strong_en_hits * 1.5
+        score += weak_en_hits * 0.25
+        if len(words) >= 2 and (strong_en_hits >= 2 or (strong_en_hits >= 1 and len(words) >= 3)):
             score += 2.0
-        if tr_chars >= 1 or tr_hits >= 1:
+        elif len(words) >= 2 and strong_en_hits >= 1 and default_prior == 0.0:
+            score += 1.0
+        if tr_chars >= 1 or tr_evidence >= 1:
             score -= 3.0
+        score += default_prior
         return score
 
     # Generic languages: trust langdetect + transcript length
-    score = 2.0 if detected == target_lang else 0.5
+    score = 2.0 if detected == tgt else 0.5
     score += min(len(words), 8) * 0.2
+    score += default_prior
     return score
 
 
@@ -126,7 +128,7 @@ def resolve_stt_text_and_language(
 
     if dual_decode_only_if_ambiguous and primary_text:
         detected = _detect_language(primary_text, default=primary_lang, prefer_online=prefer_online_detect)
-        primary_score = _transcript_score(primary_text, primary_lang)
+        primary_score = _transcript_score(primary_text, primary_lang, default_lang=default_language)
         words = re.findall(r"[a-zA-ZçğıöşüÇĞİÖŞÜ']+", primary_text.lower())
         tr_hits = sum(1 for w in words if w in _TR_STOPWORDS)
         if detected == primary_lang and primary_score >= 3.0 and tr_hits >= 1:
@@ -144,12 +146,12 @@ def resolve_stt_text_and_language(
 
     best_lang = primary_lang
     best_text = primary_text
-    best_score = _transcript_score(primary_text, primary_lang) if primary_text else -1.0
+    best_score = _transcript_score(primary_text, primary_lang, default_lang=default_language) if primary_text else -1.0
 
     for lang, cand in candidates.items():
         if not cand:
             continue
-        score = _transcript_score(cand, lang)
+        score = _transcript_score(cand, lang, default_lang=default_language)
         margin = 0.0 if lang == primary_lang else max(0.0, float(dual_decode_margin)) * 0.5
         if score > best_score + margin:
             best_score = score

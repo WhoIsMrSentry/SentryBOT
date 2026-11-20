@@ -26,7 +26,8 @@ recognition:
   utterance_buffer_sec: 20
   samplerate: 16000
   channels: 1
-  input_gain: 3.0
+  input_gain: 1.2
+  silence_threshold: 130.0
 
   vad:
     enabled: false             # enable WebRTC VAD pre-filter

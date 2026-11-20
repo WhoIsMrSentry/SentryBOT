@@ -9,3 +9,4 @@ textual
 pytest
 numpy
 pillow
+langdetect

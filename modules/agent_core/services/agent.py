@@ -5,7 +5,7 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from .agent_context import AgentContextMixin
 from .agent_turn import AgentTurnMixin
@@ -373,6 +373,29 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         except Exception:
             pass
 
+    @staticmethod
+    def _actions_handled_speech(actions: Sequence[Dict[str, Any]]) -> bool:
+        """Return True if an executed tool (e.g. speak or voiced express_emotion) already emitted TTS."""
+        for action in actions or ():
+            if not isinstance(action, dict):
+                continue
+            tool = str(action.get("tool") or "").strip().lower()
+            result = action.get("result")
+            if isinstance(result, dict):
+                if result.get("success") is False:
+                    continue
+            elif isinstance(result, str):
+                low = result.strip().lower()
+                if low.startswith(("error", "expression failed", "expression skipped", "expression parameter error")):
+                    continue
+            if tool == "speak":
+                return True
+            if tool == "express_emotion":
+                args = action.get("args")
+                if isinstance(args, dict) and str(args.get("text") or "").strip():
+                    return True
+        return False
+
     def _make_sentence_callback(
         self,
         session_language: str,
@@ -689,10 +712,11 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             )
             self._finalize_turn_memory(prompt, final_text, dialogue_entry)
 
+            speech_handled = (stream_state["spoken"] > 0) or self._actions_handled_speech(executed_actions)
             latency_trace.mark(
                 trace_id,
                 "agent.done",
-                {"steps": total_steps, "speech_handled": stream_state["spoken"] > 0},
+                {"steps": total_steps, "speech_handled": speech_handled},
             )
             if self.speech_arbiter._speak_fn is None:
                 latency_trace.finish(trace_id, "done")
@@ -709,7 +733,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                 "model": active_model,
                 "route": self.last_routed_subagents,
                 "subagents": subagent_reports,
-                "speech_handled": stream_state["spoken"] > 0,
+                "speech_handled": speech_handled,
                 "trace_id": trace_id,
                 "latency": latency_trace.get(trace_id),
             }

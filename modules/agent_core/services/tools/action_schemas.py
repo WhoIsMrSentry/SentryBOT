@@ -12,8 +12,9 @@ def get_action_tool_definitions() -> List[Dict[str, Any]]:
                 "name": "speak",
                 "description": (
                     "Say the given text out loud through the robot's speaker (TTS). "
-                    "Use this when the user asks the robot to say/repeat something "
-                    "('şunu söyle', 'say this') or when speech itself is the action."
+                    "ONLY use this when the user explicitly asks the robot to say/repeat exact words "
+                    "('şunu söyle', 'say this') or when speaking mid-action alongside another tool. "
+                    "For normal conversation or answers, reply with plain text instead — normal replies are spoken automatically."
                 ),
                 "parameters": {
                     "type": "object",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+import threading
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional
 
 from modules.voice.speech.services.turn_taking import DynamicTurnTakingEngine
@@ -32,7 +33,7 @@ class RecognizerConfig:
     vad_hangover_ms: int = 400
     min_utterance_sec: float = 0.5
     max_utterance_sec: float = 15.0
-    silence_threshold: float = 75.0
+    silence_threshold: float = 130.0
     dual_decode_languages: tuple[str, ...] = ("tr", "en")
 
 
@@ -44,6 +45,7 @@ class Recognizer:
         cfg: Optional[Dict[str, Any]] = None,
         *,
         on_turn_cue: Optional[Callable[[Dict[str, Any]], None]] = None,
+        should_suppress_speech_fn: Optional[Callable[[], bool]] = None,
     ):
         cfg = cfg or {}
         vad_cfg = cfg.get("vad", {}) if isinstance(cfg.get("vad"), dict) else {}
@@ -62,16 +64,24 @@ class Recognizer:
             vad_hangover_ms=int(vad_cfg.get("hangover_ms", 400)),
             min_utterance_sec=float(cfg.get("min_utterance_sec", 0.5)),
             max_utterance_sec=float(cfg.get("max_utterance_sec", 15.0)),
-            silence_threshold=float(cfg.get("silence_threshold", 75.0)),
+            silence_threshold=float(cfg.get("silence_threshold", 130.0)),
             dual_decode_languages=lang_tuple,
         )
         self._sr_recognizer = sr.Recognizer() if sr is not None else None
         self._on_turn_cue = on_turn_cue
+        self._should_suppress_speech_fn = should_suppress_speech_fn
+        self._reset_event = threading.Event()
+        self._pending_drop_sec = 0.0
         self._turn_engine = DynamicTurnTakingEngine(
             min_speech_duration_s=max(0.25, self.cfg.min_utterance_sec * 0.7),
             end_of_turn_silence_s=max(0.35, self.cfg.vad_hangover_ms / 1000.0),
             max_turn_timeout_s=max(2.0, self.cfg.max_utterance_sec),
         )
+
+    def request_reset(self, *, drop_sec: float = 0.18) -> None:
+        """Clear any buffered pre-wakeword audio on the next capture frame."""
+        self._pending_drop_sec = max(0.0, float(drop_sec))
+        self._reset_event.set()
 
     def status(self) -> dict[str, Any]:
         """Check speech recognition backend readiness."""
@@ -119,9 +129,10 @@ class Recognizer:
         min_bytes = int(self.cfg.min_utterance_sec * bytes_per_sec)
         max_bytes = int(self.cfg.max_utterance_sec * bytes_per_sec)
         preroll_bytes = int(0.35 * bytes_per_sec)  # 350ms rolling pre-roll buffer
-        silence_threshold = float(getattr(self.cfg, "silence_threshold", 75.0) or 75.0)
+        silence_threshold = float(getattr(self.cfg, "silence_threshold", 130.0) or 130.0)
         has_spoken = False
         audio_clock = 0.0
+        discard_until_clock = 0.0
         self._turn_engine.start_listening(current_time_s=audio_clock)
 
         for chunk in stream:
@@ -144,9 +155,30 @@ class Recognizer:
                 except Exception:
                     pass
 
-            chunk_dt = len(mono_chunk) / float(bytes_per_sec)
-            audio_clock += max(0.005, chunk_dt)
-            is_speech = energy > silence_threshold
+            chunk_dt = max(0.005, len(mono_chunk) / float(bytes_per_sec))
+            frame_start_clock = audio_clock
+            audio_clock += chunk_dt
+
+            if self._reset_event.is_set():
+                self._reset_event.clear()
+                buffer.clear()
+                has_spoken = False
+                self._turn_engine.start_listening(current_time_s=audio_clock)
+                drop_sec = float(getattr(self, "_pending_drop_sec", 0.0) or 0.0)
+                discard_until_clock = frame_start_clock + drop_sec if drop_sec > 0.0 else frame_start_clock
+
+            if audio_clock <= discard_until_clock + 1e-6:
+                continue
+
+            echo_suppressed = False
+            sup_fn = getattr(self, "_should_suppress_speech_fn", None)
+            if callable(sup_fn):
+                try:
+                    echo_suppressed = bool(sup_fn())
+                except Exception:
+                    echo_suppressed = False
+
+            is_speech = False if echo_suppressed else (energy > silence_threshold)
 
             turn_res = self._turn_engine.process_vad_frame(
                 is_speech=is_speech,
@@ -162,6 +194,8 @@ class Recognizer:
             if is_speech:
                 has_spoken = True
                 buffer.extend(mono_chunk)
+            elif echo_suppressed and not has_spoken:
+                continue
             elif has_spoken:
                 buffer.extend(mono_chunk)
             else:

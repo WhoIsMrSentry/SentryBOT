@@ -2,28 +2,38 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 
 logger = logging.getLogger("speak.lang_detect")
 
 _TR_CHARS = set("çğıöşüÇĞİÖŞÜ")
 _TR_STOPWORDS = frozenset({
-    "ben", "sen", "o", "biz", "siz", "onlar", "bu", "şu", "su", "bir", "ve", "veya",
-    "için", "icin", "ile", "de", "da", "gibi", "kadar", "daha", "çok", "cok", "en", "var", "yok",
-    "merhaba", "selam", "selamlar", "evet", "hayır", "hayir", "tamam", "peki", "tabii",
-    "nasıl", "nasil", "nasılsın", "nasilsin", "neden", "ne", "kim", "nerede", "hangi",
-    "bunu", "şunu", "sunu", "bana", "sana", "ona", "bize", "size", "onlara",
+    "ben", "sen", "o", "biz", "siz", "onlar", "bu", "şu", "su", "şunlar", "bunlar",
+    "bir", "iki", "üç", "uc", "dört", "dort", "beş", "bes", "altı", "alti", "yedi", "sekiz", "dokuz", "on",
+    "ve", "veya", "ile", "de", "da", "ki", "mi", "mı", "mu", "mü", "ya", "hem", "ama", "fakat", "ancak", "lakin",
+    "için", "icin", "gibi", "kadar", "daha", "çok", "cok", "az", "en", "her", "hiç", "hic", "hepsi",
+    "var", "yok", "olur", "olmaz", "oldu", "olabilir", "değil", "degil",
+    "merhaba", "selam", "selamlar", "evet", "hayır", "hayir", "tamam", "peki", "tabii", "eyvallah", "oldu",
+    "nasıl", "nasil", "nasılsın", "nasilsin", "neden", "niçin", "nicin", "ne", "kim", "kimsin", "nesin",
+    "nerede", "nerde", "nereye", "nereden", "neredesin", "hangi", "kaç", "kac", "zaman", "nedir", "kimdir",
+    "bunu", "şunu", "sunu", "onu", "bana", "sana", "ona", "bize", "size", "onlara",
+    "burada", "burda", "şurada", "orada", "orda", "buraya", "oraya",
     "benim", "senin", "onun", "bizim", "sizin", "onların", "onlarin",
-    "yap", "et", "ol", "gel", "git", "bak", "gör", "gor", "bil",
-    "istiyorum", "ediyorum", "bakıyorum", "bakiyorum", "dinliyorum", "bekliyorum",
-    "anladım", "anladim", "hazırım", "hazirim", "iyiyim", "buradayım", "buradayim",
-    "teşekkürler", "tesekkurler", "özür", "ozur", "lütfen", "lutfen",
-    "ama", "fakat", "ancak", "ki", "mi", "mu", "ya", "hem", "her", "hiç", "hic",
-    "biraz", "şimdi", "simdi", "hemen", "burada", "orada", "adım", "adim", "ismim", "ismin",
-    "merak", "mutlu", "sinirli", "kızgın", "kizgin", "üzgün", "uzgun", "sakin",
-    "yoldaş", "yoldas", "robotum", "yardım", "yardim", "edebilirim", "yapabilirim",
-    "güzel", "guzel", "harika", "süper", "super", "günaydın", "gunaydin",
-    "akşamlar", "aksamlar", "geceler", "hoş", "hos", "geldin",
+    "yap", "yapsana", "et", "ol", "gel", "git", "bak", "gör", "gor", "bil", "dur", "kalk", "otur", "bekle",
+    "aç", "ac", "kapat", "yak", "söndür", "sondur", "dinle", "sus", "konuş", "konus", "anlat", "söyle", "soyle",
+    "kendini", "tanıt", "tanit", "yardım", "yardim", "eder", "edebilir", "edebilirim", "yapabilirim",
+    "istiyorum", "ediyorum", "bakıyorum", "bakiyorum", "dinliyorum", "bekliyorum", "bilmiyorum", "gidiyor",
+    "anladım", "anladim", "hazırım", "hazirim", "iyiyim", "buradayım", "buradayim", "seviyorum",
+    "teşekkür", "tesekkur", "teşekkürler", "tesekkurler", "sağol", "sagol", "özür", "ozur", "lütfen", "lutfen",
+    "biraz", "şimdi", "simdi", "hemen", "sonra", "önce", "once", "bugün", "bugun", "yarın", "yarin",
+    "saat", "hava", "durumu", "haber", "haberler", "gün", "gun", "akşam", "aksam", "sabah", "gece",
+    "adım", "adim", "ismim", "ismin", "robot", "robotum", "yoldaş", "yoldas", "emir",
+    "merak", "mutlu", "mutluyum", "sinirli", "sinirlen", "sinirliyim", "kızgın", "kizgin", "korkuyorum",
+    "üzgün", "uzgun", "üzgünüm", "uzgunum", "sakin", "sakinleş", "şaşır", "sıkıl",
+    "güzel", "guzel", "kötü", "kotu", "harika", "süper", "super", "günaydın", "gunaydin",
+    "akşamlar", "aksamlar", "geceler", "hoş", "hos", "geldin", "görüşürüz", "gorusuruz",
+    "ışık", "isik", "ışıkları", "isiklari", "renk", "mavi", "kırmızı", "kirmizi", "yeşil", "yesil",
+    "sarı", "sari", "mor", "beyaz", "lazer", "ses", "sesi", "türkçe", "turkce", "ingilizce",
 })
 _EN_STOPWORDS = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
@@ -39,8 +49,33 @@ _EN_STOPWORDS = frozenset({
     "i", "you", "he", "she", "it", "we", "they", "my", "your", "his", "her",
     "its", "our", "their", "me", "him", "us", "them", "yes", "no", "ok", "please",
     "hello", "hi", "thanks", "thank", "sorry", "about", "tell", "know", "think",
-    "introduce", "yourself", "assist", "help", "who", "are", "what", "name",
+    "introduce", "yourself", "assist", "help", "name", "weather", "today", "check",
+    "time", "explain", "search",
 })
+# Single-letter or cross-language interjection tokens that must NOT tip short ambiguous STT snippets to EN
+_WEAK_EN_TOKENS = frozenset({"a", "i", "oh", "ah", "um", "uh", "ok", "okay", "hey"})
+_TR_MORPH_RE = re.compile(
+    r"(?:"
+    r"yor(?:um|sun|uz|sunuz)?|"
+    r"m[ıiuü]y?or(?:um|sun|uz)?|"
+    r"[ae]c[ae][ğgk](?:[ıi]m|s[ıi]n)?|"
+    r"s[ıiuü]n[ıiuü]z|"
+    r"m[ıiuü]s[ıiuü]n(?:[ıiuü]z)?|"
+    r"abilir(?:im|sin|iz)?|"
+    r"ebili?r(?:im|sin|iz)?|"
+    r"m[ıiuü][şs](?:t[ıiuü]r)?"
+    r")$"
+)
+
+
+def count_turkish_morph_hits(words: Iterable[str]) -> int:
+    """Count words carrying unambiguous Turkish verb/question suffixes (ASCII-safe)."""
+    hits = 0
+    for w in words:
+        lw = str(w or "").strip().lower()
+        if len(lw) >= 4 and _TR_MORPH_RE.search(lw):
+            hits += 1
+    return hits
 
 try:
     from langdetect import detect as _detect_lang  # type: ignore
@@ -68,21 +103,29 @@ def detect_text_language(text: str, *, default: str = "tr", prefer_online: bool 
 
     tr_chars = sum(1 for ch in value if ch in _TR_CHARS)
     words = re.findall(r"[a-zA-ZçğıöşüÇĞİÖŞÜ']+", value.lower())
-    en_hits = sum(1 for w in words if w in _EN_STOPWORDS)
     tr_hits = sum(1 for w in words if w in _TR_STOPWORDS)
+    tr_morph = count_turkish_morph_hits(words)
+    tr_evidence = tr_hits + tr_morph
+    en_hits = sum(1 for w in words if w in _EN_STOPWORDS)
+    strong_en_hits = sum(1 for w in words if w in _EN_STOPWORDS and w not in _WEAK_EN_TOKENS)
 
     if tr_chars >= 2:
         return "tr"
-    if tr_chars >= 1 and tr_hits >= en_hits:
+    if tr_chars >= 1 and tr_evidence >= strong_en_hits:
         return "tr"
-    if tr_hits > en_hits:
+    if tr_evidence > strong_en_hits:
         return "tr"
-    if en_hits > tr_hits and (en_hits >= 2 or (tr_chars == 0 and tr_hits == 0 and len(words) <= 3)):
+    if strong_en_hits > tr_evidence and (
+        strong_en_hits >= 2
+        or (tr_chars == 0 and tr_evidence == 0 and len(words) <= 3)
+    ):
+        return "en"
+    if en_hits >= 2 and strong_en_hits >= 1 and tr_chars == 0 and tr_evidence == 0:
         return "en"
     if tr_chars >= 1:
         return "tr"
 
-    if prefer_online and _detect_lang is not None and len(words) >= 5 and tr_chars == 0 and tr_hits == 0:
+    if prefer_online and _detect_lang is not None and len(words) >= 5 and tr_chars == 0 and tr_evidence == 0:
         try:
             detected = normalize_lang(str(_detect_lang(value)), fallback=default)
             if detected in {"tr", "en"}:

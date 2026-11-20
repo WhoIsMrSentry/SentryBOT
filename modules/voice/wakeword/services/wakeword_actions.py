@@ -9,7 +9,7 @@ try:
 except Exception:
     requests = None
 
-from modules.voice.speech.services.wake_phrase import strip_wakewords
+from modules.voice.speech.services.wake_phrase import is_wakeword_echo_transcript, strip_wakewords
 
 logger = logging.getLogger("wakeword.actions")
 _HTTP_SESSION: Any | None = None
@@ -64,7 +64,7 @@ def _normalize_command_text(text: str, wakeword: str = "") -> str:
 
 
 def _is_wakeword_only(text: str, wakeword: str = "") -> bool:
-    return len(_normalize_command_text(text, wakeword)) < 2
+    return is_wakeword_echo_transcript(text, wakeword=wakeword, recent_wakeword=True)
 
 
 class WakewordActions:
@@ -108,11 +108,16 @@ class WakewordActions:
         else:
             _post_json(self.agent_interrupt_url)
 
-    def start_speech(self) -> None:
+    def start_speech(self, wakeword: str = "") -> None:
         if self._speech_service is not None:
             if hasattr(self._speech_service, "set_stt_suppressed"):
                 try:
                     self._speech_service.set_stt_suppressed(False)
+                except Exception:
+                    pass
+            if hasattr(self._speech_service, "on_wakeword_triggered"):
+                try:
+                    self._speech_service.on_wakeword_triggered(wakeword)
                 except Exception:
                     pass
             if hasattr(self._speech_service, "start_background"):
@@ -121,7 +126,8 @@ class WakewordActions:
                     return
                 except Exception as exc:
                     logger.debug("direct speech_service start failed: %s", exc)
-        _post_json(self.speech_start_url)
+        payload = {"wakeword": str(wakeword)} if wakeword else {}
+        _post_json(self.speech_start_url, payload)
 
     def stop_speech(self) -> None:
         if self._speech_service is not None:

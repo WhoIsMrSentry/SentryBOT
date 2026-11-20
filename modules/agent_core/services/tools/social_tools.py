@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 if TYPE_CHECKING:
     pass
@@ -41,17 +41,24 @@ def _format_expression_summary(
 class SocialToolsMixin:
     """Social and Interaction tools for ToolRegistry."""
 
-    def speak(self, text: str, tone: str = "", language: str = "", voice: str = "") -> str:
+    def _localize_speech(self, text: str, language: str = "", default_lang: str = "") -> Tuple[str, str]:
         cleaned = str(text or "").strip()
-        if not cleaned:
-            return "Error: nothing to speak."
         out_lang = str(language or "").strip().lower()
         loc_fn = getattr(self, "localize_speech_fn", None)
-        if callable(loc_fn):
+        if cleaned and callable(loc_fn):
             try:
                 cleaned, out_lang = loc_fn(cleaned, out_lang)
             except Exception:
                 pass
+        if not out_lang and default_lang:
+            out_lang = default_lang
+        return cleaned, out_lang
+
+    def speak(self, text: str, tone: str = "", language: str = "", voice: str = "") -> str:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return "Error: nothing to speak."
+        cleaned, out_lang = self._localize_speech(cleaned, language)
         payload: Dict[str, Any] = {"text": cleaned}
         if tone:
             payload["tone"] = str(tone).strip().lower()
@@ -104,7 +111,7 @@ class SocialToolsMixin:
         duration_s: float = 3.0,
         modalities: list[str] | None = None,
         text: str | None = None,
-        language: str = "tr",
+        language: str = "",
     ) -> str:
         """Express an emotion across all modalities through shared arbiters and Expression service."""
         if not self.client:
@@ -132,14 +139,7 @@ class SocialToolsMixin:
                 ):
                     return "Expression skipped: lights_locked"
 
-            spoken_text = text
-            out_lang = str(language or "tr")
-            loc_fn = getattr(self, "localize_speech_fn", None)
-            if spoken_text and callable(loc_fn):
-                try:
-                    spoken_text, out_lang = loc_fn(str(spoken_text), out_lang)
-                except Exception:
-                    pass
+            spoken_text, out_lang = self._localize_speech(str(text or ""), language, default_lang="tr")
 
             payload = {
                 "emotion": canon,

@@ -275,12 +275,15 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
 
         while step_count < max_steps:
             step_count += 1
+            step_on_sentence = None if (
+                hasattr(self, "_actions_handled_speech") and self._actions_handled_speech(executed)
+            ) else on_sentence
             res = self._chat_maybe_stream(
                 active_model,
                 messages,
                 tools,
                 options,
-                on_sentence=on_sentence,
+                on_sentence=step_on_sentence,
             )
             res_dict = _as_dict(res)
             msg = _as_dict(res_dict.get("message", {}))

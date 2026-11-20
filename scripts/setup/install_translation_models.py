@@ -13,7 +13,7 @@ from typing import Tuple
 
 DEFAULT_PAIRS: Tuple[Tuple[str, str, str], ...] = (
     ("tr", "en", "Helsinki-NLP/opus-mt-tr-en"),
-    ("en", "tr", "Helsinki-NLP/opus-mt-en-tr"),
+    ("en", "tr", "Helsinki-NLP/opus-mt-tc-big-en-tr"),
 )
 
 

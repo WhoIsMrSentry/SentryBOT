@@ -384,7 +384,8 @@ speech:
     - en
     utterance_buffer_sec: 20
     samplerate: 16000
-    input_gain: 3.0
+    input_gain: 1.2
+    silence_threshold: 130.0
     vad:
       enabled: false
       aggressiveness: 2

@@ -158,14 +158,24 @@ class AgentTranslationMixin:
         tr = getattr(self, "translator", None)
         if tr is None or not getattr(getattr(tr, "cfg", None), "enabled", False):
             return raw, str(explicit_language or target)
-        bridge = str(getattr(tr, "BRIDGE_LANG", "en") or "en").lower()
-        req_lang = str(explicit_language or "").strip().lower()
-        # Respect explicit non-bridge target unless the model tagged its own English output.
-        if req_lang and req_lang != bridge and req_lang == target:
-            return raw, req_lang
+        bridge = tr.normalize_lang(getattr(tr, "BRIDGE_LANG", "en"), fallback="en")
+        target = tr.normalize_lang(target, fallback=target)
+        raw_req = str(explicit_language or "").strip()
+        req_lang = tr.normalize_lang(raw_req, fallback="") if raw_req else ""
         if target == bridge:
             return raw, bridge
-        detected = tr.detect_language(raw)
+        # Model explicitly tagged bridge output (e.g. language='en'): translate directly.
+        if req_lang == bridge:
+            return tr.from_bridge(raw, target), target
+        detect_default = (
+            bridge
+            if getattr(self, "_active_bridge_translation", False)
+            else target
+        )
+        detected = tr.detect_language(raw, default=detect_default)
+        # Respect explicit non-bridge target unless the payload itself is non-target (e.g. English).
+        if req_lang and req_lang == target and detected == target:
+            return raw, req_lang
         if detected == target:
             return raw, target
         localized = tr.from_bridge(raw, target)
