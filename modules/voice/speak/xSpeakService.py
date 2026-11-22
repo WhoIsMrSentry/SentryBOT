@@ -214,6 +214,13 @@ class SpeakService:
     def _expression_event(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
         if requests is None or not bool(self._liveliness_cfg.get("enabled", True)):
             return
+        try:
+            from modules.gateway.readiness import is_gateway_booting, is_gateway_stopping
+
+            if is_gateway_stopping() or is_gateway_booting():
+                return
+        except Exception:
+            pass
         base = self._resolve_expression_url(self._liveliness_cfg.get("expression_base_url", ""))
         if not base:
             return
