@@ -316,25 +316,67 @@ class _DDGResultHTMLParser(HTMLParser):
             self._buf.append(data)
 
 
-def _search_ddgs_pkg(query: str, max_results: int) -> Optional[List[Dict[str, str]]]:
-    try:
-        from ddgs import DDGS  # type: ignore
+_SEARCH_FILLER_TOKENS = frozenset({
+    "kimdir", "nedir", "nerede", "nasıl", "nasil", "ne", "kim", "yaratıcı", "yaratici",
+    "yaratıcın", "yaraticin", "yaratıcının", "yaraticinin", "internette", "internetten",
+    "webde", "araştır", "arastir", "ara", "bul", "hakkında", "hakkinda", "tanıt", "tanit",
+    "biography", "who", "is", "are", "was", "made", "created", "creator", "search",
+    "find", "about", "the", "of", "in", "on", "for", "web", "google",
+})
 
-        raw = list(DDGS().text(query, max_results=max_results) or [])
-        return [
-            {
-                "title": str(r.get("title", "")).strip(),
-                "url": str(r.get("href", "") or r.get("url", "")).strip(),
-                "snippet": str(r.get("body", "") or r.get("snippet", "")).strip(),
-            }
-            for r in raw
-            if isinstance(r, dict)
-        ]
-    except ImportError:
-        return None
-    except Exception as exc:
-        logger.debug("ddgs search failed, trying HTTP fallback: %s", exc)
-        return None
+
+def _simplify_search_query(query: str) -> str:
+    """Strip conversational question filler to recover core names/entities."""
+    words = [w.strip(".,?!:;\"'()[]") for w in str(query or "").split()]
+    kept = [w for w in words if w and w.lower() not in _SEARCH_FILLER_TOKENS]
+    simplified = " ".join(kept).strip()
+    if simplified and simplified.lower() != str(query or "").strip().lower():
+        return simplified
+    return ""
+
+
+def _ddgs_text_with_backend(query: str, max_results: int, backend: str) -> List[Dict[str, str]]:
+    from ddgs import DDGS  # type: ignore
+
+    raw = list(DDGS().text(query, max_results=max_results, backend=backend) or [])
+    return [
+        {
+            "title": str(r.get("title", "")).strip(),
+            "url": str(r.get("href", "") or r.get("url", "")).strip(),
+            "snippet": str(r.get("body", "") or r.get("snippet", "")).strip(),
+        }
+        for r in raw
+        if isinstance(r, dict)
+    ]
+
+
+def _search_ddgs_pkg(query: str, max_results: int) -> Optional[List[Dict[str, str]]]:
+    queries = [query]
+    simplified = _simplify_search_query(query)
+    if simplified:
+        queries.append(simplified)
+
+    # Prefer reliable backends first; fall back cleanly when DuckDuckGo/Brave rate-limit (202/429)
+    for q in queries:
+        for backend in ("bing", "auto", "yandex"):
+            try:
+                hits = _ddgs_text_with_backend(q, max_results, backend)
+                if hits:
+                    return hits
+            except ImportError:
+                return None
+            except Exception as exc:
+                logger.debug("ddgs backend=%s failed for %r: %s", backend, q[:60], exc)
+    return None
+
+
+def _wiki_hit_relevant(query: str, title: str, snippet: str) -> bool:
+    q_tokens = [t for t in re.findall(r"[a-zA-Z0-9çğıöşüÇĞİÖŞÜ]{3,}", str(query or "").lower())]
+    if len(q_tokens) < 2:
+        return True
+    haystack = f"{title} {snippet}".lower()
+    matched = sum(1 for tok in set(q_tokens) if tok in haystack)
+    return matched >= min(2, len(set(q_tokens)))
 
 
 def _search_wikipedia_api(query: str, max_results: int, timeout_s: float) -> List[Dict[str, str]]:
@@ -361,13 +403,18 @@ def _search_wikipedia_api(query: str, max_results: int, timeout_s: float) -> Lis
             if not hits:
                 continue
             out: List[Dict[str, str]] = []
-            for h in hits[:max_results]:
+            for h in hits:
                 title = str(h.get("title", "")).strip()
                 snippet = re.sub(r"<[^>]+>", " ", str(h.get("snippet", "")))
                 snippet = " ".join(snippet.split())
+                if not _wiki_hit_relevant(query, title, snippet):
+                    continue
                 page_url = f"https://{lang}.wikipedia.org/wiki/{title.replace(' ', '_')}"
                 out.append({"title": title, "url": page_url, "snippet": snippet})
-            return out
+                if len(out) >= max_results:
+                    break
+            if out:
+                return out
         except Exception:
             continue
     return []
@@ -412,6 +459,12 @@ def search_web_headless(
     wiki_hits = _search_wikipedia_api(q, limit, float(timeout_s))
     if wiki_hits:
         return {"ok": True, "backend": "wikipedia_api", "query": q, "results": wiki_hits[:limit]}
+
+    simplified = _simplify_search_query(q)
+    if simplified:
+        wiki_hits = _search_wikipedia_api(simplified, limit, float(timeout_s))
+        if wiki_hits:
+            return {"ok": True, "backend": "wikipedia_api", "query": simplified, "results": wiki_hits[:limit]}
 
     return {"ok": False, "backend": "none", "query": q, "results": [], "error": "No search backend returned results"}
 
