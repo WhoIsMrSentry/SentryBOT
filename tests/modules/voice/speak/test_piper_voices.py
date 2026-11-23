@@ -98,6 +98,14 @@ def test_text_to_speech_piper_picks_english_voice_key() -> None:
     assert voice == "glados"
 
 
+def test_english_intro_with_contractions_and_cognates_keeps_en_voice() -> None:
+    sample = "I'm Sentry, a companion robot created by Emir HAMURCU."
+    assert detect_text_language(sample, default="__unknown__") == "en"
+    assert resolve_speak_language(sample, explicit="en", prefer_text=True) == "en"
+    assert resolve_speak_language("Emir HAMURCU", explicit="en", prefer_text=True) == "en"
+    assert detect_text_language("Merhaba, ben robotum ve Emir ile konuşuyorum.") == "tr"
+
+
 def test_piper_missing_model_falls_back_to_dummy(monkeypatch) -> None:
     monkeypatch.setenv("SENTRYBOT_ALLOW_TEST_TTS", "1")
     tts = TextToSpeech({
