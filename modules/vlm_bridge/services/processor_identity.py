@@ -276,6 +276,68 @@ class ProcessorIdentityMixin(ProcessorIdentityEventsMixin):
         boxes, _raw = self._detect_face_boxes_with_raw(frame)
         return boxes
 
+    def collect_ask_context_hints(self, frame: Any = None) -> str:
+        """Collect concise local person/object recognition hints for VLM scene queries."""
+        known_names: List[str] = []
+        objects: List[str] = []
+        face_count = 0
+
+        for item in getattr(self, "latest_results", None) or []:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or "").strip()
+            name = str(item.get("name") or "").strip()
+            if label.lower() == "person":
+                face_count += 1
+                if name and name.lower() != "unknown" and name not in known_names:
+                    known_names.append(name)
+            elif label and label not in objects:
+                objects.append(label)
+
+        ctx_fn = getattr(self, "get_latest_visual_context", None)
+        if callable(ctx_fn):
+            try:
+                ctx = ctx_fn()
+                if isinstance(ctx, dict):
+                    for person in ctx.get("people") or []:
+                        if not isinstance(person, dict):
+                            continue
+                        pname = str(person.get("name") or "").strip()
+                        if pname and pname.lower() != "unknown" and pname not in known_names:
+                            known_names.append(pname)
+            except Exception:
+                pass
+
+        if (
+            not known_names
+            and frame is not None
+            and self.face_manager is not None
+            and getattr(self, "processing_mode", "local") == "local"
+        ):
+            try:
+                boxes, raw_faces = self._detect_face_boxes_with_raw(frame)
+                face_count = max(face_count, len(boxes))
+                for idx, (x1, y1, x2, y2) in enumerate(boxes):
+                    if x2 <= x1 or y2 <= y1:
+                        continue
+                    roi = frame[y1:y2, x1:x2]
+                    matched_name, _conf = self._identify_face_in_roi(
+                        roi, full_frame=frame, raw_face=raw_faces.get(idx)
+                    )
+                    if matched_name and matched_name.lower() != "unknown" and matched_name not in known_names:
+                        known_names.append(matched_name)
+            except Exception as exc:
+                logger.debug("ask context face hint extraction skipped: %s", exc)
+
+        parts: List[str] = []
+        if known_names:
+            parts.append(f"Tanınan yüzler: {', '.join(known_names)}")
+        elif face_count > 0:
+            parts.append(f"Algılanan yüz sayısı: {face_count} (yerel veritabanında kayıtlı eşleşme yok)")
+        if objects:
+            parts.append(f"Görünen nesneler: {', '.join(objects[:6])}")
+        return "; ".join(parts)
+
     def _estimate_face_distance_m(self, box_h: int) -> Optional[float]:
         if box_h <= 0:
             return None

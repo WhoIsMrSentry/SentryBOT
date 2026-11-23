@@ -209,13 +209,13 @@ def get_perception_tool_definitions() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "ask_vlm_about_scene",
-                "description": "Ask the vision-language model a specific question about the current camera view. Use for detailed analysis.",
+                "description": "Ask the vision-language model a specific question about the current camera view (or visible screen/objects/people in front of the camera). Use for detailed scene or person identification before web search.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "question": {
                             "type": "string",
-                            "description": "Clear, concise question about what is visible in the scene",
+                            "description": "Clear, concise question about what is visible in the scene or on camera",
                         }
                     },
                     "required": ["question"],
@@ -259,7 +259,7 @@ def get_perception_tool_definitions() -> List[Dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "read_text_ocr",
-                "description": "Read printed or handwritten text visible in the camera view using OCR.",
+                "description": "Read printed, handwritten, or on-screen text (names, titles, signs, labels) visible in the camera view using OCR or VLM fallback.",
                 "parameters": {"type": "object", "properties": {}, "required": []},
             },
         },

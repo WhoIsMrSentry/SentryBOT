@@ -18,28 +18,42 @@ def get_analysis_router(processor: Any, base_url: str) -> APIRouter:
             return {"ok": False, "answer": "Kamera görüntüsü şu an kullanılamıyor.", "reason": "camera_unavailable"}
 
         frame = None
-        with processor._frame_lock:
-            if processor._latest_raw_frame is not None:
-                frame = processor._latest_raw_frame.copy()
+        if hasattr(processor, "_grab_frame"):
+            frame = processor._grab_frame()
+        else:
+            with processor._frame_lock:
+                if processor._latest_raw_frame is not None:
+                    frame = processor._latest_raw_frame.copy()
 
-        if frame is None and not processor._is_http_camera_source():
-            try:
-                import cv2
-                cap = cv2.VideoCapture(processor.camera_source)
-                if cap.isOpened():
-                    ret, frame = cap.read()
-                    cap.release()
-                    if not ret:
-                        frame = None
-            except Exception:
-                pass
+            if frame is None and not processor._is_http_camera_source():
+                try:
+                    import cv2
+
+                    cap = cv2.VideoCapture(processor.camera_source)
+                    if cap.isOpened():
+                        ret, frame = cap.read()
+                        cap.release()
+                        if not ret:
+                            frame = None
+                except Exception:
+                    pass
 
         if frame is None:
             return {"ok": False, "answer": "Kamera görüntüsü alınamadı.", "reason": "no_frame"}
 
         if processor.vlm_client:
             try:
-                answer = processor.vlm_client.ask_about_scene(frame, question, force=True)
+                hints_fn = getattr(processor, "collect_ask_context_hints", None)
+                context_hints = hints_fn(frame) if callable(hints_fn) else ""
+                try:
+                    answer = processor.vlm_client.ask_about_scene(
+                        frame,
+                        question,
+                        force=True,
+                        context_hints=context_hints,
+                    )
+                except TypeError:
+                    answer = processor.vlm_client.ask_about_scene(frame, question, force=True)
                 if answer:
                     gate = getattr(processor, "vision_request_gate", None)
                     if gate is not None:
@@ -47,7 +61,13 @@ def get_analysis_router(processor: Any, base_url: str) -> APIRouter:
                             gate.record_manual_event("user_question", ok=True)
                         except Exception:
                             pass
-                    return {"ok": True, "answer": answer, "source": "direct_vlm", "duplicate_refresh": False}
+                    return {
+                        "ok": True,
+                        "answer": answer,
+                        "source": "direct_vlm",
+                        "duplicate_refresh": False,
+                        "hints_used": bool(context_hints),
+                    }
             except Exception:
                 pass
 
