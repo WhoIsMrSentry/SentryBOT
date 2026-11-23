@@ -488,6 +488,13 @@ def _wire_wakeword_interactions(started: Dict[str, object]) -> None:
             if started.get("agent_core") is not None:
                 actions._agent_service = started.get("agent_core")
         logger.info("wakeword wired to speech/speak/agent/interactions engines (in-process 0ms barge-in)")
+    speak = started.get("speak")
+    if speak is not None and hasattr(wakeword, "attach_speak_service"):
+        try:
+            wakeword.attach_speak_service(speak)
+            logger.info("wakeword echo gate linked to speak playback state")
+        except Exception as exc:
+            logger.debug("wakeword-speak echo bridge skipped: %s", exc)
     if autostart and hasattr(wakeword, "start_background"):
         try:
             wakeword.start_background()
