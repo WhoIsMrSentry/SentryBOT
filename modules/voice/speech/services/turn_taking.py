@@ -87,6 +87,19 @@ class DynamicTurnTakingEngine:
         ):
             effective_eot = max(0.35, self.end_of_turn_silence_s * 0.75)
 
+        # Kısa anlık gürültü (min_speech_duration_s altında) sonrası uzun sessizlikte tamponu sıfırla
+        if (
+            speech_duration < self.min_speech_duration_s
+            and silence_duration >= max(1.0, self.end_of_turn_silence_s * 1.4)
+        ):
+            self.start_listening(current_time_s=now)
+            return {
+                "state": self.state.value,
+                "turn_completed": False,
+                "aborted_noise": True,
+                "suggested_cue": None,
+            }
+
         # Kullanıcı yeterli süre konuştu ve ardından doğal konuşma sonu sessizliği oluştu
         if speech_duration >= self.min_speech_duration_s and silence_duration >= effective_eot:
             self.state = TurnState.USER_DONE
