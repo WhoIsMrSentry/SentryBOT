@@ -205,11 +205,11 @@ def get_hardware_tool_definitions() -> List[Dict[str, Any]]:
                     "properties": {
                         "top": {
                             "type": "string",
-                            "description": "Text for the top line (max 16 chars).",
+                            "description": "Text for the top line (max 20 chars).",
                         },
                         "bottom": {
                             "type": "string",
-                            "description": "Text for the bottom line (max 16 chars).",
+                            "description": "Text for the bottom line (max 20 chars).",
                         },
                     },
                     "required": ["top", "bottom"],
