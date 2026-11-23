@@ -27,7 +27,7 @@ _TR_STOPWORDS = frozenset({
     "teşekkür", "tesekkur", "teşekkürler", "tesekkurler", "sağol", "sagol", "özür", "ozur", "lütfen", "lutfen",
     "biraz", "şimdi", "simdi", "hemen", "sonra", "önce", "once", "bugün", "bugun", "yarın", "yarin",
     "saat", "hava", "durumu", "haber", "haberler", "gün", "gun", "akşam", "aksam", "sabah", "gece",
-    "adım", "adim", "ismim", "ismin", "robot", "robotum", "yoldaş", "yoldas", "emir",
+    "adım", "adim", "ismim", "ismin", "robotum", "yoldaş", "yoldas",
     "merak", "mutlu", "mutluyum", "sinirli", "sinirlen", "sinirliyim", "kızgın", "kizgin", "korkuyorum",
     "üzgün", "uzgun", "üzgünüm", "uzgunum", "sakin", "sakinleş", "şaşır", "sıkıl",
     "güzel", "guzel", "kötü", "kotu", "harika", "süper", "super", "günaydın", "gunaydin",
@@ -51,6 +51,11 @@ _EN_STOPWORDS = frozenset({
     "hello", "hi", "thanks", "thank", "sorry", "about", "tell", "know", "think",
     "introduce", "yourself", "assist", "help", "name", "weather", "today", "check",
     "time", "explain", "search",
+    "i'm", "i've", "i'll", "i'd", "you're", "you've", "you'll", "you'd",
+    "he's", "she's", "it's", "we're", "we've", "we'll", "they're", "they've", "they'll",
+    "that's", "what's", "who's", "there's", "here's",
+    "don't", "doesn't", "didn't", "can't", "couldn't", "won't", "wouldn't", "shouldn't",
+    "isn't", "aren't", "wasn't", "weren't", "haven't", "hasn't", "hadn't",
 })
 # Single-letter or cross-language interjection tokens that must NOT tip short ambiguous STT snippets to EN
 _WEAK_EN_TOKENS = frozenset({"a", "i", "oh", "ah", "um", "uh", "ok", "okay", "hey"})
