@@ -40,7 +40,7 @@ llm:
   clm_fallback_model: nemotron-3.5-bolt:e4b
   fallback_on_missing_model: false
   fallback_on_error: false
-  think: false
+  think: true
   keep_alive: -1
 models:
   roles:
@@ -76,7 +76,7 @@ tri_layer:
     max_steps: 2
   persona:
     num_predict: 4096
-    stream: false
+    stream: true
     system_prompt: ""
 safety:
   max_servo_angle: 180

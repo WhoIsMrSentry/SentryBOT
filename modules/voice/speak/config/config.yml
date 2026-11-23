@@ -50,5 +50,18 @@ liveliness:
   enabled: true
   expression_base_url: '@gateway/expression'
   event_timeout_s: 0.35
+lcd_sync:
+  enabled: true
+  cols: 20
+  rows: 4
+  overlay: true
+  restore_on_finish: true
+  restore_delay_s: 0.35
+  min_page_sec: 0.75
+  gateway_base_url: '@gateway'
+  arduino_path: /arduino/send
+  timeout_s: 0.25
+  fail_cooldown_s: 10.0
+  header: ''
 naturalness:
   enabled: false

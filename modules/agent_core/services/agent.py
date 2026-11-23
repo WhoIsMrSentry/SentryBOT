@@ -114,7 +114,7 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                             "num_ctx": int(getattr(self, "num_ctx", 8192) or 8192),
                             "temperature": 0.0,
                         },
-                        think=False,
+                        think=getattr(self, "ollama_think", True),
                         keep_alive=getattr(self, "ollama_keep_alive", -1),
                     )
                     self._ollama_probe_ok_until = time.monotonic() + 60.0

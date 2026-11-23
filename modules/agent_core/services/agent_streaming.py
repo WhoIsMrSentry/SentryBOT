@@ -154,15 +154,20 @@ class AgentStreamingMixin:
 
         runtime_model = self._pick_runtime_model(model)
         full_text: List[str] = []
+        thinking_parts: List[str] = []
         collected_tool_calls: List[Dict[str, Any]] = []
         buffer: str = ""
         first_token_ts: Optional[float] = None
         t0 = time.time()
         sentence_idx = 0
         is_first_chunk = True
+        emitted_any = False
+        done_reason = ""
+        eval_count = 0
 
         def _emit(s: str) -> None:
-            nonlocal sentence_idx, is_first_chunk
+            nonlocal sentence_idx, is_first_chunk, emitted_any
+            emitted_any = True
             try:
                 sig = inspect.signature(on_sentence)
                 if len(sig.parameters) >= 2:
@@ -203,13 +208,28 @@ class AgentStreamingMixin:
             for chunk in stream:
                 if first_token_ts is None:
                     first_token_ts = time.time()
+                chunk_done_reason = (
+                    chunk.get("done_reason") if isinstance(chunk, dict) else getattr(chunk, "done_reason", None)
+                )
+                if chunk_done_reason:
+                    done_reason = str(chunk_done_reason)
+                chunk_eval = chunk.get("eval_count") if isinstance(chunk, dict) else getattr(chunk, "eval_count", None)
+                if chunk_eval is not None:
+                    try:
+                        eval_count = max(eval_count, int(chunk_eval))
+                    except (TypeError, ValueError):
+                        pass
                 msg_chunk = chunk.get("message", {}) if isinstance(chunk, dict) else {}
                 if not msg_chunk and hasattr(chunk, "message"):
                     raw_msg = getattr(chunk, "message")
                     msg_chunk = raw_msg if isinstance(raw_msg, dict) else {
                         "content": getattr(raw_msg, "content", ""),
+                        "thinking": getattr(raw_msg, "thinking", ""),
                         "tool_calls": getattr(raw_msg, "tool_calls", None),
                     }
+                chunk_thinking = msg_chunk.get("thinking", "")
+                if chunk_thinking:
+                    thinking_parts.append(str(chunk_thinking))
                 chunk_calls = msg_chunk.get("tool_calls") or []
                 if chunk_calls:
                     collected_tool_calls.extend(chunk_calls)
@@ -217,7 +237,7 @@ class AgentStreamingMixin:
                 if not content:
                     continue
                 full_text.append(content)
-                if not collected_tool_calls:
+                if not collected_tool_calls or emitted_any:
                     buffer += content
                     allow_clause = not bool(getattr(self, "_active_bridge_translation", False))
                     sentences, buffer = self._extract_ready_sentences(
@@ -228,7 +248,7 @@ class AgentStreamingMixin:
                     for sentence in sentences:
                         _emit(sentence)
 
-            if not collected_tool_calls:
+            if not collected_tool_calls or emitted_any:
                 rem = buffer.strip()
                 if rem:
                     _emit(rem)
@@ -238,15 +258,22 @@ class AgentStreamingMixin:
                 "role": "assistant",
                 "content": final_content,
             }
+            if thinking_parts:
+                msg_out["thinking"] = "".join(thinking_parts)
             if collected_tool_calls:
                 msg_out["tool_calls"] = collected_tool_calls
-            return {
+            out: Dict[str, Any] = {
                 "message": msg_out,
                 "latency": {
                     "ttft_ms": int((first_token_ts - t0) * 1000) if first_token_ts else 0,
                     "total_ms": int((time.time() - t0) * 1000),
                 },
             }
+            if done_reason:
+                out["done_reason"] = done_reason
+            if eval_count > 0:
+                out["eval_count"] = eval_count
+            return out
         except Exception as exc:
             is_transport = getattr(self, "_is_provider_transport_error", None)
             if first_token_ts is None and callable(is_transport) and is_transport(exc):

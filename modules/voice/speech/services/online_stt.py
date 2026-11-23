@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,7 +13,20 @@ except ImportError:
 
 logger = logging.getLogger("speech.online_stt")
 
-_recognizer = sr.Recognizer() if sr is not None else None
+_DEFAULT_OPERATION_TIMEOUT_S = 6.0
+_DEFAULT_MULTILANG_TIMEOUT_S = 7.5
+
+
+def _ensure_recognizer_timeout(recognizer: Any, timeout_s: float = _DEFAULT_OPERATION_TIMEOUT_S) -> Any:
+    if recognizer is not None and getattr(recognizer, "operation_timeout", None) is None:
+        try:
+            recognizer.operation_timeout = float(timeout_s)
+        except Exception:
+            pass
+    return recognizer
+
+
+_recognizer = _ensure_recognizer_timeout(sr.Recognizer() if sr is not None else None)
 
 # Map standard 2-letter codes to full BCP-47 language tags for Google STT
 _LANG_TAG_MAP = {
@@ -44,13 +57,14 @@ def transcribe_single_language(
     """Transcribe single audio data for a given language tag."""
     if _recognizer is None:
         return "", lang_tag
+    _ensure_recognizer_timeout(_recognizer)
     try:
         text = _recognizer.recognize_google(audio_data, language=lang_tag)
         return str(text or "").strip(), lang_tag
     except getattr(sr, "UnknownValueError", Exception):
         return "", lang_tag
-    except getattr(sr, "RequestError", Exception) as e:
-        logger.warning("Google STT network error for %s: %s", lang_tag, e)
+    except (getattr(sr, "RequestError", Exception), TimeoutError) as e:
+        logger.warning("Google STT network/timeout error for %s: %s", lang_tag, e)
         return "", lang_tag
     except Exception as exc:
         logger.debug("Google STT error for %s: %s", lang_tag, exc)
@@ -62,6 +76,7 @@ def transcribe_google_multilang(
     samplerate: int = 16000,
     languages: Optional[List[str]] = None,
     default_lang: str = "tr",
+    timeout_s: float = _DEFAULT_MULTILANG_TIMEOUT_S,
 ) -> Tuple[str, str]:
     """Transcribe PCM audio across multiple candidate languages and pick the best transcript and detected language.
 
@@ -87,13 +102,15 @@ def transcribe_google_multilang(
 
     audio_data = sr.AudioData(pcm_bytes, sample_rate=samplerate, sample_width=2)
     candidates: Dict[str, str] = {}
+    overall_timeout = max(0.05, float(timeout_s))
 
-    with ThreadPoolExecutor(max_workers=min(4, len(tags_to_query))) as executor:
-        futures = {
-            executor.submit(transcribe_single_language, audio_data, tag): tag
-            for tag in tags_to_query
-        }
-        for fut in as_completed(futures):
+    executor = ThreadPoolExecutor(max_workers=min(4, len(tags_to_query)))
+    futures = {
+        executor.submit(transcribe_single_language, audio_data, tag): tag
+        for tag in tags_to_query
+    }
+    try:
+        for fut in as_completed(futures, timeout=overall_timeout):
             try:
                 text, tag = fut.result()
                 if text:
@@ -101,6 +118,14 @@ def transcribe_google_multilang(
                     candidates[short_code] = text
             except Exception as e:
                 logger.debug("Multi-lang STT worker failed: %s", e)
+    except (FuturesTimeoutError, TimeoutError):
+        logger.warning(
+            "Google STT timed out after %.1fs; releasing listener with %d partial candidate(s).",
+            overall_timeout,
+            len(candidates),
+        )
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
     if not candidates:
         return "", default_lang

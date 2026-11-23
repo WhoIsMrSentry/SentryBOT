@@ -152,11 +152,21 @@ def _validate_cute(payload: Dict[str, Any]) -> Optional[str]:
 
 
 def _validate_lcd(payload: Dict[str, Any]) -> Optional[str]:
-    has_msg = any(isinstance(payload.get(k), str) and payload.get(k).strip() for k in ("msg", "top", "bottom"))
-    if not has_msg:
-        return "lcd requires non-empty 'msg' or 'top'/'bottom'"
+    if "overlay" in payload and not _is_bool(payload.get("overlay")):
+        return "lcd 'overlay' must be boolean"
+    if "restore" in payload and not _is_bool(payload.get("restore")):
+        return "lcd 'restore' must be boolean"
     if "id" in payload and _as_int(payload.get("id")) is None:
         return "lcd 'id' must be integer"
+    text_keys = ("msg", "top", "bottom", "l1", "l2", "l3", "l4")
+    for k in text_keys:
+        if k in payload and payload.get(k) is not None and not isinstance(payload.get(k), str):
+            return f"lcd '{k}' must be string"
+    if payload.get("restore") is True:
+        return None
+    has_msg = any(isinstance(payload.get(k), str) and payload.get(k).strip() for k in text_keys)
+    if not has_msg:
+        return "lcd requires non-empty 'msg', 'top'/'bottom', or 'l1'..'l4'"
     return None
 
 

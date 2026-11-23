@@ -31,6 +31,7 @@ def _sentrybot_normalize_agent_turn_model(model) -> str:
 
 import json
 import logging
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -40,6 +41,25 @@ from modules.common.latency_trace import latency_trace
 from modules.common.ollama_compat import call_ollama_chat
 
 logger = logging.getLogger("agent.orchestrator")
+
+_GEMMA_RAW_TOOL_CALL_RE = re.compile(r"^\s*[a-z_][a-z0-9_]*\{[^{}]*\}\s*$", re.IGNORECASE | re.DOTALL)
+
+
+def _extract_usable_reply(text: Any) -> str:
+    """Return non-empty spoken text after removing leaked control tags or raw tool calls."""
+    raw = str(text or "").strip()
+    if not raw or _GEMMA_RAW_TOOL_CALL_RE.match(raw):
+        return ""
+    try:
+        from modules.ai_provider.services.tags import strip_speech_control_artifacts
+
+        cleaned = strip_speech_control_artifacts(raw)
+    except Exception:
+        cleaned = raw
+    cleaned = cleaned.strip()
+    if not cleaned or _GEMMA_RAW_TOOL_CALL_RE.match(cleaned):
+        return ""
+    return cleaned
 
 
 class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
@@ -261,6 +281,9 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
         executed = actions_out if actions_out is not None else []
         step_count = 0
         final_content = ""
+        last_nonempty_content = ""
+        last_res_dict: Dict[str, Any] = {}
+        last_msg: Dict[str, Any] = {}
         recovery_handler = None
         if hasattr(self, "_native_tool_recovery_factory"):
             try:
@@ -273,11 +296,24 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
             self.tool_registry.get_tool_names() if hasattr(self.tool_registry, "get_tool_names") else []
         )
 
+        streamed_sentence_count = 0
+
+        def _make_step_on_sentence() -> Optional[Callable[[str, int], None]]:
+            if on_sentence is None or streamed_sentence_count > 0:
+                return None
+            if hasattr(self, "_actions_handled_speech") and self._actions_handled_speech(executed):
+                return None
+
+            def _tracked(sentence: str, idx: int) -> None:
+                nonlocal streamed_sentence_count
+                streamed_sentence_count += 1
+                on_sentence(sentence, idx)
+
+            return _tracked
+
         while step_count < max_steps:
             step_count += 1
-            step_on_sentence = None if (
-                hasattr(self, "_actions_handled_speech") and self._actions_handled_speech(executed)
-            ) else on_sentence
+            step_on_sentence = _make_step_on_sentence()
             res = self._chat_maybe_stream(
                 active_model,
                 messages,
@@ -289,7 +325,11 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
             msg = _as_dict(res_dict.get("message", {}))
             if not msg and hasattr(res, "message"):
                 msg = _as_dict(getattr(res, "message"))
+            last_res_dict = res_dict
+            last_msg = msg
             content = str(msg.get("content", "") or "")
+            if _extract_usable_reply(content):
+                last_nonempty_content = content
             tool_calls = _normalize_tool_calls(msg.get("tool_calls", []))
 
             assistant_msg: Dict[str, Any] = {"role": "assistant", "content": content}
@@ -298,7 +338,7 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
             messages.append(assistant_msg)
 
             if not tool_calls:
-                final_content = content
+                final_content = content if _extract_usable_reply(content) else last_nonempty_content
                 break
 
             stop_loop = False
@@ -349,8 +389,46 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
             if stop_loop:
                 # Do not issue another LLM turn after progress/abort stop.
                 if not final_content:
-                    final_content = content or "İşlemi güvenli şekilde durdurdum."
+                    final_content = (
+                        content
+                        if _extract_usable_reply(content)
+                        else (last_nonempty_content or "İşlemi güvenli şekilde durdurdum.")
+                    )
                 break
+
+        if not _extract_usable_reply(final_content) and last_nonempty_content:
+            final_content = last_nonempty_content
+
+        speech_done = hasattr(self, "_actions_handled_speech") and self._actions_handled_speech(executed)
+        model_produced_empty = (
+            bool(executed)
+            or bool(last_res_dict.get("eval_count"))
+            or bool(str(last_res_dict.get("done_reason") or "").strip())
+            or bool(str(last_msg.get("thinking") or "").strip())
+        )
+        if not _extract_usable_reply(final_content) and not speech_done and model_produced_empty:
+            recovery_options = dict(options)
+            recovery_options["num_predict"] = max(int(options.get("num_predict") or 0), 512)
+            recovery_messages = list(messages) + [
+                {
+                    "role": "user",
+                    "content": "Reply directly to the user in plain natural text now. Do not output tool calls.",
+                }
+            ]
+            rec_res = self._chat_maybe_stream(
+                active_model,
+                recovery_messages,
+                None,
+                recovery_options,
+                on_sentence=_make_step_on_sentence(),
+            )
+            rec_dict = _as_dict(rec_res)
+            rec_msg = _as_dict(rec_dict.get("message", {}))
+            if not rec_msg and hasattr(rec_res, "message"):
+                rec_msg = _as_dict(getattr(rec_res, "message"))
+            rec_content = str(rec_msg.get("content", "") or "")
+            if _extract_usable_reply(rec_content):
+                final_content = rec_content
 
         return final_content, step_count
 

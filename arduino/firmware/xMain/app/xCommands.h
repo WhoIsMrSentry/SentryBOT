@@ -225,7 +225,32 @@ static inline void handleJson(const String &line){
 
   if (cmd == F("lcd")){
 #if LCD_ENABLED
+    bool overlay = Protocol::parseJsonBoolAfter(line, F("\"overlay\":"), false);
+    if (overlay && g_lcdStatus.isPinned()){
+      Protocol::sendOk(F("lcd_skipped_pinned"));
+      return;
+    }
+    bool restore = Protocol::parseJsonBoolAfter(line, F("\"restore\":"), false);
+    if (restore){
+      if (!g_lcdStatus.isPinned()){
+        g_lcdStatus.invalidate();
+#if VIRTUAL_MENU_ENABLED
+        g_irMenu.showHome();
+#endif
+      }
+      Protocol::sendOk(F("lcd_restored"));
+      return;
+    }
     uint8_t tgt = lcdTargetMaskFromLine(line);
+    String l1 = Protocol::parseJsonStringAfter(line, F("\"l1\":"));
+    String l2 = Protocol::parseJsonStringAfter(line, F("\"l2\":"));
+    String l3 = Protocol::parseJsonStringAfter(line, F("\"l3\":"));
+    String l4 = Protocol::parseJsonStringAfter(line, F("\"l4\":"));
+    if (l1.length() > 0 || l2.length() > 0 || l3.length() > 0 || l4.length() > 0){
+      g_lcdStatus.show4To(tgt, l1, l2, l3, l4, true);
+      Protocol::sendOk(F("lcd_ok"));
+      return;
+    }
     String top = Protocol::parseJsonStringAfter(line, F("\"top\":"));
     String bottom = Protocol::parseJsonStringAfter(line, F("\"bottom\":"));
     if (top.length() == 0){
