@@ -68,6 +68,8 @@ class Recognizer:
             dual_decode_languages=lang_tuple,
         )
         self._sr_recognizer = sr.Recognizer() if sr is not None else None
+        if self._sr_recognizer is not None and getattr(self._sr_recognizer, "operation_timeout", None) is None:
+            self._sr_recognizer.operation_timeout = 6.0
         self._on_turn_cue = on_turn_cue
         self._should_suppress_speech_fn = should_suppress_speech_fn
         self._reset_event = threading.Event()
@@ -228,7 +230,7 @@ class Recognizer:
                     else:
                         logger.debug("Speech recognition returned empty text")
                 except Exception as exc:
-                    logger.debug("recognize_pcm error: %s", exc)
+                    logger.warning("recognize_pcm error: %s", exc)
 
         if has_spoken and len(buffer) >= min_bytes:
             try:
