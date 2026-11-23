@@ -103,9 +103,14 @@ _CAMERA_DIRECT_PATTERNS: Tuple[str, ...] = (
 
 _CAMERA_SOFT_PATTERNS: Tuple[str, ...] = (
     r"\bne\s+(?:görüyorsun|görüyor|bakıyorsun)\b",
-    r"\betafa\s+bak\b",
+    r"\bet(?:afa|rafa)\s+bak\b",
     r"\b(?:yüz(?:ler)?|faces?|nesneler?)\s+(?:var\s+|gör|ara|tanı)\b",
-    r"\bwhat\s+do\s+you\s+see\b",
+    r"\bwhat(?:'s|\s+is|\s+do\s+you)\s+(?:see|on\s+(?:the\s+)?(?:screen|camera))\b",
+    r"\bwho\s+is\s+(?:that|this|on\s+(?:the\s+)?camera)\b",
+    r"\bkamera(?:daki|da|ya)?\s+(?:kişi|kim|ne)\b",
+    r"\bekranda\s+(?:ne|kim|hangi\s+yazı)\b",
+    r"\b(?:bu|şu|karşındaki|oradaki)\s+(?:kişi\s+)?kim\b",
+    r"\bkişi\s+kim\b",
     r"\bkamera\s+(?:görüntüsü|bakış)\b",
 )
 
@@ -444,6 +449,7 @@ def classify(
             urgency=urgency,
             urgency_confidence=0.70,
             t0=t0,
+            suggested_tool="ask_vlm_about_scene",
         )
 
     if _search(cleaned, _SPEAK_SOFT_RE):

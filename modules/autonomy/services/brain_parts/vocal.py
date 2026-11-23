@@ -249,7 +249,14 @@ class VocalMixin(VocalProsodyMixin):
                             trace_id=request_id,
                             **extra_kw,
                         )
-                return True
+                    return True
+                if agent_result.get("speech_handled"):
+                    return True
+                logger.warning(
+                    "Agent Core returned actions without spoken reply (%d actions); falling back to direct LLM.",
+                    len(agent_result.get("actions") or []),
+                )
+                return False
         except Exception as exc:
             logger.warning("Agent Core step failed, falling back to direct LLM: %s", exc)
         return False

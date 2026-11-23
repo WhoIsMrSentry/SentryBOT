@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from modules.common.bind_host import apply_bind_host
 from modules.common.latency_trace import latency_trace
 from modules.voice.speak.config_loader import load_config
+from modules.voice.speak.services.lcd_sync import SpeechLcdSync
 from modules.voice.speak.services.player import AudioPlayer
 from modules.voice.speak.services.speech_queue import SpeechPriorityQueue
 from modules.voice.speak.services.tts import TextToSpeech, TTSUnavailableError
@@ -71,6 +72,10 @@ class SpeakService:
         self.tts = TextToSpeech(self.cfg.get("tts", {}))
         self.player = AudioPlayer(self.cfg.get("audio_out", {}))
         self._liveliness_cfg = self.cfg.get("liveliness", {}) or {}
+        self.lcd_sync = SpeechLcdSync(
+            self.cfg.get("lcd_sync", {}) if isinstance(self.cfg.get("lcd_sync"), dict) else {},
+            full_cfg=self.cfg,
+        )
         # R21: separate serialization for synthesis (model access) vs playback
         # (single speaker). _speech_lock kept as alias for compatibility.
         self._synth_lock = threading.RLock()
@@ -130,6 +135,9 @@ class SpeakService:
         except Exception:
             pass
         self.player.stop_playback()
+        lcd_sync = getattr(self, "lcd_sync", None)
+        if lcd_sync is not None:
+            lcd_sync.end_utterance(interrupted=True)
         self._notify_playback_listeners(False, 0.0)
 
     def set_stream_max_chunk_chars(self, value: int) -> Dict[str, Any]:
@@ -237,6 +245,20 @@ class SpeakService:
         self._expression_event("speak.finished", {"interrupted": True})
         return {"ok": True, "stopped": True}
 
+    @staticmethod
+    def _estimate_pcm_duration_sec(pcm: Any, player: Any) -> float:
+        data = getattr(pcm, "data", None)
+        if data is None:
+            return 0.0
+        try:
+            n_frames = len(data)
+        except Exception:
+            return 0.0
+        player_cfg = getattr(player, "cfg", None)
+        fallback_sr = getattr(player_cfg, "samplerate", 22050) if player_cfg is not None else 22050
+        sr = int(getattr(pcm, "samplerate", 0) or fallback_sr or 22050)
+        return float(n_frames) / max(1, sr)
+
     def speak(
         self,
         text: str,
@@ -311,20 +333,32 @@ class SpeakService:
                 latency_trace.finish(trace_id, "tts_failed", {"detail": repr(exc)})
                 raise
 
+        expected_dur_sec = self._estimate_pcm_duration_sec(pcm, self.player)
         self._expression_event(
             "speak.started",
-            {"trace_id": trace_id, "tone": tone if isinstance(tone, str) else "", "chars": len(cleaned_text)},
+            {
+                "trace_id": trace_id,
+                "tone": tone if isinstance(tone, str) else "",
+                "chars": len(cleaned_text),
+                "text": cleaned_text,
+                "duration_sec": round(expected_dur_sec, 3),
+            },
         )
         latency_trace.mark(trace_id, "audio.play_start")
         self._notify_playback_listeners(True, 1200.0)
+        lcd_sync = getattr(self, "lcd_sync", None)
+        lcd_token = lcd_sync.begin_utterance(cleaned_text, expected_dur_sec) if lcd_sync is not None else None
         try:
             with self._play_lock:
                 duration_sec = self.player.play_blocking(pcm)
         finally:
+            interrupted = bool(getattr(self.player, "is_stopped", False))
+            if lcd_sync is not None:
+                lcd_sync.end_utterance(lcd_token, interrupted=interrupted)
             self._is_speaking = False
             self._notify_playback_listeners(False, 0.0)
             latency_trace.mark(trace_id, "audio.play_done")
-            self._expression_event("speak.finished", {"trace_id": trace_id})
+            self._expression_event("speak.finished", {"trace_id": trace_id, "interrupted": interrupted})
 
         latency_trace.finish(trace_id, "done", {"duration_sec": duration_sec})
         snapshot = latency_trace.get(trace_id) or {}

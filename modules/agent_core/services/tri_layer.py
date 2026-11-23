@@ -128,9 +128,16 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
         "camera": SubAgentProfile(
             module="camera",
             role="Camera specialist",
-            goal="Interpret visual context from camera outputs.",
-            allowed_tools=("get_vision", "get_sensor_data"),
-            keywords=("camera", "see", "look", "object", "person", "vision"),
+            goal="Interpret camera view via VLM/OCR, identify visible people or screens, and research entities online when needed.",
+            allowed_tools=(
+                "get_vision", "get_visual_context", "describe_scene",
+                "ask_vlm_about_scene", "read_text_ocr",
+                "web_search", "fetch_webpage", "get_sensor_data",
+            ),
+            keywords=(
+                "camera", "see", "look", "object", "person", "vision",
+                "kamera", "ekran", "ekranda", "ocr", "oku", "kim", "kişi", "araştır", "screen",
+            ),
         ),
         "config_center": SubAgentProfile(
             module="config_center",
@@ -250,11 +257,12 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
         "vlm_bridge": SubAgentProfile(
             module="vlm_bridge",
             role="Visual cognition specialist",
-            goal="Understand current visual world, people identity, scene meaning, person memory, and focus target.",
+            goal="Understand current visual world, people identity, scene meaning, OCR text, person memory, and web research.",
             allowed_tools=(
                 "get_vision", "get_visual_context", "describe_scene",
                 "search_memory", "focus_person", "remember_person",
                 "update_person_relationship", "ask_vlm_about_scene",
+                "read_text_ocr", "web_search", "fetch_webpage",
                 "get_sensor_data", "start_owner_follow", "stop_follow",
             ),
             keywords=(
@@ -262,7 +270,8 @@ def build_subagent_profiles(overrides: Dict[str, dict] | None = None) -> Dict[st
                 "görüyorsun", "çevrede", "kim", "beni", "etrafa",
                 "ortam", "sahibi", "yüz", "takip", "geldi", "masada",
                 "tehlike", "bak", "kamera", "sahne", "kişi", "tanı",
-                "see", "look", "person", "face", "scene", "who",
+                "ekran", "ekranda", "ocr", "oku", "yazı", "araştır",
+                "see", "look", "person", "face", "scene", "who", "screen",
             ),
         ),
         "wakeword": SubAgentProfile(

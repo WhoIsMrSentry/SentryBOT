@@ -153,7 +153,7 @@ class AgentContextMixin(AgentMemorySyncMixin, AgentPersonaMixin):
         self.clm_fallback_model = str(llm_cfg.get("clm_fallback_model", agent_cfg.get("clm_fallback_model", ""))).strip()
         self.fallback_on_missing_model = bool(llm_cfg.get("fallback_on_missing_model", True))
         self.fallback_on_error = bool(llm_cfg.get("fallback_on_error", True))
-        self.ollama_think = llm_cfg.get("think", False)
+        self.ollama_think = llm_cfg.get("think", True)
         self.ollama_keep_alive = llm_cfg.get("keep_alive", -1)
         self.request_timeout = self._safe_float(
             agent_cfg.get("request_timeout", agent_cfg.get("ollama_request_timeout", 60.0)), fallback=60.0, minimum=1.0,
@@ -367,7 +367,11 @@ class AgentContextMixin(AgentMemorySyncMixin, AgentPersonaMixin):
         self.persona_system_prompt = str(persona_cfg.get("system_prompt") or "").strip()
         self.persona_num_predict = self._safe_int(persona_cfg.get("num_predict", 160), fallback=160, minimum=10)
         self.persona_stream_enabled = bool(persona_cfg.get("stream_enabled", persona_cfg.get("stream", False)))
-        self.chat_num_predict = self._safe_int(agent_cfg.get("chat_num_predict", 120), fallback=120, minimum=10)
+        self.chat_num_predict = self._safe_int(
+            agent_cfg.get("chat_num_predict", agent_cfg.get("num_predict", 2048)),
+            fallback=2048,
+            minimum=10,
+        )
         if hasattr(self, "_init_persona_runtime"):
             self._init_persona_runtime(config, configured_prompt=self.persona_system_prompt)
             reg = getattr(self, "tool_registry", None)

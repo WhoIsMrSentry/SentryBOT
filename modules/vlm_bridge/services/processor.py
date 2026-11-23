@@ -168,45 +168,80 @@ class VisionProcessor(
     def record_chat(self, person: str, text: str, role: str = "assistant") -> None:
         self.memory.append_chat(person, role, text)
 
+    def _fallback_ocr_via_vlm(self, target_frame: Any, languages: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
+        vlm = getattr(self, "vlm_client", None)
+        if vlm is None:
+            return None
+        try:
+            text: Optional[str] = None
+            if hasattr(vlm, "extract_text_ocr"):
+                text = vlm.extract_text_ocr(target_frame, languages=languages, force=True)
+            elif hasattr(vlm, "ask_about_scene"):
+                text = vlm.ask_about_scene(
+                    target_frame,
+                    "Görüntüdeki veya ekrandaki tüm okunabilir yazıları ve kişi isimlerini aynen yaz.",
+                    force=True,
+                )
+            cleaned = str(text or "").strip()
+            if not cleaned or cleaned.upper() == "YOK":
+                return None
+            lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+            return {
+                "ok": True,
+                "text": cleaned,
+                "full_text": cleaned,
+                "lines": lines,
+                "source": "vlm_ocr_fallback",
+            }
+        except Exception as exc:
+            logger.debug("VLM OCR fallback failed: %s", exc)
+            return None
+
     def run_ocr_remote(self, frame: Optional[Any] = None, languages: Optional[List[str]] = None) -> Dict[str, Any]:
         if not self.mode_categories.get("remote", {}).get("ocr", False) and not self.mode_flags.get("ocr", False):
             return {"ok": False, "error": "ocr_mode_disabled"}
-        if not self.remote_mm_enabled:
-            return {"ok": False, "error": "remote_multimodal_disabled"}
-        endpoint = self.remote_mm_ocr_endpoint
-        if not endpoint:
-            return {"ok": False, "error": "remote_ocr_endpoint_missing"}
 
         target_frame = frame if frame is not None else self._grab_frame()
         if target_frame is None:
             return {"ok": False, "error": "no_frame_available"}
-        image_b64 = self._encode_frame_b64(target_frame, quality=80)
-        if not image_b64:
-            return {"ok": False, "error": "frame_encode_failed"}
 
-        langs = languages or self.remote_mm_ocr_languages
-        payload: Dict[str, Any] = {"image_b64": image_b64}
-        if langs:
-            payload["languages"] = list(langs)
-        headers: Dict[str, str] = {}
-        if self.remote_mm_auth_token:
-            headers["X-Auth-Token"] = self.remote_mm_auth_token
-        try:
-            resp = requests.post(
-                endpoint,
-                json=payload,
-                headers=headers,
-                timeout=self.remote_mm_ocr_timeout_s,
-            )
-        except Exception as exc:
-            return {"ok": False, "error": f"remote_call_failed: {exc}"}
-        if resp.status_code != 200:
-            return {"ok": False, "error": f"remote_http_{resp.status_code}"}
-        try:
-            data = resp.json()
-        except Exception as exc:
-            return {"ok": False, "error": f"remote_json_failed: {exc}"}
-        if not isinstance(data, dict):
-            return {"ok": False, "error": "remote_payload_invalid"}
-        data.setdefault("ok", True)
-        return data
+        endpoint = self.remote_mm_ocr_endpoint if self.remote_mm_enabled else ""
+        last_error = (
+            "remote_ocr_endpoint_missing"
+            if self.remote_mm_enabled and not endpoint
+            else "remote_multimodal_disabled"
+        )
+        if endpoint:
+            image_b64 = self._encode_frame_b64(target_frame, quality=80)
+            if not image_b64:
+                return {"ok": False, "error": "frame_encode_failed"}
+
+            langs = languages or self.remote_mm_ocr_languages
+            payload: Dict[str, Any] = {"image_b64": image_b64}
+            if langs:
+                payload["languages"] = list(langs)
+            headers: Dict[str, str] = {}
+            if self.remote_mm_auth_token:
+                headers["X-Auth-Token"] = self.remote_mm_auth_token
+            try:
+                resp = requests.post(
+                    endpoint,
+                    json=payload,
+                    headers=headers,
+                    timeout=self.remote_mm_ocr_timeout_s,
+                )
+                if resp.status_code != 200:
+                    last_error = f"remote_http_{resp.status_code}"
+                else:
+                    data = resp.json()
+                    if isinstance(data, dict):
+                        data.setdefault("ok", True)
+                        return data
+                    last_error = "remote_payload_invalid"
+            except Exception as exc:
+                last_error = f"remote_call_failed: {exc}"
+
+        vlm_fallback = self._fallback_ocr_via_vlm(target_frame, languages=languages)
+        if vlm_fallback is not None:
+            return vlm_fallback
+        return {"ok": False, "error": last_error}

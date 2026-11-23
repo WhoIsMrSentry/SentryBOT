@@ -232,7 +232,15 @@ def build_lcd_cmd(
     msg: Optional[str] = None,
     top: Optional[str] = None,
     bottom: Optional[str] = None,
+    *,
+    l1: Optional[str] = None,
+    l2: Optional[str] = None,
+    l3: Optional[str] = None,
+    l4: Optional[str] = None,
+    overlay: Optional[bool] = None,
+    restore: Optional[bool] = None,
 ) -> Dict[str, Any]:
+    """Build an Arduino LCD payload supporting legacy 2-line, 20x4 multi-line, overlay, and restore modes."""
     payload: Dict[str, Any] = {"cmd": "lcd"}
     if id_ is not None:
         payload["id"] = int(id_)
@@ -242,4 +250,11 @@ def build_lcd_cmd(
         payload["top"] = str(top)
     if bottom is not None:
         payload["bottom"] = str(bottom)
+    for key, val in (("l1", l1), ("l2", l2), ("l3", l3), ("l4", l4)):
+        if val is not None:
+            payload[key] = str(val)
+    if overlay is not None:
+        payload["overlay"] = bool(overlay)
+    if restore is not None:
+        payload["restore"] = bool(restore)
     return payload

@@ -249,17 +249,47 @@ class OllamaVLMClient:
         frame,
         question: str,
         force: bool = True,
+        *,
+        context_hints: Optional[str] = None,
     ) -> Optional[str]:
         """Ask a specific question about what the camera sees.
 
         Returns natural language answer string.
         """
         prompt = _QUESTION_PROMPT_TR.format(question=question)
+        hints = str(context_hints or "").strip()
+        if hints:
+            prompt = (
+                f"{prompt}\n\n"
+                f"Yerel tanıma ipuçları (görüntüyle uyuşuyorsa kimlik/nesne adlandırmada kullan): {hints}"
+            )
         result = self.analyze_frame(frame, custom_prompt=prompt, force=force)
         if result is None:
             return None
         # For question mode, we expect raw text not JSON
         return result.get("raw_text") or result.get("summary") or str(result)
+
+    def extract_text_ocr(
+        self,
+        frame,
+        *,
+        languages: Optional[list[str]] = None,
+        force: bool = True,
+    ) -> Optional[str]:
+        """Extract visible printed or on-screen text from a frame using Ollama VLM."""
+        lang_hint = f" Odak dilleri: {', '.join(languages)}." if languages else ""
+        prompt = (
+            "Görüntüdeki veya ekrandaki tüm okunabilir yazıları, başlıkları, kişi isimlerini "
+            "ve etiketleri olduğu gibi satır satır çıkar. Yalnızca gördüğün metni yaz; "
+            f"hiç metin yoksa sadece YOK yaz.{lang_hint}"
+        )
+        result = self.analyze_frame(frame, custom_prompt=prompt, force=force)
+        if result is None:
+            return None
+        raw = str(result.get("raw_text") or result.get("summary") or "").strip()
+        if not raw or raw.upper() == "YOK":
+            return None
+        return raw
 
     def is_available(self) -> bool:
         """Quick health check against the remote Ollama server."""
