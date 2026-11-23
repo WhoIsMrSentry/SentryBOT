@@ -25,7 +25,7 @@ llm:
   clm_fallback_model: nemotron-3.5-bolt:e4b
   fallback_on_missing_model: false
   fallback_on_error: false
-  think: false
+  think: true
   keep_alive: -1
 models:
   roles:
@@ -174,7 +174,7 @@ vlm_bridge:
       people: true
       faces: true
       depth: false
-      ocr: false
+      ocr: true
       hazards: true
       semantic_scene: true
     mode_categories:
@@ -317,6 +317,19 @@ speak:
     enabled: true
     expression_base_url: '@gateway/expression'
     event_timeout_s: 0.35
+  lcd_sync:
+    enabled: true
+    cols: 20
+    rows: 4
+    overlay: true
+    restore_on_finish: true
+    restore_delay_s: 0.35
+    min_page_sec: 0.75
+    gateway_base_url: '@gateway'
+    arduino_path: /arduino/send
+    timeout_s: 0.25
+    fail_cooldown_s: 10.0
+    header: ''
   naturalness:
     enabled: false
 # Ortak ses yakalama yolu — AudioRouter tek kanonik acilim (R18).
@@ -507,7 +520,7 @@ tri_layer:
     max_steps: 4
   persona:
     num_predict: 4096
-    stream: false
+    stream: true
 realtime_profile:
   active: fast
   profiles:
