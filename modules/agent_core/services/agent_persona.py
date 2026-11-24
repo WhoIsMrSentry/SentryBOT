@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Dict, List, Optional
 
 from modules.common.model_roles import (
@@ -118,6 +119,16 @@ class AgentPersonaMixin:
 
         derived_model = str(manifest.get("model") or f"{new_pid}:latest").strip()
         base_model = str(manifest.get("base_model") or DEFAULT_UTILITY_MODEL).strip()
+
+        active_tid = getattr(self, "_active_turn_thread_id", None)
+        if active_tid is not None and active_tid != threading.get_ident():
+            self._external_persona_epoch = int(getattr(self, "_external_persona_epoch", 0) or 0) + 1
+            cancel_fn = getattr(self, "cancel_active_turn", None)
+            if callable(cancel_fn):
+                try:
+                    cancel_fn(reason=f"persona_switched:{new_pid}", interrupt_speech=True)
+                except Exception:
+                    pass
 
         self._applying_persona_guard = True
         try:

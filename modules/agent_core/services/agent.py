@@ -49,6 +49,12 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         self._active_progress_token: str = ""
         self.last_routed_subagents: List[str] = []
         self._turn_lock = threading.Lock()
+        self._turn_epoch_lock = threading.RLock()
+        self._active_turn_token: str = ""
+        self._active_turn_cancel: Optional[threading.Event] = None
+        self._active_turn_thread_id: Optional[int] = None
+        self._external_persona_epoch: int = 0
+        self._just_cancelled_until: float = 0.0
         self._ack_tls = threading.local()
         if getattr(self, "_history_lock", None) is None:
             self._history_lock = threading.RLock()
@@ -155,6 +161,50 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         logger.info("AgentOrchestrator subsystems stopped.")
 
 
+    def _ensure_turn_state_lock(self) -> threading.RLock:
+        lock = getattr(self, "_turn_epoch_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._turn_epoch_lock = lock
+        return lock
+
+    def cancel_active_turn(self, reason: str = "", *, interrupt_speech: bool = True) -> bool:
+        """Signal the currently running turn to abort streaming, tool calls, and history writes."""
+        with self._ensure_turn_state_lock():
+            cancel_ev = getattr(self, "_active_turn_cancel", None)
+            had_turn = bool(getattr(self, "_active_turn_token", "") or getattr(self, "is_busy", False))
+            if cancel_ev is not None:
+                cancel_ev.set()
+            self._active_turn_token = ""
+            if had_turn:
+                self._just_cancelled_until = time.monotonic() + 2.0
+        if had_turn:
+            logger.debug("Cancelled active agent turn (reason=%s)", reason or "unspecified")
+        if interrupt_speech:
+            arbiter = getattr(self, "speech_arbiter", None)
+            if arbiter is not None and hasattr(arbiter, "interrupt_all"):
+                try:
+                    arbiter.interrupt_all()
+                except Exception:
+                    pass
+        return had_turn
+
+    def _is_turn_cancelled(
+        self,
+        turn_token: str,
+        cancel_event: Optional[threading.Event],
+        start_persona_epoch: int,
+    ) -> bool:
+        if cancel_event is not None and cancel_event.is_set():
+            return True
+        if getattr(self, "_stopped_once", False):
+            return True
+        if getattr(self, "_active_turn_token", turn_token) != turn_token:
+            return True
+        if int(getattr(self, "_external_persona_epoch", 0) or 0) != start_persona_epoch:
+            return True
+        return False
+
     def _try_enter_turn(self, prompt: str, *, bypass_cooldown: bool = False) -> bool:
         """Enter one agent turn if no other turn is active."""
         if getattr(self, "_turn_lock", None) is None:
@@ -167,15 +217,15 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             self.cooldown = 0.0
         if not prompt:
             return False
-        acquired = (
-            self._turn_lock.acquire(timeout=1.5)
-            if bypass_cooldown
-            else self._turn_lock.acquire(blocking=False)
-        )
+        just_cancelled = time.monotonic() < float(getattr(self, "_just_cancelled_until", 0.0) or 0.0)
+        if bypass_cooldown or just_cancelled:
+            acquired = self._turn_lock.acquire(timeout=1.5)
+        else:
+            acquired = self._turn_lock.acquire(blocking=False)
         if not acquired:
             return False
         now = time.time()
-        if self.is_busy or (not bypass_cooldown and now - self.last_run < self.cooldown):
+        if self.is_busy or (not bypass_cooldown and not just_cancelled and now - self.last_run < self.cooldown):
             self._turn_lock.release()
             return False
         if not bypass_cooldown:
@@ -400,8 +450,9 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         self,
         session_language: str,
         trace_id: str,
-        stream_state: Dict[str, int],
+        stream_state: Dict[str, Any],
         event_type: Optional[str] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Optional[Callable[[str, int], None]]:
         arbiter = getattr(self, "speech_arbiter", None)
         if arbiter is None or getattr(arbiter, "_speak_fn", None) is None:
@@ -419,17 +470,27 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         detected_lang: Dict[str, Optional[str]] = {"value": target_lang if bridge_active else None}
 
         def speak_sentence(sentence: str, index: int) -> None:
+            if callable(cancel_check) and cancel_check():
+                return
             try:
                 from modules.ai_provider.services.tags import strip_speech_control_artifacts
 
                 sentence = strip_speech_control_artifacts(sentence)
             except Exception:
                 sentence = str(sentence or "").strip()
+            if not sentence:
+                return
             if bridge_active and sentence and hasattr(self, "_translate_output_from_llm"):
                 sentence = self._translate_output_from_llm(
                     sentence, session_language, event_type=event_type
                 )
-            if not sentence:
+                try:
+                    from modules.ai_provider.services.tags import strip_speech_control_artifacts
+
+                    sentence = strip_speech_control_artifacts(sentence)
+                except Exception:
+                    sentence = str(sentence or "").strip()
+            if not sentence or (callable(cancel_check) and cancel_check()):
                 return
             if detected_lang["value"] is None:
                 lang = target_lang
@@ -454,6 +515,9 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             )
             if item_id:
                 stream_state["spoken"] += 1
+                chunks = stream_state.setdefault("translated_chunks", [])
+                if isinstance(chunks, list):
+                    chunks.append(sentence)
 
         return speak_sentence
 
@@ -560,6 +624,16 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
         callback = self._build_progress_callback(progress_token, progress_cb)
         self.tool_registry.status_hook = callback
 
+        turn_token = uuid.uuid4().hex
+        cancel_event = threading.Event()
+        start_persona_epoch = int(getattr(self, "_external_persona_epoch", 0) or 0)
+        with self._ensure_turn_state_lock():
+            self._active_turn_token = turn_token
+            self._active_turn_cancel = cancel_event
+            self._active_turn_thread_id = threading.get_ident()
+            self._just_cancelled_until = 0.0
+        cancel_check = lambda: self._is_turn_cancelled(turn_token, cancel_event, start_persona_epoch)
+
         try:
             self._active_event_type = event_type
             self._active_response_language = (
@@ -600,9 +674,9 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     except Exception:
                         pass
 
-            stream_state = {"spoken": 0}
+            stream_state: Dict[str, Any] = {"spoken": 0, "translated_chunks": []}
             on_sentence = self._make_sentence_callback(
-                session_language, trace_id, stream_state, event_type=event_type
+                session_language, trace_id, stream_state, event_type=event_type, cancel_check=cancel_check
             )
             executed_actions: List[Dict[str, Any]] = []
 
@@ -655,16 +729,29 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
 
             use_tri_layer = bool(getattr(self, "tri_layer_enabled", False)) and not bool(native_tools) and not is_short_fast
             if use_tri_layer:
-                final_text, total_steps, subagent_reports = self._run_tri_layer(
-                    prompt,
-                    world_context,
-                    survival_override,
-                    active_model,
-                    session_language,
-                    progress_token,
-                    callback,
-                    on_sentence=on_sentence,
-                )
+                try:
+                    final_text, total_steps, subagent_reports = self._run_tri_layer(
+                        prompt,
+                        world_context,
+                        survival_override,
+                        active_model,
+                        session_language,
+                        progress_token,
+                        callback,
+                        on_sentence=on_sentence,
+                        cancel_check=cancel_check,
+                    )
+                except TypeError:
+                    final_text, total_steps, subagent_reports = self._run_tri_layer(
+                        prompt,
+                        world_context,
+                        survival_override,
+                        active_model,
+                        session_language,
+                        progress_token,
+                        callback,
+                        on_sentence=on_sentence,
+                    )
                 executed_actions = self._summarize_actions(subagent_reports)
             else:
                 try:
@@ -675,21 +762,66 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
                     )
                 except TypeError:
                     messages = self._native_loop_messages(session_language)
-                final_text, total_steps = self._run_native_history_loop(
-                    active_model,
-                    messages,
-                    actions_out=executed_actions,
-                    num_predict=getattr(self, "fast_path_num_predict", None) if is_short_fast else None,
-                    on_sentence=on_sentence,
-                    max_steps=(
-                        getattr(self, "fast_path_max_steps", 2)
-                        if is_short_fast
-                        else getattr(self, "max_steps", 4)
-                    ),
-                    trace_id=trace_id,
-                )
+                try:
+                    final_text, total_steps = self._run_native_history_loop(
+                        active_model,
+                        messages,
+                        actions_out=executed_actions,
+                        num_predict=getattr(self, "fast_path_num_predict", None) if is_short_fast else None,
+                        on_sentence=on_sentence,
+                        max_steps=(
+                            getattr(self, "fast_path_max_steps", 2)
+                            if is_short_fast
+                            else getattr(self, "max_steps", 4)
+                        ),
+                        trace_id=trace_id,
+                        cancel_check=cancel_check,
+                    )
+                except TypeError:
+                    final_text, total_steps = self._run_native_history_loop(
+                        active_model,
+                        messages,
+                        actions_out=executed_actions,
+                        num_predict=getattr(self, "fast_path_num_predict", None) if is_short_fast else None,
+                        on_sentence=on_sentence,
+                        max_steps=(
+                            getattr(self, "fast_path_max_steps", 2)
+                            if is_short_fast
+                            else getattr(self, "max_steps", 4)
+                        ),
+                        trace_id=trace_id,
+                    )
 
-            if final_text:
+            if cancel_check():
+                if int(getattr(self, "_external_persona_epoch", 0) or 0) == start_persona_epoch:
+                    with self._ensure_history_lock():
+                        hist = getattr(self, "chat_history", [])
+                        if hist and hist[-1].get("role") == "user" and hist[-1].get("content") == prompt:
+                            hist.pop()
+                latency_trace.finish(trace_id, "cancelled")
+                return {
+                    "ok": False,
+                    "cancelled": True,
+                    "text": "",
+                    "thoughts": "Turn cancelled due to superseding input or persona switch.",
+                    "actions": executed_actions,
+                    "plan": [],
+                    "model": active_model,
+                    "route": self.last_routed_subagents,
+                    "subagents": subagent_reports,
+                    "speech_handled": False,
+                    "trace_id": trace_id,
+                    "latency": latency_trace.get(trace_id),
+                }
+
+            emitted_chunks = list(stream_state.get("translated_chunks") or [])
+            if (
+                int(stream_state.get("spoken", 0) or 0) > 0
+                and getattr(self, "_active_bridge_translation", False)
+                and emitted_chunks
+            ):
+                final_text = " ".join(str(c).strip() for c in emitted_chunks if str(c).strip()).strip()
+            elif final_text:
                 try:
                     from modules.ai_provider.services.tags import strip_speech_control_artifacts
 
@@ -757,6 +889,12 @@ class AgentOrchestrator(AgentContextMixin, AgentTurnMixin):
             latency_trace.finish(trace_id, "failed", {"detail": repr(exc)})
             raise
         finally:
+            with self._ensure_turn_state_lock():
+                if getattr(self, "_active_turn_token", "") == turn_token:
+                    self._active_turn_token = ""
+                    self._active_turn_cancel = None
+                if getattr(self, "_active_turn_thread_id", None) == threading.get_ident():
+                    self._active_turn_thread_id = None
             self.progress_manager.emit_final(progress_token)
             self.tool_registry.status_hook = previous_hook
             self._active_progress_token = ""
