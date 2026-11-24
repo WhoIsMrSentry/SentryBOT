@@ -505,8 +505,8 @@ tri_layer:
     embed:
       enabled: true                      # e5-small kNN (~50-100ms); model yoksa otomatik atlanır
       model_path: models/e5-small-onnx
-      threshold_module: 0.50
-      threshold_direct: 0.60
+      threshold_module: 0.55
+      threshold_direct: 0.80
   fast_path:
     enabled: true
     max_chars: 180
