@@ -107,8 +107,44 @@ def extract_llm_tags(text: str) -> Tuple[str, Dict[str, List[Any]]]:
     return cleaned.strip(), actions
 
 
+_EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\u200D]+")
+_STAGE_DIRECTION_CUES_RE = re.compile(
+    r"\b(?:"
+    r"ton\w*|tone|voice|ses\w*|başım\w*|basim\w*|başı\w*|tilts?|head|look\w*|stare\w*|glare\w*|"
+    r"ifade\w*|bakış\w*|bakis\w*|jest\w*|gesture\w*|sigh\w*|gasp\w*|chuckle\w*|pause\w*|duraksama\w*|"
+    r"sentez\w*|synthesiz\w*|klinik|clinical|sarcastic\w*|alayc\w*|küçümse\w*|kucumse\w*|"
+    r"donuk|monoton\w*|oynat\w*|eğil\w*|egil\w*|çevir\w*|cevir\w*|expression\w*|smirk\w*|dry|kuru|"
+    r"şaşkınlık|saskinlik|tiksinti|rahatsızlık"
+    r")\b",
+    re.IGNORECASE,
+)
+_PAREN_SEGMENT_RE = re.compile(r"[*_`]*\(([^()]{3,280})\)[*_`]*")
+
+
+def _strip_stage_directions_and_formatting(text: str) -> str:
+    """Remove emojis, roleplay/stage parentheticals, and markdown wrappers for spoken TTS."""
+    out = _EMOJI_RE.sub(" ", str(text or ""))
+
+    def _paren_repl(match: re.Match[str]) -> str:
+        inner = match.group(1).strip()
+        if _STAGE_DIRECTION_CUES_RE.search(inner):
+            return " "
+        return match.group(0)
+
+    out = _PAREN_SEGMENT_RE.sub(_paren_repl, out)
+    out = out.strip()
+    if re.fullmatch(r"\([^()]{3,}\)", out):
+        return ""
+    out = re.sub(r"`([^`]*)`", r"\1", out)
+    out = re.sub(r"\*{1,3}([^*\n]+?)\*{1,3}", r"\1", out)
+    out = re.sub(r"[ \t]{2,}", " ", out).strip()
+    if not any(ch.isalnum() for ch in out):
+        return ""
+    return out
+
+
 def strip_speech_control_artifacts(text: str) -> str:
-    """Strip inline hardware tags, <think> blocks, and leaked tool directives before TTS."""
+    """Strip inline hardware tags, <think> blocks, emojis, stage directions, and tool directives before TTS."""
     raw = str(text or "")
     if not raw.strip():
         return ""
@@ -120,7 +156,7 @@ def strip_speech_control_artifacts(text: str) -> str:
         cleaned,
         flags=re.IGNORECASE,
     )
-    return re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+    return _strip_stage_directions_and_formatting(cleaned)
 
 
 __all__ = ["extract_llm_tags", "strip_speech_control_artifacts"]

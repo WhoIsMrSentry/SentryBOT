@@ -59,6 +59,17 @@ module_levels:
   httpcore: WARNING
   urllib3.connectionpool: WARNING
   comtypes.client._code_cache: WARNING
+  primp: WARNING
+  ddgs: WARNING
+  h2: WARNING
+  hickory_resolver: WARNING
+  hickory_net: WARNING
+  hickory_proto: WARNING
+  cookie_store: WARNING
+  rustls: WARNING
+  hyper: WARNING
+  hyper_util: WARNING
+  reqwest: WARNING
 
 separate_files:
   enabled: true

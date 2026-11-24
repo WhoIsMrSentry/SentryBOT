@@ -23,16 +23,16 @@ openwakeword:
   pretrained_models:
     - hey_mycroft
   inference_framework: onnx
-  threshold: 0.25
+  threshold: 0.40
   smooth_window: 3
   input_gain: 3.0
   # Print a periodic score probe in INFO logs (0 disables)
   log_every_n_chunks: 100
   # Runner input channel count. If omitted, xWakewordService injects audio.channels.
   input_channels: 2
-  # Light RMS/VAD energy gate before feeding ONNX model (disabled by default to keep sliding window continuous)
-  vad_gate_enabled: false
-  vad_min_rms: 35.0
+  # Light RMS/VAD energy gate before feeding ONNX model
+  vad_gate_enabled: true
+  vad_min_rms: 75.0
   vad_hangover_sec: 0.6
   auto_calibration:
     enabled: true
@@ -40,8 +40,8 @@ openwakeword:
     min_samples: 120
     percentile: 99.5
     margin: 0.0007
-    min_threshold: 0.20
-    max_threshold: 0.40
+    min_threshold: 0.35
+    max_threshold: 0.65
   verifier_path: null  # optional path to verifier joblib trained with train_verifier.py
 
 actions:

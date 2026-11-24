@@ -137,9 +137,12 @@ class SpeechReactMixin:
         if len(words) == 1:
             try:
                 from modules.common.emotion_vocab import get_vocab
-                canon = get_vocab().canonical(words[0])
-                if canon not in {"neutral", "curiosity"}:
-                    return canon
+
+                vocab = get_vocab()
+                if vocab.is_known(words[0]):
+                    canon = vocab.canonical(words[0])
+                    if canon not in {"neutral", "curiosity"}:
+                        return canon
             except Exception:
                 pass
         return None

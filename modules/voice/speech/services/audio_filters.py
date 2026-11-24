@@ -152,11 +152,15 @@ class SpeechAudioFilterMixin:
     def set_tts_playback_state(self, active: bool, estimated_rms: float = 1200.0) -> None:
         """Inform speech filter about TTS playback status for acoustic echo suppression."""
         if getattr(self, "_echo_gate", None) is None:
-            self._echo_gate = SoftwareEchoGate()
+            self._echo_gate = SoftwareEchoGate(suppression_gain=0.08, barge_in_ratio=2.8, hold_time_s=0.65)
         self._echo_gate.set_tts_playback(active, estimated_rms)
 
     def _on_barge_in_breakthrough(self) -> None:
-        logger.info("Human barge-in speech breakthrough detected during TTS playback")
+        now = time.monotonic()
+        last = float(getattr(self, "_last_barge_in_log_ts", 0.0) or 0.0)
+        if now - last >= 1.5:
+            self._last_barge_in_log_ts = now
+            logger.info("Human barge-in speech breakthrough detected during TTS playback")
 
     def _append_utterance_pcm(self, mono: bytes) -> None:
         if not mono or not self._auto_language:

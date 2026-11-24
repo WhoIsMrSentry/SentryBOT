@@ -117,7 +117,10 @@ class AgentSubagentsMixin:
         progress_token: str,
         callback: Optional[Callable],
         on_sentence: Optional[Callable[[str, int], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Tuple[str, int, List[Dict[str, Any]]]:
+        if callable(cancel_check) and cancel_check():
+            return "", 0, []
         profiles = self._route_subagents(user_prompt)
         self.last_routed_subagents = [p.name for p in profiles]
         subagent_reports: List[Dict[str, Any]] = []
@@ -126,12 +129,21 @@ class AgentSubagentsMixin:
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.subagent_workers) as executor:
                 fut_map = {executor.submit(self._run_subagent_task, p, user_prompt): p for p in profiles}
                 for fut in concurrent.futures.as_completed(fut_map):
+                    if callable(cancel_check) and cancel_check():
+                        return "", len(subagent_reports), subagent_reports
                     try:
                         subagent_reports.append(fut.result())
                     except Exception as e:
                         logger.error("Subagent execution failed: %s", e)
 
-        synth_res = self._synthesize_persona_response(user_prompt, subagent_reports, on_sentence=on_sentence)
+        if callable(cancel_check) and cancel_check():
+            return "", len(subagent_reports), subagent_reports
+        synth_res = self._synthesize_persona_response(
+            user_prompt,
+            subagent_reports,
+            on_sentence=on_sentence,
+            cancel_check=cancel_check,
+        )
         final_text = synth_res.get("message", {}).get("content", "")
         return final_text, len(subagent_reports), subagent_reports
 
@@ -140,6 +152,7 @@ class AgentSubagentsMixin:
         user_prompt: str,
         subagent_results: List[Dict[str, Any]],
         on_sentence: Optional[Callable[..., None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
         combined_context: List[str] = []
         for r in subagent_results:
@@ -171,6 +184,11 @@ class AgentSubagentsMixin:
             default_model = resolver(default_model)
         if self.persona_stream_enabled and on_sentence:
             return self._stream_turn_sentence_by_sentence(
-                default_model, messages, tools=None, options=options, on_sentence=on_sentence
+                default_model,
+                messages,
+                tools=None,
+                options=options,
+                on_sentence=on_sentence,
+                cancel_check=cancel_check,
             )
         return self._chat_turn(default_model, messages, tools=None, options=options)

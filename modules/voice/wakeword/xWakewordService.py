@@ -11,6 +11,7 @@ from typing import Any, Iterable, Iterator, Optional
 from fastapi import FastAPI
 
 from modules.voice.audio_router import get_audio_router
+from modules.voice.speech.services.audio_filters import SoftwareEchoGate
 from modules.voice.wakeword.config_loader import load_audio_router_config, load_config
 from modules.voice.wakeword.services.openwakeword_runner import OpenWakewordRunner
 from modules.voice.wakeword.services.wakeword_actions import WakewordActions, _now
@@ -75,6 +76,11 @@ class WakewordService:
         self._vad_hangover_until = 0.0
         self._energy_gate_skipped = 0
         self._energy_gate_passed = 0
+        self._echo_gate = SoftwareEchoGate(
+            suppression_gain=float(ow_cfg.get("echo_suppression_gain", 0.05)),
+            barge_in_ratio=float(ow_cfg.get("echo_barge_in_ratio", 3.0)),
+            hold_time_s=float(ow_cfg.get("echo_hold_time_s", 0.75)),
+        )
 
         try:
             audio_channels = int((self.cfg.get("audio", {}) or {}).get("channels", 1))
@@ -95,10 +101,34 @@ class WakewordService:
             bool(self._degraded_reason),
         )
 
+    def set_tts_playback_state(self, active: bool, estimated_rms: float = 1200.0) -> None:
+        """Inform wakeword energy gate about active TTS playback to avoid self-interruption."""
+        gate = getattr(self, "_echo_gate", None)
+        if gate is None:
+            gate = SoftwareEchoGate(suppression_gain=0.05, barge_in_ratio=3.0, hold_time_s=0.75)
+            self._echo_gate = gate
+        gate.set_tts_playback(active, estimated_rms)
+
+    def attach_speak_service(self, speak_service: Any) -> bool:
+        """Bridge SpeakService playback state to WakewordService to suppress TTS echo wakewords."""
+        register = getattr(speak_service, "register_playback_listener", None)
+        if not callable(register):
+            return False
+        register(lambda active, rms=1200.0: self.set_tts_playback_state(active, estimated_rms=rms))
+        return True
+
     def _should_feed_wakeword(self, chunk: bytes, capture: Any = None) -> bool:
-        """Lightweight RMS/VAD gate avoiding ONNX inference on silent frames."""
+        """Lightweight RMS/VAD and echo gate avoiding ONNX false triggers on TTS playback."""
         if not chunk:
             return False
+        rms: Optional[float] = None
+        gate = getattr(self, "_echo_gate", None)
+        if gate is not None and gate.is_echo_active():
+            rms = _chunk_rms_int16(chunk)
+            _, barge_in = gate.process_chunk(chunk, rms)
+            if not barge_in:
+                self._energy_gate_skipped += 1
+                return False
         if not self._vad_gate_enabled or self._vad_min_rms <= 0.0:
             self._energy_gate_passed += 1
             return True
@@ -113,7 +143,9 @@ class WakewordService:
             self._energy_gate_passed += 1
             return True
 
-        if _chunk_rms_int16(chunk) >= self._vad_min_rms:
+        if rms is None:
+            rms = _chunk_rms_int16(chunk)
+        if rms >= self._vad_min_rms:
             self._vad_hangover_until = now + self._vad_hangover_sec
             self._energy_gate_passed += 1
             return True

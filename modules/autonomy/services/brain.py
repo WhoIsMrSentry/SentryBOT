@@ -171,8 +171,17 @@ class AutonomyBrain(
 
     def _loop(self) -> None:
         logger.info("Brain main loop running.")
+        try:
+            from modules.gateway.readiness import is_gateway_stopping, wait_if_booting
+
+            if not wait_if_booting(stop_check=lambda: not self.running, timeout_s=6.0):
+                return
+        except Exception:
+            is_gateway_stopping = lambda: False  # noqa: E731
         poll_interval = float(self.config.get("defaults", {}).get("poll_interval_s", 0.5))
         while self.running:
+            if is_gateway_stopping():
+                break
             try:
                 self._sense()
                 self._think()

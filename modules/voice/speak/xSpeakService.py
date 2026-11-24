@@ -8,6 +8,11 @@ import time
 from typing import Any, Dict, Optional
 
 try:
+    import numpy as np  # type: ignore
+except Exception:  # pragma: no cover
+    np = None  # type: ignore
+
+try:
     import requests  # type: ignore
 except Exception:  # pragma: no cover
     requests = None  # type: ignore
@@ -214,6 +219,13 @@ class SpeakService:
     def _expression_event(self, event_type: str, data: Optional[Dict[str, Any]] = None) -> None:
         if requests is None or not bool(self._liveliness_cfg.get("enabled", True)):
             return
+        try:
+            from modules.gateway.readiness import is_gateway_booting, is_gateway_stopping
+
+            if is_gateway_stopping() or is_gateway_booting():
+                return
+        except Exception:
+            pass
         base = self._resolve_expression_url(self._liveliness_cfg.get("expression_base_url", ""))
         if not base:
             return
@@ -258,6 +270,24 @@ class SpeakService:
         fallback_sr = getattr(player_cfg, "samplerate", 22050) if player_cfg is not None else 22050
         sr = int(getattr(pcm, "samplerate", 0) or fallback_sr or 22050)
         return float(n_frames) / max(1, sr)
+
+    @staticmethod
+    def _estimate_pcm_rms_int16(pcm: Any) -> float:
+        """Estimate int16-equivalent RMS of synthesized PCM for acoustic echo suppression."""
+        data = getattr(pcm, "data", None)
+        if data is None or np is None:
+            return 1200.0
+        try:
+            arr = np.asarray(data, dtype=np.float32)
+            if arr.size == 0:
+                return 1200.0
+            scale = 32768.0 if float(np.max(np.abs(arr))) <= 1.5 else 1.0
+            rms = float(np.sqrt(np.mean((arr * scale) ** 2)))
+            if rms < 50.0:
+                return 1200.0
+            return max(1200.0, min(12000.0, rms))
+        except Exception:
+            return 1200.0
 
     def speak(
         self,
@@ -345,7 +375,7 @@ class SpeakService:
             },
         )
         latency_trace.mark(trace_id, "audio.play_start")
-        self._notify_playback_listeners(True, 1200.0)
+        self._notify_playback_listeners(True, self._estimate_pcm_rms_int16(pcm))
         lcd_sync = getattr(self, "lcd_sync", None)
         lcd_token = lcd_sync.begin_utterance(cleaned_text, expected_dur_sec) if lcd_sync is not None else None
         try:
@@ -375,7 +405,7 @@ class SpeakService:
         trace_id = latency_trace.ensure(trace_id, {"component": "speak.play_wav"})
         self._expression_event("speak.started", {"trace_id": trace_id})
         latency_trace.mark(trace_id, "audio.play_start")
-        self._notify_playback_listeners(True, 1200.0)
+        self._notify_playback_listeners(True, 1500.0)
         try:
             duration_sec = self.player.play_wav_bytes(data)
         finally:

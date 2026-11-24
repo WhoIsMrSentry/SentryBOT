@@ -71,7 +71,18 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
         except Exception:
             return str(self.urls.get("agent_core") or "http://127.0.0.1:8080/agent")
 
+    @staticmethod
+    def _gateway_stopping() -> bool:
+        try:
+            from modules.gateway.readiness import is_gateway_stopping
+
+            return is_gateway_stopping()
+        except Exception:
+            return False
+
     def _post(self, service: str, endpoint: str, json: Any = None, params: Any = None, timeout_s: Optional[float] = None) -> Any:
+        if self._gateway_stopping():
+            return None
         url = self.urls.get(service)
         if not url:
             return None
@@ -100,6 +111,8 @@ class ServiceClient(ClientHardwareMixin, ClientVisionMixin, ClientSpeechMixin):
             return None
 
     def _get(self, service: str, endpoint: str, params: Any = None, timeout_s: Optional[float] = None) -> Any:
+        if self._gateway_stopping():
+            return None
         url = self.urls.get(service)
         if not url:
             return None

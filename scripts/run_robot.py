@@ -128,8 +128,20 @@ def main() -> None:
                 force_timer.daemon = True
                 force_timer.start()
         if count_now >= 2:
+            try:
+                from modules.gateway.readiness import mark_gateway_stopping
+
+                mark_gateway_stopping()
+            except Exception:
+                pass
             force_exit()
             return
+        try:
+            from modules.gateway.readiness import mark_gateway_stopping
+
+            mark_gateway_stopping()
+        except Exception:
+            pass
         logger.info("shutdown signal received: %s", signum)
         server.should_exit = True
 

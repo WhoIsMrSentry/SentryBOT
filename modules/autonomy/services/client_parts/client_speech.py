@@ -118,6 +118,13 @@ class ClientSpeechMixin:
         deadline = time.time() + max_wait
         polls = 0
         while time.time() < deadline and polls < max_polls:
+            try:
+                from modules.gateway.readiness import is_gateway_stopping
+
+                if is_gateway_stopping():
+                    return {"ok": False, "status": "interrupted", "job_id": job_id, "reason": "gateway_stopping"}
+            except Exception:
+                pass
             polls += 1
             status = self._get("speak", f"/jobs/{job_id}", timeout_s=2.0)
             if not isinstance(status, dict):

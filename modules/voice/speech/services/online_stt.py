@@ -101,6 +101,13 @@ def transcribe_google_multilang(
             tags_to_query.append(tag)
 
     audio_data = sr.AudioData(pcm_bytes, sample_rate=samplerate, sample_width=2)
+    if len(tags_to_query) > 1 and hasattr(audio_data, "get_flac_data") and callable(getattr(audio_data, "get_flac_data", None)):
+        try:
+            conv_rate = None if getattr(audio_data, "sample_rate", samplerate) >= 8000 else 8000
+            cached_flac = audio_data.get_flac_data(convert_rate=conv_rate, convert_width=2)
+            audio_data.get_flac_data = lambda *_a, **_kw: cached_flac  # type: ignore[method-assign]
+        except Exception as exc:
+            logger.debug("Single-pass FLAC pre-encode skipped: %s", exc)
     candidates: Dict[str, str] = {}
     overall_timeout = max(0.05, float(timeout_s))
 

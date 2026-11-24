@@ -79,6 +79,10 @@ class AgentStreamingMixin:
             return fallback
         return model
 
+    @staticmethod
+    def _has_unclosed_paren(text: str) -> bool:
+        return text.count("(") > text.count(")")
+
     def _extract_ready_sentences(
         self,
         buffer: str,
@@ -93,6 +97,10 @@ class AgentStreamingMixin:
         if AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE is None:
             AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE = re.compile(r"([,;:—–\n]+|[.!?…]+)")
 
+        # Wait for closing ')' on stage-direction/parenthetical prefixes before emitting a split fragment
+        if len(buffer) < 240 and self._has_unclosed_paren(buffer):
+            return [], buffer
+
         # Ultra low-latency first clause break (disabled during bridge translation to avoid literal fragments)
         if is_first_chunk and allow_first_clause_split:
             words = buffer.split()
@@ -100,7 +108,11 @@ class AgentStreamingMixin:
                 parts = AgentStreamingMixin._FIRST_CLAUSE_SPLIT_RE.split(buffer)
                 if len(parts) > 1:
                     first_clause = (parts[0] + parts[1]).strip()
-                    if len(first_clause.split()) >= 1 and len(first_clause) >= 4:
+                    if (
+                        not self._has_unclosed_paren(first_clause)
+                        and len(first_clause.split()) >= 1
+                        and len(first_clause) >= 4
+                    ):
                         remainder = "".join(parts[2:]).lstrip()
                         return [first_clause], remainder
 
@@ -112,6 +124,10 @@ class AgentStreamingMixin:
         i = 0
         while i < len(parts) - 1:
             chunk = parts[i] + parts[i + 1]
+            if self._has_unclosed_paren(chunk) and i + 2 < len(parts):
+                parts[i + 2] = chunk + parts[i + 2]
+                i += 2
+                continue
             c_clean = chunk.strip()
             if c_clean:
                 sentences.append(c_clean)
@@ -131,7 +147,10 @@ class AgentStreamingMixin:
         tools: Optional[List[Dict[str, Any]]],
         options: Optional[Dict[str, Any]],
         on_sentence: Optional[Callable[..., None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
+        if callable(cancel_check) and cancel_check():
+            return {"message": {"role": "assistant", "content": ""}, "cancelled": True}
         if not on_sentence:
             return self._chat_turn(model, messages, tools, options)
         if getattr(self, "llm_provider", "ollama") != "ollama":
@@ -139,7 +158,14 @@ class AgentStreamingMixin:
         # Enable streaming when on_sentence callback is provided unless explicitly forced off
         if getattr(self, "persona_stream_enabled", None) is False:
             return self._chat_turn(model, messages, tools, options)
-        return self._stream_turn_sentence_by_sentence(model, messages, tools, options, on_sentence=on_sentence)
+        return self._stream_turn_sentence_by_sentence(
+            model,
+            messages,
+            tools,
+            options,
+            on_sentence=on_sentence,
+            cancel_check=cancel_check,
+        )
 
     def _stream_turn_sentence_by_sentence(
         self,
@@ -148,7 +174,10 @@ class AgentStreamingMixin:
         tools: Optional[List[Dict[str, Any]]],
         options: Optional[Dict[str, Any]],
         on_sentence: Optional[Callable[..., None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
+        if callable(cancel_check) and cancel_check():
+            return {"message": {"role": "assistant", "content": ""}, "cancelled": True}
         if not on_sentence:
             return self._chat_turn(model, messages, tools, options)
 
@@ -206,6 +235,14 @@ class AgentStreamingMixin:
 
             stream = call_ollama_chat(self.ollama_client, **stream_kwargs)
             for chunk in stream:
+                if callable(cancel_check) and cancel_check():
+                    close_fn = getattr(stream, "close", None)
+                    if callable(close_fn):
+                        try:
+                            close_fn()
+                        except Exception:
+                            pass
+                    return {"message": {"role": "assistant", "content": ""}, "cancelled": True}
                 if first_token_ts is None:
                     first_token_ts = time.time()
                 chunk_done_reason = (
@@ -248,6 +285,9 @@ class AgentStreamingMixin:
                     for sentence in sentences:
                         _emit(sentence)
 
+            if callable(cancel_check) and cancel_check():
+                return {"message": {"role": "assistant", "content": ""}, "cancelled": True}
+
             if not collected_tool_calls or emitted_any:
                 rem = buffer.strip()
                 if rem:
@@ -275,6 +315,8 @@ class AgentStreamingMixin:
                 out["eval_count"] = eval_count
             return out
         except Exception as exc:
+            if callable(cancel_check) and cancel_check():
+                return {"message": {"role": "assistant", "content": ""}, "cancelled": True}
             is_transport = getattr(self, "_is_provider_transport_error", None)
             if first_token_ts is None and callable(is_transport) and is_transport(exc):
                 raise

@@ -52,11 +52,12 @@ class xExpressionService:
 
         gateway_url = str(adp_cfg.get("gateway_url", "http://127.0.0.1:8080")).rstrip("/")
 
+        head_enabled = bool(adp_cfg.get("head_enabled", True))
         clients = ModalityClients(
             neopixel=NeopixelAdapter(gateway_url, adp_cfg.get("neopixel_timeout", 2.0)),
             oled=OledAdapter(gateway_url, adp_cfg.get("oled_timeout", 2.0)),
             speak=SpeakAdapter(gateway_url, adp_cfg.get("speak_timeout", 4.0)),
-            head=HeadAdapter(gateway_url, adp_cfg.get("head_timeout", 1.0)),
+            head=HeadAdapter(gateway_url, adp_cfg.get("head_timeout", 1.0)) if head_enabled else None,
             piservo=PiServoAdapter(gateway_url, adp_cfg.get("head_timeout", 1.0)),
         )
         return ExpressionArbiter(clients, config=self.cfg.get("arbiter", {}))

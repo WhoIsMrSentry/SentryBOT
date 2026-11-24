@@ -120,6 +120,15 @@ def _include_interactions(app: FastAPI, started: Dict[str, object], cfg: Dict[st
     app.include_router(get_inter_router(eng))
 
 
+def _arduino_mounted(started: Dict[str, object]) -> bool:
+    ardu = started.get("arduino")
+    if ardu is None:
+        return False
+    if isinstance(ardu, dict) and ardu.get("kind") == "stub":
+        return False
+    return True
+
+
 def _include_expression(app: FastAPI, started: Dict[str, object], cfg: Dict[str, Any]) -> None:
     from modules.expression.api.router import get_router as get_expression_router  # type: ignore
     from modules.expression.config_loader import load_config as load_expression_cfg  # type: ignore
@@ -129,6 +138,8 @@ def _include_expression(app: FastAPI, started: Dict[str, object], cfg: Dict[str,
     adapters = ecfg.setdefault("adapters", {})
     if isinstance(adapters, dict):
         adapters["gateway_url"] = str(started.get("gateway_base_url", "http://127.0.0.1:8080"))
+        if not _arduino_mounted(started):
+            adapters.setdefault("head_enabled", False)
     svc = xExpressionService(config_overrides=ecfg)
     started["expression"] = svc
     router = get_expression_router(svc.engine)
@@ -157,6 +168,10 @@ def _include_speak(app: FastAPI, started: Dict[str, object]) -> None:
     liveliness = svc.cfg.get("liveliness", {}) if isinstance(svc.cfg.get("liveliness", {}), dict) else {}
     liveliness["interactions_base_url"] = gateway_url(base, "/interactions")
     svc.cfg["liveliness"] = liveliness
+    if not _arduino_mounted(started) and getattr(svc, "lcd_sync", None) is not None:
+        raw_gw = str(getattr(svc.lcd_sync, "_raw_gateway_url", "") or "").strip()
+        if not raw_gw or raw_gw.startswith("@gateway"):
+            svc.lcd_sync.enabled = False
     started["speak"] = svc
     app.include_router(get_speak_router(svc))
     logger.info("module speak mounted")
@@ -473,6 +488,13 @@ def _wire_wakeword_interactions(started: Dict[str, object]) -> None:
             if started.get("agent_core") is not None:
                 actions._agent_service = started.get("agent_core")
         logger.info("wakeword wired to speech/speak/agent/interactions engines (in-process 0ms barge-in)")
+    speak = started.get("speak")
+    if speak is not None and hasattr(wakeword, "attach_speak_service"):
+        try:
+            wakeword.attach_speak_service(speak)
+            logger.info("wakeword echo gate linked to speak playback state")
+        except Exception as exc:
+            logger.debug("wakeword-speak echo bridge skipped: %s", exc)
     if autostart and hasattr(wakeword, "start_background"):
         try:
             wakeword.start_background()
