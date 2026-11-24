@@ -27,6 +27,8 @@ def _ensure_wsl_host_microphone_unmuted() -> None:
 
     if os.environ.get("PYTEST_CURRENT_TEST") or not os.path.exists("/mnt/wslg"):
         return
+    if str(os.environ.get("SENTRYBOT_DISABLE_WSL_PS_UNMUTE", "")).strip().lower() in {"1", "true", "yes", "on"}:
+        return
     ps_exe = shutil.which("powershell.exe") or "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
     if not os.path.exists(ps_exe):
         return
@@ -40,19 +42,27 @@ def _ensure_wsl_host_microphone_unmuted() -> None:
         "[Guid(\"A95664D2-9614-4F35-A746-DE8DB63617E6\"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]"
         "interface IMMDeviceEnumerator { int a(); int GetDefaultAudioEndpoint(int d, int r, out IMMDevice ep); }"
         "[ComImport, Guid(\"BCDE0395-E52F-467C-8E3D-C4579291692E\")] class E {}"
-        "public class U { public static void Fix() { var en=(IMMDeviceEnumerator)(new E()); IMMDevice d; en.GetDefaultAudioEndpoint(1,0,out d); Guid g=typeof(IAudioEndpointVolume).GUID; object o; d.Activate(ref g,23,IntPtr.Zero,out o); var v=(IAudioEndpointVolume)o; bool m; float l; v.GetMute(out m); v.GetMasterVolumeLevelScalar(out l); if(m){v.SetMute(false,Guid.Empty);} if(l<0.5f){v.SetMasterVolumeLevelScalar(0.9f,Guid.Empty);} } }"
+        "public class U { public static void Fix() { var en=(IMMDeviceEnumerator)(new E()); IMMDevice d; en.GetDefaultAudioEndpoint(1,0,out d); Guid g=typeof(IAudioEndpointVolume).GUID; object o; d.Activate(ref g,23,IntPtr.Zero,out o); var v=(IAudioEndpointVolume)o; bool m; float l; v.GetMute(out m); v.GetMasterVolumeLevelScalar(out l); if(m){v.SetMute(false,Guid.Empty);} if(l<0.5f){v.SetMute(false,Guid.Empty); v.SetMasterVolumeLevelScalar(0.9f,Guid.Empty);} } }"
         "'; [U]::Fix()"
     )
+    proc: subprocess.Popen[bytes] | None = None
     try:
-        subprocess.run(
+        proc = subprocess.Popen(
             [ps_exe, "-NoProfile", "-NonInteractive", "-Command", ps_script],
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=4.0,
-            check=False,
         )
+        proc.wait(timeout=4.0)
     except Exception as exc:
         logger.debug("WSL host mic unmute check skipped: %s", exc)
+    finally:
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.kill()
+                proc.wait(timeout=1.0)
+            except Exception:
+                pass
 
 
 def _is_alsa_device_name(device: Any) -> bool:

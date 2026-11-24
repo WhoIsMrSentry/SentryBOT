@@ -180,11 +180,15 @@ def get_router(service: SpeakService) -> APIRouter:
         text = str(payload.get("text", "")).strip()
         if not text:
             return {"ok": False, "error": "text is empty"}
+        cleaner = getattr(service, "_clean_text_for_speech", None)
+        cleaned = cleaner(text) if callable(cleaner) else text
         trace_id = str(payload.get("trace_id") or uuid.uuid4().hex[:16])
+        if not cleaned:
+            return {"ok": True, "trace_id": trace_id, "duration_sec": 0.0, "skipped": True}
         try:
             return await asyncio.to_thread(
                 service.speak,
-                text,
+                cleaned,
                 engine=payload.get("engine"),
                 tone=payload.get("tone"),
                 speaker_wav=payload.get("speaker_wav"),
@@ -200,16 +204,25 @@ def get_router(service: SpeakService) -> APIRouter:
     @router.post("/speak/say_stream")
     async def say_stream(payload: dict) -> Dict[str, Any]:
         _prune_stream_jobs()
-        text = str(payload.get("text", "")).strip()
-        if not text:
+        raw_text = str(payload.get("text", "")).strip()
+        if not raw_text:
             return {"ok": False, "error": "text is empty"}
+        cleaner = getattr(service, "_clean_text_for_speech", None)
+        text = cleaner(raw_text) if callable(cleaner) else raw_text
+        trace_id = str(payload.get("trace_id") or uuid.uuid4().hex[:16])
+        if not text:
+            return {"ok": True, "job_id": "", "trace_id": trace_id, "chunks": 0, "skipped": True}
         default_chunk = int(getattr(service, "stream_max_chunk_chars", 180))
-        chunks = _split_text_chunks(
-            text,
-            max_chars=max(40, int(payload.get("max_chunk_chars", default_chunk))),
-        )
+        chunks = [
+            c
+            for c in _split_text_chunks(
+                text,
+                max_chars=max(40, int(payload.get("max_chunk_chars", default_chunk))),
+            )
+            if (cleaner(c) if callable(cleaner) else c.strip())
+        ]
         if not chunks:
-            return {"ok": False, "error": "text has no speakable chunks"}
+            return {"ok": True, "job_id": "", "trace_id": trace_id, "chunks": 0, "skipped": True}
 
         job_id = uuid.uuid4().hex[:12]
         trace_id = str(payload.get("trace_id") or uuid.uuid4().hex[:16])

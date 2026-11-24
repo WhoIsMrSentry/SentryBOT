@@ -178,7 +178,17 @@ class SensorFeedbackLoop:
             pass
 
     def _poll_loop(self):
+        try:
+            from modules.gateway.readiness import is_gateway_stopping, wait_if_booting
+
+            if not wait_if_booting(stop_check=lambda: not self.running, timeout_s=6.0):
+                return
+        except Exception:
+            is_gateway_stopping = lambda: False  # noqa: E731
+
         while self.running:
+            if is_gateway_stopping():
+                break
             now = time.time()
             updates = {}
             try:

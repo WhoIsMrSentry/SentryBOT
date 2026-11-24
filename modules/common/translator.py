@@ -38,6 +38,33 @@ _TR_HINT_WORDS = frozenset({
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?…\n])\s+")
 _VALID_MODES = frozenset({"online_first", "hybrid", "local_first", "local_only", "online_only", "ollama"})
 _GOOGLE_ENDPOINT = "https://translate.googleapis.com/translate_a/single"
+_PROTECTED_ENTITY_RE = re.compile(
+    r"(?<![A-Za-z0-9_çğıöşüÇĞİÖŞÜ])"
+    r"(WhoIsMrSentry|SentryBOT|GLaDOS|glados|Emir\s+HAMURCU|Emir\s+Hamurcu|sentry)"
+    r"(?![A-Za-z0-9_çğıöşüÇĞİÖŞÜ])",
+    re.IGNORECASE,
+)
+
+
+def _protect_entities(text: str) -> Tuple[str, List[Tuple[str, str]]]:
+    """Replace domain proper nouns/persona IDs with opaque tokens before translation."""
+    replacements: List[Tuple[str, str]] = []
+
+    def _repl(match: re.Match[str]) -> str:
+        token = f"zz9{len(replacements):02d}zz"
+        replacements.append((token, match.group(0)))
+        return token
+
+    protected = _PROTECTED_ENTITY_RE.sub(_repl, text)
+    return protected, replacements
+
+
+def _restore_entities(text: str, replacements: List[Tuple[str, str]]) -> str:
+    """Restore preserved proper nouns after translation."""
+    out = str(text or "")
+    for token, original in replacements:
+        out = re.sub(re.escape(token), lambda _m, orig=original: orig, out, flags=re.IGNORECASE)
+    return out
 
 
 @dataclass
@@ -524,26 +551,27 @@ class HybridTranslator:
         mode = self.cfg.mode
         translated: Optional[str] = None
         backend = "passthrough"
+        protected_value, protected_map = _protect_entities(value)
 
         if mode in {"online_first", "hybrid", "online_only"}:
-            translated = self._online.translate(value, src, tgt)
+            translated = self._online.translate(protected_value, src, tgt)
             if translated:
                 backend = "online_google"
             elif mode != "online_only":
-                translated, backend = self._local.translate(value, src, tgt)
+                translated, backend = self._local.translate(protected_value, src, tgt)
         elif mode in {"local_first", "local_only"}:
-            translated, backend = self._local.translate(value, src, tgt)
+            translated, backend = self._local.translate(protected_value, src, tgt)
             if not translated and mode == "local_first":
-                translated = self._online.translate(value, src, tgt)
+                translated = self._online.translate(protected_value, src, tgt)
                 if translated:
                     backend = "online_google"
         elif mode == "ollama":
-            translated = self._translate_ollama(value, src, tgt)
+            translated = self._translate_ollama(protected_value, src, tgt)
             if translated:
                 backend = "ollama"
 
         if not translated and self.cfg.fallback_to_ollama and mode != "ollama":
-            translated = self._translate_ollama(value, src, tgt)
+            translated = self._translate_ollama(protected_value, src, tgt)
             if translated:
                 backend = "ollama_fallback"
 
@@ -551,6 +579,7 @@ class HybridTranslator:
             self._last_backend = "passthrough_fallback"
             return value, "passthrough_fallback"
 
+        translated = _restore_entities(translated, protected_map)
         self._last_backend = backend
         self._cache_put(key, translated, backend)
         return translated, backend

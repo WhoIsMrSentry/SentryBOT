@@ -21,7 +21,12 @@ _TR_STOPWORDS = frozenset({
     "benim", "senin", "onun", "bizim", "sizin", "onların", "onlarin",
     "yap", "yapsana", "et", "ol", "gel", "git", "bak", "gör", "gor", "bil", "dur", "kalk", "otur", "bekle",
     "aç", "ac", "kapat", "yak", "söndür", "sondur", "dinle", "sus", "konuş", "konus", "anlat", "söyle", "soyle",
-    "kendini", "tanıt", "tanit", "yardım", "yardim", "eder", "edebilir", "edebilirim", "yapabilirim",
+    "kendini", "tanıt", "tanit", "yardım", "yardim", "yardımcı", "yardimci", "eder", "edebilir", "edebilirim", "yapabilirim",
+    "araştır", "arastir", "araştırma", "arastirma", "tekrar", "yeniden", "geç", "gec", "dön", "don", "dene", "deneme",
+    "listele", "değiştir", "degistir", "başlat", "baslat", "durdur", "kişilik", "kisilik", "kişiliği", "kisiligi",
+    "kişilikler", "kisilikler", "mod", "modu", "moduna", "yaratıcı", "yaratici", "yaratıcın", "yaraticin",
+    "yaratıcının", "yaraticinin", "yaratıcını", "yaraticini", "internette", "kişi", "kisi",
+    "ekran", "ekranda", "kamera", "kamerada", "kameradaki", "nöbetçi", "nobetci",
     "istiyorum", "ediyorum", "bakıyorum", "bakiyorum", "dinliyorum", "bekliyorum", "bilmiyorum", "gidiyor",
     "anladım", "anladim", "hazırım", "hazirim", "iyiyim", "buradayım", "buradayim", "seviyorum",
     "teşekkür", "tesekkur", "teşekkürler", "tesekkurler", "sağol", "sagol", "özür", "ozur", "lütfen", "lutfen",
@@ -50,7 +55,8 @@ _EN_STOPWORDS = frozenset({
     "its", "our", "their", "me", "him", "us", "them", "yes", "no", "ok", "please",
     "hello", "hi", "thanks", "thank", "sorry", "about", "tell", "know", "think",
     "introduce", "yourself", "assist", "help", "name", "weather", "today", "check",
-    "time", "explain", "search",
+    "time", "explain", "search", "switch", "change", "set", "list", "persona", "personas",
+    "mode", "browser", "creator", "camera", "internet", "retry", "again",
     "i'm", "i've", "i'll", "i'd", "you're", "you've", "you'll", "you'd",
     "he's", "she's", "it's", "we're", "we've", "we'll", "they're", "they've", "they'll",
     "that's", "what's", "who's", "there's", "here's",
@@ -68,7 +74,9 @@ _TR_MORPH_RE = re.compile(
     r"m[ıiuü]s[ıiuü]n(?:[ıiuü]z)?|"
     r"abilir(?:im|sin|iz)?|"
     r"ebili?r(?:im|sin|iz)?|"
-    r"m[ıiuü][şs](?:t[ıiuü]r)?"
+    r"m[ıiuü][şs](?:t[ıiuü]r)?|"
+    r"(?:şt|la|le|ış|iş)[ıiuü]?r(?:ım|im|sın|sin)?|"
+    r"[ae]r[ae][şs]t[ıiuü]r\w*"
     r")$"
 )
 

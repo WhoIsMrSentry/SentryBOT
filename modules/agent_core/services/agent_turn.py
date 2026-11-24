@@ -219,6 +219,7 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
         on_sentence: Optional[Callable[[str, int], None]] = None,
         max_steps: int = 4,
         trace_id: Optional[str] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Tuple[str, int]:
         def _as_dict(value: Any) -> Dict[str, Any]:
             if isinstance(value, dict):
@@ -312,16 +313,30 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
             return _tracked
 
         while step_count < max_steps:
+            if callable(cancel_check) and cancel_check():
+                return "", step_count
             step_count += 1
             step_on_sentence = _make_step_on_sentence()
-            res = self._chat_maybe_stream(
-                active_model,
-                messages,
-                tools,
-                options,
-                on_sentence=step_on_sentence,
-            )
+            try:
+                res = self._chat_maybe_stream(
+                    active_model,
+                    messages,
+                    tools,
+                    options,
+                    on_sentence=step_on_sentence,
+                    cancel_check=cancel_check,
+                )
+            except TypeError:
+                res = self._chat_maybe_stream(
+                    active_model,
+                    messages,
+                    tools,
+                    options,
+                    on_sentence=step_on_sentence,
+                )
             res_dict = _as_dict(res)
+            if res_dict.get("cancelled") or (callable(cancel_check) and cancel_check()):
+                return "", step_count
             msg = _as_dict(res_dict.get("message", {}))
             if not msg and hasattr(res, "message"):
                 msg = _as_dict(getattr(res, "message"))
@@ -343,6 +358,8 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
 
             stop_loop = False
             for call in tool_calls:
+                if callable(cancel_check) and cancel_check():
+                    return "", step_count
                 fn = call.get("function", {})
                 name = str(fn.get("name", "") or "").strip()
                 args = _normalize_args(fn.get("arguments", {}))
@@ -406,7 +423,12 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
             or bool(str(last_res_dict.get("done_reason") or "").strip())
             or bool(str(last_msg.get("thinking") or "").strip())
         )
-        if not _extract_usable_reply(final_content) and not speech_done and model_produced_empty:
+        if (
+            not (callable(cancel_check) and cancel_check())
+            and not _extract_usable_reply(final_content)
+            and not speech_done
+            and model_produced_empty
+        ):
             recovery_options = dict(options)
             recovery_options["num_predict"] = max(int(options.get("num_predict") or 0), 512)
             recovery_messages = list(messages) + [
@@ -415,13 +437,23 @@ class AgentTurnMixin(AgentStreamingMixin, AgentSubagentsMixin):
                     "content": "Reply directly to the user in plain natural text now. Do not output tool calls.",
                 }
             ]
-            rec_res = self._chat_maybe_stream(
-                active_model,
-                recovery_messages,
-                None,
-                recovery_options,
-                on_sentence=_make_step_on_sentence(),
-            )
+            try:
+                rec_res = self._chat_maybe_stream(
+                    active_model,
+                    recovery_messages,
+                    None,
+                    recovery_options,
+                    on_sentence=_make_step_on_sentence(),
+                    cancel_check=cancel_check,
+                )
+            except TypeError:
+                rec_res = self._chat_maybe_stream(
+                    active_model,
+                    recovery_messages,
+                    None,
+                    recovery_options,
+                    on_sentence=_make_step_on_sentence(),
+                )
             rec_dict = _as_dict(rec_res)
             rec_msg = _as_dict(rec_dict.get("message", {}))
             if not rec_msg and hasattr(rec_res, "message"):

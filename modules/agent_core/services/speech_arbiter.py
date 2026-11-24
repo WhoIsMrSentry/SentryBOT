@@ -139,6 +139,14 @@ class SpeechArbiter:
         value = str(text or "").strip()
         if not value:
             return None
+        try:
+            from modules.ai_provider.services.tags import strip_speech_control_artifacts
+
+            value = strip_speech_control_artifacts(value)
+        except Exception:
+            pass
+        if not value:
+            return None
         now = time.time()
         key = value[:80].lower()
         with self._lock:

@@ -190,6 +190,13 @@ class SpeechLcdSync:
 
         if requests is None:
             return False
+        try:
+            from modules.gateway.readiness import is_gateway_booting, is_gateway_stopping
+
+            if is_gateway_stopping() or is_gateway_booting():
+                return False
+        except Exception:
+            pass
         now = time.monotonic()
         with self._lock:
             if now < self._cooldown_until:
@@ -205,10 +212,12 @@ class SpeechLcdSync:
                 resp = sess.post(url, json=payload, timeout=self.timeout_s)
             else:
                 resp = requests.post(url, json=payload, timeout=self.timeout_s)
-            ok = int(getattr(resp, "status_code", 0) or 0) < 500
+            status = int(getattr(resp, "status_code", 0) or 0)
+            ok = 200 <= status < 300
             if not ok and self.fail_cooldown_s > 0:
+                cooldown = max(self.fail_cooldown_s, 60.0) if status == 404 else self.fail_cooldown_s
                 with self._lock:
-                    self._cooldown_until = time.monotonic() + self.fail_cooldown_s
+                    self._cooldown_until = time.monotonic() + cooldown
             return ok
         except Exception as exc:
             logger.debug("speech lcd dispatch failed: %s", exc)

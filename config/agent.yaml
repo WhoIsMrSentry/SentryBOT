@@ -360,19 +360,20 @@ wakeword:
     pretrained_models:
     - hey_mycroft
     inference_framework: onnx
-    threshold: 0.25
+    threshold: 0.40
     smooth_window: 3
     input_gain: 3.0
     input_channels: 2
-    vad_gate_enabled: false
+    vad_gate_enabled: true
+    vad_min_rms: 75.0
     auto_calibration:
       enabled: true
       duration_sec: 4.0
       min_samples: 40
       percentile: 99.5
       margin: 0.0007
-      min_threshold: 0.2
-      max_threshold: 0.4
+      min_threshold: 0.35
+      max_threshold: 0.65
 speech:
   listening: true
   server:
@@ -504,8 +505,8 @@ tri_layer:
     embed:
       enabled: true                      # e5-small kNN (~50-100ms); model yoksa otomatik atlanır
       model_path: models/e5-small-onnx
-      threshold_module: 0.50
-      threshold_direct: 0.60
+      threshold_module: 0.55
+      threshold_direct: 0.80
   fast_path:
     enabled: true
     max_chars: 180

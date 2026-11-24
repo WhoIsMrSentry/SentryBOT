@@ -196,6 +196,10 @@ class Recognizer:
             if is_speech:
                 has_spoken = True
                 buffer.extend(mono_chunk)
+            elif turn_res.get("aborted_noise"):
+                has_spoken = False
+                if len(buffer) > preroll_bytes:
+                    buffer = buffer[-preroll_bytes:]
             elif echo_suppressed and not has_spoken:
                 continue
             elif has_spoken:

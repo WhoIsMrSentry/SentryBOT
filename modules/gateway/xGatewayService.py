@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import os
@@ -12,6 +13,13 @@ from modules.common.config_loader import load_dotenv
 from modules.common.http_client import close_all_clients
 
 from .config_loader import load_config
+from .readiness import (
+    mark_gateway_booting,
+    mark_gateway_idle,
+    mark_gateway_ready,
+    mark_gateway_stopping,
+    probe_gateway_tcp,
+)
 from .services.agent_api_compat import install_agent_api_compat
 
 logger = logging.getLogger("gateway.service")
@@ -288,19 +296,38 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        _mount_bootstrap(app, cfg)
-
+        srv_cfg = cfg.get("server", {}) if isinstance(cfg.get("server"), dict) else {}
+        mark_gateway_booting(
+            str(srv_cfg.get("host", "127.0.0.1")),
+            int(srv_cfg.get("port", 8080) or 8080),
+        )
+        ready_task: asyncio.Task | None = None
         try:
-            nb = (app.state.started or {}).get("notifier_bot")
-            if nb and (app.state.started or {}).get("notifier_polling_enabled"):
-                await nb.start()
-        except Exception as exc:
-            logger.warning("notifier start failed: %s", exc)
+            _mount_bootstrap(app, cfg)
 
-        try:
+            try:
+                nb = (app.state.started or {}).get("notifier_bot")
+                if nb and (app.state.started or {}).get("notifier_polling_enabled"):
+                    await nb.start()
+            except Exception as exc:
+                logger.warning("notifier start failed: %s", exc)
+
+            async def _watch_tcp_ready() -> None:
+                for _ in range(40):
+                    if await asyncio.to_thread(probe_gateway_tcp, 0.05):
+                        mark_gateway_ready()
+                        return
+                    await asyncio.sleep(0.08)
+                mark_gateway_ready()
+
+            ready_task = asyncio.create_task(_watch_tcp_ready())
             yield
         finally:
+            mark_gateway_stopping()
+            if ready_task is not None and not ready_task.done():
+                ready_task.cancel()
             await _shutdown_started_services(getattr(app.state, "started", {}) or {})
+            mark_gateway_idle()
 
     app = FastAPI(title="SentryBOT Gateway", lifespan=lifespan)
     app.state.started = {}  # type: ignore[attr-defined]

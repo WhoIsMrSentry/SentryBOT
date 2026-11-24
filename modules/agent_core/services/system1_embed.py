@@ -115,6 +115,18 @@ _INTENT_CORPUS: Tuple[Tuple[str, bool, str], ...] = (
     ("system2_chat", False, "yapay zeka hakkında ne düşünüyorsun"),
     ("system2_chat", False, "lütfen kendini tanıt"),
     ("system2_chat", False, "kendini tanıt"),
+    ("system2_chat", False, "yaratıcını tanıt"),
+    ("system2_chat", False, "yaratıcın kimdir"),
+    ("system2_chat", False, "yaratıcını internette araştır"),
+    ("system2_chat", False, "internetten araştır"),
+    ("system2_chat", False, "internette ara"),
+    ("system2_chat", False, "webde araştır"),
+    ("system2_chat", False, "search the web"),
+    ("system2_chat", False, "tekrar dene"),
+    ("system2_chat", False, "yeniden dene"),
+    ("system2_chat", False, "kişilik değiştir"),
+    ("system2_chat", False, "persona değiştir"),
+    ("system2_chat", False, "switch persona"),
     ("system2_chat", False, "sen kimsin ve yeteneklerin neler"),
     ("system2_chat", False, "neler yapabilirsin"),
     ("system2_chat", False, "merhaba nasılsın"),
@@ -306,8 +318,8 @@ class System1EmbedEngine:
         cfg = cfg or {}
         self.enabled = bool(cfg.get("enabled", True))
         self.model_path = str(cfg.get("model_path", "models/e5-small-onnx"))
-        self.threshold_direct = float(cfg.get("threshold_direct", 0.60))
-        self.threshold_module = float(cfg.get("threshold_module", 0.50))
+        self.threshold_direct = float(cfg.get("threshold_direct", 0.80))
+        self.threshold_module = float(cfg.get("threshold_module", 0.55))
         self._session: Any = None
         self._tokenizer: Any = None
         self._matrix: Any = None
@@ -566,6 +578,10 @@ class System1EmbedEngine:
             is_direct = False
         else:
             is_direct = bool(anchor_is_direct and module_conf >= self.threshold_direct)
+            if target == "emergency_stop" and is_direct:
+                if module_conf < max(self.threshold_direct, 0.85) and urgency_bonus(cleaned) <= 0.0:
+                    target = "system2_chat"
+                    is_direct = False
 
         direct_conf = round(module_conf if is_direct else max(0.65, 1.0 - module_conf * 0.3), 3)
 
