@@ -215,6 +215,13 @@ class VocalMixin(VocalProsodyMixin):
             elapsed_ms = round((time.monotonic() - t0) * 1000.0, 2)
             if isinstance(getattr(self, "state", None), dict):
                 self.state["agent_last_latency_ms"] = elapsed_ms
+            if isinstance(agent_result, dict) and agent_result.get("cancelled"):
+                return True
+            if agent_result is None:
+                logger.info("Agent Core busy or turn preempted; skipping duplicate Ollama fallback.")
+                return True
+            if not self._is_active_request(request_id):
+                return True
             if isinstance(agent_result, dict) and agent_result.get("ok", True) is not False and (
                 agent_result.get("text")
                 or agent_result.get("speech_handled")
@@ -320,6 +327,17 @@ class VocalMixin(VocalProsodyMixin):
                 text = stripped_cmd
                 if detect_text_language:
                     lang = detect_text_language(text, default=lang or "tr") or lang
+
+        agent_obj = getattr(self, "agent", None)
+        if (
+            agent_obj is not None
+            and getattr(agent_obj, "is_busy", False)
+            and callable(getattr(agent_obj, "cancel_active_turn", None))
+        ):
+            try:
+                agent_obj.cancel_active_turn(reason="superseded_by_new_speech", interrupt_speech=True)
+            except Exception:
+                pass
 
         if self._handle_speech_command_shortcuts(text, lang, request_id):
             return
